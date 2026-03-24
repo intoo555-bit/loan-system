@@ -82,12 +82,11 @@ async def callback(request: Request):
     body = await request.json()
 
     for event in body.get("events", []):
-    source = event.get("source", {})
-    print("GROUP ID:", source.get("groupId"))
+        source = event.get("source", {})
+        print("GROUP ID:", source.get("groupId"))
 
-    if event.get("type") != "message":
-        continue
-        
+        if event.get("type") != "message":
+            continue
 
         message = event.get("message", {})
         if message.get("type") != "text":
