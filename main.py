@@ -1,8 +1,12 @@
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
 import uvicorn
+import requests
+import os
 
 app = FastAPI()
+
+CHANNEL_ACCESS_TOKEN = os.getenv("CHANNEL_ACCESS_TOKEN", "")
 
 customers = {}
 
@@ -11,14 +15,17 @@ COMPANY_LIST = ["亞太", "和裕", "21"]
 DELETE_KEYWORDS = ["結案", "刪掉", "不追了", "全部不送", "已撥款結案"]
 BLOCK_KEYWORDS = ["鼎信", "禾基"]
 
+
 def extract_name(text):
     return text.split("（")[0].split(" ")[0].strip()
+
 
 def extract_company(text):
     for c in COMPANY_LIST:
         if c in text:
             return c
     return None
+
 
 def process_message(text):
     name = extract_name(text)
@@ -48,19 +55,48 @@ def process_message(text):
 
     return "⚠️ 無法判讀"
 
+
+def reply(reply_token, text):
+    if not CHANNEL_ACCESS_TOKEN:
+        return
+
+    url = "https://api.line.me/v2/bot/message/reply"
+    headers = {
+        "Authorization": f"Bearer {CHANNEL_ACCESS_TOKEN}",
+        "Content-Type": "application/json"
+    }
+    data = {
+        "replyToken": reply_token,
+        "messages": [
+            {
+                "type": "text",
+                "text": text
+            }
+        ]
+    }
+    requests.post(url, headers=headers, json=data, timeout=10)
+
+
 @app.post("/callback")
 async def callback(request: Request):
     body = await request.json()
-    events = body.get("events", [])
 
-    for event in events:
+    for event in body.get("events", []):
         if event.get("type") != "message":
             continue
 
-        text = event["message"]["text"]
-        process_message(text)
+        message = event.get("message", {})
+        if message.get("type") != "text":
+            continue
 
-    return {"ok": True}
+        text = message["text"]
+        reply_token = event["replyToken"]
+
+        result = process_message(text)
+        reply(reply_token, f"收到：{text}\n結果：{result}")
+
+    return {"status": "ok"}
+
 
 @app.get("/", response_class=HTMLResponse)
 def home():
@@ -73,9 +109,11 @@ def home():
     <a href="/report">看日報</a>
     """
 
+
 @app.get("/send")
 def send(msg: str):
     return process_message(msg)
+
 
 @app.get("/report", response_class=HTMLResponse)
 def report():
@@ -89,6 +127,7 @@ def report():
                 result += f"{name}｜{data['companies'][c]}<br>"
         result += "——————————<br>"
     return result
+
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
