@@ -46,12 +46,6 @@ def extract_company(text):
     return ""
 
 
-def mask_id(id_no):
-    if not id_no or len(id_no) != 10:
-        return ""
-    return id_no[:3] + "****" + id_no[-3:]
-
-
 def get_source_group_name(group_id):
     if group_id == B_GROUP_ID:
         return "B群"
@@ -104,7 +98,6 @@ def reply(reply_token, text):
     requests.post(url, headers=headers, json=data, timeout=10)
 
 
-# ===== B/C群建客戶 =====
 def create_or_update_customer(text, source_group_id):
     name = extract_name(text)
     id_no = extract_id_no(text)
@@ -113,27 +106,44 @@ def create_or_update_customer(text, source_group_id):
     if not name:
         return "⚠️ 抓不到客戶姓名"
 
-    # 有身分證時，先用身分證找
+    # 先擋禁止字
+    if any(w in text for w in BLOCK_KEYWORDS):
+        return "❌ 含禁止轉發關鍵字，已攔截"
+
+    # 同身分證優先處理
     if id_no:
         for _, customer in customers.items():
             if customer["id_no"] == id_no and customer["status"] == "ACTIVE":
+                # 同身分證但不同群：只有明確轉件才改來源群
+                if customer["source_group_id"] != source_group_id:
+                    if "轉" in text or "轉件" in text:
+                        customer["source_group_id"] = source_group_id
+                        customer["name"] = name
+                        if company:
+                            customer["company"] = company
+                        customer["last_update"] = text
+                        customer["date"] = today_str()
+                        return f"➡️ 已轉移客戶到新群：{name}"
+                    else:
+                        old_group = get_source_group_name(customer["source_group_id"])
+                        return f"⚠️ 此客戶已存在於 {old_group}，如需轉件請輸入轉件"
+
+                # 同群正常更新
                 customer["name"] = name
-                customer["source_group_id"] = source_group_id
                 if company:
                     customer["company"] = company
                 customer["last_update"] = text
                 customer["date"] = today_str()
                 return f"🔄 已更新客戶：{name}"
 
-    # 沒身分證時，再用姓名 + 來源群找
+    # 沒身分證時，用姓名 + 來源群找
     for _, customer in customers.items():
         if (
             customer["name"] == name
             and customer["source_group_id"] == source_group_id
             and customer["status"] == "ACTIVE"
+            and not customer["id_no"]
         ):
-            if id_no:
-                customer["id_no"] = id_no
             if company:
                 customer["company"] = company
             customer["last_update"] = text
@@ -155,18 +165,17 @@ def create_or_update_customer(text, source_group_id):
     return f"🆕 已建立客戶：{name}"
 
 
-# ===== A群找客戶 =====
 def find_customer_for_a_group(text):
     name = extract_name(text)
     id_no = extract_id_no(text)
 
-    # 1. 身分證優先
+    # 身分證優先
     if id_no:
         for _, customer in customers.items():
             if customer["id_no"] == id_no and customer["status"] == "ACTIVE":
                 return customer
 
-    # 2. 只用姓名時，找 ACTIVE 同名
+    # 沒身分證時，只能用姓名
     matches = []
     for _, customer in customers.items():
         if customer["name"] == name and customer["status"] == "ACTIVE":
@@ -204,19 +213,18 @@ async def callback(request: Request):
         text = message["text"]
         reply_token = event["replyToken"]
 
-        # 禁止轉發字眼
-        if any(w in text for w in BLOCK_KEYWORDS):
-            reply(reply_token, "❌ 含禁止轉發關鍵字，已攔截")
-            continue
-
-        # ===== B/C群：建立客戶 =====
+        # ===== B / C 群：建立客戶 =====
         if group_id in [B_GROUP_ID, C_GROUP_ID]:
             result = create_or_update_customer(text, group_id)
             reply(reply_token, result)
             continue
 
-        # ===== A群：處理進度並回貼 =====
+        # ===== A 群：處理進度並回貼 =====
         if group_id == A_GROUP_ID:
+            if any(w in text for w in BLOCK_KEYWORDS):
+                reply(reply_token, "❌ 含禁止轉發關鍵字，已攔截")
+                continue
+
             customer = find_customer_for_a_group(text)
 
             if customer == "MULTIPLE":
@@ -235,7 +243,7 @@ async def callback(request: Request):
 
                 push(
                     customer["source_group_id"],
-                    f"【A群進度回貼】\n{text}\n（此客戶已結案）"
+                    f"{text}\n（此客戶已結案）"
                 )
                 reply(reply_token, "✅ 已結案並回貼")
                 continue
@@ -248,7 +256,8 @@ async def callback(request: Request):
             customer["last_update"] = text
             customer["date"] = today_str()
 
-            push(customer["source_group_id"], f"【A群進度回貼】\n{text}")
+            # 不顯示「A群進度回貼」
+            push(customer["source_group_id"], text)
             reply(reply_token, "✅ 已回貼到原業務群")
             continue
 
@@ -272,7 +281,6 @@ def home():
 
 @app.get("/send")
 def send(msg: str):
-    # 手動測試用，假裝是B群建客戶
     result = create_or_update_customer(msg, B_GROUP_ID)
     return result
 
