@@ -100,8 +100,8 @@ def seed_groups():
 
     data = [
         (A_GROUP_ID, "A群", "A_GROUP", 1, now),
-        (B_GROUP_ID, "B群", "B群", 1, now),
-        (C_GROUP_ID, "C群", "C群", 1, now),
+        (B_GROUP_ID, "B群", "SALES_GROUP", 1, now),
+        (C_GROUP_ID, "C群", "SALES_GROUP", 1, now),
     ]
 
     for row in data:
@@ -144,8 +144,6 @@ def extract_name(text):
         return ""
 
     first_line = extract_first_line(text)
-
-    # 去掉前面日期格式，例如 115/3/25-
     first_line = re.sub(r"^\d{2,4}/\d{1,2}/\d{1,2}[-－]\s*", "", first_line)
 
     match = CHINESE_NAME_RE.search(first_line)
@@ -201,6 +199,25 @@ def looks_like_case_line(line):
     return has_name and (has_company or has_status_word)
 
 
+def is_valid_case_block(block):
+    """
+    只有符合案件格式才處理，避免在群組亂回：
+    1. 有身分證
+    2. 或有日期前綴 + 姓名
+    """
+    has_id = bool(extract_id_no(block))
+    has_name = bool(extract_name(block))
+    has_date_prefix = bool(re.search(r"\d{2,4}/\d{1,2}/\d{1,2}[-－]", block))
+
+    if has_id:
+        return True
+
+    if has_date_prefix and has_name:
+        return True
+
+    return False
+
+
 def split_multi_cases(text):
     """
     支援：
@@ -225,7 +242,7 @@ def split_multi_cases(text):
         if not lines:
             continue
 
-        # 規則A：遇到看起來像新客戶的行就開新段
+        # 遇到像新客戶的行就開新段
         blocks = []
         current_block = []
 
@@ -254,7 +271,7 @@ def split_multi_cases(text):
                 if n not in ["等保書", "婉拒", "核准", "補件", "退件", "亞太", "和裕", "無可知情"]
             ]
 
-            # 規則B：同一行多名字時拆開
+            # 同一行多名字時拆開
             if not id_match and len(possible_names) >= 2:
                 remain = first_line
                 for name in possible_names:
@@ -475,7 +492,7 @@ def handle_bc_case_block(block_text, source_group_id, reply_token):
     company = extract_company(block_text)
 
     if not name:
-        return "⚠️ 抓不到客戶姓名"
+        return None
 
     if is_blocked(block_text):
         return "❌ 含禁止轉發關鍵字，已攔截"
@@ -591,7 +608,8 @@ def handle_a_case_block(block_text, reply_token):
         return "QUICK_REPLY_SENT"
 
     if not customer:
-        return "⚠️ 找不到對應客戶"
+        first_line = extract_first_line(block_text)
+        return f"⚠️ 找不到對應客戶：{first_line}"
 
     company = extract_company(block_text) or customer["company"]
 
@@ -730,19 +748,28 @@ async def callback(request: Request):
             continue
 
         blocks = split_multi_cases(text)
+        valid_blocks = [block for block in blocks if is_valid_case_block(block)]
+
+        # 沒有有效案件就完全不回，避免群組太亂
+        if not valid_blocks:
+            return {"status": "ignored"}
 
         if group_id in [B_GROUP_ID, C_GROUP_ID]:
             results = []
             quick_reply_sent = False
 
-            for block in blocks:
+            for idx, block in enumerate(valid_blocks, start=1):
                 result = handle_bc_case_block(block, group_id, reply_token)
                 if result == "QUICK_REPLY_SENT":
                     quick_reply_sent = True
                     break
-                results.append(result)
+                if result:
+                    if len(valid_blocks) > 1:
+                        results.append(f"第{idx}筆：{result}")
+                    else:
+                        results.append(result)
 
-            if not quick_reply_sent:
+            if not quick_reply_sent and results:
                 reply_text(reply_token, "\n".join(results))
             continue
 
@@ -750,14 +777,18 @@ async def callback(request: Request):
             results = []
             quick_reply_sent = False
 
-            for block in blocks:
+            for idx, block in enumerate(valid_blocks, start=1):
                 result = handle_a_case_block(block, reply_token)
                 if result == "QUICK_REPLY_SENT":
                     quick_reply_sent = True
                     break
-                results.append(result)
+                if result:
+                    if len(valid_blocks) > 1:
+                        results.append(f"第{idx}筆：{result}")
+                    else:
+                        results.append(result)
 
-            if not quick_reply_sent:
+            if not quick_reply_sent and results:
                 reply_text(reply_token, "\n".join(results))
             continue
 
@@ -782,11 +813,17 @@ def home():
 @app.get("/send")
 def send(msg: str):
     blocks = split_multi_cases(msg)
+    valid_blocks = [block for block in blocks if is_valid_case_block(block)]
+
     results = []
-    for block in blocks:
+    for idx, block in enumerate(valid_blocks, start=1):
         result = handle_bc_case_block(block, B_GROUP_ID, "TEST")
-        if result != "QUICK_REPLY_SENT":
-            results.append(result)
+        if result != "QUICK_REPLY_SENT" and result:
+            if len(valid_blocks) > 1:
+                results.append(f"第{idx}筆：{result}")
+            else:
+                results.append(result)
+
     return "\n".join(results)
 
 
@@ -810,8 +847,9 @@ def report():
 
         for customer in rows:
             has_data = True
+            update_date = customer["updated_at"][5:10].replace("-", "/") if customer["updated_at"] else ""
             html += (
-                f"{today_str()}"
+                f"{update_date}"
                 f"-{customer['customer_name']}"
                 f"-{customer['company']}"
                 f"-{customer['last_update']}"
