@@ -100,8 +100,8 @@ def seed_groups():
 
     data = [
         (A_GROUP_ID, "A群", "A_GROUP", 1, now),
-        (B_GROUP_ID, "B群", "SALES_GROUP", 1, now),
-        (C_GROUP_ID, "C群", "SALES_GROUP", 1, now),
+        (B_GROUP_ID, "B群", "B群", 1, now),
+        (C_GROUP_ID, "C群", "C群", 1, now),
     ]
 
     for row in data:
@@ -214,7 +214,6 @@ def split_multi_cases(text):
     if not text:
         return []
 
-    # 先統一把 / 當成分隔
     text = re.sub(r"\n\s*/\s*\n", "\n<<<SPLIT>>>\n", text)
     text = re.sub(r"\n\s*\n+", "\n<<<SPLIT>>>\n", text)
 
@@ -226,7 +225,7 @@ def split_multi_cases(text):
         if not lines:
             continue
 
-        # 規則A：每遇到像客戶資料的新行，就開新段
+        # 規則A：遇到看起來像新客戶的行就開新段
         blocks = []
         current_block = []
 
@@ -538,8 +537,8 @@ def handle_bc_case_block(block_text, source_group_id, reply_token):
             insert_case_log(row["case_id"], name, "", company or row["company"], block_text, source_group_id)
             return f"🔄 已更新客戶：{name}"
 
-    case_id = create_customer_record(name, id_no, company, source_group_id, block_text)
-    return f"🆕 已建立客戶：{name}（{case_id}）"
+    create_customer_record(name, id_no, company, source_group_id, block_text)
+    return f"🆕 已建立客戶：{name}"
 
 
 def send_ambiguous_case_buttons(reply_token, block_text, matches):
