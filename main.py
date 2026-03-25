@@ -203,20 +203,22 @@ def looks_like_case_line(line):
 
 def split_multi_cases(text):
     """
-    分段規則：
-    1. 單獨一行 "/" 視為分隔
-    2. 空白行視為分隔
-    3. 如果多行都像一行一客戶，就每行拆成一筆
-    4. 如果某一段第一行有多個名字、且沒有身分證，則拆成多筆
+    支援：
+    1. 一客戶一行
+    2. 一客戶 + 多行補充
+    3. 用 / 分隔
+    4. 空白行分隔
+    5. 同一行多名字拆分
     """
     text = text.strip()
     if not text:
         return []
 
+    # 先統一把 / 當成分隔
     text = re.sub(r"\n\s*/\s*\n", "\n<<<SPLIT>>>\n", text)
     text = re.sub(r"\n\s*\n+", "\n<<<SPLIT>>>\n", text)
-    raw_parts = [p.strip() for p in text.split("<<<SPLIT>>>") if p.strip()]
 
+    raw_parts = [p.strip() for p in text.split("<<<SPLIT>>>") if p.strip()]
     final_parts = []
 
     for part in raw_parts:
@@ -224,36 +226,48 @@ def split_multi_cases(text):
         if not lines:
             continue
 
-        # 多行看起來都像一筆客戶 -> 每行各自拆
-        if len(lines) >= 2:
-            case_like_count = sum(1 for line in lines if looks_like_case_line(line))
-            if case_like_count >= max(2, len(lines) - 1):
-                for line in lines:
-                    final_parts.append(line)
+        # 規則A：每遇到像客戶資料的新行，就開新段
+        blocks = []
+        current_block = []
+
+        for line in lines:
+            if looks_like_case_line(line):
+                if current_block:
+                    blocks.append("\n".join(current_block))
+                    current_block = []
+            current_block.append(line)
+
+        if current_block:
+            blocks.append("\n".join(current_block))
+
+        for block in blocks:
+            block_lines = [line.strip() for line in block.splitlines() if line.strip()]
+            if not block_lines:
                 continue
 
-        first_line = lines[0]
-        rest_lines = lines[1:]
-        id_match = ID_RE.search(first_line)
+            first_line = block_lines[0]
+            rest_lines = block_lines[1:]
+            id_match = ID_RE.search(first_line)
 
-        possible_names = extract_possible_names(first_line)
-        possible_names = [
-            n for n in possible_names
-            if n not in ["等保書", "婉拒", "核准", "補件", "退件", "亞太", "和裕", "無可知情"]
-        ]
+            possible_names = extract_possible_names(first_line)
+            possible_names = [
+                n for n in possible_names
+                if n not in ["等保書", "婉拒", "核准", "補件", "退件", "亞太", "和裕", "無可知情"]
+            ]
 
-        if not id_match and len(possible_names) >= 2:
-            remain = first_line
-            for name in possible_names:
-                remain = remain.replace(name, "", 1)
-            remain = remain.strip()
+            # 規則B：同一行多名字時拆開
+            if not id_match and len(possible_names) >= 2:
+                remain = first_line
+                for name in possible_names:
+                    remain = remain.replace(name, "", 1)
+                remain = remain.strip()
 
-            for name in possible_names:
-                new_block_lines = [f"{name} {remain}".strip()]
-                new_block_lines.extend(rest_lines)
-                final_parts.append("\n".join(new_block_lines).strip())
-        else:
-            final_parts.append(part)
+                for name in possible_names:
+                    new_block_lines = [f"{name} {remain}".strip()]
+                    new_block_lines.extend(rest_lines)
+                    final_parts.append("\n".join(new_block_lines).strip())
+            else:
+                final_parts.append(block)
 
     return final_parts
 
