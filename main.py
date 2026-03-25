@@ -20,9 +20,11 @@ COMPANY_LIST = ["亞太", "和裕", "21"]
 DELETE_KEYWORDS = ["結案", "刪掉", "不追了", "全部不送", "已撥款結案"]
 BLOCK_KEYWORDS = ["鼎信", "禾基"]
 
-# ===== 暫存資料 =====
 customers = {}
 pending_actions = {}
+
+CHINESE_NAME_RE = re.compile(r'[\u4e00-\u9fff]{2,4}')
+ID_RE = re.compile(r'[A-Z][12]\d{8}')
 
 
 def today_str():
@@ -33,16 +35,30 @@ def short_id():
     return str(uuid.uuid4())[:8]
 
 
+def extract_first_line(text):
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    return lines[0] if lines else ""
+
+
+def extract_possible_names(text):
+    return CHINESE_NAME_RE.findall(text)
+
+
 def extract_name(text):
     text = text.strip()
     if not text:
         return ""
-    first_line = text.splitlines()[0].strip()
+
+    first_line = extract_first_line(text)
+    match = CHINESE_NAME_RE.search(first_line)
+    if match:
+        return match.group(0)
+
     return first_line.split("（")[0].split(" ")[0].strip()
 
 
 def extract_id_no(text):
-    match = re.search(r"[A-Z][12]\d{8}", text.upper())
+    match = ID_RE.search(text.upper())
     return match.group(0) if match else ""
 
 
@@ -85,7 +101,7 @@ def push_text(to_group_id, text):
 
 
 def reply_text(reply_token, text):
-    if not CHANNEL_ACCESS_TOKEN:
+    if not CHANNEL_ACCESS_TOKEN or reply_token == "TEST":
         return
 
     url = "https://api.line.me/v2/bot/message/reply"
@@ -105,8 +121,19 @@ def reply_text(reply_token, text):
     requests.post(url, headers=headers, json=data, timeout=10)
 
 
+def make_quick_reply_item(label, text):
+    return {
+        "type": "action",
+        "action": {
+            "type": "message",
+            "label": label[:20],
+            "text": text
+        }
+    }
+
+
 def reply_quick_reply(reply_token, text, items):
-    if not CHANNEL_ACCESS_TOKEN:
+    if not CHANNEL_ACCESS_TOKEN or reply_token == "TEST":
         return
 
     url = "https://api.line.me/v2/bot/message/reply"
@@ -129,42 +156,60 @@ def reply_quick_reply(reply_token, text, items):
     requests.post(url, headers=headers, json=data, timeout=10)
 
 
-def make_quick_reply_item(label, text):
-    return {
-        "type": "action",
-        "action": {
-            "type": "message",
-            "label": label[:20],
-            "text": text
-        }
-    }
-
-
-def split_multi_cases(text):
-    """
-    支援：
-    1. 用單獨一行 "/" 分段
-    2. 用空白行分段
-    """
-    text = text.strip()
-    if not text:
-        return []
-
-    # 先把單獨一行 / 當作分隔
-    text = re.sub(r"\n\s*/\s*\n", "\n<<<SPLIT>>>\n", text)
-    # 再把連續空白行當分隔
-    text = re.sub(r"\n\s*\n+", "\n<<<SPLIT>>>\n", text)
-
-    parts = [p.strip() for p in text.split("<<<SPLIT>>>") if p.strip()]
-    return parts
-
-
 def is_blocked(text):
     return any(w in text for w in BLOCK_KEYWORDS)
 
 
 def is_closed_text(text):
     return any(w in text for w in DELETE_KEYWORDS)
+
+
+def split_multi_cases(text):
+    """
+    大分段：
+    1. 單獨一行 "/" 視為分隔
+    2. 空白行視為分隔
+
+    小分段：
+    如果某一段第一行有多個名字、且沒有身分證，
+    則拆成多位客戶，各自共用尾巴內容。
+    """
+    text = text.strip()
+    if not text:
+        return []
+
+    text = re.sub(r"\n\s*/\s*\n", "\n<<<SPLIT>>>\n", text)
+    text = re.sub(r"\n\s*\n+", "\n<<<SPLIT>>>\n", text)
+    raw_parts = [p.strip() for p in text.split("<<<SPLIT>>>") if p.strip()]
+
+    final_parts = []
+
+    for part in raw_parts:
+        lines = [line.strip() for line in part.splitlines() if line.strip()]
+        if not lines:
+            continue
+
+        first_line = lines[0]
+        rest_lines = lines[1:]
+        id_match = ID_RE.search(first_line)
+
+        possible_names = extract_possible_names(first_line)
+        possible_names = [n for n in possible_names if n not in ["等保書", "婉拒", "核准", "補件", "退件"]]
+
+        if not id_match and len(possible_names) >= 2:
+            remain = first_line
+            for name in possible_names:
+                remain = remain.replace(name, "", 1)
+            remain = remain.strip()
+
+            for name in possible_names:
+                new_block_lines = [f"{name} {remain}".strip()]
+                new_block_lines.extend(rest_lines)
+                final_parts.append("\n".join(new_block_lines).strip())
+        else:
+            final_parts.append(part)
+
+    return final_parts
 
 
 def create_customer_record(name, id_no, company, source_group_id, text):
@@ -207,12 +252,10 @@ def handle_bc_case_block(block_text, source_group_id, reply_token):
     if is_blocked(block_text):
         return "❌ 含禁止轉發關鍵字，已攔截"
 
-    # ===== 同身分證優先 =====
     if id_no:
         existing = find_active_by_id_no(id_no)
 
         if existing:
-            # 同一群：直接更新
             if existing["source_group_id"] == source_group_id:
                 if company:
                     existing["company"] = company
@@ -220,7 +263,6 @@ def handle_bc_case_block(block_text, source_group_id, reply_token):
                 existing["date"] = today_str()
                 return f"🔄 已更新客戶：{name}"
 
-            # 不同群：若有明確轉件，直接轉
             if "轉件" in block_text or "轉" in block_text:
                 existing["source_group_id"] = source_group_id
                 existing["name"] = name
@@ -230,7 +272,6 @@ def handle_bc_case_block(block_text, source_group_id, reply_token):
                 existing["date"] = today_str()
                 return f"➡️ 已轉移客戶到{get_group_name(source_group_id)}：{name}"
 
-            # 不同群：按鈕確認
             action_id = short_id()
             pending_actions[action_id] = {
                 "type": "transfer_customer",
@@ -260,31 +301,22 @@ def handle_bc_case_block(block_text, source_group_id, reply_token):
             )
             return "QUICK_REPLY_SENT"
 
-    # ===== 沒身分證或找不到同身分證 → 建新客戶 =====
+    if not id_no:
+        for customer in customers.values():
+            if (
+                customer["status"] == "ACTIVE"
+                and customer["name"] == name
+                and customer["source_group_id"] == source_group_id
+                and not customer["id_no"]
+            ):
+                if company:
+                    customer["company"] = company
+                customer["last_update"] = block_text
+                customer["date"] = today_str()
+                return f"🔄 已更新客戶：{name}"
+
     create_customer_record(name, id_no, company, source_group_id, block_text)
     return f"🆕 已建立客戶：{name}"
-
-
-def find_customer_for_a_block(block_text):
-    name = extract_name(block_text)
-    id_no = extract_id_no(block_text)
-
-    # 身分證優先
-    if id_no:
-        c = find_active_by_id_no(id_no)
-        if c:
-            return c
-
-    # 姓名次之
-    matches = find_active_by_name(name)
-
-    if len(matches) == 1:
-        return matches[0]
-
-    if len(matches) > 1:
-        return "MULTIPLE"
-
-    return None
 
 
 def send_ambiguous_case_buttons(reply_token, block_text, matches):
@@ -308,15 +340,34 @@ def send_ambiguous_case_buttons(reply_token, block_text, matches):
     )
 
 
+def find_customer_for_a_block(block_text, reply_token):
+    name = extract_name(block_text)
+    id_no = extract_id_no(block_text)
+
+    if id_no:
+        c = find_active_by_id_no(id_no)
+        if c:
+            return c
+
+    matches = find_active_by_name(name)
+
+    if len(matches) == 1:
+        return matches[0]
+
+    if len(matches) > 1:
+        send_ambiguous_case_buttons(reply_token, block_text, matches)
+        return "MULTIPLE"
+
+    return None
+
+
 def handle_a_case_block(block_text, reply_token):
     if is_blocked(block_text):
         return "❌ 含禁止轉發關鍵字，已攔截"
 
-    customer = find_customer_for_a_block(block_text)
+    customer = find_customer_for_a_block(block_text, reply_token)
 
     if customer == "MULTIPLE":
-        matches = find_active_by_name(extract_name(block_text))
-        send_ambiguous_case_buttons(reply_token, block_text, matches)
         return "QUICK_REPLY_SENT"
 
     if not customer:
@@ -339,7 +390,6 @@ def handle_a_case_block(block_text, reply_token):
 
 
 def handle_command_text(text, reply_token):
-    # 轉群確認
     if text.startswith("CONFIRM_TRANSFER|"):
         _, action_id = text.split("|", 1)
         action = pending_actions.get(action_id)
@@ -370,7 +420,6 @@ def handle_command_text(text, reply_token):
         reply_text(reply_token, "✅ 已維持原群")
         return True
 
-    # A群同名多筆選擇
     if text.startswith("SELECT_CASE|"):
         _, action_id, case_id = text.split("|", 2)
         action = pending_actions.get(action_id)
@@ -426,13 +475,11 @@ async def callback(request: Request):
         text = message["text"]
         reply_token = event["replyToken"]
 
-        # 先處理按鈕命令
         if handle_command_text(text, reply_token):
             continue
 
         blocks = split_multi_cases(text)
 
-        # ===== B / C 群：建立或更新客戶 =====
         if group_id in [B_GROUP_ID, C_GROUP_ID]:
             results = []
             quick_reply_sent = False
@@ -446,10 +493,8 @@ async def callback(request: Request):
 
             if not quick_reply_sent:
                 reply_text(reply_token, "\n".join(results))
-
             continue
 
-        # ===== A 群：多客戶進度回貼 =====
         if group_id == A_GROUP_ID:
             results = []
             quick_reply_sent = False
@@ -463,7 +508,6 @@ async def callback(request: Request):
 
             if not quick_reply_sent:
                 reply_text(reply_token, "\n".join(results))
-
             continue
 
         reply_text(reply_token, "⚠️ 此群組未設定")
@@ -486,7 +530,6 @@ def home():
 
 @app.get("/send")
 def send(msg: str):
-    # 網頁手動測試用，預設當 B群建客戶
     blocks = split_multi_cases(msg)
     results = []
     for block in blocks:
