@@ -4,6 +4,7 @@ import uvicorn
 import requests
 import os
 import re
+import sqlite3
 from datetime import datetime
 import uuid
 
@@ -20,11 +21,104 @@ COMPANY_LIST = ["亞太", "和裕", "21"]
 DELETE_KEYWORDS = ["結案", "刪掉", "不追了", "全部不送", "已撥款結案"]
 BLOCK_KEYWORDS = ["鼎信", "禾基"]
 
-customers = {}
-pending_actions = {}
+DB_PATH = "loan_system.db"
 
-CHINESE_NAME_RE = re.compile(r'[\u4e00-\u9fff]{2,4}')
-ID_RE = re.compile(r'[A-Z][12]\d{8}')
+CHINESE_NAME_RE = re.compile(r"[\u4e00-\u9fff]{2,4}")
+ID_RE = re.compile(r"[A-Z][12]\d{8}")
+
+
+# =========================
+# 資料庫
+# =========================
+def get_conn():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def init_db():
+    conn = get_conn()
+    cur = conn.cursor()
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS groups (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        group_id TEXT UNIQUE NOT NULL,
+        group_name TEXT,
+        group_type TEXT NOT NULL,
+        is_active INTEGER DEFAULT 1,
+        created_at TEXT NOT NULL
+    )
+    """)
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS customers (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        case_id TEXT UNIQUE NOT NULL,
+        customer_name TEXT NOT NULL,
+        id_no TEXT,
+        source_group_id TEXT NOT NULL,
+        company TEXT,
+        last_update TEXT,
+        status TEXT NOT NULL DEFAULT 'ACTIVE',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    )
+    """)
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS case_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        case_id TEXT NOT NULL,
+        customer_name TEXT NOT NULL,
+        id_no TEXT,
+        company TEXT,
+        message_text TEXT NOT NULL,
+        from_group_id TEXT NOT NULL,
+        created_at TEXT NOT NULL
+    )
+    """)
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS pending_actions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        action_id TEXT UNIQUE NOT NULL,
+        action_type TEXT NOT NULL,
+        payload TEXT NOT NULL,
+        created_at TEXT NOT NULL
+    )
+    """)
+
+    conn.commit()
+    conn.close()
+
+
+def seed_groups():
+    conn = get_conn()
+    cur = conn.cursor()
+    now = now_iso()
+
+    data = [
+        (A_GROUP_ID, "A群", "A_GROUP", 1, now),
+        (B_GROUP_ID, "B群", "SALES_GROUP", 1, now),
+        (C_GROUP_ID, "C群", "SALES_GROUP", 1, now),
+    ]
+
+    for row in data:
+        cur.execute("""
+        INSERT OR IGNORE INTO groups (group_id, group_name, group_type, is_active, created_at)
+        VALUES (?, ?, ?, ?, ?)
+        """, row)
+
+    conn.commit()
+    conn.close()
+
+
+# =========================
+# 工具
+# =========================
+def now_iso():
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
 def today_str():
@@ -48,12 +142,10 @@ def extract_name(text):
     text = text.strip()
     if not text:
         return ""
-
     first_line = extract_first_line(text)
     match = CHINESE_NAME_RE.search(first_line)
     if match:
         return match.group(0)
-
     return first_line.split("（")[0].split(" ")[0].strip()
 
 
@@ -70,15 +162,69 @@ def extract_company(text):
 
 
 def get_group_name(group_id):
-    if group_id == A_GROUP_ID:
-        return "A群"
-    if group_id == B_GROUP_ID:
-        return "B群"
-    if group_id == C_GROUP_ID:
-        return "C群"
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT group_name FROM groups WHERE group_id = ?", (group_id,))
+    row = cur.fetchone()
+    conn.close()
+    if row:
+        return row["group_name"]
     return "未知群組"
 
 
+def is_blocked(text):
+    return any(w in text for w in BLOCK_KEYWORDS)
+
+
+def is_closed_text(text):
+    return any(w in text for w in DELETE_KEYWORDS)
+
+
+def split_multi_cases(text):
+    text = text.strip()
+    if not text:
+        return []
+
+    text = re.sub(r"\n\s*/\s*\n", "\n<<<SPLIT>>>\n", text)
+    text = re.sub(r"\n\s*\n+", "\n<<<SPLIT>>>\n", text)
+    raw_parts = [p.strip() for p in text.split("<<<SPLIT>>>") if p.strip()]
+
+    final_parts = []
+
+    for part in raw_parts:
+        lines = [line.strip() for line in part.splitlines() if line.strip()]
+        if not lines:
+            continue
+
+        first_line = lines[0]
+        rest_lines = lines[1:]
+        id_match = ID_RE.search(first_line)
+
+        possible_names = extract_possible_names(first_line)
+        possible_names = [
+            n for n in possible_names
+            if n not in ["等保書", "婉拒", "核准", "補件", "退件", "亞太", "和裕"]
+        ]
+
+        if not id_match and len(possible_names) >= 2:
+            remain = first_line
+            for name in possible_names:
+                remain = remain.replace(name, "", 1)
+            remain = remain.strip()
+
+            for name in possible_names:
+                new_block_lines = [f"{name} {remain}".strip()]
+                new_block_lines.extend(rest_lines)
+                final_parts.append("\n".join(new_block_lines).strip())
+        else:
+            final_parts.append(part)
+
+    return final_parts
+
+
+# =========================
+# LINE
+# =========================
 def push_text(to_group_id, text):
     if not CHANNEL_ACCESS_TOKEN:
         return
@@ -90,12 +236,7 @@ def push_text(to_group_id, text):
     }
     data = {
         "to": to_group_id,
-        "messages": [
-            {
-                "type": "text",
-                "text": text
-            }
-        ]
+        "messages": [{"type": "text", "text": text}]
     }
     requests.post(url, headers=headers, json=data, timeout=10)
 
@@ -111,12 +252,7 @@ def reply_text(reply_token, text):
     }
     data = {
         "replyToken": reply_token,
-        "messages": [
-            {
-                "type": "text",
-                "text": text
-            }
-        ]
+        "messages": [{"type": "text", "text": text}]
     }
     requests.post(url, headers=headers, json=data, timeout=10)
 
@@ -143,104 +279,149 @@ def reply_quick_reply(reply_token, text, items):
     }
     data = {
         "replyToken": reply_token,
-        "messages": [
-            {
-                "type": "text",
-                "text": text,
-                "quickReply": {
-                    "items": items
-                }
-            }
-        ]
+        "messages": [{
+            "type": "text",
+            "text": text,
+            "quickReply": {"items": items}
+        }]
     }
     requests.post(url, headers=headers, json=data, timeout=10)
 
 
-def is_blocked(text):
-    return any(w in text for w in BLOCK_KEYWORDS)
-
-
-def is_closed_text(text):
-    return any(w in text for w in DELETE_KEYWORDS)
-
-
-def split_multi_cases(text):
-    """
-    大分段：
-    1. 單獨一行 "/" 視為分隔
-    2. 空白行視為分隔
-
-    小分段：
-    如果某一段第一行有多個名字、且沒有身分證，
-    則拆成多位客戶，各自共用尾巴內容。
-    """
-    text = text.strip()
-    if not text:
-        return []
-
-    text = re.sub(r"\n\s*/\s*\n", "\n<<<SPLIT>>>\n", text)
-    text = re.sub(r"\n\s*\n+", "\n<<<SPLIT>>>\n", text)
-    raw_parts = [p.strip() for p in text.split("<<<SPLIT>>>") if p.strip()]
-
-    final_parts = []
-
-    for part in raw_parts:
-        lines = [line.strip() for line in part.splitlines() if line.strip()]
-        if not lines:
-            continue
-
-        first_line = lines[0]
-        rest_lines = lines[1:]
-        id_match = ID_RE.search(first_line)
-
-        possible_names = extract_possible_names(first_line)
-        possible_names = [n for n in possible_names if n not in ["等保書", "婉拒", "核准", "補件", "退件"]]
-
-        if not id_match and len(possible_names) >= 2:
-            remain = first_line
-            for name in possible_names:
-                remain = remain.replace(name, "", 1)
-            remain = remain.strip()
-
-            for name in possible_names:
-                new_block_lines = [f"{name} {remain}".strip()]
-                new_block_lines.extend(rest_lines)
-                final_parts.append("\n".join(new_block_lines).strip())
-        else:
-            final_parts.append(part)
-
-    return final_parts
-
-
+# =========================
+# DB CRUD
+# =========================
 def create_customer_record(name, id_no, company, source_group_id, text):
+    conn = get_conn()
+    cur = conn.cursor()
+
     case_id = short_id()
-    customers[case_id] = {
-        "case_id": case_id,
-        "name": name,
-        "id_no": id_no,
-        "company": company,
-        "source_group_id": source_group_id,
-        "last_update": text,
-        "date": today_str(),
-        "status": "ACTIVE"
-    }
-    return customers[case_id]
+    now = now_iso()
+
+    cur.execute("""
+    INSERT INTO customers (
+        case_id, customer_name, id_no, source_group_id, company,
+        last_update, status, created_at, updated_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?)
+    """, (
+        case_id, name, id_no, source_group_id, company,
+        text, now, now
+    ))
+
+    cur.execute("""
+    INSERT INTO case_logs (
+        case_id, customer_name, id_no, company, message_text, from_group_id, created_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+    """, (
+        case_id, name, id_no, company, text, source_group_id, now
+    ))
+
+    conn.commit()
+    conn.close()
+    return case_id
 
 
 def find_active_by_id_no(id_no):
-    for c in customers.values():
-        if c["status"] == "ACTIVE" and c["id_no"] == id_no:
-            return c
-    return None
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("""
+    SELECT * FROM customers
+    WHERE status = 'ACTIVE' AND id_no = ?
+    LIMIT 1
+    """, (id_no,))
+    row = cur.fetchone()
+    conn.close()
+    return row
 
 
 def find_active_by_name(name):
-    return [
-        c for c in customers.values()
-        if c["status"] == "ACTIVE" and c["name"] == name
-    ]
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("""
+    SELECT * FROM customers
+    WHERE status = 'ACTIVE' AND customer_name = ?
+    ORDER BY updated_at DESC
+    """, (name,))
+    rows = cur.fetchall()
+    conn.close()
+    return rows
 
 
+def update_customer(case_id, **kwargs):
+    if not kwargs:
+        return
+
+    conn = get_conn()
+    cur = conn.cursor()
+
+    fields = []
+    values = []
+
+    for k, v in kwargs.items():
+        fields.append(f"{k} = ?")
+        values.append(v)
+
+    fields.append("updated_at = ?")
+    values.append(now_iso())
+
+    values.append(case_id)
+
+    sql = f"UPDATE customers SET {', '.join(fields)} WHERE case_id = ?"
+    cur.execute(sql, values)
+    conn.commit()
+    conn.close()
+
+
+def insert_case_log(case_id, customer_name, id_no, company, text, from_group_id):
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("""
+    INSERT INTO case_logs (
+        case_id, customer_name, id_no, company, message_text, from_group_id, created_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+    """, (
+        case_id, customer_name, id_no, company, text, from_group_id, now_iso()
+    ))
+    conn.commit()
+    conn.close()
+
+
+def save_pending_action(action_id, action_type, payload):
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("""
+    INSERT OR REPLACE INTO pending_actions (action_id, action_type, payload, created_at)
+    VALUES (?, ?, ?, ?)
+    """, (action_id, action_type, payload, now_iso()))
+    conn.commit()
+    conn.close()
+
+
+def get_pending_action(action_id):
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("""
+    SELECT * FROM pending_actions WHERE action_id = ?
+    """, (action_id,))
+    row = cur.fetchone()
+    conn.close()
+    return row
+
+
+def delete_pending_action(action_id):
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM pending_actions WHERE action_id = ?", (action_id,))
+    conn.commit()
+    conn.close()
+
+
+# =========================
+# 業務邏輯
+# =========================
 def handle_bc_case_block(block_text, source_group_id, reply_token):
     name = extract_name(block_text)
     id_no = extract_id_no(block_text)
@@ -257,41 +438,36 @@ def handle_bc_case_block(block_text, source_group_id, reply_token):
 
         if existing:
             if existing["source_group_id"] == source_group_id:
-                if company:
-                    existing["company"] = company
-                existing["last_update"] = block_text
-                existing["date"] = today_str()
+                update_customer(
+                    existing["case_id"],
+                    customer_name=name,
+                    company=company or existing["company"],
+                    last_update=block_text
+                )
+                insert_case_log(existing["case_id"], name, id_no, company or existing["company"], block_text, source_group_id)
                 return f"🔄 已更新客戶：{name}"
 
             if "轉件" in block_text or "轉" in block_text:
-                existing["source_group_id"] = source_group_id
-                existing["name"] = name
-                if company:
-                    existing["company"] = company
-                existing["last_update"] = block_text
-                existing["date"] = today_str()
+                update_customer(
+                    existing["case_id"],
+                    source_group_id=source_group_id,
+                    customer_name=name,
+                    company=company or existing["company"],
+                    last_update=block_text
+                )
+                insert_case_log(existing["case_id"], name, id_no, company or existing["company"], block_text, source_group_id)
                 return f"➡️ 已轉移客戶到{get_group_name(source_group_id)}：{name}"
 
             action_id = short_id()
-            pending_actions[action_id] = {
-                "type": "transfer_customer",
-                "case_id": existing["case_id"],
-                "target_group_id": source_group_id,
-                "text": block_text
-            }
+            payload = f"{existing['case_id']}||{source_group_id}||{block_text}"
+            save_pending_action(action_id, "transfer_customer", payload)
 
             old_group = get_group_name(existing["source_group_id"])
             new_group = get_group_name(source_group_id)
 
             items = [
-                make_quick_reply_item(
-                    f"轉到{new_group}",
-                    f"CONFIRM_TRANSFER|{action_id}"
-                ),
-                make_quick_reply_item(
-                    "維持原群",
-                    f"CANCEL_TRANSFER|{action_id}"
-                )
+                make_quick_reply_item(f"轉到{new_group}", f"CONFIRM_TRANSFER|{action_id}"),
+                make_quick_reply_item("維持原群", f"CANCEL_TRANSFER|{action_id}")
             ]
 
             reply_quick_reply(
@@ -301,35 +477,33 @@ def handle_bc_case_block(block_text, source_group_id, reply_token):
             )
             return "QUICK_REPLY_SENT"
 
+    # 沒身分證：同群同名才更新
     if not id_no:
-        for customer in customers.values():
-            if (
-                customer["status"] == "ACTIVE"
-                and customer["name"] == name
-                and customer["source_group_id"] == source_group_id
-                and not customer["id_no"]
-            ):
-                if company:
-                    customer["company"] = company
-                customer["last_update"] = block_text
-                customer["date"] = today_str()
-                return f"🔄 已更新客戶：{name}"
+        rows = find_active_by_name(name)
+        same_group_rows = [r for r in rows if r["source_group_id"] == source_group_id and not r["id_no"]]
+        if len(same_group_rows) == 1:
+            row = same_group_rows[0]
+            update_customer(
+                row["case_id"],
+                company=company or row["company"],
+                last_update=block_text
+            )
+            insert_case_log(row["case_id"], name, "", company or row["company"], block_text, source_group_id)
+            return f"🔄 已更新客戶：{name}"
 
-    create_customer_record(name, id_no, company, source_group_id, block_text)
-    return f"🆕 已建立客戶：{name}"
+    case_id = create_customer_record(name, id_no, company, source_group_id, block_text)
+    return f"🆕 已建立客戶：{name}（{case_id}）"
 
 
 def send_ambiguous_case_buttons(reply_token, block_text, matches):
     action_id = short_id()
-    pending_actions[action_id] = {
-        "type": "route_a_case",
-        "text": block_text,
-        "choices": [c["case_id"] for c in matches]
-    }
+    case_ids = ",".join([m["case_id"] for m in matches])
+    payload = f"{block_text}||{case_ids}"
+    save_pending_action(action_id, "route_a_case", payload)
 
     items = []
     for c in matches[:10]:
-        label = f"{c['name']}-{c['company'] or '未填'}-{get_group_name(c['source_group_id'])}"
+        label = f"{c['customer_name']}-{c['company'] or '未填'}-{get_group_name(c['source_group_id'])}"
         text = f"SELECT_CASE|{action_id}|{c['case_id']}"
         items.append(make_quick_reply_item(label, text))
 
@@ -345,9 +519,9 @@ def find_customer_for_a_block(block_text, reply_token):
     id_no = extract_id_no(block_text)
 
     if id_no:
-        c = find_active_by_id_no(id_no)
-        if c:
-            return c
+        row = find_active_by_id_no(id_no)
+        if row:
+            return row
 
     matches = find_active_by_name(name)
 
@@ -373,18 +547,25 @@ def handle_a_case_block(block_text, reply_token):
     if not customer:
         return "⚠️ 找不到對應客戶"
 
-    customer["last_update"] = block_text
-    customer["date"] = today_str()
-
-    company = extract_company(block_text)
-    if company:
-        customer["company"] = company
+    company = extract_company(block_text) or customer["company"]
 
     if is_closed_text(block_text):
-        customer["status"] = "CLOSED"
+        update_customer(
+            customer["case_id"],
+            company=company,
+            last_update=block_text,
+            status="CLOSED"
+        )
+        insert_case_log(customer["case_id"], customer["customer_name"], customer["id_no"], company, block_text, A_GROUP_ID)
         push_text(customer["source_group_id"], f"{block_text}\n（此客戶已結案）")
         return f"✅ 已結案並回貼到{get_group_name(customer['source_group_id'])}"
 
+    update_customer(
+        customer["case_id"],
+        company=company,
+        last_update=block_text
+    )
+    insert_case_log(customer["case_id"], customer["customer_name"], customer["id_no"], company, block_text, A_GROUP_ID)
     push_text(customer["source_group_id"], block_text)
     return f"✅ 已回貼到{get_group_name(customer['source_group_id'])}"
 
@@ -392,70 +573,94 @@ def handle_a_case_block(block_text, reply_token):
 def handle_command_text(text, reply_token):
     if text.startswith("CONFIRM_TRANSFER|"):
         _, action_id = text.split("|", 1)
-        action = pending_actions.get(action_id)
+        action = get_pending_action(action_id)
 
-        if not action or action["type"] != "transfer_customer":
+        if not action or action["action_type"] != "transfer_customer":
             reply_text(reply_token, "⚠️ 找不到待確認資料")
             return True
 
-        case_id = action["case_id"]
-        target_group_id = action["target_group_id"]
+        case_id, target_group_id, block_text = action["payload"].split("||", 2)
 
-        if case_id not in customers:
+        conn = get_conn()
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM customers WHERE case_id = ?", (case_id,))
+        customer = cur.fetchone()
+        conn.close()
+
+        if not customer:
             reply_text(reply_token, "⚠️ 原案件不存在")
+            delete_pending_action(action_id)
             return True
 
-        customers[case_id]["source_group_id"] = target_group_id
-        customers[case_id]["last_update"] = action["text"]
-        customers[case_id]["date"] = today_str()
+        update_customer(
+            case_id,
+            source_group_id=target_group_id,
+            last_update=block_text
+        )
+        insert_case_log(case_id, customer["customer_name"], customer["id_no"], customer["company"], block_text, target_group_id)
 
         reply_text(reply_token, f"✅ 已改到{get_group_name(target_group_id)}")
-        del pending_actions[action_id]
+        delete_pending_action(action_id)
         return True
 
     if text.startswith("CANCEL_TRANSFER|"):
         _, action_id = text.split("|", 1)
-        if action_id in pending_actions:
-            del pending_actions[action_id]
+        delete_pending_action(action_id)
         reply_text(reply_token, "✅ 已維持原群")
         return True
 
     if text.startswith("SELECT_CASE|"):
         _, action_id, case_id = text.split("|", 2)
-        action = pending_actions.get(action_id)
+        action = get_pending_action(action_id)
 
-        if not action or action["type"] != "route_a_case":
+        if not action or action["action_type"] != "route_a_case":
             reply_text(reply_token, "⚠️ 找不到待確認案件")
             return True
 
-        if case_id not in customers:
+        block_text, _ = action["payload"].split("||", 1)
+
+        conn = get_conn()
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM customers WHERE case_id = ?", (case_id,))
+        customer = cur.fetchone()
+        conn.close()
+
+        if not customer:
             reply_text(reply_token, "⚠️ 案件不存在")
+            delete_pending_action(action_id)
             return True
 
-        customer = customers[case_id]
-        block_text = action["text"]
-
-        customer["last_update"] = block_text
-        customer["date"] = today_str()
-
-        company = extract_company(block_text)
-        if company:
-            customer["company"] = company
+        company = extract_company(block_text) or customer["company"]
 
         if is_closed_text(block_text):
-            customer["status"] = "CLOSED"
+            update_customer(
+                case_id,
+                company=company,
+                last_update=block_text,
+                status="CLOSED"
+            )
+            insert_case_log(case_id, customer["customer_name"], customer["id_no"], company, block_text, A_GROUP_ID)
             push_text(customer["source_group_id"], f"{block_text}\n（此客戶已結案）")
             reply_text(reply_token, f"✅ 已結案並回貼到{get_group_name(customer['source_group_id'])}")
         else:
+            update_customer(
+                case_id,
+                company=company,
+                last_update=block_text
+            )
+            insert_case_log(case_id, customer["customer_name"], customer["id_no"], company, block_text, A_GROUP_ID)
             push_text(customer["source_group_id"], block_text)
             reply_text(reply_token, f"✅ 已回貼到{get_group_name(customer['source_group_id'])}")
 
-        del pending_actions[action_id]
+        delete_pending_action(action_id)
         return True
 
     return False
 
 
+# =========================
+# API
+# =========================
 @app.post("/callback")
 async def callback(request: Request):
     body = await request.json()
@@ -518,7 +723,7 @@ async def callback(request: Request):
 @app.get("/", response_class=HTMLResponse)
 def home():
     return """
-    <h2>貸款系統</h2>
+    <h2>貸款系統 SQLite版</h2>
     <form action="/send">
         <input name="msg" style="width:300px"/>
         <button>送出</button>
@@ -541,22 +746,27 @@ def send(msg: str):
 
 @app.get("/report", response_class=HTMLResponse)
 def report():
+    conn = get_conn()
+    cur = conn.cursor()
+
     html = "<h2>📊 日報</h2>"
 
     for company in COMPANY_LIST:
         html += f"<b>{company}</b><br>"
         has_data = False
 
-        for customer in customers.values():
-            if customer["status"] != "ACTIVE":
-                continue
-            if customer["company"] != company:
-                continue
+        cur.execute("""
+        SELECT * FROM customers
+        WHERE status = 'ACTIVE' AND company = ?
+        ORDER BY updated_at DESC
+        """, (company,))
+        rows = cur.fetchall()
 
+        for customer in rows:
             has_data = True
             html += (
-                f"{customer['date']}"
-                f"-{customer['name']}"
+                f"{today_str()}"
+                f"-{customer['customer_name']}"
                 f"-{customer['company']}"
                 f"-{customer['last_update']}"
                 f"-{get_group_name(customer['source_group_id'])}"
@@ -568,8 +778,17 @@ def report():
 
         html += "——————————<br>"
 
+    conn.close()
     return html
 
 
+@app.on_event("startup")
+def startup():
+    init_db()
+    seed_groups()
+
+
 if __name__ == "__main__":
+    init_db()
+    seed_groups()
     uvicorn.run(app, host="0.0.0.0", port=8000)
