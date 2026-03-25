@@ -142,10 +142,16 @@ def extract_name(text):
     text = text.strip()
     if not text:
         return ""
+
     first_line = extract_first_line(text)
+
+    # 去掉前面日期格式，例如 115/3/25-
+    first_line = re.sub(r"^\d{2,4}/\d{1,2}/\d{1,2}[-－]\s*", "", first_line)
+
     match = CHINESE_NAME_RE.search(first_line)
     if match:
         return match.group(0)
+
     return first_line.split("（")[0].split(" ")[0].strip()
 
 
@@ -180,7 +186,29 @@ def is_closed_text(text):
     return any(w in text for w in DELETE_KEYWORDS)
 
 
+def looks_like_case_line(line):
+    line = line.strip()
+    if not line:
+        return False
+
+    if ID_RE.search(line):
+        return True
+
+    has_name = CHINESE_NAME_RE.search(line) is not None
+    has_company = any(c in line for c in COMPANY_LIST)
+    has_status_word = any(w in line for w in ["婉拒", "核准", "補件", "等保書", "退件", "無可知情"])
+
+    return has_name and (has_company or has_status_word)
+
+
 def split_multi_cases(text):
+    """
+    分段規則：
+    1. 單獨一行 "/" 視為分隔
+    2. 空白行視為分隔
+    3. 如果多行都像一行一客戶，就每行拆成一筆
+    4. 如果某一段第一行有多個名字、且沒有身分證，則拆成多筆
+    """
     text = text.strip()
     if not text:
         return []
@@ -196,6 +224,14 @@ def split_multi_cases(text):
         if not lines:
             continue
 
+        # 多行看起來都像一筆客戶 -> 每行各自拆
+        if len(lines) >= 2:
+            case_like_count = sum(1 for line in lines if looks_like_case_line(line))
+            if case_like_count >= max(2, len(lines) - 1):
+                for line in lines:
+                    final_parts.append(line)
+                continue
+
         first_line = lines[0]
         rest_lines = lines[1:]
         id_match = ID_RE.search(first_line)
@@ -203,7 +239,7 @@ def split_multi_cases(text):
         possible_names = extract_possible_names(first_line)
         possible_names = [
             n for n in possible_names
-            if n not in ["等保書", "婉拒", "核准", "補件", "退件", "亞太", "和裕"]
+            if n not in ["等保書", "婉拒", "核准", "補件", "退件", "亞太", "和裕", "無可知情"]
         ]
 
         if not id_match and len(possible_names) >= 2:
@@ -403,9 +439,7 @@ def save_pending_action(action_id, action_type, payload):
 def get_pending_action(action_id):
     conn = get_conn()
     cur = conn.cursor()
-    cur.execute("""
-    SELECT * FROM pending_actions WHERE action_id = ?
-    """, (action_id,))
+    cur.execute("SELECT * FROM pending_actions WHERE action_id = ?", (action_id,))
     row = cur.fetchone()
     conn.close()
     return row
@@ -477,7 +511,6 @@ def handle_bc_case_block(block_text, source_group_id, reply_token):
             )
             return "QUICK_REPLY_SENT"
 
-    # 沒身分證：同群同名才更新
     if not id_no:
         rows = find_active_by_name(name)
         same_group_rows = [r for r in rows if r["source_group_id"] == source_group_id and not r["id_no"]]
