@@ -21,7 +21,7 @@ COMPANY_LIST = ["亞太", "和裕", "21"]
 DELETE_KEYWORDS = ["結案", "刪掉", "不追了", "全部不送", "已撥款結案"]
 BLOCK_KEYWORDS = ["鼎信", "禾基"]
 
-# ===== 永久磁碟資料庫路徑 =====
+# Render Disk 永久保存路徑
 DB_PATH = "/var/data/loan_system.db"
 
 CHINESE_NAME_RE = re.compile(r"[\u4e00-\u9fff]{2,4}")
@@ -202,7 +202,7 @@ def looks_like_case_line(line):
 
 def is_valid_case_block(block):
     """
-    只有符合案件格式才處理，避免群組亂回：
+    B/C群比較嚴格：
     1. 有身分證
     2. 或有日期前綴 + 姓名
     """
@@ -212,8 +212,36 @@ def is_valid_case_block(block):
 
     if has_id:
         return True
-
     if has_date_prefix and has_name:
+        return True
+
+    return False
+
+
+def is_valid_case_block_for_a(block):
+    """
+    A群放寬規則：
+    1. 有身分證
+    2. 或有日期前綴 + 姓名
+    3. 或有姓名 + 公司
+    4. 或有姓名 + 常見進度詞
+    """
+    has_id = bool(extract_id_no(block))
+    has_name = bool(extract_name(block))
+    has_date_prefix = bool(re.search(r"\d{2,4}/\d{1,2}/\d{1,2}[-－]", block))
+    has_company = bool(extract_company(block))
+    has_status_word = any(w in block for w in [
+        "補件", "婉拒", "核准", "退件", "等保書", "照會",
+        "待撥款", "缺", "不足", "補資料", "可送", "轉件", "NA"
+    ])
+
+    if has_id:
+        return True
+    if has_date_prefix and has_name:
+        return True
+    if has_name and has_company:
+        return True
+    if has_name and has_status_word:
         return True
 
     return False
@@ -243,7 +271,6 @@ def split_multi_cases(text):
         if not lines:
             continue
 
-        # 遇到像新客戶的行就開新段
         blocks = []
         current_block = []
 
@@ -272,7 +299,6 @@ def split_multi_cases(text):
                 if n not in ["等保書", "婉拒", "核准", "補件", "退件", "亞太", "和裕", "無可知情"]
             ]
 
-            # 同一行多名字時拆開
             if not id_match and len(possible_names) >= 2:
                 remain = first_line
                 for name in possible_names:
@@ -749,9 +775,14 @@ async def callback(request: Request):
             continue
 
         blocks = split_multi_cases(text)
-        valid_blocks = [block for block in blocks if is_valid_case_block(block)]
 
-        # 沒有有效案件就完全不回，避免群組太亂
+        if group_id in [B_GROUP_ID, C_GROUP_ID]:
+            valid_blocks = [block for block in blocks if is_valid_case_block(block)]
+        elif group_id == A_GROUP_ID:
+            valid_blocks = [block for block in blocks if is_valid_case_block_for_a(block)]
+        else:
+            valid_blocks = []
+
         if not valid_blocks:
             return {"status": "ignored"}
 
