@@ -21,7 +21,8 @@ COMPANY_LIST = ["亞太", "和裕", "21"]
 DELETE_KEYWORDS = ["結案", "刪掉", "不追了", "全部不送", "已撥款結案"]
 BLOCK_KEYWORDS = ["鼎信", "禾基"]
 
-DB_PATH = "loan_system.db"
+# ===== 永久磁碟資料庫路徑 =====
+DB_PATH = "/var/data/loan_system.db"
 
 CHINESE_NAME_RE = re.compile(r"[\u4e00-\u9fff]{2,4}")
 ID_RE = re.compile(r"[A-Z][12]\d{8}")
@@ -201,7 +202,7 @@ def looks_like_case_line(line):
 
 def is_valid_case_block(block):
     """
-    只有符合案件格式才處理，避免在群組亂回：
+    只有符合案件格式才處理，避免群組亂回：
     1. 有身分證
     2. 或有日期前綴 + 姓名
     """
