@@ -31,12 +31,6 @@ STATUS_WORDS = [
 DELETE_KEYWORDS = ["結案", "刪掉", "不追了", "全部不送", "已撥款結案"]
 BLOCK_KEYWORDS = ["鼎信", "禾基"]
 
-# ===== 本次最小修正：避免把備註/結案詞當姓名 =====
-IGNORE_NAME_WORDS = {
-    "信用不良", "不需要了", "不用了", "不要了", "結案", "補件", "核准", "婉拒",
-    "照會", "等保書", "待撥款", "缺資料", "補資料", "資料補", "補來", "退件"
-}
-
 CHINESE_NAME_RE = re.compile(r"[\u4e00-\u9fff]{2,4}")
 ID_RE = re.compile(r"[A-Z][12]\d{8}")
 DATE_PREFIX_RE = re.compile(r"^\d{2,4}/\d{1,2}/\d{1,2}[-－]\s*")
@@ -78,7 +72,6 @@ def extract_possible_names(text: str):
 
 def extract_name(text: str) -> str:
     first_line = normalize_first_line(extract_first_line(text))
-    first_line = re.split(r"[:：]|->", first_line, maxsplit=1)[0].strip()
     if not first_line:
         return ""
 
@@ -87,7 +80,10 @@ def extract_name(text: str) -> str:
         m = CHINESE_NAME_RE.search(left)
         return m.group(0) if m else ""
 
-   first_line = re.split(r"[:：]|->|結案|補件|婉拒|核准", first_line, maxsplit=1)[0].strip()
+    if "->" in first_line:
+        left = first_line.split("->", 1)[0].strip()
+        m = CHINESE_NAME_RE.search(left)
+        return m.group(0) if m else ""
 
     m = CHINESE_NAME_RE.search(first_line)
     return m.group(0) if m else ""
@@ -514,17 +510,12 @@ def split_multi_cases(text: str):
                 continue
 
             first_line = normalize_first_line(block_lines[0])
+            id_match = ID_RE.search(first_line)
 
-            # 避免把「:備註」或「->備註」後面的中文誤當第二個姓名
-            header_line = re.split(r"[:：]|->", first_line, maxsplit=1)[0].strip()
-            id_match = ID_RE.search(header_line)
-
-            possible_names = extract_possible_names(header_line)
+            possible_names = extract_possible_names(first_line)
             excluded = {
                 "等保書", "婉拒", "核准", "補件", "退件", "亞太", "和裕",
-                "無可知情", "黑名單", "查詢次數", "過多", "不承作", "貸救補",
-                "信用不良", "不需要了", "不用了", "不要了", "結案", "缺資料",
-                "補資料", "資料補", "補來"
+                "無可知情", "黑名單", "查詢次數", "過多", "不承作", "貸救補"
             }
             possible_names = [n for n in possible_names if n not in excluded]
 
@@ -548,60 +539,16 @@ def split_multi_cases(text: str):
 # =========================
 # 主要業務邏輯
 # =========================
-def find_any_by_name(name: str):
-    conn = get_conn()
-    cur = conn.cursor()
-    cur.execute("""
-    SELECT * FROM customers
-    WHERE customer_name = ?
-    ORDER BY updated_at DESC
-    """, (name,))
-    rows = cur.fetchall()
-    conn.close()
-    return rows
-
-
-def send_reopen_case_buttons(reply_token: str, block_text: str, closed_rows):
-    action_id = short_id()
-    case_ids = ",".join([r["case_id"] for r in closed_rows[:10]])
-    payload = f"{block_text}||{case_ids}"
-    save_pending_action(action_id, "reopen_or_new_case", payload)
-
-    items = []
-    for c in closed_rows[:5]:
-        label = f'重啟-{c["customer_name"]}-{c["company"] or "未填"}'
-        text = f"REOPEN_CASE|{action_id}|{c['case_id']}"
-        items.append(make_quick_reply_item(label, text))
-    items.append(make_quick_reply_item("建立新案件", f"CREATE_NEW_CASE|{action_id}"))
-    items.append(make_quick_reply_item("取消", f"CANCEL_REOPEN|{action_id}"))
-
-    reply_quick_reply(reply_token, "⚠️ 此客戶案件已結案，請選擇要重啟原案件或建立新案件", items)
-
-
 def handle_bc_case_block(block_text: str, source_group_id: str, reply_token: str):
     name = extract_name(block_text)
     id_no = extract_id_no(block_text)
     company = extract_company(block_text)
 
-    # 避免把「信用不良 / 不需要了 / 結案」這類字當姓名建案
-    if not name or name in IGNORE_NAME_WORDS:
+    if not name:
         return None
 
     if is_blocked(block_text):
         return "❌ 含禁止關鍵字，已略過"
-
-    # 如果沒有公司、沒有身分證、也不是明確格式/狀態，業務群不自動建案
-    if not id_no and not company and not is_format_trigger(block_text) and not contains_status_word(block_text) and not is_closed_text(block_text):
-        return None
-
-    # 若目前沒有 ACTIVE 案件，但同名有已結案案件，則詢問重啟 / 新建
-    active_rows = find_active_by_name(name)
-    if not active_rows:
-        any_rows = find_any_by_name(name)
-        closed_rows = [r for r in any_rows if r["status"] != "ACTIVE"]
-        if closed_rows and (contains_status_word(block_text) or is_closed_text(block_text)):
-            send_reopen_case_buttons(reply_token, block_text, closed_rows)
-            return "QUICK_REPLY_SENT"
 
     if id_no:
         existing = find_active_by_id_no(id_no)
@@ -803,61 +750,6 @@ def handle_command_text(text: str, reply_token: str):
         delete_pending_action(action_id)
         return True
 
-    if text.startswith("REOPEN_CASE|"):
-        _, action_id, case_id = text.split("|", 2)
-        action = get_pending_action(action_id)
-
-        if not action or action["action_type"] != "reopen_or_new_case":
-            reply_text(reply_token, "⚠️ 找不到重啟案件資料")
-            return True
-
-        block_text, _ = action["payload"].split("||", 1)
-
-        conn = get_conn()
-        cur = conn.cursor()
-        cur.execute("SELECT * FROM customers WHERE case_id = ?", (case_id,))
-        customer = cur.fetchone()
-        conn.close()
-
-        if not customer:
-            reply_text(reply_token, "⚠️ 原案件不存在")
-            delete_pending_action(action_id)
-            return True
-
-        update_customer(
-            case_id,
-            extract_company(block_text) or customer["company"] or "",
-            block_text,
-            customer["source_group_id"],
-            status="ACTIVE"
-        )
-        reply_text(reply_token, f"✅ 已重啟案件：{customer['customer_name']}")
-        delete_pending_action(action_id)
-        return True
-
-    if text.startswith("CREATE_NEW_CASE|"):
-        _, action_id = text.split("|", 1)
-        action = get_pending_action(action_id)
-
-        if not action or action["action_type"] != "reopen_or_new_case":
-            reply_text(reply_token, "⚠️ 找不到建立新案件資料")
-            return True
-
-        block_text, _ = action["payload"].split("||", 1)
-        name = extract_name(block_text)
-        id_no = extract_id_no(block_text)
-        company = extract_company(block_text)
-        create_customer_record(name, id_no, company, A_GROUP_ID, block_text)
-        reply_text(reply_token, f"🆕 已建立新案件：{name}")
-        delete_pending_action(action_id)
-        return True
-
-    if text.startswith("CANCEL_REOPEN|"):
-        _, action_id = text.split("|", 1)
-        delete_pending_action(action_id)
-        reply_text(reply_token, "✅ 已取消")
-        return True
-
     return False
 
 
@@ -889,12 +781,8 @@ async def callback(request: Request):
 
         # ===== B / C 群 =====
         if group_id in [B_GROUP_ID, C_GROUP_ID]:
-            raw_text = text
-            clean_text = raw_text.replace("@AI", "").replace("@ai", "").replace("#AI", "").replace("#ai", "").strip()
-
-            blocks = split_multi_cases(clean_text)
-            if not blocks:
-                blocks = [clean_text]
+            # 這裡是本次重點修正：B/C群也做多段分拆
+            blocks = split_multi_cases(text)
 
             results = []
             quick_reply_sent = False
@@ -919,11 +807,21 @@ async def callback(request: Request):
         # ===== A 群 =====
         if group_id == A_GROUP_ID:
             raw_text = text
-            has_trigger = ("@ai" in raw_text.lower()) or ("#ai" in raw_text.lower())
+            has_trigger = ("@AI" in raw_text) or ("#AI" in raw_text)
 
             if has_trigger:
-                clean_text = raw_text.replace("@AI", "").replace("@ai", "").replace("#AI", "").replace("#ai", "").strip()
-                blocks = split_multi_cases(clean_text)
+                clean_text = raw_text.replace("@AI", "").replace("#AI", "").strip()
+
+                has_explicit_separator = (
+                    re.search(r"\n\s*/\s*\n", clean_text) is not None or
+                    re.search(r"\n\s*\n+", clean_text) is not None
+                )
+
+                if has_explicit_separator:
+                    blocks = split_multi_cases(clean_text)
+                else:
+                    blocks = [clean_text]
+
             else:
                 if is_format_trigger(raw_text) or is_fallback_trigger(raw_text):
                     blocks = [raw_text]
@@ -935,11 +833,9 @@ async def callback(request: Request):
 
             for idx, block in enumerate(blocks, start=1):
                 result = handle_a_case_block(block, reply_token)
-
                 if result == "QUICK_REPLY_SENT":
                     quick_reply_sent = True
                     break
-
                 if result:
                     if len(blocks) > 1:
                         results.append(f"第{idx}筆：{result}")
@@ -951,6 +847,7 @@ async def callback(request: Request):
             continue
 
     return {"status": "ok"}
+
 
 @app.get("/", response_class=HTMLResponse)
 def home():
