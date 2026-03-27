@@ -917,7 +917,7 @@ async def callback(request: Request):
         # ===== A 群 =====
         if group_id == A_GROUP_ID:
             raw_text = text
-            has_trigger = ("@AI" in raw_text) or ("#AI" in raw_text)
+            has_trigger = ("@ai" in raw_text.lower()) or ("#ai" in raw_text.lower())
 
             if has_trigger:
                 clean_text = raw_text.replace("@AI", "").replace("#AI", "").strip()
