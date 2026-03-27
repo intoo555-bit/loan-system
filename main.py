@@ -888,28 +888,33 @@ async def callback(request: Request):
             continue
 
         # ===== B / C 群 =====
-        if group_id in [B_GROUP_ID, C_GROUP_ID]:
-            # 這裡是本次重點修正：B/C群也做多段分拆
-            blocks = split_multi_cases(text)
+       if group_id in [B_GROUP_ID, C_GROUP_ID]:
+    raw_text = text
+    clean_text = raw_text.replace("@AI", "").replace("@ai", "").replace("#AI", "").replace("#ai", "").strip()
 
-            results = []
-            quick_reply_sent = False
+    blocks = split_multi_cases(clean_text)
+    if not blocks:
+        blocks = [clean_text]
 
-            for idx, block in enumerate(blocks, start=1):
-                result = handle_bc_case_block(block, group_id, reply_token)
+    results = []
+    quick_reply_sent = False
 
-                if result == "QUICK_REPLY_SENT":
-                    quick_reply_sent = True
-                    break
+    for idx, block in enumerate(blocks, start=1):
+        result = handle_bc_case_block(block, group_id, reply_token)
 
-                if result:
-                    if len(blocks) > 1:
-                        results.append(f"第{idx}筆：{result}")
-                    else:
-                        results.append(result)
+        if result == "QUICK_REPLY_SENT":
+            quick_reply_sent = True
+            break
 
-            if not quick_reply_sent and results:
-                reply_text(reply_token, "\n".join(results))
+        if result:
+            if len(blocks) > 1:
+                results.append(f"第{idx}筆：{result}")
+            else:
+                results.append(result)
+
+    if not quick_reply_sent and results:
+        reply_text(reply_token, "\n".join(results))
+    continue
             
 
         # ===== A 群 =====
@@ -943,7 +948,7 @@ async def callback(request: Request):
 
             if not quick_reply_sent and results:
                 reply_text(reply_token, "\n".join(results))
-            continue
+            
 
     return {"status": "ok"}
 
