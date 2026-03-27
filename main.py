@@ -87,7 +87,7 @@ def extract_name(text: str) -> str:
         m = CHINESE_NAME_RE.search(left)
         return m.group(0) if m else ""
 
-   
+   first_line = re.split(r"[:：]|->|結案|補件|婉拒|核准", first_line, maxsplit=1)[0].strip()
 
     m = CHINESE_NAME_RE.search(first_line)
     return m.group(0) if m else ""
