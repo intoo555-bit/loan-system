@@ -7,7 +7,6 @@ import re
 import sqlite3
 from datetime import datetime
 import uuid
-import difflib
 
 app = FastAPI()
 
@@ -31,7 +30,12 @@ STATUS_WORDS = [
 ]
 DELETE_KEYWORDS = ["結案", "刪掉", "不追了", "全部不送", "已撥款結案"]
 BLOCK_KEYWORDS = ["鼎信", "禾基"]
-IGNORE_NAME_WORDS = {"信用不良", "不需要了", "不用了", "不要了", "缺資料", "補資料", "資料補", "補來"}
+
+# ===== 本次最小修正：避免把備註/結案詞當姓名 =====
+IGNORE_NAME_WORDS = {
+    "信用不良", "不需要了", "不用了", "不要了", "結案", "補件", "核准", "婉拒",
+    "照會", "等保書", "待撥款", "缺資料", "補資料", "資料補", "補來", "退件"
+}
 
 CHINESE_NAME_RE = re.compile(r"[\u4e00-\u9fff]{2,4}")
 ID_RE = re.compile(r"[A-Z][12]\d{8}")
@@ -77,19 +81,20 @@ def extract_name(text: str) -> str:
     if not first_line:
         return ""
 
+    first_line = re.split(r"[:：]|->", first_line, maxsplit=1)[0].strip()
+    first_line = ID_RE.sub("", first_line.upper()).strip()
+    first_line = re.split(r"結案|補件|婉拒|核准|照會|等保書|退件|缺資料|補資料|資料補|補來", first_line, maxsplit=1)[0].strip()
+
+    if not first_line:
+        return ""
+
     if "｜" in first_line:
-        left = first_line.split("｜", 1)[0].strip()
-        m = CHINESE_NAME_RE.search(left)
-        return m.group(0) if m else ""
+        first_line = first_line.split("｜", 1)[0].strip()
+    if "|" in first_line:
+        first_line = first_line.split("|", 1)[0].strip()
 
-    if "->" in first_line:
-        left = first_line.split("->", 1)[0].strip()
-        m = CHINESE_NAME_RE.search(left)
-        return m.group(0) if m else ""
-
-    m = CHINESE_NAME_RE.search(first_line)
+    m = re.match(r"^[一-鿿]{2,4}", first_line)
     return m.group(0) if m else ""
-
 
 def extract_id_no(text: str) -> str:
     m = ID_RE.search(text.upper())
@@ -452,12 +457,6 @@ def looks_like_case_start(line: str) -> bool:
     if not line:
         return False
 
-    # 補充條列不是新案件開頭
-    if re.match(r"^[\[【(]?\d+[\]】)]", line):
-        return False
-    if line in ["/", "／"]:
-        return False
-
     if ID_RE.search(line.upper()):
         return True
 
@@ -518,13 +517,17 @@ def split_multi_cases(text: str):
                 continue
 
             first_line = normalize_first_line(block_lines[0])
-            first_line = re.split(r"[:：]|->", first_line, maxsplit=1)[0].strip()
-            id_match = ID_RE.search(first_line.upper())
 
-            possible_names = extract_possible_names(first_line)
+            # 避免把「:備註」或「->備註」後面的中文誤當第二個姓名
+            header_line = re.split(r"[:：]|->", first_line, maxsplit=1)[0].strip()
+            id_match = ID_RE.search(header_line.upper())
+
+            possible_names = extract_possible_names(header_line)
             excluded = {
                 "等保書", "婉拒", "核准", "補件", "退件", "亞太", "和裕",
-                "無可知情", "黑名單", "查詢次數", "過多", "不承作", "貸救補"
+                "無可知情", "黑名單", "查詢次數", "過多", "不承作", "貸救補",
+                "信用不良", "不需要了", "不用了", "不要了", "結案", "缺資料",
+                "補資料", "資料補", "補來"
             }
             possible_names = [n for n in possible_names if n not in excluded]
 
@@ -533,7 +536,6 @@ def split_multi_cases(text: str):
                 for name in possible_names:
                     remain = remain.replace(name, "", 1)
                 remain = remain.strip()
-                remain = re.split(r"結案|補件|婉拒|核准|照會|退件|等保書|待撥款|不承作", remain, maxsplit=1)[0].strip()
 
                 for name in possible_names:
                     new_lines = [f"{name} {remain}".strip()]
@@ -584,11 +586,25 @@ def handle_bc_case_block(block_text: str, source_group_id: str, reply_token: str
     id_no = extract_id_no(block_text)
     company = extract_company(block_text)
 
-    if not name:
+    # 避免把「信用不良 / 不需要了 / 結案」這類字當姓名建案
+    if not name or name in IGNORE_NAME_WORDS:
         return None
 
     if is_blocked(block_text):
         return "❌ 含禁止關鍵字，已略過"
+
+    # 如果沒有公司、沒有身分證、也不是明確格式/狀態，業務群不自動建案
+    if not id_no and not company and not is_format_trigger(block_text) and not contains_status_word(block_text) and not is_closed_text(block_text):
+        return None
+
+    # 若目前沒有 ACTIVE 案件，但同名有已結案案件，則詢問重啟 / 新建
+    active_rows = find_active_by_name(name)
+    if not active_rows:
+        any_rows = find_any_by_name(name)
+        closed_rows = [r for r in any_rows if r["status"] != "ACTIVE"]
+        if closed_rows and (contains_status_word(block_text) or is_closed_text(block_text)):
+            send_reopen_case_buttons(reply_token, block_text, closed_rows)
+            return "QUICK_REPLY_SENT"
 
     if id_no:
         existing = find_active_by_id_no(id_no)
@@ -632,7 +648,7 @@ def handle_bc_case_block(block_text: str, source_group_id: str, reply_token: str
         rows = find_active_by_name(name)
         same_group_rows = [
             r for r in rows
-            if r["source_group_id"] == source_group_id and (not r["id_no"])
+            if r["source_group_id"] == source_group_id
         ]
         if len(same_group_rows) == 1:
             row = same_group_rows[0]
@@ -936,7 +952,6 @@ async def callback(request: Request):
             continue
 
     return {"status": "ok"}
-
 
 @app.get("/", response_class=HTMLResponse)
 def home():
