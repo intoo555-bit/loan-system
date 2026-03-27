@@ -888,34 +888,33 @@ async def callback(request: Request):
             continue
 
         # ===== B / C 群 =====
-       if group_id in [B_GROUP_ID, C_GROUP_ID]:
-    raw_text = text
-    clean_text = raw_text.replace("@AI", "").replace("@ai", "").replace("#AI", "").replace("#ai", "").strip()
+        if group_id in [B_GROUP_ID, C_GROUP_ID]:
+            raw_text = text
+            clean_text = raw_text.replace("@AI", "").replace("@ai", "").replace("#AI", "").replace("#ai", "").strip()
 
-    blocks = split_multi_cases(clean_text)
-    if not blocks:
-        blocks = [clean_text]
+            blocks = split_multi_cases(clean_text)
+            if not blocks:
+                blocks = [clean_text]
 
-    results = []
-    quick_reply_sent = False
+            results = []
+            quick_reply_sent = False
 
-    for idx, block in enumerate(blocks, start=1):
-        result = handle_bc_case_block(block, group_id, reply_token)
+            for idx, block in enumerate(blocks, start=1):
+                result = handle_bc_case_block(block, group_id, reply_token)
 
-        if result == "QUICK_REPLY_SENT":
-            quick_reply_sent = True
-            break
+                if result == "QUICK_REPLY_SENT":
+                    quick_reply_sent = True
+                    break
 
-        if result:
-            if len(blocks) > 1:
-                results.append(f"第{idx}筆：{result}")
-            else:
-                results.append(result)
+                if result:
+                    if len(blocks) > 1:
+                        results.append(f"第{idx}筆：{result}")
+                    else:
+                        results.append(result)
 
-    if not quick_reply_sent and results:
-        reply_text(reply_token, "\n".join(results))
-    continue
-            
+            if not quick_reply_sent and results:
+                reply_text(reply_token, "\n".join(results))
+            continue
 
         # ===== A 群 =====
         if group_id == A_GROUP_ID:
@@ -925,7 +924,6 @@ async def callback(request: Request):
             if has_trigger:
                 clean_text = raw_text.replace("@AI", "").replace("@ai", "").replace("#AI", "").replace("#ai", "").strip()
                 blocks = split_multi_cases(clean_text)
-
             else:
                 if is_format_trigger(raw_text) or is_fallback_trigger(raw_text):
                     blocks = [raw_text]
@@ -937,9 +935,11 @@ async def callback(request: Request):
 
             for idx, block in enumerate(blocks, start=1):
                 result = handle_a_case_block(block, reply_token)
+
                 if result == "QUICK_REPLY_SENT":
                     quick_reply_sent = True
                     break
+
                 if result:
                     if len(blocks) > 1:
                         results.append(f"第{idx}筆：{result}")
@@ -948,10 +948,9 @@ async def callback(request: Request):
 
             if not quick_reply_sent and results:
                 reply_text(reply_token, "\n".join(results))
-            
+            continue
 
     return {"status": "ok"}
-
 
 @app.get("/", response_class=HTMLResponse)
 def home():
