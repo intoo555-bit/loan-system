@@ -582,6 +582,20 @@ def send_reopen_case_buttons(reply_token: str, block_text: str, closed_rows):
 
 
 def handle_bc_case_block(block_text: str, source_group_id: str, reply_token: str):
+    # ===== 先判斷是不是動作（最重要）=====
+if any(w in block_text for w in ["結案","補件","婉拒","核准","照會","退件","等保書","缺資料","補資料"]):
+    name = extract_name(block_text)
+
+    if not name:
+        return None
+
+    existing = find_active_by_name(name)
+
+    if existing:
+        update_customer(existing[0]["case_id"], extract_company(block_text), block_text, source_group_id)
+        return f"已更新客戶：{name}"
+    else:
+        return f"⚠️ 找不到案件：{name}"
     name = extract_name(block_text)
     id_no = extract_id_no(block_text)
     company = extract_company(block_text)
