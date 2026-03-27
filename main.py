@@ -910,7 +910,7 @@ async def callback(request: Request):
 
             if not quick_reply_sent and results:
                 reply_text(reply_token, "\n".join(results))
-            continue
+            
 
         # ===== A 群 =====
         if group_id == A_GROUP_ID:
