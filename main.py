@@ -78,6 +78,7 @@ def extract_possible_names(text: str):
 
 def extract_name(text: str) -> str:
     first_line = normalize_first_line(extract_first_line(text))
+    first_line = re.split(r"[:：]|->", first_line, maxsplit=1)[0].strip()
     if not first_line:
         return ""
 
@@ -86,10 +87,7 @@ def extract_name(text: str) -> str:
         m = CHINESE_NAME_RE.search(left)
         return m.group(0) if m else ""
 
-    if "->" in first_line:
-        left = first_line.split("->", 1)[0].strip()
-        m = CHINESE_NAME_RE.search(left)
-        return m.group(0) if m else ""
+   
 
     m = CHINESE_NAME_RE.search(first_line)
     return m.group(0) if m else ""
