@@ -920,7 +920,7 @@ async def callback(request: Request):
             has_trigger = ("@ai" in raw_text.lower()) or ("#ai" in raw_text.lower())
 
             if has_trigger:
-                clean_text = raw_text.replace("@AI", "").replace("#AI", "").strip()
+                clean_text = raw_text.replace("@AI", "").replace("@ai", "").replace("#AI", "").replace("#ai", "").strip()
                 blocks = split_multi_cases(clean_text)
 
             else:
