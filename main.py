@@ -7,6 +7,7 @@ import re
 import sqlite3
 from datetime import datetime
 import uuid
+import difflib
 
 app = FastAPI()
 
@@ -16,6 +17,8 @@ CHANNEL_ACCESS_TOKEN = os.getenv("CHANNEL_ACCESS_TOKEN", "")
 A_GROUP_ID = "Cb3579e75c94437ed22aafc7b1f6aecdd"   # A群
 B_GROUP_ID = "Cd14f3ee775f1d9f5cfdafb223173cbef"   # B群
 C_GROUP_ID = "C1a647fcb29a74842eceeb18e7a53823d"   # C群
+D_GROUP_ID = os.getenv("D_GROUP_ID", "")          # D群（預留）
+E_GROUP_ID = os.getenv("E_GROUP_ID", "")          # E群（行政群，預留）
 
 # ===== Render Disk 永久保存 =====
 DB_PATH = "/var/data/loan_system.db"
@@ -146,6 +149,98 @@ def get_group_name(group_id: str) -> str:
     if group_id == C_GROUP_ID:
         return "C群"
     return "未知群組"
+
+
+def has_ai_trigger(text: str) -> bool:
+    upper_text = text.upper()
+    return "@AI" in upper_text or "#AI" in upper_text
+
+
+def split_ai_batch_text(text: str):
+    clean_text = text.replace("@AI", "").replace("@ai", "").replace("#AI", "").replace("#ai", "").strip()
+    return split_multi_cases(clean_text)
+
+
+def find_close_name_candidates(name: str, limit: int = 5):
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("""
+    SELECT DISTINCT customer_name, company, source_group_id, case_id, status, updated_at
+    FROM customers
+    ORDER BY updated_at DESC
+    """)
+    rows = cur.fetchall()
+    conn.close()
+
+    all_names = list(dict.fromkeys([r["customer_name"] for r in rows if r["customer_name"]]))
+    candidate_names = difflib.get_close_matches(name, all_names, n=limit, cutoff=0.6)
+
+    candidates = []
+    for cand_name in candidate_names:
+        matched_rows = [r for r in rows if r["customer_name"] == cand_name]
+        for r in matched_rows:
+            candidates.append(r)
+    return candidates[:limit]
+
+
+def find_any_by_name(name: str):
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("""
+    SELECT * FROM customers
+    WHERE customer_name = ?
+    ORDER BY updated_at DESC
+    """, (name,))
+    rows = cur.fetchall()
+    conn.close()
+    return rows
+
+
+def send_close_name_buttons(reply_token: str, input_name: str, candidates):
+    action_id = short_id()
+    case_ids = ",".join([c["case_id"] for c in candidates])
+    payload = f"{input_name}||{case_ids}"
+    save_pending_action(action_id, "select_close_name", payload)
+
+    items = []
+    for c in candidates[:10]:
+        label = f'{c["customer_name"]}-{c["company"] or "未填"}-{get_group_name(c["source_group_id"])}'
+        text = f"SELECT_CLOSE_NAME|{action_id}|{c['case_id']}"
+        items.append(make_quick_reply_item(label, text))
+    items.append(make_quick_reply_item("都不是", f"CANCEL_CLOSE_NAME|{action_id}"))
+    reply_quick_reply(reply_token, f"⚠️ 找不到案件：{input_name}\n你是不是要找下面其中一筆？", items)
+
+
+def send_reopen_case_buttons(reply_token: str, block_text: str, closed_rows):
+    action_id = short_id()
+    case_ids = ",".join([r["case_id"] for r in closed_rows])
+    payload = f"{block_text}||{case_ids}"
+    save_pending_action(action_id, "reopen_or_new_case", payload)
+
+    items = []
+    for c in closed_rows[:5]:
+        label = f'重啟-{c["customer_name"]}-{c["company"] or "未填"}'
+        text = f"REOPEN_CASE|{action_id}|{c['case_id']}"
+        items.append(make_quick_reply_item(label, text))
+    items.append(make_quick_reply_item("建立新案件", f"CREATE_NEW_CASE|{action_id}"))
+    items.append(make_quick_reply_item("取消", f"CANCEL_REOPEN|{action_id}"))
+    reply_quick_reply(reply_token, "⚠️ 此客戶案件已結案，請選擇要重啟原案件或建立新案件", items)
+
+
+def is_same_status_duplicate(customer, block_text: str) -> bool:
+    last_update = (customer["last_update"] or "").strip()
+    current_company = customer["company"] or ""
+    new_company = extract_company(block_text) or current_company
+
+    if last_update == block_text.strip() and new_company == current_company:
+        return True
+
+    if contains_status_word(block_text) and contains_status_word(last_update):
+        status_words = [w for w in STATUS_WORDS if w in block_text]
+        if status_words and all(w in last_update for w in status_words) and new_company == current_company:
+            return True
+
+    return False
 
 
 def get_block_display_text(block_text: str) -> str:
@@ -295,6 +390,10 @@ def seed_groups():
         (B_GROUP_ID, "B群", "SALES_GROUP", 1, now),
         (C_GROUP_ID, "C群", "SALES_GROUP", 1, now),
     ]
+    if D_GROUP_ID:
+        rows.append((D_GROUP_ID, "D群", "SALES_GROUP", 1, now))
+    if E_GROUP_ID:
+        rows.append((E_GROUP_ID, "E群", "ADMIN_GROUP", 1, now))
 
     for row in rows:
         cur.execute("""
@@ -640,6 +739,19 @@ def find_customer_for_a_block(block_text: str, reply_token: str):
             send_ambiguous_case_buttons(reply_token, block_text, matches)
             return "MULTIPLE"
 
+        # 找不到 active，檢查是否有已結案案件
+        any_rows = find_any_by_name(name)
+        closed_rows = [r for r in any_rows if r["status"] != "ACTIVE"]
+        if closed_rows:
+            send_reopen_case_buttons(reply_token, block_text, closed_rows)
+            return "REOPEN"
+
+        # 近似姓名候選
+        close_candidates = find_close_name_candidates(name)
+        if close_candidates:
+            send_close_name_buttons(reply_token, name, close_candidates)
+            return "CLOSE_NAME"
+
     return None
 
 
@@ -649,14 +761,17 @@ def handle_a_case_block(block_text: str, reply_token: str):
 
     customer = find_customer_for_a_block(block_text, reply_token)
 
-    if customer == "MULTIPLE":
+    if customer in ["MULTIPLE", "REOPEN", "CLOSE_NAME"]:
         return "QUICK_REPLY_SENT"
 
     if not customer:
-        return f"⚠️ 找不到對應客戶：{get_block_display_text(block_text)}"
+        return f"⚠️ 找不到案件：{get_block_display_text(block_text)}"
 
     company = extract_company(block_text) or customer["company"] or ""
     new_status = "CLOSED" if is_closed_text(block_text) else None
+
+    if is_same_status_duplicate(customer, block_text):
+        return f"ℹ️ 已是相同狀態，略過：{customer['customer_name']}"
 
     update_customer(
         customer["case_id"],
@@ -739,6 +854,11 @@ def handle_command_text(text: str, reply_token: str):
         company = extract_company(block_text) or customer["company"] or ""
         new_status = "CLOSED" if is_closed_text(block_text) else None
 
+        if is_same_status_duplicate(customer, block_text):
+            reply_text(reply_token, f"ℹ️ 已是相同狀態，略過：{customer['customer_name']}")
+            delete_pending_action(action_id)
+            return True
+
         update_customer(case_id, company, block_text, A_GROUP_ID, status=new_status)
         push_text(customer["source_group_id"], block_text)
 
@@ -748,6 +868,69 @@ def handle_command_text(text: str, reply_token: str):
             reply_text(reply_token, f"✅ 已回貼到{get_group_name(customer['source_group_id'])}：{customer['customer_name']}")
 
         delete_pending_action(action_id)
+        return True
+
+    if text.startswith("SELECT_CLOSE_NAME|"):
+        _, action_id, case_id = text.split("|", 2)
+        action = get_pending_action(action_id)
+        if not action or action["action_type"] != "select_close_name":
+            reply_text(reply_token, "⚠️ 找不到姓名近似待確認資料")
+            return True
+
+        delete_pending_action(action_id)
+        reply_text(reply_token, f"✅ 已選擇案件：{case_id}，請重新輸入原本的 @AI 指令一次")
+        return True
+
+    if text.startswith("CANCEL_CLOSE_NAME|"):
+        _, action_id = text.split("|", 1)
+        delete_pending_action(action_id)
+        reply_text(reply_token, "✅ 已取消")
+        return True
+
+    if text.startswith("REOPEN_CASE|"):
+        _, action_id, case_id = text.split("|", 2)
+        action = get_pending_action(action_id)
+        if not action or action["action_type"] != "reopen_or_new_case":
+            reply_text(reply_token, "⚠️ 找不到重啟案件資料")
+            return True
+
+        block_text, _ = action["payload"].split("||", 1)
+        update_customer(case_id, extract_company(block_text), block_text, A_GROUP_ID, status="ACTIVE")
+
+        conn = get_conn()
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM customers WHERE case_id = ?", (case_id,))
+        customer = cur.fetchone()
+        conn.close()
+
+        if customer:
+            push_text(customer["source_group_id"], block_text)
+            reply_text(reply_token, f"✅ 已重啟並回貼到{get_group_name(customer['source_group_id'])}：{customer['customer_name']}")
+        else:
+            reply_text(reply_token, "⚠️ 原案件不存在")
+        delete_pending_action(action_id)
+        return True
+
+    if text.startswith("CREATE_NEW_CASE|"):
+        _, action_id = text.split("|", 1)
+        action = get_pending_action(action_id)
+        if not action or action["action_type"] != "reopen_or_new_case":
+            reply_text(reply_token, "⚠️ 找不到建立新案件資料")
+            return True
+
+        block_text, _ = action["payload"].split("||", 1)
+        name = extract_name(block_text)
+        id_no = extract_id_no(block_text)
+        company = extract_company(block_text)
+        create_customer_record(name, id_no, company, A_GROUP_ID, block_text)
+        reply_text(reply_token, f"🆕 已建立新案件：{name}")
+        delete_pending_action(action_id)
+        return True
+
+    if text.startswith("CANCEL_REOPEN|"):
+        _, action_id = text.split("|", 1)
+        delete_pending_action(action_id)
+        reply_text(reply_token, "✅ 已取消")
         return True
 
     return False
@@ -780,7 +963,7 @@ async def callback(request: Request):
             continue
 
         # ===== B / C 群 =====
-        if group_id in [B_GROUP_ID, C_GROUP_ID]:
+        if group_id in [gid for gid in [B_GROUP_ID, C_GROUP_ID, D_GROUP_ID] if gid]:
             # 這裡是本次重點修正：B/C群也做多段分拆
             blocks = split_multi_cases(text)
 
@@ -807,26 +990,15 @@ async def callback(request: Request):
         # ===== A 群 =====
         if group_id == A_GROUP_ID:
             raw_text = text
-            has_trigger = ("@AI" in raw_text) or ("#AI" in raw_text)
 
-            if has_trigger:
-                clean_text = raw_text.replace("@AI", "").replace("#AI", "").strip()
+            # A群：只有 @AI / #AI 才正式執行，避免日常聊天亂觸發
+            if not has_ai_trigger(raw_text):
+                continue
 
-                has_explicit_separator = (
-                    re.search(r"\n\s*/\s*\n", clean_text) is not None or
-                    re.search(r"\n\s*\n+", clean_text) is not None
-                )
-
-                if has_explicit_separator:
-                    blocks = split_multi_cases(clean_text)
-                else:
-                    blocks = [clean_text]
-
-            else:
-                if is_format_trigger(raw_text) or is_fallback_trigger(raw_text):
-                    blocks = [raw_text]
-                else:
-                    return {"status": "ignored"}
+            blocks = split_ai_batch_text(raw_text)
+            if not blocks:
+                reply_text(reply_token, "⚠️ 沒有可處理內容")
+                continue
 
             results = []
             quick_reply_sent = False
