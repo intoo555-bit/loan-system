@@ -577,29 +577,34 @@ def handle_bc_case_block(block_text: str, source_group_id: str, reply_token: str
             return None
 
         active_rows = find_active_by_name(name)
-        if active_rows:
-            customer = active_rows[0]
-            new_status = "CLOSED" if is_closed_text(block_text) else None
+if active_rows:
+    customer = active_rows[0]
 
-            update_customer(
-                customer["case_id"],
-                extract_company(block_text) or customer["company"] or "",
-                block_text,
-                source_group_id,
-                status=new_status
-            )
+    if is_closed_text(block_text):
+        new_status = "CLOSED"
+    else:
+        new_status = customer["status"]
 
-            push_text(A_GROUP_ID, block_text)
-            return f"已更新客戶：{name}"
+    update_customer(
+        customer["case_id"],
+        extract_company(block_text) or customer["company"] or "",
+        block_text,
+        source_group_id,
+        status=new_status
+    )
 
-        any_rows = find_any_by_name(name)
-        closed_rows = [r for r in any_rows if r["status"] != "ACTIVE"]
+    push_text(A_GROUP_ID, block_text)
+    return f"已更新客戶：{name}"
 
-        if closed_rows:
-            send_reopen_case_buttons(reply_token, block_text, closed_rows)
-            return "QUICK_REPLY_SENT"
+any_rows = find_any_by_name(name)
+closed_rows = [r for r in any_rows if r["status"] != "ACTIVE"]
 
-        return f"⚠️ 找不到案件：{name}"
+if closed_rows:
+    send_reopen_case_buttons(reply_token, block_text, closed_rows)
+    return "QUICK_REPLY_SENT"
+
+return f"⚠️ 找不到案件：{name}"
+
 
     name = extract_name(block_text)
     id_no = extract_id_no(block_text)
@@ -920,35 +925,33 @@ async def callback(request: Request):
             continue
 
         if group_id == A_GROUP_ID:
-            raw_text = text
-            has_trigger = ("@ai" in raw_text.lower()) or ("#ai" in raw_text.lower())
+    raw_text = text
+    has_trigger = ("@ai" in raw_text.lower()) or ("#ai" in raw_text.lower())
 
-            if has_trigger:
-                clean_text = raw_text.replace("@AI", "").replace("@ai", "").replace("#AI", "").replace("#ai", "").strip()
-                blocks = split_multi_cases(clean_text)
+    if has_trigger:
+        clean_text = raw_text.replace("@AI", "").replace("@ai", "").replace("#AI", "").replace("#ai", "").strip()
+        blocks = split_multi_cases(clean_text)
+    else:
+        blocks = [raw_text]
+
+    results = []
+
+    for idx, block in enumerate(blocks, start=1):
+        result = handle_a_case_block(block, reply_token)
+
+        if result == "QUICK_REPLY_SENT":
+            return {"status": "ok"}
+
+        if result:
+            if len(blocks) > 1:
+                results.append(f"第{idx}筆：{result}")
             else:
-                if is_format_trigger(raw_text) or is_fallback_trigger(raw_text):
-                    blocks = [raw_text]
-                else:
-                    return {"status": "ignored"}
+                results.append(result)
 
-            results = []
-            quick_reply_sent = False
+    if results:
+        reply_text(reply_token, "\n".join(results))
 
-            for idx, block in enumerate(blocks, start=1):
-                result = handle_a_case_block(block, reply_token)
-                if result == "QUICK_REPLY_SENT":
-                    quick_reply_sent = True
-                    break
-                if result:
-                    if len(blocks) > 1:
-                        results.append(f"第{idx}筆：{result}")
-                    else:
-                        results.append(result)
-
-            if not quick_reply_sent and results:
-                reply_text(reply_token, "\n".join(results))
-            continue
+    return {"status": "ok"}
 
     return {"status": "ok"}
 
