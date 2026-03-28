@@ -606,7 +606,7 @@ if any(w in block_text for w in action_words):
         # 🔥 業務群同步回貼到 A 群
         push_text(A_GROUP_ID, block_text)
 
-        return f"已更新客戶：{name}"
+        result_text = f"已更新客戶：{name}"
 
     # 沒 ACTIVE，再找是否有已結案案件
     any_rows = find_any_by_name(name)
