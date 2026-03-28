@@ -582,20 +582,41 @@ def send_reopen_case_buttons(reply_token: str, block_text: str, closed_rows):
 
 
 def handle_bc_case_block(block_text: str, source_group_id: str, reply_token: str):
-    # ===== 先判斷是不是動作（最重要）=====
-    if any(w in block_text for w in ["結案","補件","婉拒","核准","照會","退件","等保書","缺資料","補資料"]):
-        name = extract_name(block_text)
+  # ===== 先判斷是不是動作（補件 / 結案 / 婉拒 / 核准...）=====
+action_words = ["結案","補件","婉拒","核准","照會","退件","等保書","缺資料","補資料"]
 
-        if not name:
-            return None
+if any(w in block_text for w in action_words):
+    name = extract_name(block_text)
 
-        existing = find_active_by_name(name)
+    if not name:
+        return None
 
-        if existing:
-            update_customer(existing[0]["case_id"], extract_company(block_text), block_text, source_group_id)
-            return f"已更新客戶：{name}"
-        else:
-            return f"⚠️ 找不到案件：{name}"
+    # 先找 ACTIVE
+    active_rows = find_active_by_name(name)
+    if active_rows:
+        customer = active_rows[0]
+
+        update_customer(
+            customer["case_id"],
+            extract_company(block_text) or customer["company"] or "",
+            block_text,
+            source_group_id
+        )
+
+        # 🔥 業務群同步回貼到 A 群
+        push_text(A_GROUP_ID, block_text)
+
+        return f"已更新客戶：{name}"
+
+    # 沒 ACTIVE，再找是否有已結案案件
+    any_rows = find_any_by_name(name)
+    closed_rows = [r for r in any_rows if r["status"] != "ACTIVE"]
+
+    if closed_rows:
+        send_reopen_case_buttons(reply_token, block_text, closed_rows)
+        return "QUICK_REPLY_SENT"
+
+    return f"⚠️ 找不到案件：{name}"
 
     name = extract_name(block_text)
     id_no = extract_id_no(block_text)
