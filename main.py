@@ -593,20 +593,22 @@ if any(w in block_text for w in action_words):
 
     # 先找 ACTIVE
     active_rows = find_active_by_name(name)
-    if active_rows:
-        customer = active_rows[0]
-
-        update_customer(
-            customer["case_id"],
-            extract_company(block_text) or customer["company"] or "",
-            block_text,
-            source_group_id
-        )
-
-        # 🔥 業務群同步回貼到 A 群
-        push_text(A_GROUP_ID, block_text)
-
-        result_text = f"已更新客戶：{name}"
+        if active_rows:
+            customer = active_rows[0]
+    new_status = "CLOSED" if is_closed_text(block_text) else None
+    
+    update_customer(
+        customer["case_id"],
+        extract_company(block_text) or customer["company"] or "",
+        block_text,
+        source_group_id,
+        status=new_status
+    )
+    
+            # 🔥 業務群同步回貼到 A 群
+            push_text(A_GROUP_ID, block_text)
+    
+            return f"已更新客戶：{name}"
 
     # 沒 ACTIVE，再找是否有已結案案件
     any_rows = find_any_by_name(name)
