@@ -604,7 +604,11 @@ def send_ambiguous_case_buttons(reply_token: str, block_text: str, matches):
 # 主要業務邏輯
 # =========================
 def handle_bc_case_block(block_text: str, source_group_id: str, reply_token: str):
-    action_words = ["結案", "刪掉", "補件", "補資料", "婉拒", "核准", "照會", "退件", "等保書", "缺資料", "不承作"]
+    action_words = [
+        "結案", "刪掉", "不追了", "全部不送", "已撥款結案",
+        "補件", "補資料", "缺資料", "婉拒", "核准", "照會",
+        "退件", "等保書", "不承作", "待撥款"
+    ]
 
     name = extract_name(block_text)
     id_no = extract_id_no(block_text)
@@ -618,22 +622,22 @@ def handle_bc_case_block(block_text: str, source_group_id: str, reply_token: str
 
     has_action_word = any(w in block_text for w in action_words)
 
-    # =========================
-    # 1. 先檢查是否有已結案案件
-    #    只要後續又出現進度，就跳按鈕
-    # =========================
+    # 先找所有同名案件
     any_rows = find_any_by_name(name)
     active_rows = [r for r in any_rows if r["status"] == "ACTIVE"]
     closed_rows = [r for r in any_rows if r["status"] != "ACTIVE"]
 
-    if closed_rows and not active_rows and has_action_word:
+    # =========================
+    # 1. 如果只有已結案案件，後續又出現進度 -> 跳按鈕
+    # =========================
+    if has_action_word and closed_rows and not active_rows:
         send_reopen_case_buttons(reply_token, block_text, closed_rows)
         return "QUICK_REPLY_SENT"
 
     # =========================
-    # 2. 有 ACTIVE 案件時，進度更新後回貼 A 群
+    # 2. 如果有 ACTIVE 案件 -> 正常更新 + 回貼 A群
     # =========================
-    if active_rows and has_action_word:
+    if has_action_word and active_rows:
         customer = active_rows[0]
         new_status = "CLOSED" if is_closed_text(block_text) else customer["status"]
 
@@ -649,7 +653,7 @@ def handle_bc_case_block(block_text: str, source_group_id: str, reply_token: str
         return f"已更新客戶：{name}"
 
     # =========================
-    # 3. 保留原本新建 / 轉件邏輯
+    # 3. 以下保留原本新建邏輯
     # =========================
     if id_no:
         existing = find_active_by_id_no(id_no)
@@ -970,37 +974,35 @@ async def callback(request: Request):
             continue
 
         # A 群：只有 @AI 或 #AI 才觸發
-        if group_id == A_GROUP_ID:
-            raw_text = text
-            has_trigger = ("@ai" in raw_text.lower()) or ("#ai" in raw_text.lower())
+      if group_id == A_GROUP_ID:
+    raw_text = text
+    has_trigger = ("@ai" in raw_text.lower()) or ("#ai" in raw_text.lower())
 
-            if not has_trigger:
-                continue
+    if not has_trigger:
+        continue
 
-            clean_text = re.sub(r"(@ai|#ai)", "", raw_text, flags=re.IGNORECASE).strip()
+    clean_text = re.sub(r"(@ai|#ai)", "", raw_text, flags=re.IGNORECASE).strip()
 
-            blocks = split_multi_cases(clean_text)
-            if not blocks:
-                blocks = [clean_text]
+    blocks = split_multi_cases(clean_text)
+    if not blocks:
+        blocks = [clean_text]
 
-            results = []
+    results = []
 
-            for idx, block in enumerate(blocks, start=1):
-                result = handle_a_case_block(block, reply_token)
+    for idx, block in enumerate(blocks, start=1):
+        result = handle_a_case_block(block, reply_token)
 
-                if result == "QUICK_REPLY_SENT":
-                    return {"status": "ok"}
-
-                if result:
-                    if len(blocks) > 1:
-                        results.append(f"第{idx}筆：{result}")
-                    else:
-                        results.append(result)
-
-            if results:
-                reply_text(reply_token, "\n".join(results))
-
+        if result == "QUICK_REPLY_SENT":
             return {"status": "ok"}
+
+        if result:
+            if len(blocks) > 1:
+                results.append(f"第{idx}筆：{result}")
+            else:
+                results.append(result)
+
+    if results:
+        reply_text(reply_token, "\n".join(results))
 
     return {"status": "ok"}
 
