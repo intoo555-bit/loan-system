@@ -935,9 +935,9 @@ async def callback(request: Request):
             continue
 
         # B/C 群：建立案件、更新案件、推送到 A 群
-               if group_id in [B_GROUP_ID, C_GROUP_ID]:
-        raw_text = text
-        has_trigger = ("@ai" in raw_text.lower()) or ("#ai" in raw_text.lower())
+       if group_id in [B_GROUP_ID, C_GROUP_ID]:
+    raw_text = text
+    has_trigger = ("@ai" in raw_text.lower()) or ("#ai" in raw_text.lower())
     
         if not has_trigger:
             continue
