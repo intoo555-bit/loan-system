@@ -583,28 +583,43 @@ if active_rows:
     if is_closed_text(block_text):
         new_status = "CLOSED"
     else:
-        new_status = customer["status"]
+        def handle_bc_case_block(block_text: str, source_group_id: str, reply_token: str):
+    action_words = ["結案","補件","婉拒","核准","照會","退件","等保書","缺資料","補資料"]
 
-    update_customer(
-        customer["case_id"],
-        extract_company(block_text) or customer["company"] or "",
-        block_text,
-        source_group_id,
-        status=new_status
-    )
+    if any(w in block_text for w in action_words):
+        name = extract_name(block_text)
+        if not name:
+            return None
 
-    push_text(A_GROUP_ID, block_text)
-    return f"已更新客戶：{name}"
+        active_rows = find_active_by_name(name)
 
-any_rows = find_any_by_name(name)
-closed_rows = [r for r in any_rows if r["status"] != "ACTIVE"]
+        if active_rows:
+            customer = active_rows[0]
 
-if closed_rows:
-    send_reopen_case_buttons(reply_token, block_text, closed_rows)
-    return "QUICK_REPLY_SENT"
+            if is_closed_text(block_text):
+                new_status = "CLOSED"
+            else:
+                new_status = customer["status"]
 
-return f"⚠️ 找不到案件：{name}"
+            update_customer(
+                customer["case_id"],
+                extract_company(block_text) or customer["company"] or "",
+                block_text,
+                source_group_id,
+                status=new_status
+            )
 
+            push_text(A_GROUP_ID, block_text)
+            return f"已更新客戶：{name}"
+
+        any_rows = find_any_by_name(name)
+        closed_rows = [r for r in any_rows if r["status"] != "ACTIVE"]
+
+        if closed_rows:
+            send_reopen_case_buttons(reply_token, block_text, closed_rows)
+            return "QUICK_REPLY_SENT"
+
+        return f"⚠️ 找不到案件：{name}"
 
     name = extract_name(block_text)
     id_no = extract_id_no(block_text)
@@ -924,8 +939,8 @@ async def callback(request: Request):
                 reply_text(reply_token, "\n".join(results))
             continue
 
-        if group_id == A_GROUP_ID:
-    raw_text = text
+       if group_id == A_GROUP_ID:
+raw_text = text
     has_trigger = ("@ai" in raw_text.lower()) or ("#ai" in raw_text.lower())
 
     if has_trigger:
