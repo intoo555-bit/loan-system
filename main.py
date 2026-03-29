@@ -938,7 +938,6 @@ async def callback(request: Request):
         if handle_command_text(text, reply_token):
             continue
 
-        # B/C 群：只有 @AI 或 #AI 才觸發
         if group_id in [B_GROUP_ID, C_GROUP_ID]:
             raw_text = text
             has_trigger = ("@ai" in raw_text.lower()) or ("#ai" in raw_text.lower())
@@ -973,36 +972,37 @@ async def callback(request: Request):
 
             continue
 
-        # A 群：只有 @AI 或 #AI 才觸發
-      if group_id == A_GROUP_ID:
-    raw_text = text
-    has_trigger = ("@ai" in raw_text.lower()) or ("#ai" in raw_text.lower())
+        if group_id == A_GROUP_ID:
+            raw_text = text
+            has_trigger = ("@ai" in raw_text.lower()) or ("#ai" in raw_text.lower())
 
-    if not has_trigger:
-        continue
+            if not has_trigger:
+                continue
 
-    clean_text = re.sub(r"(@ai|#ai)", "", raw_text, flags=re.IGNORECASE).strip()
+            clean_text = re.sub(r"(@ai|#ai)", "", raw_text, flags=re.IGNORECASE).strip()
 
-    blocks = split_multi_cases(clean_text)
-    if not blocks:
-        blocks = [clean_text]
+            blocks = split_multi_cases(clean_text)
+            if not blocks:
+                blocks = [clean_text]
 
-    results = []
+            results = []
 
-    for idx, block in enumerate(blocks, start=1):
-        result = handle_a_case_block(block, reply_token)
+            for idx, block in enumerate(blocks, start=1):
+                result = handle_a_case_block(block, reply_token)
 
-        if result == "QUICK_REPLY_SENT":
+                if result == "QUICK_REPLY_SENT":
+                    return {"status": "ok"}
+
+                if result:
+                    if len(blocks) > 1:
+                        results.append(f"第{idx}筆：{result}")
+                    else:
+                        results.append(result)
+
+            if results:
+                reply_text(reply_token, "\n".join(results))
+
             return {"status": "ok"}
-
-        if result:
-            if len(blocks) > 1:
-                results.append(f"第{idx}筆：{result}")
-            else:
-                results.append(result)
-
-    if results:
-        reply_text(reply_token, "\n".join(results))
 
     return {"status": "ok"}
 
