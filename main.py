@@ -35,7 +35,7 @@ BLOCK_KEYWORDS = ["鼎信", "禾基"]
 
 IGNORE_NAME_WORDS = {
     "信用不良", "不需要了", "不用了", "不要了", "結案", "補件", "核准", "婉拒",
-    "照會", "等保書", "待撥款", "缺資料", "補資料", "資料補", "補來", "退件"
+    "照會", "等保書", "待撥款", "缺資料", "補資料", "資料補", "補來", "退件", "助理", "AI助理", "先生", "小姐"
 }
 
 CHINESE_NAME_RE = re.compile(r"[\u4e00-\u9fff]{2,4}")
@@ -173,8 +173,9 @@ def get_block_display_text(block_text: str) -> str:
 # LINE API
 # =========================
 def push_text(to_group_id: str, text: str):
+    """回傳 (ok: bool, error_text: str)"""
     if not CHANNEL_ACCESS_TOKEN:
-        return
+        return False, "未設定 CHANNEL_ACCESS_TOKEN"
 
     url = "https://api.line.me/v2/bot/message/push"
     headers = {
@@ -185,7 +186,14 @@ def push_text(to_group_id: str, text: str):
         "to": to_group_id,
         "messages": [{"type": "text", "text": text}]
     }
-    requests.post(url, headers=headers, json=data, timeout=10)
+
+    try:
+        resp = requests.post(url, headers=headers, json=data, timeout=10)
+        if 200 <= resp.status_code < 300:
+            return True, ""
+        return False, f"LINE push失敗({resp.status_code}) {resp.text[:200]}"
+    except Exception as e:
+        return False, f"LINE push例外: {str(e)}"
 
 
 def reply_text(reply_token: str, text: str):
@@ -481,6 +489,14 @@ def looks_like_case_start(line: str) -> bool:
     if not line:
         return False
 
+    # 續行內容，不要誤切
+    if re.match(r"^[\[【(（]\d+[\]】)）]", line):
+        return False
+    if line.startswith("@") or line.startswith("#"):
+        return False
+    if line in {"助理", "AI助理"}:
+        return False
+
     if ID_RE.search(line.upper()):
         return True
 
@@ -542,15 +558,17 @@ def split_multi_cases(text: str):
                 "等保書", "婉拒", "核准", "補件", "退件", "亞太", "和裕",
                 "無可知情", "黑名單", "查詢次數", "過多", "不承作", "貸救補",
                 "信用不良", "不需要了", "不用了", "不要了", "結案", "缺資料",
-                "補資料", "資料補", "補來"
+                "補資料", "資料補", "補來", "先生", "小姐", "助理"
             }
             possible_names = [n for n in possible_names if n not in excluded]
 
-            if not id_match and len(possible_names) >= 2 and not is_format_trigger(first_line):
-                remain = first_line
+            explicit_multi = any(sep in header_line for sep in ["，", ",", "、"])
+
+            if explicit_multi and not id_match and len(possible_names) >= 2 and not is_format_trigger(first_line):
+                remain = header_line
                 for name in possible_names:
                     remain = remain.replace(name, "", 1)
-                remain = remain.strip()
+                remain = remain.strip(" ，,、")
 
                 for name in possible_names:
                     new_lines = [f"{name} {remain}".strip()]
@@ -622,21 +640,14 @@ def handle_bc_case_block(block_text: str, source_group_id: str, reply_token: str
 
     has_action_word = any(w in block_text for w in action_words)
 
-    # 先找所有同名案件
     any_rows = find_any_by_name(name)
     active_rows = [r for r in any_rows if r["status"] == "ACTIVE"]
     closed_rows = [r for r in any_rows if r["status"] != "ACTIVE"]
 
-    # =========================
-    # 1. 如果只有已結案案件，後續又出現進度 -> 跳按鈕
-    # =========================
     if has_action_word and closed_rows and not active_rows:
         send_reopen_case_buttons(reply_token, block_text, closed_rows)
         return "QUICK_REPLY_SENT"
 
-    # =========================
-    # 2. 如果有 ACTIVE 案件 -> 正常更新 + 回貼 A群
-    # =========================
     if has_action_word and active_rows:
         customer = active_rows[0]
         new_status = "CLOSED" if is_closed_text(block_text) else customer["status"]
@@ -649,12 +660,15 @@ def handle_bc_case_block(block_text: str, source_group_id: str, reply_token: str
             status=new_status
         )
 
-        push_text(A_GROUP_ID, block_text)
+        ok, err = push_text(A_GROUP_ID, block_text)
+        if not ok:
+            return f"❌ 已更新客戶：{name}，但回貼A群失敗：{err}"
+
         return f"已更新客戶：{name}"
 
-    # =========================
-    # 3. 以下保留原本新建邏輯
-    # =========================
+    if not id_no and not company and not has_action_word and not is_format_trigger(block_text):
+        return None
+
     if id_no:
         existing = find_active_by_id_no(id_no)
 
@@ -669,7 +683,9 @@ def handle_bc_case_block(block_text: str, source_group_id: str, reply_token: str
                 )
 
                 if has_action_word:
-                    push_text(A_GROUP_ID, block_text)
+                    ok, err = push_text(A_GROUP_ID, block_text)
+                    if not ok:
+                        return f"❌ 已更新客戶：{name}，但回貼A群失敗：{err}"
 
                 return f"🔄 已更新客戶：{name}"
 
@@ -684,7 +700,9 @@ def handle_bc_case_block(block_text: str, source_group_id: str, reply_token: str
                 )
 
                 if has_action_word:
-                    push_text(A_GROUP_ID, block_text)
+                    ok, err = push_text(A_GROUP_ID, block_text)
+                    if not ok:
+                        return f"❌ 已轉移客戶：{name}，但回貼A群失敗：{err}"
 
                 return f"➡️ 已轉移客戶到{get_group_name(source_group_id)}：{name}"
 
@@ -721,7 +739,9 @@ def handle_bc_case_block(block_text: str, source_group_id: str, reply_token: str
             )
 
             if has_action_word:
-                push_text(A_GROUP_ID, block_text)
+                ok, err = push_text(A_GROUP_ID, block_text)
+                if not ok:
+                    return f"❌ 已更新客戶：{name}，但回貼A群失敗：{err}"
 
             return f"🔄 已更新客戶：{name}"
 
@@ -771,7 +791,9 @@ def handle_a_case_block(block_text: str, reply_token: str):
         status=new_status
     )
 
-    push_text(customer["source_group_id"], block_text)
+    ok, err = push_text(customer["source_group_id"], block_text)
+    if not ok:
+        return f"❌ 找到客戶：{customer['customer_name']}，但回貼{get_group_name(customer['source_group_id'])}失敗：{err}"
 
     if new_status == "CLOSED":
         return f"✅ 已結案並回貼到{get_group_name(customer['source_group_id'])}：{customer['customer_name']}"
@@ -947,6 +969,9 @@ async def callback(request: Request):
 
             clean_text = re.sub(r"(@ai|#ai)", "", raw_text, flags=re.IGNORECASE).strip()
 
+            if clean_text in {"", "助理", "AI助理"}:
+                continue
+
             blocks = split_multi_cases(clean_text)
             if not blocks:
                 blocks = [clean_text]
@@ -981,17 +1006,22 @@ async def callback(request: Request):
 
             clean_text = re.sub(r"(@ai|#ai)", "", raw_text, flags=re.IGNORECASE).strip()
 
+            if clean_text in {"", "助理", "AI助理"}:
+                continue
+
             blocks = split_multi_cases(clean_text)
             if not blocks:
                 blocks = [clean_text]
 
             results = []
+            quick_reply_sent = False
 
             for idx, block in enumerate(blocks, start=1):
                 result = handle_a_case_block(block, reply_token)
 
                 if result == "QUICK_REPLY_SENT":
-                    return {"status": "ok"}
+                    quick_reply_sent = True
+                    break
 
                 if result:
                     if len(blocks) > 1:
@@ -999,10 +1029,10 @@ async def callback(request: Request):
                     else:
                         results.append(result)
 
-            if results:
+            if not quick_reply_sent and results:
                 reply_text(reply_token, "\n".join(results))
 
-            return {"status": "ok"}
+            continue
 
     return {"status": "ok"}
 
