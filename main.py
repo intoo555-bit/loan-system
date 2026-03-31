@@ -24,20 +24,12 @@ COMPANY_LIST = [
     "亞太", "和裕", "21", "貸救補", "第一", "分貝", "麻吉",
     "手機分期", "和裕商品", "和裕機車", "亞太商品", "亞太機車"
 ]
-
 STATUS_WORDS = [
     "婉拒", "核准", "補件", "等保書", "退件", "不承作", "照會",
     "保密", "NA", "待撥款", "可送", "缺資料", "補資料"
 ]
-
 DELETE_KEYWORDS = ["結案", "刪掉", "不追了", "全部不送", "已撥款結案"]
 BLOCK_KEYWORDS = ["鼎信", "禾基"]
-
-IGNORE_NAME_WORDS = {
-    "信用不良", "不需要了", "不用了", "不要了", "結案", "補件", "核准", "婉拒",
-    "照會", "等保書", "待撥款", "缺資料", "補資料", "資料補", "補來", "退件",
-    "助理", "AI助理", "先生", "小姐"
-}
 
 CHINESE_NAME_RE = re.compile(r"[\u4e00-\u9fff]{2,4}")
 ID_RE = re.compile(r"[A-Z][12]\d{8}")
@@ -80,7 +72,6 @@ def extract_possible_names(text: str):
 
 def extract_name(text: str) -> str:
     first_line = normalize_first_line(extract_first_line(text))
-    first_line = re.split(r"[:：]|->", first_line, maxsplit=1)[0].strip()
     if not first_line:
         return ""
 
@@ -89,11 +80,10 @@ def extract_name(text: str) -> str:
         m = CHINESE_NAME_RE.search(left)
         return m.group(0) if m else ""
 
-    first_line = re.split(
-        r"[:：]|->|結案|補件|婉拒|核准|照會|退件|等保書|缺資料|補資料",
-        first_line,
-        maxsplit=1
-    )[0].strip()
+    if "->" in first_line:
+        left = first_line.split("->", 1)[0].strip()
+        m = CHINESE_NAME_RE.search(left)
+        return m.group(0) if m else ""
 
     m = CHINESE_NAME_RE.search(first_line)
     return m.group(0) if m else ""
@@ -122,6 +112,26 @@ def is_blocked(text: str) -> bool:
 def is_closed_text(text: str) -> bool:
     return any(w in text for w in DELETE_KEYWORDS)
 
+def has_ai_trigger(text: str) -> bool:
+    t = (text or "").lower()
+    return ("@ai" in t) or ("#ai" in t)
+
+
+def strip_ai_trigger(text: str) -> str:
+    return re.sub(r"(@ai助理|#ai助理|@ai|#ai)", "", text, flags=re.IGNORECASE).strip()
+
+
+def has_business_action_word(text: str) -> bool:
+    action_keywords = [
+        "結案", "刪掉", "不追了", "全部不送", "已撥款結案",
+        "補件", "補資料", "缺資料", "婉拒", "核准", "照會",
+        "退件", "等保書", "不承作", "待撥款",
+        "補行照", "行照", "補照會", "照會時段", "補時段",
+        "補保人", "保證人", "補保證人", "補聯徵", "補照片"
+    ]
+    return any(w in text for w in action_keywords)
+
+
 
 def is_format_trigger(block: str) -> bool:
     first = normalize_first_line(extract_first_line(block))
@@ -147,7 +157,6 @@ def get_group_name(group_id: str) -> str:
     cur.execute("SELECT group_name FROM groups WHERE group_id = ?", (group_id,))
     row = cur.fetchone()
     conn.close()
-
     if row:
         return row["group_name"]
     if group_id == A_GROUP_ID:
@@ -208,12 +217,9 @@ def reply_text(reply_token: str, text: str):
     }
     data = {
         "replyToken": reply_token,
-        "messages": [{"type": "text", "text": text[:4900]}]
+        "messages": [{"type": "text", "text": text}]
     }
-    try:
-        requests.post(url, headers=headers, json=data, timeout=10)
-    except Exception:
-        pass
+    requests.post(url, headers=headers, json=data, timeout=10)
 
 
 def make_quick_reply_item(label: str, text: str):
@@ -244,10 +250,7 @@ def reply_quick_reply(reply_token: str, text: str, items):
             "quickReply": {"items": items}
         }]
     }
-    try:
-        requests.post(url, headers=headers, json=data, timeout=10)
-    except Exception:
-        pass
+    requests.post(url, headers=headers, json=data, timeout=10)
 
 
 # =========================
@@ -317,8 +320,8 @@ def seed_groups():
 
     rows = [
         (A_GROUP_ID, "A群", "A_GROUP", 1, now),
-        (B_GROUP_ID, "B群", "B_GROUP", 1, now),
-        (C_GROUP_ID, "C群", "C_GROUP", 1, now),
+        (B_GROUP_ID, "B群", "SALES_GROUP", 1, now),
+        (C_GROUP_ID, "C群", "SALES_GROUP", 1, now),
     ]
 
     for row in rows:
@@ -360,15 +363,7 @@ def create_customer_record(name: str, id_no: str, company: str, source_group_id:
     return case_id
 
 
-def update_customer(
-    case_id: str,
-    company: str,
-    text: str,
-    from_group_id: str,
-    status: str | None = None,
-    name: str | None = None,
-    source_group_id: str | None = None
-):
+def update_customer(case_id: str, company: str, text: str, from_group_id: str, status: str | None = None, name: str | None = None, source_group_id: str | None = None):
     conn = get_conn()
     cur = conn.cursor()
     now = now_iso()
@@ -447,19 +442,6 @@ def find_active_by_name(name: str):
     return rows
 
 
-def find_any_by_name(name: str):
-    conn = get_conn()
-    cur = conn.cursor()
-    cur.execute("""
-    SELECT * FROM customers
-    WHERE customer_name = ?
-    ORDER BY updated_at DESC
-    """, (name,))
-    rows = cur.fetchall()
-    conn.close()
-    return rows
-
-
 def save_pending_action(action_id: str, action_type: str, payload: str):
     conn = get_conn()
     cur = conn.cursor()
@@ -513,6 +495,27 @@ def looks_like_case_start(line: str) -> bool:
     if re.match(r"^[\u4e00-\u9fff]{2,4}\s*[\[【(（]1[\]】)）]", first):
         return True
 
+    # 日期-姓名 英數字串 也視為新案件起始（例如 3/31-許永松 R122...）
+    if re.match(r"^[\u4e00-\u9fff]{2,4}\s+[A-Z]\d{8,10}", first):
+        return True
+
+    name = extract_name(first)
+    company = extract_company(first)
+    has_strong = contains_status_word(first)
+
+    if is_format_trigger(first):
+        return True
+    if name and company:
+        return True
+    if name and has_strong:
+        return True
+
+    return False
+
+    if ID_RE.search(line):
+        return True
+
+    first = normalize_first_line(line)
     name = extract_name(first)
     company = extract_company(first)
     has_strong = contains_status_word(first)
@@ -528,6 +531,13 @@ def looks_like_case_start(line: str) -> bool:
 
 
 def split_multi_cases(text: str):
+    """
+    多筆分段：
+    - 空白行分隔
+    - 單獨一行 / 分隔
+    - 新案件主句開新段
+    - 黑名單/查詢次數/過多 這類補充不會被拆成獨立案件
+    """
     text = text.strip()
     if not text:
         return []
@@ -562,25 +572,20 @@ def split_multi_cases(text: str):
                 continue
 
             first_line = normalize_first_line(block_lines[0])
-            header_line = re.split(r"[:：]|->", first_line, maxsplit=1)[0].strip()
-            id_match = ID_RE.search(header_line.upper())
+            id_match = ID_RE.search(first_line)
 
-            possible_names = extract_possible_names(header_line)
+            possible_names = extract_possible_names(first_line)
             excluded = {
                 "等保書", "婉拒", "核准", "補件", "退件", "亞太", "和裕",
-                "無可知情", "黑名單", "查詢次數", "過多", "不承作", "貸救補",
-                "信用不良", "不需要了", "不用了", "不要了", "結案", "缺資料",
-                "補資料", "資料補", "補來", "先生", "小姐", "助理"
+                "無可知情", "黑名單", "查詢次數", "過多", "不承作", "貸救補"
             }
             possible_names = [n for n in possible_names if n not in excluded]
 
-            explicit_multi = any(sep in header_line for sep in ["，", ",", "、"])
-
-            if explicit_multi and not id_match and len(possible_names) >= 2 and not is_format_trigger(first_line):
-                remain = header_line
+            if not id_match and len(possible_names) >= 2 and not is_format_trigger(first_line):
+                remain = first_line
                 for name in possible_names:
                     remain = remain.replace(name, "", 1)
-                remain = remain.strip(" ，,、")
+                remain = remain.strip()
 
                 for name in possible_names:
                     new_lines = [f"{name} {remain}".strip()]
@@ -593,56 +598,10 @@ def split_multi_cases(text: str):
     return final_blocks
 
 
-def send_reopen_case_buttons(reply_token: str, block_text: str, closed_rows):
-    action_id = short_id()
-    closed_rows = sorted(closed_rows, key=lambda x: x["updated_at"], reverse=True)
-    closed_rows = closed_rows[:1]
-
-    case_ids = ",".join([r["case_id"] for r in closed_rows])
-    payload = f"{block_text}||{case_ids}"
-    save_pending_action(action_id, "reopen_or_new_case", payload)
-
-    items = []
-
-    for c in closed_rows:
-        label = f'重啟-{c["customer_name"]}-{c["company"] or "未填"}'
-        text = f"REOPEN_CASE|{action_id}|{c['case_id']}"
-        items.append(make_quick_reply_item(label, text))
-    items.append(make_quick_reply_item("建立新案件", f"CREATE_NEW_CASE|{action_id}"))
-    items.append(make_quick_reply_item("取消", f"CANCEL_REOPEN|{action_id}"))
-
-    reply_quick_reply(
-        reply_token,
-        "⚠️ 此客戶案件已結案，請選擇要重啟原案件或建立新案件",
-        items
-    )
-
-
-def send_ambiguous_case_buttons(reply_token: str, block_text: str, matches):
-    action_id = short_id()
-    case_ids = ",".join([m["case_id"] for m in matches])
-    payload = f"{block_text}||{case_ids}"
-    save_pending_action(action_id, "route_a_case", payload)
-
-    items = []
-    for c in matches[:10]:
-        label = f"{c['customer_name']}-{c['company'] or '未填'}-{get_group_name(c['source_group_id'])}"
-        text = f"SELECT_CASE|{action_id}|{c['case_id']}"
-        items.append(make_quick_reply_item(label, text))
-
-    reply_quick_reply(reply_token, "⚠️ 多筆同名客戶，請選擇要回貼的案件", items)
-
-
 # =========================
 # 主要業務邏輯
 # =========================
 def handle_bc_case_block(block_text: str, source_group_id: str, reply_token: str):
-    action_words = [
-        "結案", "刪掉", "不追了", "全部不送", "已撥款結案",
-        "補件", "補資料", "缺資料", "婉拒", "核准", "照會",
-        "退件", "等保書", "不承作", "待撥款"
-    ]
-
     name = extract_name(block_text)
     id_no = extract_id_no(block_text)
     company = extract_company(block_text)
@@ -653,7 +612,7 @@ def handle_bc_case_block(block_text: str, source_group_id: str, reply_token: str
     if is_blocked(block_text):
         return "❌ 含禁止關鍵字，已略過"
 
-    has_action_word = any(w in block_text for w in action_words)
+    has_action_word = has_business_action_word(block_text)
 
     any_rows = find_any_by_name(name)
 
@@ -668,7 +627,10 @@ def handle_bc_case_block(block_text: str, source_group_id: str, reply_token: str
     active_rows = same_group_active if same_group_active else all_active
     closed_rows = same_group_closed if same_group_closed else all_closed
 
+    # 只有已結案，且是後續進度 -> 跳按鈕；如果只是再打一個結案，不跳按鈕
     if has_action_word and closed_rows and not active_rows:
+        if is_closed_text(block_text):
+            return f"已更新客戶：{name}"
         send_reopen_case_buttons(reply_token, block_text, closed_rows)
         return "QUICK_REPLY_SENT"
 
@@ -684,7 +646,7 @@ def handle_bc_case_block(block_text: str, source_group_id: str, reply_token: str
             status=new_status
         )
 
-        # 結案不回貼A群
+        # 結案不回貼A群；其他後續進度才回貼
         if not is_closed_text(block_text):
             ok, err = push_text(A_GROUP_ID, block_text)
             if not ok:
@@ -692,6 +654,7 @@ def handle_bc_case_block(block_text: str, source_group_id: str, reply_token: str
 
         return f"已更新客戶：{name}"
 
+    # 沒有公司/身分證/後續進度/格式，不自動建案
     if not id_no and not company and not has_action_word and not is_format_trigger(block_text):
         return None
 
@@ -750,9 +713,8 @@ def handle_bc_case_block(block_text: str, source_group_id: str, reply_token: str
             return "QUICK_REPLY_SENT"
 
     if not id_no:
-        rows = find_active_by_name(name)
         same_group_name_rows = [
-            r for r in rows
+            r for r in active_rows
             if r["source_group_id"] == source_group_id and (not r["id_no"])
         ]
         if len(same_group_name_rows) == 1:
@@ -818,9 +780,7 @@ def handle_a_case_block(block_text: str, reply_token: str):
         status=new_status
     )
 
-    ok, err = push_text(customer["source_group_id"], block_text)
-    if not ok:
-        return f"❌ 找到客戶：{customer['customer_name']}，但回貼{get_group_name(customer['source_group_id'])}失敗：{err}"
+    push_text(customer["source_group_id"], block_text)
 
     if new_status == "CLOSED":
         return f"✅ 已結案並回貼到{get_group_name(customer['source_group_id'])}：{customer['customer_name']}"
@@ -894,12 +854,7 @@ def handle_command_text(text: str, reply_token: str):
         new_status = "CLOSED" if is_closed_text(block_text) else None
 
         update_customer(case_id, company, block_text, A_GROUP_ID, status=new_status)
-        ok, err = push_text(customer["source_group_id"], block_text)
-
-        if not ok:
-            reply_text(reply_token, f"❌ 找到案件但回貼失敗：{err}")
-            delete_pending_action(action_id)
-            return True
+        push_text(customer["source_group_id"], block_text)
 
         if new_status == "CLOSED":
             reply_text(reply_token, f"✅ 已結案並回貼到{get_group_name(customer['source_group_id'])}：{customer['customer_name']}")
@@ -907,75 +862,6 @@ def handle_command_text(text: str, reply_token: str):
             reply_text(reply_token, f"✅ 已回貼到{get_group_name(customer['source_group_id'])}：{customer['customer_name']}")
 
         delete_pending_action(action_id)
-        return True
-
-    if text.startswith("REOPEN_CASE|"):
-        _, action_id, case_id = text.split("|", 2)
-        action = get_pending_action(action_id)
-
-        if not action or action["action_type"] != "reopen_or_new_case":
-            reply_text(reply_token, "⚠️ 找不到重啟案件資料")
-            return True
-
-        block_text, _ = action["payload"].split("||", 1)
-
-        conn = get_conn()
-        cur = conn.cursor()
-        cur.execute("SELECT * FROM customers WHERE case_id = ?", (case_id,))
-        customer = cur.fetchone()
-        conn.close()
-
-        if not customer:
-            reply_text(reply_token, "⚠️ 原案件不存在")
-            delete_pending_action(action_id)
-            return True
-
-        update_customer(
-            case_id,
-            extract_company(block_text) or customer["company"] or "",
-            block_text,
-            customer["source_group_id"],
-            status="ACTIVE"
-        )
-
-        # 重啟後屬於後續進度，要回貼A群
-        ok, err = push_text(A_GROUP_ID, block_text)
-        if not ok:
-            reply_text(reply_token, f"⚠️ 已重啟案件，但回貼A群失敗：{err}")
-        else:
-            reply_text(reply_token, f"✅ 已重啟案件並回貼A群：{customer['customer_name']}")
-
-        delete_pending_action(action_id)
-        return True
-
-    if text.startswith("CREATE_NEW_CASE|"):
-        _, action_id = text.split("|", 1)
-        action = get_pending_action(action_id)
-
-        if not action or action["action_type"] != "reopen_or_new_case":
-            reply_text(reply_token, "⚠️ 找不到建立新案件資料")
-            return True
-
-        block_text, _ = action["payload"].split("||", 1)
-        name = extract_name(block_text)
-        id_no = extract_id_no(block_text)
-        company = extract_company(block_text)
-        create_customer_record(name, id_no, company, A_GROUP_ID, block_text)
-
-        # 新建後屬於後續進度，也回貼A群
-        ok, err = push_text(A_GROUP_ID, block_text)
-        if not ok:
-            reply_text(reply_token, f"🆕 已建立新案件：{name}，但回貼A群失敗：{err}")
-        else:
-            reply_text(reply_token, f"🆕 已建立新案件並回貼A群：{name}")
-
-        delete_pending_action(action_id)
-        return True
-
-    if text.startswith("CANCEL_REOPEN|"):
-        _, action_id = text.split("|", 1)
-        delete_pending_action(action_id)
-        reply_text(reply_token, "✅ 已取消")
         return True
 
     return False
@@ -1008,12 +894,10 @@ async def callback(request: Request):
 
         if group_id in [B_GROUP_ID, C_GROUP_ID]:
             raw_text = text
-            has_trigger = ("@ai" in raw_text.lower()) or ("#ai" in raw_text.lower())
-
-            if not has_trigger:
+            if not has_ai_trigger(raw_text):
                 continue
 
-            clean_text = re.sub(r"(@ai助理|#ai助理|@ai|#ai)", "", raw_text, flags=re.IGNORECASE).strip()
+            clean_text = strip_ai_trigger(raw_text)
 
             if clean_text in {"", "助理", "AI助理"}:
                 continue
@@ -1045,12 +929,10 @@ async def callback(request: Request):
 
         if group_id == A_GROUP_ID:
             raw_text = text
-            has_trigger = ("@ai" in raw_text.lower()) or ("#ai" in raw_text.lower())
-
-            if not has_trigger:
+            if not has_ai_trigger(raw_text):
                 continue
 
-            clean_text = re.sub(r"(@ai助理|#ai助理|@ai|#ai)", "", raw_text, flags=re.IGNORECASE).strip()
+            clean_text = strip_ai_trigger(raw_text)
 
             if clean_text in {"", "助理", "AI助理"}:
                 continue
