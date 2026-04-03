@@ -733,23 +733,40 @@ def send_confirm_new_case_buttons(reply_token, block_text, existing_customer, so
 # =========================
 def parse_special_command(text: str, group_id: str) -> Optional[Dict]:
     clean = strip_ai_trigger(text).strip()
+
+    # 日報
     if re.match(r"^日報$", clean):
         return {"type": "report"}
+
+    # 查詢：支援所有格式
+    # @AI 查 彭駿為 / 彭駿為 查@AI / 彭駿為@AI 查
     m = re.match(r"^查\s*([\u4e00-\u9fff]{2,4})$", clean)
     if m:
         return {"type": "search", "name": m.group(1)}
+    m = re.match(r"^([\u4e00-\u9fff]{2,4})\s*查$", clean)
+    if m:
+        return {"type": "search", "name": m.group(1)}
+
+    # 轉下一家
     m = re.match(r"^([\u4e00-\u9fff]{2,4})\s*轉下一家$", clean)
     if m:
         return {"type": "advance", "name": m.group(1), "target": None}
+
+    # 轉指定公司
     m = re.match(r"^([\u4e00-\u9fff]{2,4})\s*轉(.+)$", clean)
     if m and m.group(2).strip() != "下一家":
         return {"type": "advance", "name": m.group(1), "target": m.group(2).strip()}
+
+    # 結案
     m = re.match(r"^([\u4e00-\u9fff]{2,4})\s*(已結案|結案)$", clean)
     if m:
         return {"type": "close", "name": m.group(1)}
+
+    # 婉拒
     m = re.match(r"^([\u4e00-\u9fff]{2,4})\s*婉拒$", clean)
     if m:
         return {"type": "reject", "name": m.group(1)}
+
     return None
 
 
@@ -855,14 +872,14 @@ def handle_route_order_block(block_text, source_group_id, reply_token) -> Option
     if same:
         update_customer(same[0]["case_id"], route_plan=route_json, current_company=current_co,
                         text=block_text, from_group_id=source_group_id)
-        return f"📋 已更新 {name} 送件順序：{' → '.join(companies)}"
+        return f"📋 已更新 {name} 送件順序：{'/'.join(companies)}"
     other = [r for r in rows if r["source_group_id"] != source_group_id]
     if other:
         send_transfer_case_buttons(reply_token, other[0], source_group_id, block_text, allow_new=True)
         return "QUICK_REPLY_SENT"
     create_customer_record(name, "", current_co, source_group_id, block_text,
                            route_plan=route_json, current_company=current_co)
-    return f"🆕 已建立客戶 {name}，送件順序：{' → '.join(companies)}"
+    return f"🆕 已建立客戶 {name}，送件順序：{'/'.join(companies)}"
 
 
 def handle_bc_case_block(block_text, source_group_id, reply_token, source_text="") -> Optional[str]:
@@ -879,7 +896,15 @@ def handle_bc_case_block(block_text, source_group_id, reply_token, source_text="
     if not name or name in IGNORE_NAME_SET:
         return None
 
-    want_push_a = has_ai_trigger(source_text or block_text) and ("補" in block_text)
+    # want_push_a：原始訊息有@AI觸發 且 訊息含補件相關動作
+    # 用 source_text（未去掉@AI的原始文字）來判斷@AI觸發
+    # 這樣「彭駿為 補案件@AI」也能正確判斷
+    raw_for_trigger = source_text or block_text
+    has_bu_keyword = any(w in block_text for w in [
+        "補", "照會", "缺資料", "補件", "補資料", "補照片",
+        "補時段", "補聯徵", "補保人", "補行照", "補照會",
+    ])
+    want_push_a = has_ai_trigger(raw_for_trigger) and has_bu_keyword
     has_action = has_business_action_word(block_text)
 
     if id_no:
@@ -1400,7 +1425,7 @@ def search_customer_web(name: str):
         html += f"<b>{row['customer_name']}</b> {badge}<br>"
         html += f"群組：{get_group_name(row['source_group_id'])} | 目前：{current}<br>"
         if order:
-            html += f"送件順序：{' → '.join(order)}（第{idx+1}/{len(order)}家）<br>"
+            html += f"送件順序：{'/'.join(order)}（第{idx+1}/{len(order)}家）<br>"
         last = (row["last_update"] or "").splitlines()
         if last:
             html += f"最新：{last[-1].strip()[:60]}<br>"
