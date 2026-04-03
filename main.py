@@ -57,7 +57,7 @@ ACTION_KEYWORDS = [
     "補聯徵", "補保人", "保密", "無可知情", "聯絡人皆可知情", "已補",
 ]
 
-DELETE_KEYWORDS = ["結案", "刪掉", "不追了", "全部不送", "已撥款結案", "違約金結案", "已支付違約金"]
+DELETE_KEYWORDS = ["結案", "刪掉", "不追了", "全部不送", "已撥款結案", "違約金結案", "已支付違約金", "以收到違約金", "收到違約金", "違約金已收"]
 BLOCK_KEYWORDS = ["鼎信", "禾基"]
 
 IGNORE_NAME_SET = {
@@ -678,15 +678,38 @@ def is_disbursement_list(text: str) -> bool:
 
 
 def get_admin_group_for_sales(sales_group_id: str) -> Optional[str]:
-    """根據業務群ID找對應的行政群ID"""
+    """
+    找對應的行政群ID。
+    優先找有設定 linked_sales_group_id 對應的，
+    找不到就找任何啟用的行政群（所有業務群共用一個行政群的情況）。
+    """
     conn = get_conn(); cur = conn.cursor()
+    # 先找有明確對應的
     cur.execute("""
         SELECT group_id FROM groups
         WHERE group_type='ADMIN_GROUP' AND linked_sales_group_id=? AND is_active=1
         LIMIT 1
     """, (sales_group_id,))
+    row = cur.fetchone()
+    if row:
+        conn.close()
+        return row["group_id"]
+    # 找不到就用任何啟用的行政群
+    cur.execute("""
+        SELECT group_id FROM groups
+        WHERE group_type='ADMIN_GROUP' AND is_active=1
+        LIMIT 1
+    """)
     row = cur.fetchone(); conn.close()
     return row["group_id"] if row else None
+
+
+def get_all_admin_groups() -> List[str]:
+    """取得所有啟用的行政群ID（用於廣播撥款名單）"""
+    conn = get_conn(); cur = conn.cursor()
+    cur.execute("SELECT group_id FROM groups WHERE group_type='ADMIN_GROUP' AND is_active=1")
+    rows = cur.fetchall(); conn.close()
+    return [r["group_id"] for r in rows]
 
 
 # =========================
@@ -1089,112 +1112,6 @@ def handle_route_order_block(block_text, source_group_id, reply_token) -> Option
     return f"🆕 已建立客戶 {name}，送件順序：{'/'.join(companies)}"
 
 
-def handle_bc_case_block(block_text, source_group_id, reply_token, source_text="") -> Optional[str]:
-    if is_blocked(block_text):
-        return "❌ 含禁止關鍵字，已略過"
-    if is_route_order_line(extract_first_line(block_text)):
-        return handle_route_order_block(block_text, source_group_id, reply_token)
-    if looks_like_new_case_block(block_text):
-        return handle_new_case_block(block_text, source_group_id, reply_token)
-
-    name = extract_name(block_text)
-    id_no = extract_id_no(block_text)
-    company = extract_company(block_text)
-    if not name or name in IGNORE_NAME_SET:
-        return None
-
-    # want_push_a：原始訊息有@AI觸發 且 訊息含補件相關動作
-    # 用 source_text（未去掉@AI的原始文字）來判斷@AI觸發
-    # 這樣「彭駿為 補案件@AI」也能正確判斷
-    raw_for_trigger = source_text or block_text
-    has_bu_keyword = any(w in block_text for w in [
-        "補", "照會", "缺資料", "補件", "補資料", "補照片",
-        "補時段", "補聯徵", "補保人", "補行照", "補照會",
-    ])
-    want_push_a = has_ai_trigger(raw_for_trigger) and has_bu_keyword
-    has_action = has_business_action_word(block_text)
-
-    if id_no:
-        existing = find_active_by_id_no(id_no)
-        if existing:
-            if existing["source_group_id"] == source_group_id:
-                new_status = "CLOSED" if is_closed_text(block_text) else None
-                update_customer(existing["case_id"], company=company or existing["company"] or "",
-                                text=block_text, from_group_id=source_group_id, status=new_status, name=name)
-                pushed = False
-                if want_push_a and new_status != "CLOSED":
-                    ok, _ = push_text(A_GROUP_ID, block_text); pushed = ok
-                msg = f"已更新客戶：{name}"
-                if pushed: msg += f"\n✅ 已回貼A群：{name}"
-                return msg
-            if is_closed_text(block_text):
-                return f"⚠️ 同身分證案件存在於{get_group_name(existing['source_group_id'])}：{name}"
-            send_transfer_case_buttons(reply_token, existing, source_group_id, block_text, allow_new=True)
-            return "QUICK_REPLY_SENT"
-        create_customer_record(name, id_no, company, source_group_id, block_text)
-        pushed = False
-        if want_push_a:
-            ok, _ = push_text(A_GROUP_ID, block_text); pushed = ok
-        msg = f"🆕 已建立客戶：{name}"
-        if pushed: msg += f"\n✅ 已回貼A群：{name}"
-        return msg
-
-    any_rows = find_any_by_name(name)
-    same_rows = [r for r in any_rows if r["source_group_id"] == source_group_id]
-    same_active = [r for r in same_rows if r["status"] == "ACTIVE"]
-    same_closed = [r for r in same_rows if r["status"] != "ACTIVE"]
-    other_active = [r for r in any_rows if r["source_group_id"] != source_group_id and r["status"] == "ACTIVE"]
-    other_closed = [r for r in any_rows if r["source_group_id"] != source_group_id and r["status"] != "ACTIVE"]
-
-    if has_action and same_closed and not same_active and not is_closed_text(block_text):
-        send_reopen_case_buttons(reply_token, block_text, same_closed, source_group_id, push_to_a_after_reopen=want_push_a)
-        return "QUICK_REPLY_SENT"
-    if has_action and same_active:
-        c = same_active[0]
-        new_status = "CLOSED" if is_closed_text(block_text) else None
-        update_customer(c["case_id"], company=company or c["company"] or "",
-                        text=block_text, from_group_id=source_group_id, status=new_status)
-        pushed = False
-        if want_push_a and new_status != "CLOSED":
-            ok, _ = push_text(A_GROUP_ID, block_text); pushed = ok
-        msg = f"已更新客戶：{name}"
-        if pushed: msg += f"\n✅ 已回貼A群：{name}"
-        return msg
-    if not has_action and not is_format_trigger(block_text):
-        return None
-    if same_active:
-        r = same_active[0]
-        update_customer(r["case_id"], company=company or r["company"] or "",
-                        text=block_text, from_group_id=source_group_id)
-        pushed = False
-        if want_push_a:
-            ok, _ = push_text(A_GROUP_ID, block_text); pushed = ok
-        msg = f"已更新客戶：{name}"
-        if pushed: msg += f"\n✅ 已回貼A群：{name}"
-        return msg
-    if other_active:
-        send_transfer_case_buttons(reply_token, other_active[0], source_group_id, block_text, allow_new=True)
-        return "QUICK_REPLY_SENT"
-    if same_closed and is_closed_text(block_text):
-        r = same_closed[0]
-        update_customer(r["case_id"], company=company or r["company"] or "",
-                        text=block_text, from_group_id=source_group_id, status="CLOSED")
-        return f"已更新客戶：{name}"
-    if same_closed:
-        send_reopen_case_buttons(reply_token, block_text, same_closed, source_group_id, push_to_a_after_reopen=want_push_a)
-        return "QUICK_REPLY_SENT"
-    if other_closed:
-        send_transfer_case_buttons(reply_token, other_closed[0], source_group_id, block_text, allow_new=True)
-        return "QUICK_REPLY_SENT"
-    create_customer_record(name, "", company, source_group_id, block_text)
-    pushed = False
-    if want_push_a:
-        ok, _ = push_text(A_GROUP_ID, block_text); pushed = ok
-    msg = f"🆕 已建立客戶：{name}"
-    if pushed: msg += f"\n✅ 已回貼A群：{name}"
-    return msg
-
-
 def handle_a_case_block(block_text, reply_token) -> Optional[str]:
     if is_blocked(block_text):
         return "❌ 含禁止關鍵字，已略過"
@@ -1394,11 +1311,11 @@ def handle_command_text(text: str, reply_token: str) -> bool:
 # =========================
 def handle_disbursement_list(text: str, reply_token: str):
     """
-    解析A群撥款名單，更新客戶撥款日期。
-    推送排撥名單給各行政群，格式：
-    4/3 排撥名單
-    楊又丞　21機25 20萬　B群
-    呂菁菁　亞太25 10萬　C群
+    解析A群撥款名單：
+    1. 去DB查每個客戶的核准金額和所屬業務群
+    2. 更新撥款日期
+    3. 組合排撥名單推給所有行政群
+    4. A群只回簡短確認
     """
     parsed = parse_disbursement_list(text)
     if not parsed:
@@ -1406,20 +1323,22 @@ def handle_disbursement_list(text: str, reply_token: str):
         return
 
     results = []
-    # {admin_gid: (disb_date, [push_lines])}
-    admin_push_map: Dict[str, tuple] = {}
+    all_push_lines = []
+    disb_date_str = ""
 
     for disb_date, companies in parsed.items():
+        disb_date_str = disb_date
         for company, names in companies.items():
             for name in names:
-                # 找客戶（active 或 待撥款）
+                # 找客戶（進行中 或 待撥款）
                 rows = find_active_by_name(name)
                 if not rows:
                     conn = get_conn(); cur = conn.cursor()
                     cur.execute(
-                        "SELECT * FROM customers WHERE customer_name=? AND report_section='待撥款' ORDER BY updated_at DESC",
+                        "SELECT * FROM customers WHERE customer_name=? ORDER BY updated_at DESC LIMIT 1",
                         (name,))
-                    rows = list(cur.fetchall()); conn.close()
+                    row = cur.fetchone(); conn.close()
+                    rows = [row] if row else []
 
                 if not rows:
                     results.append(f"⚠️ 找不到客戶：{name}")
@@ -1429,7 +1348,7 @@ def handle_disbursement_list(text: str, reply_token: str):
                 sales_group_name = get_group_name(target["source_group_id"])
                 approved_amount = target["approved_amount"] or ""
 
-                # 更新撥款日期
+                # 更新撥款日期，移到待撥款區
                 update_customer(
                     target["case_id"],
                     disbursement_date=disb_date,
@@ -1437,35 +1356,32 @@ def handle_disbursement_list(text: str, reply_token: str):
                     text=name + " " + company + " 撥款" + disb_date,
                     from_group_id=A_GROUP_ID,
                 )
-                results.append("✅ " + name + " 撥款" + disb_date + "（" + company + "）")
+                results.append("✅ " + name + "（" + company + "）")
 
-                # 組合排撥名單行：姓名	公司+金額	群組名稱
+                # 組合排撥名單行：姓名	公司+金額	業務群名稱
                 company_amount = company + (" " + approved_amount if approved_amount else "")
-                push_line = name + "	" + company_amount + "	" + sales_group_name
+                push_line = name + "\t" + company_amount + "\t" + sales_group_name
+                all_push_lines.append(push_line)
 
-                # 依行政群分組
-                admin_gid = get_admin_group_for_sales(target["source_group_id"])
-                if admin_gid:
-                    if admin_gid not in admin_push_map:
-                        admin_push_map[admin_gid] = (disb_date, [])
-                    admin_push_map[admin_gid][1].append(push_line)
+    # 推送排撥名單給所有行政群
+    all_admin_gids = get_all_admin_groups()
+    if all_admin_gids and all_push_lines:
+        push_msg = disb_date_str + " 排撥名單" + chr(10) + chr(10).join(all_push_lines)
+        for admin_gid in all_admin_gids:
+            ok, err = push_text(admin_gid, push_msg)
+            if not ok:
+                results.append(f"⚠️ 推送行政群失敗：{err}")
 
-    # 推送排撥名單給各行政群
-    for admin_gid, (date, push_lines) in admin_push_map.items():
-        push_msg = date + " 排撥名單" + chr(10) + chr(10).join(push_lines)
-        push_text(admin_gid, push_msg)
-
-    # 回覆A群結果
+    # A群回簡短確認
     if results:
-        if len(results) <= 5:
-            reply_text(reply_token, chr(10).join(results))
-        else:
-            ok_count = sum(1 for r in results if r.startswith("✅"))
-            fail_count = len(results) - ok_count
-            msg = "✅ 撥款名單處理完成，共" + str(ok_count) + "筆成功"
-            if fail_count:
-                msg += "，" + str(fail_count) + "筆找不到客戶"
-            reply_text(reply_token, msg)
+        ok_count = sum(1 for r in results if r.startswith("✅"))
+        fail_count = len(results) - ok_count
+        msg = f"✅ 撥款名單已處理，共{ok_count}筆"
+        if fail_count:
+            msg += f"，{fail_count}筆找不到客戶"
+        if all_admin_gids:
+            msg += f"\n📤 已推送排撥名單給行政群"
+        reply_text(reply_token, msg)
 
 
 from fastapi import FastAPI, Request, BackgroundTasks
@@ -1527,7 +1443,7 @@ ACTION_KEYWORDS = [
     "補聯徵", "補保人", "保密", "無可知情", "聯絡人皆可知情", "已補",
 ]
 
-DELETE_KEYWORDS = ["結案", "刪掉", "不追了", "全部不送", "已撥款結案", "違約金結案", "已支付違約金"]
+DELETE_KEYWORDS = ["結案", "刪掉", "不追了", "全部不送", "已撥款結案", "違約金結案", "已支付違約金", "以收到違約金", "收到違約金", "違約金已收"]
 BLOCK_KEYWORDS = ["鼎信", "禾基"]
 
 IGNORE_NAME_SET = {
@@ -2148,15 +2064,38 @@ def is_disbursement_list(text: str) -> bool:
 
 
 def get_admin_group_for_sales(sales_group_id: str) -> Optional[str]:
-    """根據業務群ID找對應的行政群ID"""
+    """
+    找對應的行政群ID。
+    優先找有設定 linked_sales_group_id 對應的，
+    找不到就找任何啟用的行政群（所有業務群共用一個行政群的情況）。
+    """
     conn = get_conn(); cur = conn.cursor()
+    # 先找有明確對應的
     cur.execute("""
         SELECT group_id FROM groups
         WHERE group_type='ADMIN_GROUP' AND linked_sales_group_id=? AND is_active=1
         LIMIT 1
     """, (sales_group_id,))
+    row = cur.fetchone()
+    if row:
+        conn.close()
+        return row["group_id"]
+    # 找不到就用任何啟用的行政群
+    cur.execute("""
+        SELECT group_id FROM groups
+        WHERE group_type='ADMIN_GROUP' AND is_active=1
+        LIMIT 1
+    """)
     row = cur.fetchone(); conn.close()
     return row["group_id"] if row else None
+
+
+def get_all_admin_groups() -> List[str]:
+    """取得所有啟用的行政群ID（用於廣播撥款名單）"""
+    conn = get_conn(); cur = conn.cursor()
+    cur.execute("SELECT group_id FROM groups WHERE group_type='ADMIN_GROUP' AND is_active=1")
+    rows = cur.fetchall(); conn.close()
+    return [r["group_id"] for r in rows]
 
 
 # =========================
