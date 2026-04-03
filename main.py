@@ -57,7 +57,7 @@ ACTION_KEYWORDS = [
     "補聯徵", "補保人", "保密", "無可知情", "聯絡人皆可知情", "已補",
 ]
 
-DELETE_KEYWORDS = ["結案", "刪掉", "不追了", "全部不送", "已撥款結案", "違約金結案", "已支付違約金", "以收到違約金", "收到違約金", "違約金已收"]
+DELETE_KEYWORDS = ["結案", "刪掉", "不追了", "全部不送", "已撥款結案", "違約金結案", "已支付違約金", "以收到違約金", "收到違約金", "違約金已收", "以收到違約金", "違約金"]
 BLOCK_KEYWORDS = ["鼎信", "禾基"]
 
 IGNORE_NAME_SET = {
@@ -1314,23 +1314,26 @@ def handle_disbursement_list(text: str, reply_token: str):
     解析A群撥款名單：
     1. 去DB查每個客戶的核准金額和所屬業務群
     2. 更新撥款日期
-    3. 組合排撥名單推給所有行政群
-    4. A群只回簡短確認
+    3. 組合排撥名單推給所有行政群（格式：日期 排撥名單\n姓名\t公司+金額\t業務群）
+    4. A群回報結果（成功幾筆/找不到幾筆）
     """
     parsed = parse_disbursement_list(text)
     if not parsed:
         reply_text(reply_token, "⚠️ 無法解析撥款名單格式")
         return
 
-    results = []
     all_push_lines = []
     disb_date_str = ""
+    result_lines = []  # (idx, status, name, msg)
+    global_idx = 0
 
     for disb_date, companies in parsed.items():
         disb_date_str = disb_date
         for company, names in companies.items():
             for name in names:
-                # 找客戶（進行中 或 待撥款）
+                global_idx += 1
+
+                # 找客戶（進行中或待撥款）
                 rows = find_active_by_name(name)
                 if not rows:
                     conn = get_conn(); cur = conn.cursor()
@@ -1341,14 +1344,14 @@ def handle_disbursement_list(text: str, reply_token: str):
                     rows = [row] if row else []
 
                 if not rows:
-                    results.append(f"⚠️ 找不到客戶：{name}")
+                    result_lines.append((global_idx, False, name, f"⚠️ 找不到對應客戶：{name}"))
                     continue
 
                 target = rows[0]
                 sales_group_name = get_group_name(target["source_group_id"])
                 approved_amount = target["approved_amount"] or ""
 
-                # 更新撥款日期，移到待撥款區
+                # 更新撥款日期
                 update_customer(
                     target["case_id"],
                     disbursement_date=disb_date,
@@ -1356,32 +1359,40 @@ def handle_disbursement_list(text: str, reply_token: str):
                     text=name + " " + company + " 撥款" + disb_date,
                     from_group_id=A_GROUP_ID,
                 )
-                results.append("✅ " + name + "（" + company + "）")
+                result_lines.append((global_idx, True, name, f"✅ {name}"))
 
-                # 組合排撥名單行：姓名	公司+金額	業務群名稱
+                # 組合排撥名單行：姓名\t公司+金額\t業務群名稱
                 company_amount = company + (" " + approved_amount if approved_amount else "")
                 push_line = name + "\t" + company_amount + "\t" + sales_group_name
                 all_push_lines.append(push_line)
 
     # 推送排撥名單給所有行政群
     all_admin_gids = get_all_admin_groups()
+    pushed_ok = False
     if all_admin_gids and all_push_lines:
         push_msg = disb_date_str + " 排撥名單" + chr(10) + chr(10).join(all_push_lines)
         for admin_gid in all_admin_gids:
-            ok, err = push_text(admin_gid, push_msg)
-            if not ok:
-                results.append(f"⚠️ 推送行政群失敗：{err}")
+            ok, _ = push_text(admin_gid, push_msg)
+            if ok:
+                pushed_ok = True
 
-    # A群回簡短確認
-    if results:
-        ok_count = sum(1 for r in results if r.startswith("✅"))
-        fail_count = len(results) - ok_count
-        msg = f"✅ 撥款名單已處理，共{ok_count}筆"
-        if fail_count:
-            msg += f"，{fail_count}筆找不到客戶"
-        if all_admin_gids:
-            msg += f"\n📤 已推送排撥名單給行政群"
-        reply_text(reply_token, msg)
+    # 組合A群回覆
+    ok_count = sum(1 for _, s, _, _ in result_lines if s)
+    fail_count = len(result_lines) - ok_count
+
+    msg_lines = []
+    if pushed_ok:
+        msg_lines.append(f"✅ 撥款名單已推送行政群，共{ok_count}筆")
+    else:
+        msg_lines.append(f"✅ 撥款名單處理完成，共{ok_count}筆")
+
+    for idx, success, name, detail in result_lines:
+        if success:
+            msg_lines.append(f"第{idx}筆：✅ {name}")
+        else:
+            msg_lines.append(f"第{idx}筆：{detail}")
+
+    reply_text(reply_token, chr(10).join(msg_lines))
 
 
 from fastapi import FastAPI, Request, BackgroundTasks
@@ -1443,7 +1454,7 @@ ACTION_KEYWORDS = [
     "補聯徵", "補保人", "保密", "無可知情", "聯絡人皆可知情", "已補",
 ]
 
-DELETE_KEYWORDS = ["結案", "刪掉", "不追了", "全部不送", "已撥款結案", "違約金結案", "已支付違約金", "以收到違約金", "收到違約金", "違約金已收"]
+DELETE_KEYWORDS = ["結案", "刪掉", "不追了", "全部不送", "已撥款結案", "違約金結案", "已支付違約金", "以收到違約金", "收到違約金", "違約金已收", "以收到違約金", "違約金"]
 BLOCK_KEYWORDS = ["鼎信", "禾基"]
 
 IGNORE_NAME_SET = {
