@@ -57,20 +57,26 @@ IGNORE_NAME_SET = {
     "信用不良", "不需要了", "不用了", "不要了", "結案", "補件", "核准", "婉拒",
     "照會", "等保書", "待撥款", "缺資料", "補資料", "資料補", "補來", "退件",
     "助理", "AI助理", "先生", "小姐", "無可知情", "聯絡人皆可知情", "下一家",
+    "可知情", "聯絡人", "皆可知情", "不可知情", "無空間", "信用卡",
+    "機車貸", "汽車貸", "商品貸", "無貸款", "合照後", "後補", "來補",
+    "空間", "貸款", "申請", "提供", "保證", "聯徵", "繳息",
 }
 
 CHINESE_NAME_RE = re.compile(r"[\u4e00-\u9fff]{2,4}")
 ID_RE = re.compile(r"[A-Z][12]\d{8}")
+
+# 支援有無 - 的日期格式，如 115/3/2廖俊宏 或 115/3/2-廖俊宏
 DATE_NAME_ID_INLINE_RE = re.compile(
     r"^\s*(\d{2,4}/\d{1,2}/\d{1,2})\s*[-－]?\s*([\u4e00-\u9fff]{2,4})\s*([A-Z][12]\d{8})",
     re.IGNORECASE,
 )
 DATE_NAME_ONLY_RE = re.compile(
-    r"^\s*(\d{2,4}/\d{1,2}/\d{1,2})\s*[-－]?\s*([\u4e00-\u9fff]{2,4})(?:\s*$|\s*[-－/])",
+    r"^\s*(\d{2,4}/\d{1,2}/\d{1,2})\s*[-－]?\s*([\u4e00-\u9fff]{2,4})(?:\s*$|\s*[-－/\u4e00-\u9fff])",
     re.IGNORECASE,
 )
+# 短日期：3/2廖俊宏 或 3/2-廖俊宏（有無-都支援）
 SHORT_DATE_NAME_RE = re.compile(
-    r"^\s*(\d{1,2}/\d{1,2})\s*[-－]\s*([\u4e00-\u9fff]{2,4})"
+    r"^\s*(\d{1,2}/\d{1,2})\s*[-－]?\s*([\u4e00-\u9fff]{2,4})"
 )
 # 送件順序格式：4/1-高郡惠-喬美/亞太/和裕
 ROUTE_ORDER_RE = re.compile(
@@ -543,6 +549,39 @@ def delete_pending_action(action_id):
 
 
 # =========================
+# 狀態摘要提取
+# =========================
+def extract_status_summary(first_line: str, customer_name: str) -> str:
+    """
+    從訊息第一行提取狀態關鍵字，用於日報顯示。
+    例：「林美伶 等保書 21」→「等保書」
+        「劉依庭21 婉拒 【1】...」→「婉拒」
+        「王鴻銘 21 待補」→「待補」
+    """
+    if not first_line:
+        return ""
+
+    # 去掉客戶姓名
+    text = first_line.replace(customer_name, "").strip()
+
+    # 去掉日期
+    text = re.sub(r"^\d{1,4}/\d{1,2}(/\d{1,2})?[-－]?\s*", "", text).strip()
+
+    # 去掉公司名稱（COMPANY_LIST）
+    for c in sorted(COMPANY_LIST, key=len, reverse=True):
+        text = text.replace(c, "").strip()
+
+    # 去掉【N】之後的內容
+    text = re.sub(r"【\d+】.*", "", text).strip()
+
+    # 去掉多餘標點
+    text = re.sub(r"^[-－/\s]+|[-－/\s]+$", "", text).strip()
+
+    # 只取前20字
+    return text[:20] if text else ""
+
+
+# =========================
 # 日報產生
 # =========================
 def generate_report_lines(group_id: str) -> List[str]:
@@ -558,11 +597,17 @@ def generate_report_lines(group_id: str) -> List[str]:
         updated = row["updated_at"] or ""
         date_str = updated[5:10].replace("-", "/") if updated else ""
         company_str = row["current_company"] or row["company"] or ""
-        last_lines = (row["last_update"] or "").splitlines()
-        last_short = last_lines[-1].strip()[:30] if last_lines else ""
+
+        # 日報只取最新訊息第一行作為狀態摘要
+        last_update = row["last_update"] or ""
+        first_line = last_update.splitlines()[0].strip() if last_update.strip() else ""
+
+        # 從第一行提取狀態關鍵字（去掉姓名、公司、日期，只留狀態）
+        status_short = extract_status_summary(first_line, row["customer_name"])
+
         line = f"{date_str}-{row['customer_name']}-{company_str}"
-        if last_short and last_short not in line:
-            line += f"-{last_short}"
+        if status_short:
+            line += f"-{status_short}"
         section_map.setdefault(section, []).append(line)
 
     output = [f"📊 {group_name} 日報 {datetime.now().strftime('%m/%d')}"]
@@ -1194,6 +1239,59 @@ async def callback(request: Request, background_tasks: BackgroundTasks):
 # =========================
 # 管理 API
 # =========================
+@app.post("/admin/reset_data")
+async def reset_data(request: Request):
+    """
+    清除所有測試資料（customers + case_logs + pending_actions）
+    群組設定保留不動。
+    需要帶 {"confirm": "yes"} 才會執行，避免誤觸。
+    """
+    body = await request.json()
+    if body.get("confirm") != "yes":
+        return {"status": "error", "message": '請帶 {"confirm": "yes"} 才會執行清除'}
+    conn = get_conn()
+    cur = conn.cursor()
+    try:
+        cur.execute("DELETE FROM customers")
+        cur.execute("DELETE FROM case_logs")
+        cur.execute("DELETE FROM pending_actions")
+        # 重置自動遞增 ID
+        cur.execute("DELETE FROM sqlite_sequence WHERE name IN ('customers','case_logs','pending_actions')")
+        conn.commit()
+        return {"status": "ok", "message": "✅ 已清除所有案件資料，群組設定保留"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+    finally:
+        conn.close()
+
+
+@app.get("/admin/reset_data", response_class=HTMLResponse)
+def reset_data_page():
+    """清除測試資料的網頁介面"""
+    return """
+    <h2>⚠️ 清除測試資料</h2>
+    <p>此操作將清除所有客戶案件紀錄，群組設定不受影響。</p>
+    <p><b>清除後無法復原（除非從 Render Snapshot 還原）</b></p>
+    <button onclick="doReset()" style="background:red;color:white;padding:10px 20px;font-size:16px;border:none;border-radius:6px;cursor:pointer">
+        確認清除所有測試資料
+    </button>
+    <div id="result" style="margin-top:20px;font-size:18px;"></div>
+    <br><a href="/">回首頁</a>
+    <script>
+    async function doReset() {
+        if (!confirm('確定要清除所有案件資料嗎？')) return;
+        const r = await fetch('/admin/reset_data', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({confirm: 'yes'})
+        });
+        const data = await r.json();
+        document.getElementById('result').innerText = data.message;
+    }
+    </script>
+    """
+
+
 @app.post("/admin/add_group")
 async def add_group(request: Request):
     """新增群組 API。Body: {group_id, group_name, group_type: SALES_GROUP/ADMIN_GROUP/A_GROUP}"""
@@ -1221,7 +1319,9 @@ async def add_group(request: Request):
 @app.get("/", response_class=HTMLResponse)
 def home():
     return """<h2>貸款系統</h2><p>系統正常運作中</p>
-    <a href="/report">📊 日報</a> | <a href="/admin/groups">群組管理</a>"""
+    <a href="/report">📊 日報</a> |
+    <a href="/admin/groups">群組管理</a> |
+    <a href="/admin/reset_data" style="color:red">🗑️ 清除測試資料</a>"""
 
 
 @app.get("/admin/groups", response_class=HTMLResponse)
