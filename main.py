@@ -437,8 +437,16 @@ def init_db():
         payload TEXT NOT NULL, created_at TEXT NOT NULL
     )""")
     # 自動補欄位，不破壞舊資料
-    for col, defn in [("route_plan", "TEXT"), ("current_company", "TEXT"), ("report_section", "TEXT")]:
+    for col, defn in [
+        ("route_plan", "TEXT"),
+        ("current_company", "TEXT"),
+        ("report_section", "TEXT"),
+        ("approved_amount", "TEXT"),       # 核准金額
+        ("disbursement_date", "TEXT"),     # 撥款日期
+    ]:
         ensure_column(cur, "customers", col, defn)
+    # groups 表新增業務群對應欄位
+    ensure_column(cur, "groups", "linked_sales_group_id", "TEXT")
     conn.commit()
     conn.close()
 
@@ -477,7 +485,8 @@ def create_customer_record(name, id_no, company, source_group_id, text,
 
 def update_customer(case_id, company=None, text=None, from_group_id="", status=None,
                     name=None, source_group_id=None, route_plan=None,
-                    current_company=None, report_section=None):
+                    current_company=None, report_section=None,
+                    approved_amount=None, disbursement_date=None):
     conn = get_conn()
     cur = conn.cursor()
     now = now_iso()
@@ -485,7 +494,9 @@ def update_customer(case_id, company=None, text=None, from_group_id="", status=N
     for col, val in [("company", company), ("last_update", text), ("status", status),
                      ("customer_name", name), ("source_group_id", source_group_id),
                      ("route_plan", route_plan), ("current_company", current_company),
-                     ("report_section", report_section)]:
+                     ("report_section", report_section),
+                     ("approved_amount", approved_amount),
+                     ("disbursement_date", disbursement_date)]:
         if val is not None:
             fields.append(f"{col} = ?"); values.append(val)
     fields.append("updated_at = ?"); values.append(now); values.append(case_id)
@@ -549,6 +560,106 @@ def delete_pending_action(action_id):
 
 
 # =========================
+# 核准金額 / 撥款名單工具
+# =========================
+def extract_approved_amount(text: str) -> str:
+    """
+    從訊息抓取核准金額。
+    支援格式：核准20萬 / 核准200,000 / 核准200000 / 核准6萬5 / 核准金額20萬
+    回傳字串如「20萬」「200,000元」，抓不到回傳空字串
+    """
+    patterns = [
+        r"核[貸准貸]\s*金額?\s*[:：]?\s*(\d+[\d,]*)\s*萬?",
+        r"核准\s*(\d+[\d,]*萬?\d*)",
+        r"最高核[貸貸]\s*金額?\s*(\d+[\d,]*)\s*萬",
+        r"金額\s*[:：]?\s*(\d+[\d,]*)\s*萬?",
+    ]
+    for pat in patterns:
+        m = re.search(pat, text)
+        if m:
+            raw = m.group(1).replace(",", "")
+            # 判斷是否有萬
+            after = text[m.end():][:3]
+            if "萬" in m.group(0) or "萬" in after:
+                # 避免重複加萬
+                return f"{raw}萬" if not raw.endswith("萬") else raw
+            # 純數字判斷：超過1000當元，否則當萬
+            try:
+                num = int(raw)
+                if num >= 1000:
+                    return f"{num:,}元"
+                else:
+                    return f"{num}萬"
+            except:
+                return raw
+    return ""
+
+
+def parse_disbursement_list(text: str) -> Dict:
+    """
+    解析撥款名單格式：
+    04/01 21 撥款名單
+    吳翰杰
+    蔡文杰
+    ...
+    04/01 亞太排撥
+    洪莉萍
+
+    回傳 {"04/01": {"21": ["吳翰杰","蔡文杰"], "亞太": ["洪莉萍"]}}
+    """
+    result = {}
+    current_date = ""
+    current_company = ""
+
+    # 撥款名單標頭正則
+    DISB_HEADER_RE = re.compile(
+        r"(\d{1,2}/\d{1,2})\s*([\w一-鿿]+?)\s*(撥款名單|排撥|撥款)",
+        re.IGNORECASE
+    )
+
+    lines = text.splitlines()
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+
+        m = DISB_HEADER_RE.search(line)
+        if m:
+            current_date = m.group(1)
+            current_company = m.group(2).strip()
+            if current_date not in result:
+                result[current_date] = {}
+            if current_company not in result[current_date]:
+                result[current_date][current_company] = []
+            continue
+
+        # 名字行（2-4個中文字，或含英文的姓名）
+        if current_date and current_company:
+            name_m = re.match(r"^([一-鿿]{2,4})\s*$", line)
+            if name_m:
+                result[current_date][current_company].append(name_m.group(1))
+
+    return result
+
+
+def is_disbursement_list(text: str) -> bool:
+    """判斷是否為撥款名單"""
+    return bool(re.search(r"撥款名單|排撥|撥款", text))
+
+
+def get_admin_group_for_sales(sales_group_id: str) -> Optional[str]:
+    """根據業務群ID找對應的行政群ID"""
+    conn = get_conn(); cur = conn.cursor()
+    cur.execute("""
+        SELECT group_id FROM groups
+        WHERE group_type='ADMIN_GROUP' AND linked_sales_group_id=? AND is_active=1
+        LIMIT 1
+    """, (sales_group_id,))
+    row = cur.fetchone(); conn.close()
+    return row["group_id"] if row else None
+
+
+# =========================
 # 狀態摘要提取
 # =========================
 def extract_status_summary(first_line: str, customer_name: str) -> str:
@@ -605,9 +716,20 @@ def generate_report_lines(group_id: str) -> List[str]:
         # 從第一行提取狀態關鍵字（去掉姓名、公司、日期，只留狀態）
         status_short = extract_status_summary(first_line, row["customer_name"])
 
-        line = f"{date_str}-{row['customer_name']}-{company_str}"
-        if status_short:
-            line += f"-{status_short}"
+        # 待撥款區用特殊格式
+        if section == "待撥款":
+            # 用 created_at 當進件日期
+            created = row["created_at"] or ""
+            created_date = created[5:10].replace("-", "/") if created else date_str
+            amount = row["approved_amount"] or ""
+            disb_date = row["disbursement_date"] or ""
+            amount_str = f"-核准{amount}" if amount else ""
+            disb_str = f"(撥款{disb_date})" if disb_date else "(待撥款)"
+            line = f"{created_date}-{row['customer_name']}-{company_str}{amount_str}{disb_str}"
+        else:
+            line = f"{date_str}-{row['customer_name']}-{company_str}"
+            if status_short:
+                line += f"-{status_short}"
         section_map.setdefault(section, []).append(line)
 
     output = [f"📊 {group_name} 日報 {datetime.now().strftime('%m/%d')}"]
@@ -1009,16 +1131,26 @@ def handle_a_case_block(block_text, reply_token) -> Optional[str]:
     company = extract_company(block_text) or customer["company"] or ""
     new_status = "CLOSED" if is_closed_text(block_text) else None
     is_reject = "婉拒" in block_text
+    is_approved = "核准" in block_text and new_status != "CLOSED"
     route = customer["route_plan"] or ""
     new_route, next_co = route, ""
     if is_reject and route:
         next_co = get_next_company(route)
         new_route = advance_route(route, "婉拒")
 
+    # 核准時抓金額，移到待撥款區
+    approved_amount = None
+    new_report_section = None
+    if is_approved:
+        approved_amount = extract_approved_amount(block_text) or None
+        new_report_section = "待撥款"
+
     update_customer(customer["case_id"], company=company, text=block_text,
                     from_group_id=A_GROUP_ID, status=new_status,
                     route_plan=new_route if new_route != route else None,
-                    current_company=next_co if next_co else None)
+                    current_company=next_co if next_co else None,
+                    approved_amount=approved_amount,
+                    report_section=new_report_section)
 
     ok, err = push_text(customer["source_group_id"], block_text)
     if not ok:
@@ -1173,6 +1305,71 @@ def handle_command_text(text: str, reply_token: str) -> bool:
 
 
 # =========================
+# 撥款名單處理
+# =========================
+def handle_disbursement_list(text: str, reply_token: str):
+    """
+    解析撥款名單，更新客戶撥款日期，推送到對應行政群。
+    格式：
+    04/01 21 撥款名單
+    吳翰杰
+    蔡文杰
+    """
+    parsed = parse_disbursement_list(text)
+    if not parsed:
+        reply_text(reply_token, "⚠️ 無法解析撥款名單格式")
+        return
+
+    results = []
+    notified_admin_groups = set()
+
+    for disb_date, companies in parsed.items():
+        for company, names in companies.items():
+            for name in names:
+                # 找客戶
+                rows = find_active_by_name(name)
+                if not rows:
+                    # 也找待撥款狀態的
+                    conn = get_conn(); cur = conn.cursor()
+                    cur.execute("""SELECT * FROM customers WHERE customer_name=?
+                                   AND report_section='待撥款' ORDER BY updated_at DESC""", (name,))
+                    rows = list(cur.fetchall()); conn.close()
+
+                if not rows:
+                    results.append(f"⚠️ 找不到客戶：{name}")
+                    continue
+
+                target = rows[0]
+                # 更新撥款日期，移到待撥款區
+                update_customer(
+                    target["case_id"],
+                    disbursement_date=disb_date,
+                    report_section="待撥款",
+                    text=f"{name} {company} 撥款{disb_date}",
+                    from_group_id=A_GROUP_ID,
+                )
+                results.append(f"✅ {name} 撥款{disb_date}（{company}）")
+
+                # 推送到對應行政群
+                admin_gid = get_admin_group_for_sales(target["source_group_id"])
+                if admin_gid and admin_gid not in notified_admin_groups:
+                    push_text(admin_gid, text)
+                    notified_admin_groups.add(admin_gid)
+
+    if results:
+        # 每次最多回5筆，超過只顯示摘要
+        if len(results) <= 5:
+            reply_text(reply_token, "\n".join(results))
+        else:
+            ok_count = sum(1 for r in results if r.startswith("✅"))
+            fail_count = len(results) - ok_count
+            msg = f"✅ 撥款名單處理完成\n共{ok_count}筆成功"
+            if fail_count:
+                msg += f"，{fail_count}筆找不到客戶"
+            reply_text(reply_token, msg)
+
+
+# =========================
 # Webhook
 # =========================
 def process_event(event: dict):
@@ -1234,6 +1431,11 @@ def process_event(event: dict):
 
     # A 群
     if group_id == A_GROUP_ID:
+        # 撥款名單（不需要@AI觸發）
+        if is_disbursement_list(text):
+            handle_disbursement_list(text, reply_token)
+            return
+
         if not has_ai_trigger(text):
             return
         cmd = parse_special_command(text, group_id)
@@ -1326,12 +1528,18 @@ async def add_group(request: Request):
     gtype = body.get("group_type", "SALES_GROUP").strip()
     if not gid or not gname:
         return {"status": "error", "message": "group_id 和 group_name 必填"}
+    linked = body.get("linked_sales_group_id", "").strip()
     conn = get_conn(); cur = conn.cursor()
     try:
-        cur.execute("INSERT OR REPLACE INTO groups (group_id,group_name,group_type,is_active,created_at) VALUES (?,?,?,1,?)",
-                    (gid, gname, gtype, now_iso()))
+        cur.execute("""INSERT OR REPLACE INTO groups
+            (group_id,group_name,group_type,is_active,linked_sales_group_id,created_at)
+            VALUES (?,?,?,1,?,?)""",
+                    (gid, gname, gtype, linked or None, now_iso()))
         conn.commit()
-        return {"status": "ok", "message": f"已新增/更新群組：{gname}({gtype})"}
+        msg = f"已新增/更新群組：{gname}({gtype})"
+        if linked:
+            msg += f"，對應業務群：{get_group_name(linked)}"
+        return {"status": "ok", "message": msg}
     except Exception as e:
         return {"status": "error", "message": str(e)}
     finally:
