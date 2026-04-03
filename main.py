@@ -856,6 +856,10 @@ def send_confirm_new_case_buttons(reply_token, block_text, existing_customer, so
 def parse_special_command(text: str, group_id: str) -> Optional[Dict]:
     clean = strip_ai_trigger(text).strip()
 
+    # 群組ID查詢
+    if re.match(r"^群組ID$", clean):
+        return {"type": "group_id"}
+
     # 日報
     if re.match(r"^日報$", clean):
         return {"type": "report"}
@@ -894,6 +898,11 @@ def parse_special_command(text: str, group_id: str) -> Optional[Dict]:
 
 def handle_special_command(cmd: Dict, reply_token: str, group_id: str):
     t = cmd["type"]
+
+    if t == "group_id":
+        gname = get_group_name(group_id)
+        reply_text(reply_token, f"📋 此群組資訊\n名稱：{gname}\nID：{group_id}")
+        return
 
     if t == "report":
         segs = generate_report_lines(group_id)
@@ -1385,6 +1394,14 @@ def process_event(event: dict):
         return
     if handle_command_text(text, reply_token):
         return
+
+    # 任何群組都可以查群組ID（方便設定用）
+    if has_ai_trigger(text):
+        clean = strip_ai_trigger(text).strip()
+        if clean == "群組ID":
+            gname = get_group_name(group_id)
+            reply_text(reply_token, f"📋 此群組資訊\n名稱：{gname}\nID：{group_id}")
+            return
 
     sales_ids = get_sales_group_ids()
     admin_ids = get_admin_group_ids()
