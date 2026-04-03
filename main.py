@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, BackgroundTasks
 from fastapi.responses import HTMLResponse
 import uvicorn
 import requests
@@ -9,17 +9,21 @@ import json
 from datetime import datetime
 import uuid
 from typing import Optional, List, Dict, Any
+import asyncio
 
 app = FastAPI()
 
 CHANNEL_ACCESS_TOKEN = os.getenv("CHANNEL_ACCESS_TOKEN", "")
 
 # ===== 群組 ID =====
-A_GROUP_ID = "Cb3579e75c94437ed22aafc7b1f6aecdd"   # A群
-B_GROUP_ID = "Cd14f3ee775f1d9f5cfdafb223173cbef"   # B群
-C_GROUP_ID = "C1a647fcb29a74842eceeb18e7a53823d"   # C群
+A_GROUP_ID = os.getenv("A_GROUP_ID", "Cb3579e75c94437ed22aafc7b1f6aecdd")   # A群（進度群）
 
-# ===== Render Disk 永久保存 =====
+# ★ 修正圖2：業務群改成動態從 DB 讀取，不再寫死 B/C
+#   只需在 DB groups 表設定 group_type='SALES_GROUP' 即可自動生效
+#   初始種子仍保留 B/C 方便測試
+B_GROUP_ID = "Cd14f3ee775f1d9f5cfdafb223173cbef"
+C_GROUP_ID = "C1a647fcb29a74842eceeb18e7a53823d"
+
 DB_PATH = os.getenv("DB_PATH", "/var/data/loan_system.db")
 
 COMPANY_LIST = [
@@ -106,6 +110,8 @@ def contains_bu_word(text: str) -> bool:
     return "補" in (text or "")
 
 
+# ★ 修正圖4：should_push_to_a_group 拆掉，改由呼叫端自行控制時機
+#   不再在「判讀階段」直接推送，避免結案後補資料立即推 A 群
 def should_push_to_a_group(text: str) -> bool:
     return has_ai_trigger(text) and contains_bu_word(text)
 
@@ -166,6 +172,20 @@ def parse_header_fields(text: str) -> Dict[str, str]:
     m = DATE_NAME_ONLY_RE.search(first)
     if m:
         result["date"], result["name"] = m.group(1), m.group(2)
+        if len(lines) >= 2:
+            id_m = ID_RE.search(lines[1].upper())
+            if id_m:
+                result["id_no"] = id_m.group(0)
+        return result
+
+    # ★ 修正圖3：「月/日-姓名」（無年份），第二行為身分證
+    SHORT_DATE_NAME_RE2 = re.compile(
+        r"^\s*(\d{1,2}/\d{1,2})\s*[-－]\s*([\u4e00-\u9fff]{2,4})\s*$"
+    )
+    m = SHORT_DATE_NAME_RE2.search(first)
+    if m:
+        result["date"] = m.group(1)
+        result["name"] = m.group(2)
         if len(lines) >= 2:
             id_m = ID_RE.search(lines[1].upper())
             if id_m:
@@ -251,11 +271,27 @@ def get_group_name(group_id: str) -> str:
         return row["group_name"]
     if group_id == A_GROUP_ID:
         return "A群"
-    if group_id == B_GROUP_ID:
-        return "B群"
-    if group_id == C_GROUP_ID:
-        return "C群"
     return "未知群組"
+
+
+# ★ 修正圖2：動態取得所有業務群 ID
+def get_sales_group_ids() -> List[str]:
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT group_id FROM groups WHERE group_type = 'SALES_GROUP' AND is_active = 1")
+    rows = cur.fetchall()
+    conn.close()
+    return [r["group_id"] for r in rows]
+
+
+# ★ 修正圖2：動態取得所有行政群 ID
+def get_admin_group_ids() -> List[str]:
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT group_id FROM groups WHERE group_type = 'ADMIN_GROUP' AND is_active = 1")
+    rows = cur.fetchall()
+    conn.close()
+    return [r["group_id"] for r in rows]
 
 
 def get_block_display_text(block_text: str) -> str:
@@ -621,73 +657,22 @@ def delete_pending_action(action_id: str):
 
 
 # =========================
-# 分段 / 判斷
+# Quick Reply 按鈕建立
 # =========================
-def looks_like_case_start(line: str) -> bool:
-    line = line.strip()
-    if not line:
-        return False
-    if re.match(r"^[\[【(（]\d+[\]】)）]", line):
-        return False
-    if line.startswith("@") or line.startswith("#"):
-        return False
-    if line in {"助理", "AI助理"}:
-        return False
-
-    compact = re.sub(r"\s+", "", line)
-    if DATE_NAME_ID_INLINE_RE.search(compact):
-        return True
-    if DATE_NAME_ONLY_RE.search(line):
-        return True
-    if looks_like_route_plan_block(line):
-        return True
-    if is_format_trigger(line):
-        return True
-
-    name = extract_name(line)
-    company = extract_company(line)
-    has_strong = contains_status_word(line)
-    if name and company:
-        return True
-    if name and has_strong:
-        return True
-    return False
-
-
-def split_multi_cases(text: str) -> List[str]:
-    text = (text or "").strip()
-    if not text:
-        return []
-
-    text = re.sub(r"\n\s*/\s*\n", "\n<<<SPLIT>>>\n", text)
-    text = re.sub(r"\n\s*\n+", "\n<<<SPLIT>>>\n", text)
-    raw_parts = [p.strip() for p in text.split("<<<SPLIT>>>") if p.strip()]
-
-    final_blocks: List[str] = []
-    for part in raw_parts:
-        lines = [line.rstrip() for line in part.splitlines() if line.strip()]
-        if not lines:
-            continue
-
-        current: List[str] = []
-        for line in lines:
-            if looks_like_case_start(line) and current:
-                final_blocks.append("\n".join(current).strip())
-                current = []
-            current.append(line.strip())
-        if current:
-            final_blocks.append("\n".join(current).strip())
-
-    return [b for b in final_blocks if b.strip()]
-
-
-def send_reopen_case_buttons(reply_token: str, block_text: str, closed_rows, source_group_id: str):
+def send_reopen_case_buttons(reply_token: str, block_text: str, closed_rows, source_group_id: str,
+                              push_to_a_after_reopen: bool = False):
+    """
+    ★ 修正圖4：新增 push_to_a_after_reopen 參數
+       True  = 重啟後才推 A 群（補資料情境）
+       False = 重啟後不推 A 群
+    """
     action_id = short_id()
     closed_rows = sorted(closed_rows, key=lambda x: x["updated_at"], reverse=True)[:1]
     payload = {
         "block_text": block_text,
         "case_ids": [r["case_id"] for r in closed_rows],
         "source_group_id": source_group_id,
+        "push_to_a_after_reopen": push_to_a_after_reopen,  # ★ 新增
     }
     save_pending_action(action_id, "reopen_or_new_case", payload)
 
@@ -746,6 +731,37 @@ def send_transfer_case_buttons(reply_token: str, customer, source_group_id: str,
     )
 
 
+# ★ 修正圖1：新增「確認建立新客戶」按鈕（同身分證但跨群時詢問）
+def send_confirm_new_case_buttons(reply_token: str, block_text: str,
+                                   existing_customer, source_group_id: str):
+    """
+    當業務群輸入新客戶，但其他群已有相同身分證時，
+    詢問是否確定要在本群建立新案件。
+    """
+    action_id = short_id()
+    payload = {
+        "block_text": block_text,
+        "source_group_id": source_group_id,
+        "existing_case_id": existing_customer["case_id"],
+    }
+    save_pending_action(action_id, "confirm_new_case_with_existing_id", payload)
+
+    old_group = get_group_name(existing_customer["source_group_id"])
+    new_group = get_group_name(source_group_id)
+    name = extract_name(block_text) or existing_customer["customer_name"]
+
+    items = [
+        make_quick_reply_item(f"沿用{old_group}案件", f"USE_EXISTING_CASE|{action_id}"),
+        make_quick_reply_item(f"在{new_group}建立新案件", f"FORCE_CREATE_NEW|{action_id}"),
+        make_quick_reply_item("取消", f"CANCEL_NEW_CASE|{action_id}"),
+    ]
+    reply_quick_reply(
+        reply_token,
+        f"⚠️ {name} 的身分證已存在於{old_group}，確定要在{new_group}建立新案件嗎？",
+        items,
+    )
+
+
 # =========================
 # 主要業務邏輯
 # =========================
@@ -756,7 +772,10 @@ def build_update_reply(name: str, pushed_to_a: bool, base_msg: str = "已更新�
     return "\n".join(lines)
 
 
-def handle_new_case_block(block_text: str, source_group_id: str):
+def handle_new_case_block(block_text: str, source_group_id: str, reply_token: str):
+    """
+    ★ 修正圖1：同身分證在其他群時改為跳確認按鈕，不再直接回警告文字
+    """
     fields = parse_header_fields(block_text)
     name = fields["name"]
     id_no = fields["id_no"]
@@ -768,6 +787,7 @@ def handle_new_case_block(block_text: str, source_group_id: str):
     existing = find_active_by_id_no(id_no)
     if existing:
         if existing["source_group_id"] == source_group_id:
+            # 同群同身分證 → 更新
             update_customer(
                 existing["case_id"],
                 company or existing["company"] or "",
@@ -776,7 +796,10 @@ def handle_new_case_block(block_text: str, source_group_id: str):
                 name=name,
             )
             return f"🔄 已更新客戶：{name}"
-        return f"⚠️ 同身分證已存在於{get_group_name(existing['source_group_id'])}：{name}"
+        else:
+            # ★ 修正圖1：跨群同身分證 → 跳確認按鈕
+            send_confirm_new_case_buttons(reply_token, block_text, existing, source_group_id)
+            return "QUICK_REPLY_SENT"
 
     create_customer_record(name, id_no, company, source_group_id, block_text)
     return f"🆕 已建立客戶：{name}"
@@ -817,7 +840,8 @@ def handle_bc_case_block(block_text: str, source_group_id: str, reply_token: str
         return "❌ 含禁止關鍵字，已略過"
 
     if looks_like_new_case_block(block_text):
-        return handle_new_case_block(block_text, source_group_id)
+        # ★ 修正圖1：傳入 reply_token
+        return handle_new_case_block(block_text, source_group_id, reply_token)
 
     if looks_like_route_plan_block(block_text):
         return handle_route_plan_block(block_text, source_group_id, reply_token)
@@ -829,15 +853,12 @@ def handle_bc_case_block(block_text: str, source_group_id: str, reply_token: str
     if not name or name in IGNORE_NAME_WORDS:
         return None
 
-    pushed_to_a = False
+    # ★ 修正圖4：push_to_a 只在「案件未結案且有效更新」後執行
+    #   不在結案後補資料觸發時直接推送
     push_source_text = source_text or block_text
-    if should_push_to_a_group(push_source_text):
-        ok, err = push_text(A_GROUP_ID, block_text)
-        pushed_to_a = ok
-
+    want_push_a = should_push_to_a_group(push_source_text)
     has_action_word = has_business_action_word(block_text)
 
-    # 有身分證：只看身分證，不因同名去跳按鈕
     if id_no:
         existing = find_active_by_id_no(id_no)
         if existing:
@@ -851,17 +872,24 @@ def handle_bc_case_block(block_text: str, source_group_id: str, reply_token: str
                     status=new_status,
                     name=name,
                 )
+                # ★ 修正圖4：結案後不推 A 群
+                pushed_to_a = False
+                if want_push_a and new_status != "CLOSED":
+                    ok, _ = push_text(A_GROUP_ID, block_text)
+                    pushed_to_a = ok
                 return build_update_reply(name, pushed_to_a)
 
             if is_closed_text(block_text):
-                # 同身分證但別群，結案不跳轉群按鈕，維持舊案資訊
                 return f"⚠️ 同身分證案件存在於{get_group_name(existing['source_group_id'])}：{name}"
 
             send_transfer_case_buttons(reply_token, existing, source_group_id, block_text, allow_new=True)
             return "QUICK_REPLY_SENT"
 
-        # 沒有同身分證，直接新建，不管是否同名
         create_customer_record(name, id_no, company, source_group_id, block_text)
+        pushed_to_a = False
+        if want_push_a:
+            ok, _ = push_text(A_GROUP_ID, block_text)
+            pushed_to_a = ok
         if pushed_to_a:
             return f"🆕 已建立客戶：{name}\n✅ 已回貼A群：{name}"
         return f"🆕 已建立客戶：{name}"
@@ -873,9 +901,12 @@ def handle_bc_case_block(block_text: str, source_group_id: str, reply_token: str
     other_group_active = [r for r in any_rows if r["source_group_id"] != source_group_id and r["status"] == "ACTIVE"]
     other_group_closed = [r for r in any_rows if r["source_group_id"] != source_group_id and r["status"] != "ACTIVE"]
 
-    # 已結案後又有後續進度：才跳重啟/新建
+    # ★ 修正圖4：結案後補資料 → 跳重啟按鈕，且帶 push_to_a_after_reopen=True
     if has_action_word and same_group_closed and not same_group_active and not is_closed_text(block_text):
-        send_reopen_case_buttons(reply_token, block_text, same_group_closed, source_group_id)
+        send_reopen_case_buttons(
+            reply_token, block_text, same_group_closed, source_group_id,
+            push_to_a_after_reopen=want_push_a  # ★ 等重啟後才推
+        )
         return "QUICK_REPLY_SENT"
 
     if has_action_word and same_group_active:
@@ -888,6 +919,11 @@ def handle_bc_case_block(block_text: str, source_group_id: str, reply_token: str
             source_group_id,
             status=new_status,
         )
+        pushed_to_a = False
+        # ★ 修正圖4：結案時不推 A 群
+        if want_push_a and new_status != "CLOSED":
+            ok, _ = push_text(A_GROUP_ID, block_text)
+            pushed_to_a = ok
         return build_update_reply(name, pushed_to_a)
 
     if not has_action_word and not is_format_trigger(block_text):
@@ -901,6 +937,10 @@ def handle_bc_case_block(block_text: str, source_group_id: str, reply_token: str
             block_text,
             source_group_id,
         )
+        pushed_to_a = False
+        if want_push_a:
+            ok, _ = push_text(A_GROUP_ID, block_text)
+            pushed_to_a = ok
         return build_update_reply(name, pushed_to_a)
 
     if other_group_active:
@@ -919,7 +959,10 @@ def handle_bc_case_block(block_text: str, source_group_id: str, reply_token: str
         return f"已更新客戶：{name}"
 
     if same_group_closed and not is_closed_text(block_text):
-        send_reopen_case_buttons(reply_token, block_text, same_group_closed, source_group_id)
+        send_reopen_case_buttons(
+            reply_token, block_text, same_group_closed, source_group_id,
+            push_to_a_after_reopen=want_push_a
+        )
         return "QUICK_REPLY_SENT"
 
     if other_group_closed and not is_closed_text(block_text):
@@ -927,6 +970,10 @@ def handle_bc_case_block(block_text: str, source_group_id: str, reply_token: str
         return "QUICK_REPLY_SENT"
 
     create_customer_record(name, "", company, source_group_id, block_text)
+    pushed_to_a = False
+    if want_push_a:
+        ok, _ = push_text(A_GROUP_ID, block_text)
+        pushed_to_a = ok
     if pushed_to_a:
         return f"🆕 已建立客戶：{name}\n✅ 已回貼A群：{name}"
     return f"🆕 已建立客戶：{name}"
@@ -989,6 +1036,54 @@ def handle_a_case_block(block_text: str, reply_token: str):
 # 指令按鈕處理
 # =========================
 def handle_command_text(text: str, reply_token: str):
+
+    # ★ 修正圖1：新增確認建立新案件的按鈕處理
+    if text.startswith("FORCE_CREATE_NEW|"):
+        _, action_id = text.split("|", 1)
+        action = get_pending_action(action_id)
+        if not action or action["action_type"] != "confirm_new_case_with_existing_id":
+            reply_text(reply_token, "⚠️ 找不到待確認資料")
+            return True
+        payload = action["payload"]
+        block_text = payload.get("block_text", "")
+        source_group_id = payload.get("source_group_id", "")
+        name = extract_name(block_text)
+        id_no = extract_id_no(block_text)
+        company = extract_company(block_text)
+        route_plan = extract_route_plan(block_text)
+        create_customer_record(name, id_no, company, source_group_id, block_text, route_plan=route_plan)
+        reply_text(reply_token, f"🆕 已在{get_group_name(source_group_id)}建立新案件：{name}")
+        delete_pending_action(action_id)
+        return True
+
+    if text.startswith("USE_EXISTING_CASE|"):
+        _, action_id = text.split("|", 1)
+        action = get_pending_action(action_id)
+        if not action or action["action_type"] != "confirm_new_case_with_existing_id":
+            reply_text(reply_token, "⚠️ 找不到待確認資料")
+            return True
+        payload = action["payload"]
+        block_text = payload.get("block_text", "")
+        existing_case_id = payload.get("existing_case_id", "")
+        conn = get_conn()
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM customers WHERE case_id = ?", (existing_case_id,))
+        customer = cur.fetchone()
+        conn.close()
+        if not customer:
+            reply_text(reply_token, "⚠️ 原案件不存在")
+            delete_pending_action(action_id)
+            return True
+        reply_text(reply_token, f"✅ 已沿用{get_group_name(customer['source_group_id'])}案件：{customer['customer_name']}")
+        delete_pending_action(action_id)
+        return True
+
+    if text.startswith("CANCEL_NEW_CASE|"):
+        _, action_id = text.split("|", 1)
+        delete_pending_action(action_id)
+        reply_text(reply_token, "✅ 已取消")
+        return True
+
     if text.startswith("CONFIRM_TRANSFER|"):
         _, action_id = text.split("|", 1)
         action = get_pending_action(action_id)
@@ -1129,7 +1224,9 @@ def handle_command_text(text: str, reply_token: str):
             reply_text(reply_token, "⚠️ 找不到重啟案件資料")
             return True
 
-        block_text = action["payload"].get("block_text", "")
+        payload = action["payload"]
+        block_text = payload.get("block_text", "")
+        push_to_a_after_reopen = payload.get("push_to_a_after_reopen", False)  # ★ 修正圖4
 
         conn = get_conn()
         cur = conn.cursor()
@@ -1150,7 +1247,17 @@ def handle_command_text(text: str, reply_token: str):
             status="ACTIVE",
             route_plan=extract_route_plan(block_text) or None,
         )
-        reply_text(reply_token, f"✅ 已重啟案件：{customer['customer_name']}")
+
+        # ★ 修正圖4：重啟後才推 A 群
+        pushed_to_a = False
+        if push_to_a_after_reopen:
+            ok, _ = push_text(A_GROUP_ID, block_text)
+            pushed_to_a = ok
+
+        msg = f"✅ 已重啟案件：{customer['customer_name']}"
+        if pushed_to_a:
+            msg += f"\n✅ 已回貼A群：{customer['customer_name']}"
+        reply_text(reply_token, msg)
         delete_pending_action(action_id)
         return True
 
@@ -1163,12 +1270,22 @@ def handle_command_text(text: str, reply_token: str):
 
         block_text = action["payload"].get("block_text", "")
         source_group_id = action["payload"].get("source_group_id", B_GROUP_ID)
+        push_to_a_after_reopen = action["payload"].get("push_to_a_after_reopen", False)
         name = extract_name(block_text)
         id_no = extract_id_no(block_text)
         company = extract_company(block_text)
         route_plan = extract_route_plan(block_text)
         create_customer_record(name, id_no, company, source_group_id, block_text, route_plan=route_plan)
-        reply_text(reply_token, f"🆕 已建立新案件：{name}")
+
+        pushed_to_a = False
+        if push_to_a_after_reopen:
+            ok, _ = push_text(A_GROUP_ID, block_text)
+            pushed_to_a = ok
+
+        msg = f"🆕 已建立新案件：{name}"
+        if pushed_to_a:
+            msg += f"\n✅ 已回貼A群：{name}"
+        reply_text(reply_token, msg)
         delete_pending_action(action_id)
         return True
 
@@ -1182,114 +1299,177 @@ def handle_command_text(text: str, reply_token: str):
 
 
 # =========================
-# API
+# Webhook
 # =========================
+# Webhook
+# =========================
+def process_event(event: dict):
+    """
+    背景處理單一 LINE 事件。
+    Webhook 收到後立即回 200，這裡在背景執行，不佔用 LINE 的 5 秒限制。
+    """
+    if event.get("type") != "message":
+        return
+    message = event.get("message", {})
+    if message.get("type") != "text":
+        return
+
+    text = message.get("text", "").strip()
+    reply_token = event.get("replyToken", "")
+    group_id = event.get("source", {}).get("groupId")
+
+    if not text:
+        return
+
+    if handle_command_text(text, reply_token):
+        return
+
+    sales_group_ids = get_sales_group_ids()
+    admin_group_ids = get_admin_group_ids()
+
+    # 業務群 / 行政群
+    if group_id in sales_group_ids or group_id in admin_group_ids:
+        raw_text = text
+        clean_text = strip_ai_trigger(raw_text)
+
+        is_creation_like = looks_like_new_case_block(raw_text) or any(
+            looks_like_new_case_block(b) for b in split_multi_cases(raw_text)
+        )
+        is_route_like = looks_like_route_plan_block(raw_text) or any(
+            looks_like_route_plan_block(b) for b in split_multi_cases(raw_text)
+        )
+
+        should_process = False
+        if is_creation_like or is_route_like:
+            should_process = True
+        elif has_ai_trigger(raw_text):
+            should_process = True
+
+        if not should_process:
+            return
+
+        process_text = raw_text if (is_creation_like or is_route_like) else clean_text
+        if process_text in {"", "助理", "AI助理"}:
+            return
+
+        blocks = split_multi_cases(process_text)
+        if not blocks:
+            blocks = [process_text]
+
+        results = []
+        quick_reply_sent = False
+
+        for idx, block in enumerate(blocks, start=1):
+            result = handle_bc_case_block(block, group_id, reply_token, source_text=raw_text)
+            if result == "QUICK_REPLY_SENT":
+                quick_reply_sent = True
+                break
+            if result:
+                if len(blocks) > 1:
+                    results.append(f"第{idx}筆：{result}")
+                else:
+                    results.append(result)
+
+        if not quick_reply_sent and results:
+            reply_text(reply_token, "\n".join(results))
+        return
+
+    # A 群
+    if group_id == A_GROUP_ID:
+        if not has_ai_trigger(text):
+            return
+
+        clean_text = strip_ai_trigger(text)
+        if clean_text in {"", "助理", "AI助理"}:
+            return
+
+        blocks = split_multi_cases(clean_text)
+        if not blocks:
+            blocks = [clean_text]
+
+        results = []
+        for idx, block in enumerate(blocks, start=1):
+            result = handle_a_case_block(block, reply_token)
+            if result == "QUICK_REPLY_SENT":
+                continue
+            if result:
+                if len(blocks) > 1:
+                    results.append(f"第{idx}筆：{result}")
+                else:
+                    results.append(result)
+
+        if results:
+            reply_text(reply_token, "\n".join(results))
+
+
 @app.post("/callback")
-async def callback(request: Request):
+async def callback(request: Request, background_tasks: BackgroundTasks):
+    """立即回 200 給 LINE，所有事件丟到背景處理，避免 5 秒 timeout。"""
     body = await request.json()
-
     for event in body.get("events", []):
-        if event.get("type") != "message":
-            continue
-
-        message = event.get("message", {})
-        if message.get("type") != "text":
-            continue
-
-        text = message.get("text", "").strip()
-        reply_token = event.get("replyToken", "")
-        group_id = event.get("source", {}).get("groupId")
-
-        if not text:
-            continue
-
-        if handle_command_text(text, reply_token):
-            continue
-
-        # B / C 群
-        if group_id in [B_GROUP_ID, C_GROUP_ID]:
-            raw_text = text
-            clean_text = strip_ai_trigger(raw_text)
-
-            is_creation_like = looks_like_new_case_block(raw_text) or any(
-                looks_like_new_case_block(b) for b in split_multi_cases(raw_text)
-            )
-            is_route_like = looks_like_route_plan_block(raw_text) or any(
-                looks_like_route_plan_block(b) for b in split_multi_cases(raw_text)
-            )
-
-            should_process = False
-            if is_creation_like or is_route_like:
-                should_process = True
-            elif has_ai_trigger(raw_text):
-                should_process = True
-
-            if not should_process:
-                continue
-
-            process_text = raw_text if (is_creation_like or is_route_like) else clean_text
-            if process_text in {"", "助理", "AI助理"}:
-                continue
-
-            blocks = split_multi_cases(process_text)
-            if not blocks:
-                blocks = [process_text]
-
-            results = []
-            quick_reply_sent = False
-
-            for idx, block in enumerate(blocks, start=1):
-                result = handle_bc_case_block(block, group_id, reply_token, source_text=raw_text)
-                if result == "QUICK_REPLY_SENT":
-                    quick_reply_sent = True
-                    break
-                if result:
-                    if len(blocks) > 1:
-                        results.append(f"第{idx}筆：{result}")
-                    else:
-                        results.append(result)
-
-            if not quick_reply_sent and results:
-                reply_text(reply_token, "\n".join(results))
-            continue
-
-        # A 群
-        if group_id == A_GROUP_ID:
-            if not has_ai_trigger(text):
-                continue
-
-            clean_text = strip_ai_trigger(text)
-            if clean_text in {"", "助理", "AI助理"}:
-                continue
-
-            blocks = split_multi_cases(clean_text)
-            if not blocks:
-                blocks = [clean_text]
-
-            results = []
-            for idx, block in enumerate(blocks, start=1):
-                result = handle_a_case_block(block, reply_token)
-                if result == "QUICK_REPLY_SENT":
-                    continue
-                if result:
-                    if len(blocks) > 1:
-                        results.append(f"第{idx}筆：{result}")
-                    else:
-                        results.append(result)
-
-            if results:
-                reply_text(reply_token, "\n".join(results))
-            continue
-
+        background_tasks.add_task(process_event, event)
     return {"status": "ok"}
 
 
+# =========================
+# 管理 API：新增群組
+# =========================
+@app.post("/admin/add_group")
+async def add_group(request: Request):
+    """
+    新增業務群或行政群，不需改程式碼，直接打 API 即可。
+    Body: {"group_id": "Cxxx", "group_name": "D群", "group_type": "SALES_GROUP"}
+    group_type: SALES_GROUP / ADMIN_GROUP / A_GROUP
+    """
+    body = await request.json()
+    group_id = body.get("group_id", "").strip()
+    group_name = body.get("group_name", "").strip()
+    group_type = body.get("group_type", "SALES_GROUP").strip()
+
+    if not group_id or not group_name:
+        return {"status": "error", "message": "group_id 和 group_name 必填"}
+
+    conn = get_conn()
+    cur = conn.cursor()
+    try:
+        cur.execute("""
+        INSERT OR REPLACE INTO groups (group_id, group_name, group_type, is_active, created_at)
+        VALUES (?, ?, ?, 1, ?)
+        """, (group_id, group_name, group_type, now_iso()))
+        conn.commit()
+        return {"status": "ok", "message": f"已新增/更新群組：{group_name}({group_type})"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+    finally:
+        conn.close()
+
+
+@app.get("/admin/groups", response_class=HTMLResponse)
+def list_groups():
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM groups ORDER BY group_type, group_name")
+    rows = cur.fetchall()
+    conn.close()
+
+    html = "<h2>群組列表</h2><table border='1' cellpadding='6'>"
+    html += "<tr><th>名稱</th><th>類型</th><th>Group ID</th><th>啟用</th></tr>"
+    for r in rows:
+        html += f"<tr><td>{r['group_name']}</td><td>{r['group_type']}</td><td>{r['group_id']}</td><td>{'✅' if r['is_active'] else '❌'}</td></tr>"
+    html += "</table><br><a href='/'>回首頁</a>"
+    return html
+
+
+# =========================
+# 報表
+# =========================
 @app.get("/", response_class=HTMLResponse)
 def home():
     return """
     <h2>貸款系統</h2>
     <p>系統正常運作中</p>
-    <a href="/report">看日報</a>
+    <a href="/report">看日報</a> |
+    <a href="/admin/groups">群組管理</a>
     """
 
 
@@ -1336,6 +1516,9 @@ def report():
     return html
 
 
+# =========================
+# 啟動
+# =========================
 @app.on_event("startup")
 def startup():
     init_db()
@@ -1346,3 +1529,72 @@ if __name__ == "__main__":
     init_db()
     seed_groups()
     uvicorn.run(app, host="0.0.0.0", port=10000)
+
+
+# =========================
+# ★ 修正圖3：修正 split_multi_cases（補在原函式旁邊）
+# =========================
+def looks_like_case_start(line: str) -> bool:
+    line = line.strip()
+    if not line:
+        return False
+    if re.match(r"^[\[【(（]\d+[\]】)）]", line):
+        return False
+    if line.startswith("@") or line.startswith("#"):
+        return False
+    if line in {"助理", "AI助理"}:
+        return False
+
+    compact = re.sub(r"\s+", "", line)
+    if DATE_NAME_ID_INLINE_RE.search(compact):
+        return True
+    if DATE_NAME_ONLY_RE.search(line):
+        return True
+
+    # ★ 修正圖3：支援「月/日-姓名」格式（無年份，如 3/31-許永松）
+    SHORT_DATE_NAME_RE = re.compile(
+        r"^\s*\d{1,2}/\d{1,2}\s*[-－]\s*([\u4e00-\u9fff]{2,4})\s*$"
+    )
+    if SHORT_DATE_NAME_RE.search(line):
+        return True
+
+    if looks_like_route_plan_block(line):
+        return True
+    if is_format_trigger(line):
+        return True
+
+    name = extract_name(line)
+    company = extract_company(line)
+    has_strong = contains_status_word(line)
+    if name and company:
+        return True
+    if name and has_strong:
+        return True
+    return False
+
+
+def split_multi_cases(text: str) -> List[str]:
+    text = (text or "").strip()
+    if not text:
+        return []
+
+    text = re.sub(r"\n\s*/\s*\n", "\n<<<SPLIT>>>\n", text)
+    text = re.sub(r"\n\s*\n+", "\n<<<SPLIT>>>\n", text)
+    raw_parts = [p.strip() for p in text.split("<<<SPLIT>>>") if p.strip()]
+
+    final_blocks: List[str] = []
+    for part in raw_parts:
+        lines = [line.rstrip() for line in part.splitlines() if line.strip()]
+        if not lines:
+            continue
+
+        current: List[str] = []
+        for line in lines:
+            if looks_like_case_start(line) and current:
+                final_blocks.append("\n".join(current).strip())
+                current = []
+            current.append(line.strip())
+        if current:
+            final_blocks.append("\n".join(current).strip())
+
+    return [b for b in final_blocks if b.strip()]
