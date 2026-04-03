@@ -1578,12 +1578,146 @@ def home():
 def list_groups():
     conn = get_conn(); cur = conn.cursor()
     cur.execute("SELECT * FROM groups ORDER BY group_type, group_name")
-    rows = cur.fetchall(); conn.close()
-    html = "<h2>群組列表</h2><table border='1' cellpadding='6'>"
-    html += "<tr><th>名稱</th><th>類型</th><th>Group ID</th><th>啟用</th></tr>"
+    rows = cur.fetchall()
+    cur.execute("SELECT group_id, group_name FROM groups WHERE group_type='SALES_GROUP' AND is_active=1")
+    sales_groups = cur.fetchall()
+    conn.close()
+
+    sales_options = "<option value=''>（無）</option>"
+    for sg in sales_groups:
+        sales_options += f"<option value='{sg['group_id']}'>{sg['group_name']}</option>"
+
+    html = """
+    <style>
+        body { font-family: sans-serif; padding: 20px; max-width: 900px; margin: 0 auto; }
+        table { border-collapse: collapse; width: 100%; margin-bottom: 20px; }
+        th, td { border: 1px solid #ccc; padding: 8px 12px; text-align: left; font-size: 14px; }
+        th { background: #f5f5f5; }
+        .form-box { background: #f9f9f9; border: 1px solid #ddd; border-radius: 8px; padding: 20px; margin-bottom: 24px; }
+        .form-box h3 { margin-top: 0; }
+        .form-row { margin-bottom: 12px; }
+        label { display: block; font-size: 13px; color: #555; margin-bottom: 4px; }
+        input, select { width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px; box-sizing: border-box; }
+        .btn { background: #4a90d9; color: white; border: none; padding: 10px 24px; border-radius: 4px; cursor: pointer; font-size: 15px; }
+        .btn:hover { background: #357abd; }
+        .btn-danger { background: #e74c3c; }
+        .btn-danger:hover { background: #c0392b; }
+        #result { margin-top: 12px; font-size: 14px; padding: 8px; border-radius: 4px; }
+        .success { background: #d4edda; color: #155724; }
+        .error { background: #f8d7da; color: #721c24; }
+        td.id-cell { font-size: 11px; color: #666; font-family: monospace; }
+    </style>
+
+    <h2>群組管理</h2>
+    <a href="/">← 回首頁</a>
+
+    <div class="form-box" style="margin-top:16px">
+        <h3>➕ 新增 / 更新群組</h3>
+        <div class="form-row">
+            <label>群組 ID（從群組打 @AI 群組ID 取得）</label>
+            <input type="text" id="f_group_id" placeholder="Cxxx...">
+        </div>
+        <div class="form-row">
+            <label>群組名稱</label>
+            <input type="text" id="f_group_name" placeholder="例：鉅烽行政群">
+        </div>
+        <div class="form-row">
+            <label>群組類型</label>
+            <select id="f_group_type">
+                <option value="SALES_GROUP">業務群 (SALES_GROUP)</option>
+                <option value="ADMIN_GROUP">行政群 (ADMIN_GROUP)</option>
+                <option value="A_GROUP">A群/進度群 (A_GROUP)</option>
+            </select>
+        </div>
+        <div class="form-row" id="linked_row">
+            <label>對應業務群（行政群才需要設定）</label>
+            <select id="f_linked">""" + sales_options + """</select>
+        </div>
+        <button class="btn" onclick="addGroup()">確認新增 / 更新</button>
+        <div id="result"></div>
+    </div>
+
+    <h3>目前群組列表</h3>
+    <table>
+        <tr>
+            <th>名稱</th>
+            <th>類型</th>
+            <th>對應業務群</th>
+            <th>啟用</th>
+            <th>Group ID</th>
+        </tr>
+    """
+
+    type_labels = {
+        "SALES_GROUP": "業務群",
+        "ADMIN_GROUP": "行政群",
+        "A_GROUP": "A群",
+    }
+
     for r in rows:
-        html += f"<tr><td>{r['group_name']}</td><td>{r['group_type']}</td><td>{r['group_id']}</td><td>{'✅' if r['is_active'] else '❌'}</td></tr>"
-    html += "</table><br><a href='/'>回首頁</a>"
+        linked_name = ""
+        if r["linked_sales_group_id"]:
+            conn2 = get_conn(); cur2 = conn2.cursor()
+            cur2.execute("SELECT group_name FROM groups WHERE group_id=?", (r["linked_sales_group_id"],))
+            ln = cur2.fetchone(); conn2.close()
+            linked_name = ln["group_name"] if ln else r["linked_sales_group_id"]
+        type_label = type_labels.get(r["group_type"], r["group_type"])
+        html += f"""<tr>
+            <td><b>{r['group_name']}</b></td>
+            <td>{type_label}</td>
+            <td>{linked_name or '-'}</td>
+            <td>{'✅' if r['is_active'] else '❌'}</td>
+            <td class="id-cell">{r['group_id']}</td>
+        </tr>"""
+
+    html += """
+    </table>
+
+    <script>
+    // 行政群才顯示對應業務群
+    document.getElementById('f_group_type').addEventListener('change', function() {
+        document.getElementById('linked_row').style.display =
+            this.value === 'ADMIN_GROUP' ? 'block' : 'none';
+    });
+    document.getElementById('linked_row').style.display = 'none';
+
+    async function addGroup() {
+        const gid = document.getElementById('f_group_id').value.trim();
+        const gname = document.getElementById('f_group_name').value.trim();
+        const gtype = document.getElementById('f_group_type').value;
+        const linked = document.getElementById('f_linked').value;
+        const resultEl = document.getElementById('result');
+
+        if (!gid || !gname) {
+            resultEl.className = 'error';
+            resultEl.innerText = '⚠️ 群組ID和名稱必填';
+            return;
+        }
+
+        const body = { group_id: gid, group_name: gname, group_type: gtype };
+        if (gtype === 'ADMIN_GROUP' && linked) {
+            body.linked_sales_group_id = linked;
+        }
+
+        try {
+            const r = await fetch('/admin/add_group', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
+            });
+            const data = await r.json();
+            resultEl.className = data.status === 'ok' ? 'success' : 'error';
+            resultEl.innerText = data.message;
+            if (data.status === 'ok') {
+                setTimeout(() => location.reload(), 1500);
+            }
+        } catch(e) {
+            resultEl.className = 'error';
+            resultEl.innerText = '❌ 請求失敗：' + e.message;
+        }
+    }
+    </script>
+    """
     return html
 
 
