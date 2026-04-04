@@ -266,13 +266,42 @@ def get_next_company(route_plan: str) -> str:
     return order[next_idx] if next_idx < len(order) else ""
 
 
-def advance_route(route_plan: str, status: str) -> str:
+def advance_route(route_plan: str, status: str, amount: str = "") -> str:
     data = parse_route_json(route_plan)
     order, idx, history = data.get("order", []), data.get("current_index", 0), data.get("history", [])
     current = order[idx] if 0 <= idx < len(order) else ""
     if current:
-        history.append({"company": current, "status": status, "date": now_iso()[:10]})
+        entry = {"company": current, "status": status, "date": now_iso()[:10]}
+        if amount:
+            entry["amount"] = amount
+        history.append(entry)
     data["current_index"] = idx + 1
+    data["history"] = history
+    return json.dumps(data, ensure_ascii=False)
+
+
+def get_amount_from_history(route_plan: str, company: str) -> str:
+    """從 history 找指定公司的核准金額"""
+    data = parse_route_json(route_plan)
+    history = data.get("history", [])
+    for h in reversed(history):
+        if h.get("company", "") == company and h.get("amount"):
+            return h["amount"]
+    return ""
+
+
+def update_company_amount_in_history(route_plan: str, company: str, amount: str) -> str:
+    """在 history 裡更新或新增指定公司的金額記錄"""
+    data = parse_route_json(route_plan)
+    history = data.get("history", [])
+    # 找到最近一筆這家公司的記錄更新金額
+    for h in reversed(history):
+        if h.get("company", "") == company:
+            h["amount"] = amount
+            data["history"] = history
+            return json.dumps(data, ensure_ascii=False)
+    # 找不到就新增一筆
+    history.append({"company": company, "status": "核准", "amount": amount, "date": now_iso()[:10]})
     data["history"] = history
     return json.dumps(data, ensure_ascii=False)
 
@@ -1231,13 +1260,15 @@ def handle_a_case_block(block_text, reply_token) -> Optional[str]:
         quick_amount = extract_approved_amount(block_text)
         if quick_amount:
             approved_amount = quick_amount
+            # 存到 route_plan history 裡對應公司
+            new_route = update_company_amount_in_history(new_route, company, quick_amount)
         else:
             ai_amount_needed = True
         new_report_section = "待撥款"
 
     update_customer(customer["case_id"], company=company, text=block_text,
                     from_group_id=A_GROUP_ID, status=new_status,
-                    route_plan=new_route if new_route != route else None,
+                    route_plan=new_route if new_route != route else new_route,
                     current_company=next_co if next_co else None,
                     approved_amount=approved_amount,
                     report_section=new_report_section)
@@ -1250,6 +1281,9 @@ def handle_a_case_block(block_text, reply_token) -> Optional[str]:
     msg = f"✅ 已結案並回貼到{gname}：{customer['customer_name']}" if new_status == "CLOSED" else f"✅ 已回貼到{gname}：{customer['customer_name']}"
     if is_reject:
         msg += f"\n➡️ 下一家：{next_co}" if next_co else f"\n⚠️ {customer['customer_name']} 已無下一家送件方案"
+    # 核准時在A群顯示金額確認
+    if is_approved and approved_amount:
+        msg += f"\n💰 核准金額：{approved_amount}（已存入）"
 
     if ai_amount_needed:
         import threading
@@ -1260,8 +1294,11 @@ def handle_a_case_block(block_text, reply_token) -> Optional[str]:
             try:
                 ai_amount = loop.run_until_complete(extract_approved_amount_with_ai(block_text))
                 if ai_amount:
-                    update_customer(customer["case_id"], approved_amount=ai_amount, from_group_id=A_GROUP_ID)
-                    push_text(A_GROUP_ID, f"✅ {customer['customer_name']} 核准金額已辨識：{ai_amount}")
+                    # 同時更新 approved_amount 和 route_plan history
+                    cur_route = customer["route_plan"] or ""
+                    new_r = update_company_amount_in_history(cur_route, company, ai_amount)
+                    update_customer(customer["case_id"], approved_amount=ai_amount, route_plan=new_r, from_group_id=A_GROUP_ID)
+                    push_text(A_GROUP_ID, f"💰 {customer['customer_name']} {company} 核准金額已辨識：{ai_amount}")
                 else:
                     push_text(A_GROUP_ID, f"⚠️ {customer['customer_name']} 核准金額無法辨識\n請手動補：{customer['customer_name']} 核准金額XX萬@AI")
             finally:
@@ -1455,7 +1492,10 @@ def handle_disbursement_list(text: str, reply_token: str):
 
                 target = rows[0]
                 sales_group_name = get_group_name(target["source_group_id"])
-                approved_amount = target["approved_amount"] or ""
+                # 優先從 route_plan history 找這家公司的金額，找不到再用 approved_amount
+                approved_amount = get_amount_from_history(target["route_plan"] or "", company)
+                if not approved_amount:
+                    approved_amount = target["approved_amount"] or ""
 
                 # 更新撥款日期
                 update_customer(
