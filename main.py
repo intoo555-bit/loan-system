@@ -635,8 +635,23 @@ def init_db():
         ensure_column(cur, "customers", col, defn)
     # groups 表新增業務群對應欄位
     ensure_column(cur, "groups", "linked_sales_group_id", "TEXT")
+    ensure_column(cur, "groups", "password_hash", "TEXT")
+    # settings 表
+    cur.execute("""CREATE TABLE IF NOT EXISTS settings (
+        key TEXT PRIMARY KEY NOT NULL,
+        value TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    )""")
+    # login_attempts 表
+    cur.execute("""CREATE TABLE IF NOT EXISTS login_attempts (
+        identifier TEXT PRIMARY KEY NOT NULL,
+        attempts INTEGER DEFAULT 0,
+        locked_until TEXT DEFAULT '',
+        updated_at TEXT NOT NULL
+    )""")
     conn.commit()
     conn.close()
+    init_settings()
 
 
 def seed_groups():
@@ -651,6 +666,21 @@ def seed_groups():
         cur.execute("INSERT OR IGNORE INTO groups (group_id,group_name,group_type,is_active,created_at) VALUES (?,?,?,?,?)", row)
     conn.commit()
     conn.close()
+
+
+def init_settings():
+    """初始化預設密碼（只有第一次才設定）"""
+    defaults = {
+        "admin_pw": hash_pw("admin_secret"),
+        "adminB_pw": hash_pw("adminB2026"),
+        "report_pw": hash_pw("admin123"),
+        "vba_secret": hash_pw("vba_secret_2026"),
+    }
+    conn = get_conn(); cur = conn.cursor()
+    for key, val in defaults.items():
+        cur.execute("INSERT OR IGNORE INTO settings (key,value,updated_at) VALUES (?,?,?)",
+            (key, val, now_iso()))
+    conn.commit(); conn.close()
 
 
 # =========================
@@ -2062,6 +2092,74 @@ async def add_group(request: Request):
         conn.close()
 
 
+
+# =========================
+# 密碼工具
+# =========================
+import hashlib as _hl
+
+def hash_pw(password: str) -> str:
+    import os as _os
+    salt = _os.urandom(16).hex()
+    hashed = _hl.sha256((salt + password).encode()).hexdigest()
+    return f"{salt}:{hashed}"
+
+def verify_pw(password: str, stored: str) -> bool:
+    try:
+        salt, hashed = stored.split(":", 1)
+        return _hl.sha256((salt + password).encode()).hexdigest() == hashed
+    except:
+        return False
+
+def get_setting(key: str) -> str:
+    conn = get_conn(); cur = conn.cursor()
+    cur.execute("SELECT value FROM settings WHERE key=?", (key,))
+    row = cur.fetchone(); conn.close()
+    return row["value"] if row else ""
+
+def set_setting(key: str, value: str):
+    conn = get_conn(); cur = conn.cursor()
+    cur.execute("INSERT OR REPLACE INTO settings (key,value,updated_at) VALUES (?,?,?)",
+        (key, value, now_iso()))
+    conn.commit(); conn.close()
+
+def get_group_password(group_id: str) -> str:
+    conn = get_conn(); cur = conn.cursor()
+    cur.execute("SELECT password_hash FROM groups WHERE group_id=?", (group_id,))
+    row = cur.fetchone(); conn.close()
+    return row["password_hash"] if row and row["password_hash"] else ""
+
+def is_login_locked(identifier: str) -> bool:
+    conn = get_conn(); cur = conn.cursor()
+    cur.execute("SELECT attempts, locked_until FROM login_attempts WHERE identifier=?", (identifier,))
+    row = cur.fetchone(); conn.close()
+    if not row: return False
+    if row["locked_until"] and row["locked_until"] > now_iso():
+        return True
+    return False
+
+def record_login_fail(identifier: str):
+    conn = get_conn(); cur = conn.cursor()
+    cur.execute("SELECT attempts FROM login_attempts WHERE identifier=?", (identifier,))
+    row = cur.fetchone()
+    if row:
+        attempts = row["attempts"] + 1
+        locked_until = ""
+        if attempts >= 5:
+            from datetime import timedelta
+            locked_until = (datetime.now() + timedelta(minutes=15)).strftime("%Y-%m-%d %H:%M:%S")
+        cur.execute("UPDATE login_attempts SET attempts=?, locked_until=?, updated_at=? WHERE identifier=?",
+            (attempts, locked_until, now_iso(), identifier))
+    else:
+        cur.execute("INSERT INTO login_attempts (identifier,attempts,locked_until,updated_at) VALUES (?,1,'',?)",
+            (identifier, now_iso()))
+    conn.commit(); conn.close()
+
+def clear_login_fail(identifier: str):
+    conn = get_conn(); cur = conn.cursor()
+    cur.execute("DELETE FROM login_attempts WHERE identifier=?", (identifier,))
+    conn.commit(); conn.close()
+
 # =========================
 # 網頁
 # =========================
@@ -2153,17 +2251,29 @@ GROUP_COLORS = ["#1a1a2e","#2d5016","#7c2d12","#1e3a5f","#4a1d6e","#1e4d4d",
                 "#78350f","#164e63","#4c1d95","#052e16"]
 
 def check_auth(request: Request) -> str:
-    """回傳 'admin'/'normal'/'' """
+    """回傳 'admin'/'adminB'/'normal'/'group_xxx'/'' """
     t = request.cookies.get("auth_token","")
     if t == SESSION_ADMIN: return "admin"
+    if t == "loan_adminB_2026": return "adminB"
     if t == SESSION_NORMAL: return "normal"
+    if t.startswith("loan_group_"): return t.replace("loan_group_","group_")
+    return ""
+
+def get_auth_group_id(request: Request) -> str:
+    """業務角色回傳其群組ID"""
+    role = check_auth(request)
+    if role.startswith("group_"):
+        return role.replace("group_","")
     return ""
 
 def make_topnav(role: str, active: str) -> str:
     links = [("📊 日報","/report","report"),("🔍 查詢","/search","search"),
              ("📁 歷史","/history","history")]
+    if role in ("admin","adminB","normal"):
+        links.append(("➕ 新增客戶","/new-customer","new"))
     if role == "admin":
         links += [("⚙️ 群組管理","/admin/groups","admin"),
+                  ("🔑 密碼管理","/admin/passwords","passwords"),
                   ("🗑️ 清除資料","/admin/reset_data","reset")]
     nav = "".join(f'<a class="nl {"active" if a==active else ""}" href="{u}">{n}</a>'
                   for n,u,a in links)
@@ -2227,20 +2337,38 @@ def build_row_map(rows) -> dict:
 
 @app.get("/login", response_class=HTMLResponse)
 def login_page(request: Request, error: str = ""):
-    err_html = '<div style="background:#fef2f2;color:#dc2626;padding:8px 12px;border-radius:6px;font-size:12px;margin-bottom:14px">密碼錯誤，請再試一次</div>' if error else ""
+    err_html = '<div style="background:#fef2f2;color:#dc2626;padding:8px 12px;border-radius:6px;font-size:12px;margin-bottom:14px">密碼錯誤或帳號已鎖定，請稍後再試</div>' if error else ""
+    conn = get_conn(); cur = conn.cursor()
+    cur.execute("SELECT group_id, group_name FROM groups WHERE group_type='SALES_GROUP' AND is_active=1 ORDER BY group_name")
+    sales_groups = cur.fetchall(); conn.close()
+    grp_opts = "".join(f'<option value="{g["group_id"]}">{g["group_name"]}</option>' for g in sales_groups)
     return f"""<!DOCTYPE html><html><head>{PAGE_CSS}<title>登入</title></head><body>
-    <div style="min-height:100vh;display:flex;align-items:center;justify-content:center">
-    <div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:36px 32px;width:340px;box-shadow:0 4px 24px rgba(0,0,0,.06)">
+    <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:#f5f0eb">
+    <div style="background:#faf7f4;border:1px solid #ddd5ca;border-radius:12px;padding:36px 32px;width:360px;box-shadow:0 4px 24px rgba(0,0,0,.06)">
       <div style="text-align:center;margin-bottom:24px">
-        <div style="font-size:22px;font-weight:700;color:#1a1a2e">貸款案件管理</div>
-        <div style="font-size:12px;color:#9ca3af;margin-top:6px">請輸入密碼繼續</div>
+        <div style="font-size:22px;font-weight:700;color:#3a3530">貸款案件管理</div>
+        <div style="font-size:12px;color:#9ca3af;margin-top:6px">請選擇身份並輸入密碼</div>
       </div>
       {err_html}
       <form method="post" action="/login">
         <div style="margin-bottom:14px">
+          <label style="font-size:12px;color:#5a4e40;font-weight:600;display:block;margin-bottom:6px">身份</label>
+          <select name="role" class="input" style="padding:9px 12px" onchange="document.getElementById('grp_sec').style.display=this.value==='group'?'block':'none'">
+            <option value="normal">行政A</option>
+            <option value="adminB">行政B</option>
+            <option value="admin">管理員</option>
+            <option value="group">業務（選群組）</option>
+          </select>
+        </div>
+        <div id="grp_sec" style="display:none;margin-bottom:14px">
+          <label style="font-size:12px;color:#5a4e40;font-weight:600;display:block;margin-bottom:6px">群組</label>
+          <select name="group_id" class="input" style="padding:9px 12px">{grp_opts}</select>
+        </div>
+        <div style="margin-bottom:16px">
+          <label style="font-size:12px;color:#5a4e40;font-weight:600;display:block;margin-bottom:6px">密碼</label>
           <input class="input" type="password" name="password" placeholder="輸入密碼" autofocus style="padding:10px 14px;font-size:15px">
         </div>
-        <button type="submit" class="btn btn-primary" style="width:100%;justify-content:center;padding:10px;font-size:14px">登入</button>
+        <button type="submit" class="btn btn-primary" style="width:100%;justify-content:center;padding:10px;font-size:14px;background:#6a5e4e;border-color:#6a5e4e">登入</button>
       </form>
     </div></div></body></html>"""
 
@@ -2250,14 +2378,35 @@ async def login_post(request: Request):
     from fastapi.responses import RedirectResponse
     form = await request.form()
     pw = form.get("password","")
-    if pw == ADMIN_PASSWORD:
+    role = form.get("role","normal")
+    group_id = form.get("group_id","")
+    identifier = role if role != "group" else f"group_{group_id}"
+    if is_login_locked(identifier):
+        return RedirectResponse("/login?error=1", status_code=303)
+    ok = False
+    token = ""
+    if role == "admin":
+        stored = get_setting("admin_pw")
+        ok = verify_pw(pw, stored) if stored else (pw == ADMIN_PASSWORD)
+        token = SESSION_ADMIN
+    elif role == "adminB":
+        stored = get_setting("adminB_pw")
+        ok = verify_pw(pw, stored) if stored else (pw == "adminB2026")
+        token = "loan_adminB_2026"
+    elif role == "normal":
+        stored = get_setting("report_pw")
+        ok = verify_pw(pw, stored) if stored else (pw == REPORT_PASSWORD)
+        token = SESSION_NORMAL
+    elif role == "group" and group_id:
+        stored = get_group_password(group_id)
+        ok = verify_pw(pw, stored) if stored else False
+        token = f"loan_group_{group_id}"
+    if ok:
+        clear_login_fail(identifier)
         resp = RedirectResponse("/report", status_code=303)
-        resp.set_cookie("auth_token", SESSION_ADMIN, max_age=86400*7, httponly=True)
+        resp.set_cookie("auth_token", token, max_age=86400*7, httponly=True)
         return resp
-    if pw == REPORT_PASSWORD:
-        resp = RedirectResponse("/report", status_code=303)
-        resp.set_cookie("auth_token", SESSION_NORMAL, max_age=86400*7, httponly=True)
-        return resp
+    record_login_fail(identifier)
     return RedirectResponse("/login?error=1", status_code=303)
 
 
@@ -2625,8 +2774,12 @@ async def customer_lookup(
     id_no: str = "",
     secret: str = ""
 ):
-    VBA_SECRET = os.getenv("VBA_SECRET", "vba_secret_2026")
-    if secret != VBA_SECRET:
+    stored_secret = get_setting("vba_secret")
+    if stored_secret:
+        vba_ok = verify_pw(secret, stored_secret)
+    else:
+        vba_ok = (secret == os.getenv("VBA_SECRET", "vba_secret_2026"))
+    if not vba_ok:
         return JSONResponse({"ok": False, "error": "無權限"}, status_code=403)
     if not date or not name or not id_no:
         return JSONResponse({"ok": False, "error": "請輸入日期、姓名、身分證"})
