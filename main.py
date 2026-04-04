@@ -2714,6 +2714,290 @@ async def customer_lookup(
             "vehicle_owner": d.get("vehicle_owner",""),
         }
     })
+    # =========================
+# 新增客戶網頁（行政A）
+# =========================
+@app.get("/new-customer", response_class=HTMLResponse)
+def new_customer_page(request: Request):
+    from fastapi.responses import RedirectResponse
+    role = check_auth(request)
+    if not role: return RedirectResponse("/login")
+    conn = get_conn(); cur = conn.cursor()
+    cur.execute("SELECT * FROM groups WHERE is_active=1 ORDER BY group_name")
+    groups = cur.fetchall(); conn.close()
+    group_opts = "".join(f'<option value="{g["group_id"]}">{g["group_name"]}</option>' for g in groups)
+    return f"""<!DOCTYPE html><html><head>{PAGE_CSS}<title>新增客戶</title></head><body>
+    {make_topnav(role, "new")}
+    <div class="page" style="max-width:700px">
+      <h2 style="font-size:16px;font-weight:600;margin-bottom:16px">新增客戶資料</h2>
+      <form method="post" action="/new-customer">
+        <div class="card" style="margin-bottom:12px">
+          <div style="font-size:12px;font-weight:600;color:#6b7280;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid #f3f4f6">所屬群組</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+            <div><label style="font-size:12px;color:#6b7280">群組</label><br><select name="source_group_id" class="input" style="margin-top:4px">{group_opts}</select></div>
+            <div><label style="font-size:12px;color:#6b7280">業務姓名</label><br><input name="sales_name" class="input" style="margin-top:4px" placeholder="王業務"></div>
+          </div>
+        </div>
+        <div class="card" style="margin-bottom:12px">
+          <div style="font-size:12px;font-weight:600;color:#6b7280;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid #f3f4f6">基本資料</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+            <div><label style="font-size:12px;color:#6b7280">姓名 *</label><br><input name="customer_name" class="input" style="margin-top:4px" required></div>
+            <div><label style="font-size:12px;color:#6b7280">身分證字號 *</label><br><input name="id_no" class="input" style="margin-top:4px;text-transform:uppercase" required></div>
+            <div><label style="font-size:12px;color:#6b7280">出生日期</label><br><input name="birth_date" class="input" style="margin-top:4px" placeholder="1990/01/01"></div>
+            <div><label style="font-size:12px;color:#6b7280">行動電話 *</label><br><input name="phone" class="input" style="margin-top:4px" placeholder="0912345678"></div>
+            <div><label style="font-size:12px;color:#6b7280">Email *</label><br><input name="email" class="input" style="margin-top:4px" placeholder="example@gmail.com"></div>
+            <div><label style="font-size:12px;color:#6b7280">LINE ID</label><br><input name="line_id" class="input" style="margin-top:4px"></div>
+            <div><label style="font-size:12px;color:#6b7280">婚姻狀態</label><br><select name="marriage" class="input" style="margin-top:4px"><option>未婚</option><option>已婚</option></select></div>
+            <div><label style="font-size:12px;color:#6b7280">教育程度</label><br><select name="education" class="input" style="margin-top:4px"><option>小學/國中</option><option>高中/職</option><option>專科/大學</option><option>研究所以上</option></select></div>
+          </div>
+        </div>
+        <div class="card" style="margin-bottom:12px">
+          <div style="font-size:12px;font-weight:600;color:#6b7280;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid #f3f4f6">身分證發證</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">
+            <div><label style="font-size:12px;color:#6b7280">發證日期</label><br><input name="id_issue_date" class="input" style="margin-top:4px" placeholder="2020/01/01"></div>
+            <div><label style="font-size:12px;color:#6b7280">發證地</label><br><select name="id_issue_place" class="input" style="margin-top:4px"><option>北市</option><option>新北市</option><option>桃市</option><option>中市</option><option>南市</option><option>高市</option><option>基市</option><option>竹市</option><option>竹縣</option><option>苗縣</option><option>彰縣</option><option>投縣</option><option>雲縣</option><option>嘉市</option><option>嘉縣</option><option>屏縣</option><option>宜縣</option><option>花縣</option><option>東縣</option><option>澎縣</option><option>金門</option><option>連江</option></select></div>
+            <div><label style="font-size:12px;color:#6b7280">發證狀態</label><br><select name="id_issue_type" class="input" style="margin-top:4px"><option>初發</option><option>補發</option><option>換發</option></select></div>
+          </div>
+        </div>
+        <div class="card" style="margin-bottom:12px">
+          <div style="font-size:12px;font-weight:600;color:#6b7280;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid #f3f4f6">戶籍地址</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr 2fr;gap:10px;margin-bottom:10px">
+            <div><label style="font-size:12px;color:#6b7280">縣市</label><br><select name="reg_city" class="input" style="margin-top:4px"><option>台北市</option><option>新北市</option><option>桃園市</option><option>台中市</option><option>台南市</option><option>高雄市</option><option>基隆市</option><option>新竹市</option><option>新竹縣</option><option>苗栗縣</option><option>彰化縣</option><option>南投縣</option><option>雲林縣</option><option>嘉義市</option><option>嘉義縣</option><option>屏東縣</option><option>宜蘭縣</option><option>花蓮縣</option><option>台東縣</option><option>澎湖縣</option><option>金門縣</option><option>連江縣</option></select></div>
+            <div><label style="font-size:12px;color:#6b7280">區/鄉鎮</label><br><input name="reg_district" class="input" style="margin-top:4px"></div>
+            <div><label style="font-size:12px;color:#6b7280">詳細地址</label><br><input name="reg_address" class="input" style="margin-top:4px"></div>
+          </div>
+          <div style="margin-bottom:10px"><label style="font-size:12px;color:#6b7280">戶籍電話</label><br><input name="reg_phone" class="input" style="margin-top:4px;max-width:200px"></div>
+          <div style="margin-bottom:10px"><label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#6b7280"><input type="checkbox" name="live_same_as_reg" value="1" checked> 住家地址與戶籍相同</label></div>
+          <div id="live_addr_section" style="display:none">
+            <div style="font-size:12px;font-weight:500;color:#6b7280;margin-bottom:6px">住家地址</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr 2fr;gap:10px">
+              <div><select name="live_city" class="input"><option>台北市</option><option>新北市</option><option>桃園市</option><option>台中市</option><option>台南市</option><option>高雄市</option><option>苗栗縣</option></select></div>
+              <div><input name="live_district" class="input" placeholder="區/鄉鎮"></div>
+              <div><input name="live_address" class="input" placeholder="詳細地址"></div>
+            </div>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-top:10px">
+            <div><label style="font-size:12px;color:#6b7280">居住狀況</label><br><select name="live_status" class="input" style="margin-top:4px"><option>自有</option><option>配偶</option><option>親屬</option><option>租屋</option><option>宿舍</option></select></div>
+            <div><label style="font-size:12px;color:#6b7280">居住年數</label><br><input name="live_years" class="input" style="margin-top:4px" placeholder="5"></div>
+            <div><label style="font-size:12px;color:#6b7280">居住月數</label><br><input name="live_months" class="input" style="margin-top:4px" placeholder="0"></div>
+          </div>
+        </div>
+        <div class="card" style="margin-bottom:12px">
+          <div style="font-size:12px;font-weight:600;color:#6b7280;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid #f3f4f6">職業資料</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+            <div style="grid-column:1/-1"><label style="font-size:12px;color:#6b7280">公司名稱 *</label><br><input name="company_name_detail" class="input" style="margin-top:4px"></div>
+            <div><label style="font-size:12px;color:#6b7280">行業類別</label><br><select name="company_industry" class="input" style="margin-top:4px"><option>餐飲與服務業</option><option>製造業</option><option>建築與營造</option><option>軍警與公教</option><option>科技與資訊</option><option>運輸與物流</option><option>金融與保險業</option><option>批發與零售業</option><option>醫療與教育</option><option>農林漁牧業</option><option>自由職業</option><option>其他</option></select></div>
+            <div><label style="font-size:12px;color:#6b7280">職務</label><br><select name="company_role" class="input" style="margin-top:4px"><option>行政與內勤</option><option>勞力與現場</option><option>銷售與業務</option><option>財務與專業</option><option>技術與工程</option><option>教學與醫護</option><option>管理與經營</option><option>自營與自由</option></select></div>
+            <div><label style="font-size:12px;color:#6b7280">公司電話區碼</label><br><select name="company_phone_area" class="input" style="margin-top:4px"><option>02</option><option>03</option><option>037</option><option>04</option><option>049</option><option>05</option><option>06</option><option>07</option><option>08</option><option>089</option></select></div>
+            <div><label style="font-size:12px;color:#6b7280">公司電話號碼 *</label><br><input name="company_phone_num" class="input" style="margin-top:4px"></div>
+            <div><label style="font-size:12px;color:#6b7280">分機</label><br><input name="company_phone_ext" class="input" style="margin-top:4px"></div>
+            <div><label style="font-size:12px;color:#6b7280">年資（年）</label><br><input name="company_years" class="input" style="margin-top:4px" placeholder="3"></div>
+            <div><label style="font-size:12px;color:#6b7280">月薪（萬）</label><br><input name="company_salary" class="input" style="margin-top:4px" placeholder="3.5"></div>
+            <div style="grid-column:1/-1"><label style="font-size:12px;color:#6b7280">公司地址</label><br>
+              <div style="display:grid;grid-template-columns:1fr 1fr 2fr;gap:8px;margin-top:4px">
+                <select name="company_city" class="input"><option>台北市</option><option>新北市</option><option>桃園市</option><option>台中市</option><option>台南市</option><option>高雄市</option><option>苗栗縣</option><option>其他</option></select>
+                <input name="company_district" class="input" placeholder="區/鄉鎮">
+                <input name="company_address" class="input" placeholder="詳細地址">
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="card" style="margin-bottom:12px">
+          <div style="font-size:12px;font-weight:600;color:#6b7280;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid #f3f4f6">撥款資料 *</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+            <div><label style="font-size:12px;color:#6b7280">銀行名稱</label><br><input name="bank_name" class="input" style="margin-top:4px"></div>
+            <div><label style="font-size:12px;color:#6b7280">分行</label><br><input name="bank_branch" class="input" style="margin-top:4px"></div>
+            <div><label style="font-size:12px;color:#6b7280">戶名</label><br><input name="bank_holder" class="input" style="margin-top:4px"></div>
+            <div><label style="font-size:12px;color:#6b7280">帳號</label><br><input name="bank_account" class="input" style="margin-top:4px"></div>
+          </div>
+        </div>
+        <div class="card" style="margin-bottom:12px">
+          <div style="font-size:12px;font-weight:600;color:#6b7280;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid #f3f4f6">聯絡人資料</div>
+          <div style="margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid #f9fafb">
+            <div style="font-size:11px;color:#9ca3af;margin-bottom:6px">聯絡人1（需為二等親）</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px">
+              <div><label style="font-size:12px;color:#6b7280">姓名 *</label><br><input name="contact1_name" class="input" style="margin-top:4px"></div>
+              <div><label style="font-size:12px;color:#6b7280">關係</label><br><input name="contact1_relation" class="input" style="margin-top:4px" placeholder="例:哥哥"></div>
+              <div><label style="font-size:12px;color:#6b7280">電話 *</label><br><input name="contact1_phone" class="input" style="margin-top:4px"></div>
+              <div><label style="font-size:12px;color:#6b7280">可知情</label><br><select name="contact1_known" class="input" style="margin-top:4px"><option>可知情</option><option>保密</option><option>無可知情</option></select></div>
+            </div>
+          </div>
+          <div>
+            <div style="font-size:11px;color:#9ca3af;margin-bottom:6px">聯絡人2</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px">
+              <div><label style="font-size:12px;color:#6b7280">姓名 *</label><br><input name="contact2_name" class="input" style="margin-top:4px"></div>
+              <div><label style="font-size:12px;color:#6b7280">關係</label><br><input name="contact2_relation" class="input" style="margin-top:4px" placeholder="例:朋友"></div>
+              <div><label style="font-size:12px;color:#6b7280">電話 *</label><br><input name="contact2_phone" class="input" style="margin-top:4px"></div>
+              <div><label style="font-size:12px;color:#6b7280">可知情</label><br><select name="contact2_known" class="input" style="margin-top:4px"><option>可知情</option><option>保密</option><option>無可知情</option></select></div>
+            </div>
+          </div>
+        </div>
+        <div class="card" style="margin-bottom:12px">
+          <div style="font-size:12px;font-weight:600;color:#6b7280;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid #f3f4f6">評估資料（行政B判別方案用）</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+            <div><label style="font-size:12px;color:#6b7280">資金需求</label><br><input name="eval_fund_need" class="input" style="margin-top:4px" placeholder="40-50萬"></div>
+            <div><label style="font-size:12px;color:#6b7280">近三月是否送件</label><br><select name="eval_sent_3m" class="input" style="margin-top:4px"><option>否</option><option>是</option></select></div>
+            <div><label style="font-size:12px;color:#6b7280">勞保狀態</label><br><select name="eval_labor_ins" class="input" style="margin-top:4px"><option>公司保</option><option>工會保</option><option>自行投保</option><option>無勞保</option></select></div>
+            <div><label style="font-size:12px;color:#6b7280">有無薪轉</label><br><select name="eval_salary_transfer" class="input" style="margin-top:4px"><option>有薪轉</option><option>無薪轉</option></select></div>
+            <div><label style="font-size:12px;color:#6b7280">是否警示戶</label><br><select name="eval_alert" class="input" style="margin-top:4px"><option>否</option><option>是</option></select></div>
+            <div><label style="font-size:12px;color:#6b7280">名下車輛</label><br><input name="eval_vehicle" class="input" style="margin-top:4px" placeholder="1機車1汽車"></div>
+            <div><label style="font-size:12px;color:#6b7280">有無不動產</label><br><select name="eval_property" class="input" style="margin-top:4px"><option>無</option><option>有</option></select></div>
+            <div><label style="font-size:12px;color:#6b7280">名下信用卡</label><br><input name="eval_credit_card" class="input" style="margin-top:4px" placeholder="銀行協商"></div>
+            <div><label style="font-size:12px;color:#6b7280">罰單欠費</label><br><input name="eval_fine" class="input" style="margin-top:4px" placeholder="$0"></div>
+            <div><label style="font-size:12px;color:#6b7280">燃料稅金額</label><br><input name="eval_fuel_tax" class="input" style="margin-top:4px" placeholder="$0"></div>
+            <div style="grid-column:1/-1"><label style="font-size:12px;color:#6b7280">備註</label><br><textarea name="eval_note" class="input" style="margin-top:4px;height:60px"></textarea></div>
+          </div>
+        </div>
+        <div class="card" style="margin-bottom:20px">
+          <div style="font-size:12px;font-weight:600;color:#6b7280;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid #f3f4f6">負債明細</div>
+          <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:6px;font-size:11px;color:#9ca3af;margin-bottom:6px">
+            <div>貸款商家</div><div>總金額</div><div>期數</div><div>月繳</div><div>已繳</div><div>剩餘金額</div>
+          </div>
+          <div id="debt_rows">
+            <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:6px;margin-bottom:6px">
+              <input name="debt_co_1" class="input" placeholder="裕融" style="font-size:12px;padding:5px">
+              <input name="debt_total_1" class="input" placeholder="100,000" style="font-size:12px;padding:5px">
+              <input name="debt_period_1" class="input" placeholder="36" style="font-size:12px;padding:5px">
+              <input name="debt_monthly_1" class="input" placeholder="2,830" style="font-size:12px;padding:5px">
+              <input name="debt_paid_1" class="input" placeholder="16" style="font-size:12px;padding:5px">
+              <input name="debt_remain_1" class="input" placeholder="-45,280" style="font-size:12px;padding:5px">
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:6px;margin-bottom:6px">
+              <input name="debt_co_2" class="input" placeholder="" style="font-size:12px;padding:5px">
+              <input name="debt_total_2" class="input" placeholder="" style="font-size:12px;padding:5px">
+              <input name="debt_period_2" class="input" placeholder="" style="font-size:12px;padding:5px">
+              <input name="debt_monthly_2" class="input" placeholder="" style="font-size:12px;padding:5px">
+              <input name="debt_paid_2" class="input" placeholder="" style="font-size:12px;padding:5px">
+              <input name="debt_remain_2" class="input" placeholder="" style="font-size:12px;padding:5px">
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:6px;margin-bottom:6px">
+              <input name="debt_co_3" class="input" placeholder="" style="font-size:12px;padding:5px">
+              <input name="debt_total_3" class="input" placeholder="" style="font-size:12px;padding:5px">
+              <input name="debt_period_3" class="input" placeholder="" style="font-size:12px;padding:5px">
+              <input name="debt_monthly_3" class="input" placeholder="" style="font-size:12px;padding:5px">
+              <input name="debt_paid_3" class="input" placeholder="" style="font-size:12px;padding:5px">
+              <input name="debt_remain_3" class="input" placeholder="" style="font-size:12px;padding:5px">
+            </div>
+          </div>
+        </div>
+        <div style="display:flex;gap:10px;margin-bottom:30px">
+          <button type="submit" class="btn btn-primary" style="padding:10px 24px">✅ 建立客戶</button>
+          <a href="/report" class="btn">取消</a>
+        </div>
+      </form>
+    </div>
+    <script>
+    document.querySelector('[name="live_same_as_reg"]').addEventListener('change',function(){{
+      document.getElementById('live_addr_section').style.display=this.checked?'none':'block';
+    }});
+    </script>
+    </body></html>"""
+
+
+@app.post("/new-customer")
+async def new_customer_post(request: Request):
+    from fastapi.responses import RedirectResponse
+    role = check_auth(request)
+    if not role: return RedirectResponse("/login")
+    form = await request.form()
+    f = dict(form)
+    name = f.get("customer_name","").strip()
+    id_no = f.get("id_no","").strip().upper()
+    if not name or not id_no:
+        return HTMLResponse("姓名和身分證為必填", status_code=400)
+    debt_list = []
+    for i in range(1,6):
+        co = f.get(f"debt_co_{i}","").strip()
+        if co:
+            debt_list.append({
+                "company": co,
+                "total": f.get(f"debt_total_{i}",""),
+                "period": f.get(f"debt_period_{i}",""),
+                "monthly": f.get(f"debt_monthly_{i}",""),
+                "paid": f.get(f"debt_paid_{i}",""),
+                "remain": f.get(f"debt_remain_{i}",""),
+            })
+    live_same = "1" if f.get("live_same_as_reg") else "0"
+    conn = get_conn(); cur = conn.cursor()
+    existing = None
+    cur.execute("SELECT * FROM customers WHERE id_no=? AND status='ACTIVE'", (id_no,))
+    existing = cur.fetchone()
+    if existing:
+        case_id = existing["case_id"]
+    else:
+        case_id = short_id()
+        now = now_iso()
+        cur.execute("""INSERT INTO customers
+            (case_id,customer_name,id_no,source_group_id,company,last_update,status,created_at,updated_at)
+            VALUES (?,?,?,?,?,?,'ACTIVE',?,?)""",
+            (case_id, name, id_no, f.get("source_group_id",""), "", f"新增客戶：{name}", now, now))
+    extra = {
+        "birth_date": f.get("birth_date",""),
+        "phone": f.get("phone",""),
+        "email": f.get("email",""),
+        "line_id": f.get("line_id",""),
+        "marriage": f.get("marriage",""),
+        "education": f.get("education",""),
+        "id_issue_date": f.get("id_issue_date",""),
+        "id_issue_place": f.get("id_issue_place",""),
+        "id_issue_type": f.get("id_issue_type",""),
+        "reg_city": f.get("reg_city",""),
+        "reg_district": f.get("reg_district",""),
+        "reg_address": f.get("reg_address",""),
+        "reg_phone": f.get("reg_phone",""),
+        "live_same_as_reg": live_same,
+        "live_city": f.get("live_city","") if live_same=="0" else f.get("reg_city",""),
+        "live_district": f.get("live_district","") if live_same=="0" else f.get("reg_district",""),
+        "live_address": f.get("live_address","") if live_same=="0" else f.get("reg_address",""),
+        "live_status": f.get("live_status",""),
+        "live_years": f.get("live_years",""),
+        "live_months": f.get("live_months",""),
+        "company_name_detail": f.get("company_name_detail",""),
+        "company_industry": f.get("company_industry",""),
+        "company_role": f.get("company_role",""),
+        "company_phone_area": f.get("company_phone_area",""),
+        "company_phone_num": f.get("company_phone_num",""),
+        "company_phone_ext": f.get("company_phone_ext",""),
+        "company_years": f.get("company_years",""),
+        "company_salary": f.get("company_salary",""),
+        "company_city": f.get("company_city",""),
+        "company_district": f.get("company_district",""),
+        "company_address": f.get("company_address",""),
+        "bank_name": f.get("bank_name",""),
+        "bank_branch": f.get("bank_branch",""),
+        "bank_account": f.get("bank_account",""),
+        "bank_holder": f.get("bank_holder",""),
+        "contact1_name": f.get("contact1_name",""),
+        "contact1_relation": f.get("contact1_relation",""),
+        "contact1_phone": f.get("contact1_phone",""),
+        "contact1_known": f.get("contact1_known",""),
+        "contact2_name": f.get("contact2_name",""),
+        "contact2_relation": f.get("contact2_relation",""),
+        "contact2_phone": f.get("contact2_phone",""),
+        "contact2_known": f.get("contact2_known",""),
+        "eval_fund_need": f.get("eval_fund_need",""),
+        "eval_sent_3m": f.get("eval_sent_3m",""),
+        "eval_labor_ins": f.get("eval_labor_ins",""),
+        "eval_salary_transfer": f.get("eval_salary_transfer",""),
+        "eval_alert": f.get("eval_alert",""),
+        "eval_vehicle": f.get("eval_vehicle",""),
+        "eval_property": f.get("eval_property",""),
+        "eval_credit_card": f.get("eval_credit_card",""),
+        "eval_fine": f.get("eval_fine",""),
+        "eval_fuel_tax": f.get("eval_fuel_tax",""),
+        "eval_note": f.get("eval_note",""),
+        "debt_list": json.dumps(debt_list, ensure_ascii=False),
+        "sales_name": f.get("sales_name",""),
+        "source_group_id": f.get("source_group_id",""),
+    }
+    fields = ", ".join(f"{k} = ?" for k in extra)
+    values = list(extra.values()) + [case_id]
+    cur.execute(f"UPDATE customers SET {fields}, updated_at=? WHERE case_id=?",
+        values + [now_iso(), case_id])
+    conn.commit(); conn.close()
+    gname = get_group_name(f.get("source_group_id",""))
+    push_text(A_GROUP_ID, f"✅ 新客戶建立：{name}（{gname}）\n請行政B判別方案")
+    return RedirectResponse(f"/report", status_code=303)
 # =========================
 # 啟動
 # =========================
