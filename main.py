@@ -60,6 +60,18 @@ ACTION_KEYWORDS = [
 DELETE_KEYWORDS = ["結案", "刪掉", "不追了", "全部不送", "已撥款結案", "違約金結案", "已支付違約金", "以收到違約金", "收到違約金", "違約金已收", "以收到違約金", "違約金"]
 BLOCK_KEYWORDS = ["鼎信", "禾基"]
 
+# 專案別名對照（業務員內部名稱 → 日報分類名稱）
+COMPANY_ALIAS = {
+    "熊速貸": "亞太商品",
+    "工會機車動擔": "亞太工會",
+    "機車動擔設定": "亞太機車",
+    "維力商品貸": "和裕商品",
+    "維力機車專": "和裕機車",
+}
+
+# 核准排除關鍵字（這些出現時不算真正核准）
+APPROVAL_EXCLUDE_KEYWORDS = ["初估", "待補", "照會", "金主初估", "需補", "補資料才"]
+
 IGNORE_NAME_SET = {
     "信用不良", "不需要了", "不用了", "不要了", "結案", "補件", "核准", "婉拒",
     "照會", "等保書", "待撥款", "缺資料", "補資料", "資料補", "補來", "退件",
@@ -167,6 +179,10 @@ def extract_id_no(text: str) -> str:
 
 
 def extract_company(text: str) -> str:
+    # 先檢查別名對照
+    for alias, real in COMPANY_ALIAS.items():
+        if alias in (text or ""):
+            return real
     for c in COMPANY_LIST:
         if c in (text or ""):
             return c
@@ -625,6 +641,62 @@ def extract_approved_amount(text: str) -> str:
     return ""
 
 
+async def extract_approved_amount_with_ai(text: str) -> str:
+    """
+    用 Claude API 解析核准金額。
+    回傳金額字串（如「20萬」），抓不到回傳空字串。
+    """
+    import os
+    api_key = os.getenv("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        return ""
+    try:
+        resp = req_lib.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json",
+            },
+            json={
+                "model": "claude-haiku-4-5-20251001",
+                "max_tokens": 100,
+                "messages": [{
+                    "role": "user",
+                    "content": f"""以下是貸款核准訊息，請判斷：
+1. 這是否為真正的核准（不是初估、不是待補、不是照會）？
+2. 如果是核准，核准金額是多少？
+
+訊息：
+{text}
+
+請只回傳JSON格式，不要其他說明：
+{{"is_approved": true或false, "amount": "金額字串或空字串"}}
+
+金額格式範例：「20萬」「6萬」「50萬」「12萬」
+注意：
+- 期數（如30期）不是金額
+- 月付金額（如4878元）不是核准金額
+- 初估/待補/需補資料才核准 → is_approved為false
+- 金額數字後面有/或%通常是利率不是金額"""
+                }],
+            },
+            timeout=15,
+        )
+        if resp.status_code == 200:
+            import json as json_lib
+            result_text = resp.json()["content"][0]["text"].strip()
+            # 清理可能的markdown格式
+            result_text = result_text.replace("```json", "").replace("```", "").strip()
+            data = json_lib.loads(result_text)
+            if data.get("is_approved") and data.get("amount"):
+                return data["amount"]
+            return ""
+    except Exception as e:
+        print(f"AI解析金額失敗: {e}")
+    return ""
+
+
 def parse_disbursement_list(text: str) -> Dict:
     """
     解析撥款名單格式：
@@ -1048,6 +1120,21 @@ def handle_special_command(cmd: Dict, reply_token: str, group_id: str):
             reply_text(reply_token, f"✅ {name} {current} 婉拒\n⚠️ 已無下一家送件方案")
         return
 
+    if t == "set_amount":
+        name, amount = cmd["name"], cmd["amount"]
+        rows = find_active_by_name(name)
+        same = [r for r in rows if r["source_group_id"] == group_id]
+        target = same[0] if same else (rows[0] if rows else None)
+        if not target:
+            # A群也可以設定
+            all_rows = find_active_by_name(name)
+            target = all_rows[0] if all_rows else None
+        if not target:
+            reply_text(reply_token, f"❌ 找不到客戶：{name}"); return
+        update_customer(target["case_id"], approved_amount=amount, from_group_id=group_id)
+        reply_text(reply_token, f"✅ {name} 核准金額已更新：{amount}")
+        return
+
     if t == "advance":
         name, target_co = cmd["name"], cmd.get("target")
         rows = find_active_by_name(name)
@@ -1144,11 +1231,17 @@ def handle_a_case_block(block_text, reply_token) -> Optional[str]:
         next_co = get_next_company(route)
         new_route = advance_route(route, "婉拒")
 
-    # 核准時抓金額，移到待撥款區
+    # 核准時抓金額，移到待撥款區（先用規則抓，再用AI補強）
     approved_amount = None
     new_report_section = None
+    ai_amount_needed = False
     if is_approved:
-        approved_amount = extract_approved_amount(block_text) or None
+        # 先用規則快速抓
+        quick_amount = extract_approved_amount(block_text)
+        if quick_amount:
+            approved_amount = quick_amount
+        else:
+            ai_amount_needed = True
         new_report_section = "待撥款"
 
     update_customer(customer["case_id"], company=company, text=block_text,
@@ -1166,6 +1259,27 @@ def handle_a_case_block(block_text, reply_token) -> Optional[str]:
     msg = f"✅ 已結案並回貼到{gname}：{customer['customer_name']}" if new_status == "CLOSED" else f"✅ 已回貼到{gname}：{customer['customer_name']}"
     if is_reject:
         msg += f"\n➡️ 下一家：{next_co}" if next_co else f"\n⚠️ {customer['customer_name']} 已無下一家送件方案"
+
+    # 如果規則抓不到金額，背景用AI補抓並通知
+    if ai_amount_needed:
+        msg += f"\n⚠️ 核准金額未能自動辨識，正在AI解析..."
+        # 背景任務：AI解析後更新DB並通知
+        import threading
+        def ai_parse_and_update():
+            import asyncio
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                ai_amount = loop.run_until_complete(extract_approved_amount_with_ai(block_text))
+                if ai_amount:
+                    update_customer(customer["case_id"], approved_amount=ai_amount, from_group_id=A_GROUP_ID)
+                    push_text(A_GROUP_ID, f"✅ {customer['customer_name']} 核准金額已辨識：{ai_amount}")
+                else:
+                    push_text(A_GROUP_ID, f"⚠️ {customer['customer_name']} 核准金額無法辨識\n請手動補：{customer['customer_name']} 核准金額XX萬@AI")
+            finally:
+                loop.close()
+        threading.Thread(target=ai_parse_and_update, daemon=True).start()
+
     return msg
 
 
@@ -1460,6 +1574,18 @@ ACTION_KEYWORDS = [
 
 DELETE_KEYWORDS = ["結案", "刪掉", "不追了", "全部不送", "已撥款結案", "違約金結案", "已支付違約金", "以收到違約金", "收到違約金", "違約金已收", "以收到違約金", "違約金"]
 BLOCK_KEYWORDS = ["鼎信", "禾基"]
+
+# 專案別名對照（業務員內部名稱 → 日報分類名稱）
+COMPANY_ALIAS = {
+    "熊速貸": "亞太商品",
+    "工會機車動擔": "亞太工會",
+    "機車動擔設定": "亞太機車",
+    "維力商品貸": "和裕商品",
+    "維力機車專": "和裕機車",
+}
+
+# 核准排除關鍵字（這些出現時不算真正核准）
+APPROVAL_EXCLUDE_KEYWORDS = ["初估", "待補", "照會", "金主初估", "需補", "補資料才"]
 
 IGNORE_NAME_SET = {
     "信用不良", "不需要了", "不用了", "不要了", "結案", "補件", "核准", "婉拒",
