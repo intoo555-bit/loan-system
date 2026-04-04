@@ -1727,7 +1727,9 @@ def process_event(event: dict):
         results = []
         for idx, block in enumerate(blocks, 1):
             result = handle_a_case_block(block, reply_token)
-            if result and result != "QUICK_REPLY_SENT":
+            if result == "QUICK_REPLY_SENT":
+                continue
+            if result:
                 results.append(f"第{idx}筆：{result}" if len(blocks) > 1 else result)
         if results:
             reply_text(reply_token, "\n".join(results))
