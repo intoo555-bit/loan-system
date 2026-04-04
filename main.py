@@ -281,22 +281,35 @@ def advance_route(route_plan: str, status: str, amount: str = "") -> str:
 
 
 def get_amount_from_history(route_plan: str, company: str) -> str:
-    """從 history 找指定公司的核准金額"""
+    """從 history 找指定公司的核准金額（支援模糊比對）"""
     data = parse_route_json(route_plan)
     history = data.get("history", [])
+    # 先精確比對
     for h in reversed(history):
         if h.get("company", "") == company and h.get("amount"):
+            return h["amount"]
+    # 再模糊比對（和裕 能匹配 和裕商品/和裕機車，亞太 能匹配 亞太商品/亞太機車）
+    for h in reversed(history):
+        hc = h.get("company", "")
+        if h.get("amount") and (company in hc or hc in company):
             return h["amount"]
     return ""
 
 
 def update_company_amount_in_history(route_plan: str, company: str, amount: str) -> str:
-    """在 history 裡更新或新增指定公司的金額記錄"""
+    """在 history 裡更新或新增指定公司的金額記錄（支援模糊比對）"""
     data = parse_route_json(route_plan)
     history = data.get("history", [])
-    # 找到最近一筆這家公司的記錄更新金額
+    # 精確比對
     for h in reversed(history):
         if h.get("company", "") == company:
+            h["amount"] = amount
+            data["history"] = history
+            return json.dumps(data, ensure_ascii=False)
+    # 模糊比對
+    for h in reversed(history):
+        hc = h.get("company", "")
+        if company in hc or hc in company:
             h["amount"] = amount
             data["history"] = history
             return json.dumps(data, ensure_ascii=False)
