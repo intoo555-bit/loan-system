@@ -55,7 +55,6 @@ ACTION_KEYWORDS = [
     "補件", "補資料", "缺資料", "婉拒", "核准", "照會", "退件", "等保書",
     "不承作", "待撥款", "補行照", "補照會", "補照片", "補時段", "補案件資料",
     "補聯徵", "補保人", "保密", "無可知情", "聯絡人皆可知情", "已補",
-    "違約金", "以收到違約金", "收到違約金", "違約金結案",
 ]
 
 DELETE_KEYWORDS = ["結案", "刪掉", "不追了", "全部不送", "已撥款結案", "違約金結案", "已支付違約金", "以收到違約金", "收到違約金", "違約金已收", "以收到違約金", "違約金"]
@@ -1313,53 +1312,181 @@ def handle_command_text(text: str, reply_token: str) -> bool:
 def handle_disbursement_list(text: str, reply_token: str):
     """
     解析A群撥款名單：
-    行政群收到：4/3 排撥名單 / 姓名\t公司+金額\t業務群
-    A群收到：✅ 撥款名單已推送行政群，共N筆 / 第1筆：✅ 姓名
+    1. 去DB查每個客戶的核准金額和所屬業務群
+    2. 更新撥款日期
+    3. 組合排撥名單推給所有行政群（格式：日期 排撥名單\n姓名\t公司+金額\t業務群）
+    4. A群回報結果（成功幾筆/找不到幾筆）
     """
     parsed = parse_disbursement_list(text)
     if not parsed:
         reply_text(reply_token, "⚠️ 無法解析撥款名單格式")
         return
+
     all_push_lines = []
     disb_date_str = ""
-    result_lines = []
+    result_lines = []  # (idx, status, name, msg)
     global_idx = 0
+
     for disb_date, companies in parsed.items():
         disb_date_str = disb_date
         for company, names in companies.items():
             for name in names:
                 global_idx += 1
+
+                # 找客戶（進行中或待撥款）
                 rows = find_active_by_name(name)
                 if not rows:
                     conn = get_conn(); cur = conn.cursor()
-                    cur.execute("SELECT * FROM customers WHERE customer_name=? ORDER BY updated_at DESC LIMIT 1", (name,))
+                    cur.execute(
+                        "SELECT * FROM customers WHERE customer_name=? ORDER BY updated_at DESC LIMIT 1",
+                        (name,))
                     row = cur.fetchone(); conn.close()
                     rows = [row] if row else []
+
                 if not rows:
                     result_lines.append((global_idx, False, name, f"⚠️ 找不到對應客戶：{name}"))
                     continue
+
                 target = rows[0]
                 sales_group_name = get_group_name(target["source_group_id"])
                 approved_amount = target["approved_amount"] or ""
-                update_customer(target["case_id"], disbursement_date=disb_date, report_section="待撥款",
-                    text=name + " " + company + " 撥款" + disb_date, from_group_id=A_GROUP_ID)
+
+                # 更新撥款日期
+                update_customer(
+                    target["case_id"],
+                    disbursement_date=disb_date,
+                    report_section="待撥款",
+                    text=name + " " + company + " 撥款" + disb_date,
+                    from_group_id=A_GROUP_ID,
+                )
                 result_lines.append((global_idx, True, name, f"✅ {name}"))
+
+                # 組合排撥名單行：姓名\t公司+金額\t業務群名稱
                 company_amount = company + (" " + approved_amount if approved_amount else "")
-                all_push_lines.append(name + "\t" + company_amount + "\t" + sales_group_name)
+                push_line = name + "\t" + company_amount + "\t" + sales_group_name
+                all_push_lines.append(push_line)
+
+    # 推送排撥名單給所有行政群
     all_admin_gids = get_all_admin_groups()
     pushed_ok = False
     if all_admin_gids and all_push_lines:
-        push_msg = disb_date_str + " 排撥名單\n" + "\n".join(all_push_lines)
+        push_msg = disb_date_str + " 排撥名單" + chr(10) + chr(10).join(all_push_lines)
         for admin_gid in all_admin_gids:
             ok, _ = push_text(admin_gid, push_msg)
             if ok:
                 pushed_ok = True
-    ok_count = sum(1 for _, s, _, _ in result_lines if s)
-    msg_lines = [f"✅ 撥款名單已推送行政群，共{ok_count}筆" if pushed_ok else f"✅ 撥款名單處理完成，共{ok_count}筆"]
-    for idx, success, name, detail in result_lines:
-        msg_lines.append(f"第{idx}筆：✅ {name}" if success else f"第{idx}筆：{detail}")
-    reply_text(reply_token, "\n".join(msg_lines))
 
+    # 組合A群回覆
+    ok_count = sum(1 for _, s, _, _ in result_lines if s)
+    fail_count = len(result_lines) - ok_count
+
+    msg_lines = []
+    if pushed_ok:
+        msg_lines.append(f"✅ 撥款名單已推送行政群，共{ok_count}筆")
+    else:
+        msg_lines.append(f"✅ 撥款名單處理完成，共{ok_count}筆")
+
+    for idx, success, name, detail in result_lines:
+        if success:
+            msg_lines.append(f"第{idx}筆：✅ {name}")
+        else:
+            msg_lines.append(f"第{idx}筆：{detail}")
+
+    reply_text(reply_token, chr(10).join(msg_lines))
+
+
+from fastapi import FastAPI, Request, BackgroundTasks
+from fastapi.responses import HTMLResponse
+import uvicorn
+import requests as req_lib
+import os
+import re
+import sqlite3
+import json
+from datetime import datetime
+import uuid
+from typing import Optional, List, Dict, Any
+
+app = FastAPI()
+
+CHANNEL_ACCESS_TOKEN = os.getenv("CHANNEL_ACCESS_TOKEN", "")
+A_GROUP_ID = os.getenv("A_GROUP_ID", "Cb3579e75c94437ed22aafc7b1f6aecdd")
+B_GROUP_ID = "Cd14f3ee775f1d9f5cfdafb223173cbef"
+C_GROUP_ID = "C1a647fcb29a74842eceeb18e7a53823d"
+DB_PATH = os.getenv("DB_PATH", "/var/data/loan_system.db")
+
+# 日報三段結構
+REPORT_SECTION_1 = [
+    "麻吉", "和潤", "中租", "裕融", "21汽車", "亞太", "創鉅", "21",
+    "第一", "合信", "興達", "和裕", "鄉民", "喬美",
+    "分貝汽車", "分貝機車", "貸救補", "預付手機分期", "融易", "手機分期",
+    "送件", "待撥款",
+]
+REPORT_SECTION_2 = [
+    "銀行", "零卡", "商品貸", "代書", "當舖專案", "核准",
+]
+REPORT_SECTION_3 = [
+    "房地", "核准(房地)",
+]
+# 合併（用於其他地方參考）
+REPORT_SECTIONS = REPORT_SECTION_1 + REPORT_SECTION_2 + REPORT_SECTION_3
+
+# 公司辨識（解析訊息用）
+COMPANY_LIST = [
+    "和裕商品", "和裕機車", "亞太商品", "亞太機車", "手機分期", "貸救補",
+    "分貝汽車", "分貝機車", "21汽車", "鄉民", "喬美", "麻吉", "亞太",
+    "和裕", "第一", "合信", "興達", "中租", "裕融", "創鉅", "和潤",
+    "銀行", "零卡", "商品貸", "代書", "當舖", "融易", "21",
+    "分貝", "鄉", "銀", "C", "商", "代",
+]
+
+STATUS_WORDS = [
+    "婉拒", "核准", "補件", "補資料", "等保書", "退件", "不承作", "照會",
+    "保密", "NA", "待撥款", "可送", "缺資料", "無可知情", "聯絡人皆可知情",
+    "補行照", "補照會", "補照片", "補時段", "補案件資料", "補聯徵", "補保人",
+    "已補", "轉", "申覆",
+]
+
+ACTION_KEYWORDS = [
+    "結案", "刪掉", "不追了", "全部不送", "已撥款結案",
+    "補件", "補資料", "缺資料", "婉拒", "核准", "照會", "退件", "等保書",
+    "不承作", "待撥款", "補行照", "補照會", "補照片", "補時段", "補案件資料",
+    "補聯徵", "補保人", "保密", "無可知情", "聯絡人皆可知情", "已補",
+]
+
+DELETE_KEYWORDS = ["結案", "刪掉", "不追了", "全部不送", "已撥款結案", "違約金結案", "已支付違約金", "以收到違約金", "收到違約金", "違約金已收", "以收到違約金", "違約金"]
+BLOCK_KEYWORDS = ["鼎信", "禾基"]
+
+IGNORE_NAME_SET = {
+    "信用不良", "不需要了", "不用了", "不要了", "結案", "補件", "核准", "婉拒",
+    "照會", "等保書", "待撥款", "缺資料", "補資料", "資料補", "補來", "退件",
+    "助理", "AI助理", "先生", "小姐", "無可知情", "聯絡人皆可知情", "下一家",
+    "可知情", "聯絡人", "皆可知情", "不可知情", "無空間", "信用卡",
+    "機車貸", "汽車貸", "商品貸", "無貸款", "合照後", "後補", "來補",
+    "空間", "貸款", "申請", "提供", "保證", "聯徵", "繳息",
+}
+
+CHINESE_NAME_RE = re.compile(r"[\u4e00-\u9fff]{2,4}")
+ID_RE = re.compile(r"[A-Z][12]\d{8}")
+
+# 支援有無 - 的日期格式，如 115/3/2廖俊宏 或 115/3/2-廖俊宏
+DATE_NAME_ID_INLINE_RE = re.compile(
+    r"^\s*(\d{2,4}/\d{1,2}/\d{1,2})\s*[-－]?\s*([\u4e00-\u9fff]{2,4})\s*([A-Z][12]\d{8})",
+    re.IGNORECASE,
+)
+DATE_NAME_ONLY_RE = re.compile(
+    r"^\s*(\d{2,4}/\d{1,2}/\d{1,2})\s*[-－]?\s*([\u4e00-\u9fff]{2,4})(?:\s*$|\s*[-－/\u4e00-\u9fff])",
+    re.IGNORECASE,
+)
+# 短日期：3/2廖俊宏 或 3/2-廖俊宏（有無-都支援）
+SHORT_DATE_NAME_RE = re.compile(
+    r"^\s*(\d{1,2}/\d{1,2})\s*[-－]?\s*([\u4e00-\u9fff]{2,4})"
+)
+# 送件順序格式：4/1-高郡惠-喬美/亞太/和裕
+ROUTE_ORDER_RE = re.compile(
+    r"^\s*(\d{1,4}/\d{1,2}(?:/\d{1,2})?)\s*[-－]\s*([\u4e00-\u9fff]{2,4})\s*[-－]\s*((?:[^\s/\n]+/)+[^\s/\n@]+)(?:\s*@AI)?\s*$",
+    re.IGNORECASE,
+)
 
 
 # =========================
