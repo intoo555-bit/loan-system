@@ -1,5 +1,5 @@
 from fastapi import FastAPI, Request, BackgroundTasks
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 import uvicorn
 import requests as req_lib
 import os
@@ -565,6 +565,72 @@ def init_db():
         ("report_section", "TEXT"),
         ("approved_amount", "TEXT"),       # 核准金額
         ("disbursement_date", "TEXT"),     # 撥款日期
+        ("birth_date", "TEXT"),
+        ("phone", "TEXT"),
+        ("email", "TEXT"),
+        ("line_id", "TEXT"),
+        ("marriage", "TEXT"),
+        ("education", "TEXT"),
+        ("id_issue_date", "TEXT"),
+        ("id_issue_place", "TEXT"),
+        ("id_issue_type", "TEXT"),
+        ("reg_city", "TEXT"),
+        ("reg_district", "TEXT"),
+        ("reg_address", "TEXT"),
+        ("reg_phone", "TEXT"),
+        ("live_city", "TEXT"),
+        ("live_district", "TEXT"),
+        ("live_address", "TEXT"),
+        ("live_phone", "TEXT"),
+        ("live_same_as_reg", "TEXT"),
+        ("live_status", "TEXT"),
+        ("live_years", "TEXT"),
+        ("live_months", "TEXT"),
+        ("company_name_detail", "TEXT"),
+        ("company_industry", "TEXT"),
+        ("company_role", "TEXT"),
+        ("company_phone_area", "TEXT"),
+        ("company_phone_num", "TEXT"),
+        ("company_phone_ext", "TEXT"),
+        ("company_years", "TEXT"),
+        ("company_salary", "TEXT"),
+        ("company_city", "TEXT"),
+        ("company_district", "TEXT"),
+        ("company_address", "TEXT"),
+        ("bank_name", "TEXT"),
+        ("bank_branch", "TEXT"),
+        ("bank_account", "TEXT"),
+        ("bank_holder", "TEXT"),
+        ("contact1_name", "TEXT"),
+        ("contact1_relation", "TEXT"),
+        ("contact1_phone", "TEXT"),
+        ("contact1_known", "TEXT"),
+        ("contact2_name", "TEXT"),
+        ("contact2_relation", "TEXT"),
+        ("contact2_phone", "TEXT"),
+        ("contact2_known", "TEXT"),
+        ("eval_fund_need", "TEXT"),
+        ("eval_sent_3m", "TEXT"),
+        ("eval_labor_ins", "TEXT"),
+        ("eval_salary_transfer", "TEXT"),
+        ("eval_alert", "TEXT"),
+        ("eval_vehicle", "TEXT"),
+        ("eval_property", "TEXT"),
+        ("eval_credit_card", "TEXT"),
+        ("eval_fine", "TEXT"),
+        ("eval_fuel_tax", "TEXT"),
+        ("eval_note", "TEXT"),
+        ("debt_list", "TEXT"),
+        ("signature_img", "TEXT"),
+        ("selected_plans", "TEXT"),
+        ("product_type", "TEXT"),
+        ("product_model", "TEXT"),
+        ("product_imei", "TEXT"),
+        ("vehicle_plate", "TEXT"),
+        ("vehicle_type", "TEXT"),
+        ("vehicle_owner", "TEXT"),
+        ("sales_name", "TEXT"),
+        ("created_by_role", "TEXT"),
     ]:
         ensure_column(cur, "customers", col, defn)
     # groups 表新增業務群對應欄位
@@ -2548,6 +2614,106 @@ def list_groups(request: Request):
     </script>
     </body></html>"""
 
+# =========================
+# VBA 查詢 API
+# =========================
+@app.get("/api/customer-lookup")
+async def customer_lookup(
+    request: Request,
+    date: str = "",
+    name: str = "",
+    id_no: str = "",
+    secret: str = ""
+):
+    VBA_SECRET = os.getenv("VBA_SECRET", "vba_secret_2026")
+    if secret != VBA_SECRET:
+        return JSONResponse({"ok": False, "error": "無權限"}, status_code=403)
+    if not date or not name or not id_no:
+        return JSONResponse({"ok": False, "error": "請輸入日期、姓名、身分證"})
+    conn = get_conn(); cur = conn.cursor()
+    cur.execute("SELECT * FROM customers WHERE customer_name=? AND id_no=? ORDER BY created_at DESC", (name, id_no.upper()))
+    rows = cur.fetchall(); conn.close()
+    if not rows:
+        return JSONResponse({"ok": False, "error": f"找不到客戶：{name} / {id_no}"})
+    matched = None
+    old_cases = []
+    for row in rows:
+        created = (row["created_at"] or "")[:10]
+        created_fmt = created.replace("-", "/")
+        try:
+            y = int(created[:4]) - 1911
+            created_roc = f"{y}/{created[5:7]}/{created[8:10]}"
+        except:
+            created_roc = ""
+        if date in [created_fmt, created_roc]:
+            if row["status"] == "ACTIVE":
+                matched = row
+            else:
+                old_cases.append(row)
+    if not matched:
+        return JSONResponse({"ok": False, "error": f"找到客戶 {name} 但日期不符，請確認建立日期"})
+    d = dict(matched)
+    old_warning = ""
+    if old_cases:
+        oc = old_cases[0]
+        old_warning = f"⚠️ 此客戶有舊案記錄\n舊案日期：{(oc['created_at'] or '')[:10]}\n舊案狀態：{oc['status']}\n請確認您填的是新案資料"
+    return JSONResponse({
+        "ok": True,
+        "old_warning": old_warning,
+        "data": {
+            "customer_name": d.get("customer_name",""),
+            "id_no": d.get("id_no",""),
+            "birth_date": d.get("birth_date",""),
+            "phone": d.get("phone",""),
+            "email": d.get("email",""),
+            "line_id": d.get("line_id",""),
+            "marriage": d.get("marriage",""),
+            "education": d.get("education",""),
+            "id_issue_date": d.get("id_issue_date",""),
+            "id_issue_place": d.get("id_issue_place",""),
+            "id_issue_type": d.get("id_issue_type",""),
+            "reg_city": d.get("reg_city",""),
+            "reg_district": d.get("reg_district",""),
+            "reg_address": d.get("reg_address",""),
+            "reg_phone": d.get("reg_phone",""),
+            "live_same_as_reg": d.get("live_same_as_reg",""),
+            "live_city": d.get("live_city",""),
+            "live_district": d.get("live_district",""),
+            "live_address": d.get("live_address",""),
+            "live_phone": d.get("live_phone",""),
+            "live_status": d.get("live_status",""),
+            "live_years": d.get("live_years",""),
+            "live_months": d.get("live_months",""),
+            "company_name_detail": d.get("company_name_detail",""),
+            "company_industry": d.get("company_industry",""),
+            "company_role": d.get("company_role",""),
+            "company_phone_area": d.get("company_phone_area",""),
+            "company_phone_num": d.get("company_phone_num",""),
+            "company_phone_ext": d.get("company_phone_ext",""),
+            "company_years": d.get("company_years",""),
+            "company_salary": d.get("company_salary",""),
+            "company_city": d.get("company_city",""),
+            "company_district": d.get("company_district",""),
+            "company_address": d.get("company_address",""),
+            "bank_name": d.get("bank_name",""),
+            "bank_branch": d.get("bank_branch",""),
+            "bank_account": d.get("bank_account",""),
+            "bank_holder": d.get("bank_holder",""),
+            "contact1_name": d.get("contact1_name",""),
+            "contact1_relation": d.get("contact1_relation",""),
+            "contact1_phone": d.get("contact1_phone",""),
+            "contact1_known": d.get("contact1_known",""),
+            "contact2_name": d.get("contact2_name",""),
+            "contact2_relation": d.get("contact2_relation",""),
+            "contact2_phone": d.get("contact2_phone",""),
+            "contact2_known": d.get("contact2_known",""),
+            "product_model": d.get("product_model",""),
+            "product_imei": d.get("product_imei",""),
+            "vehicle_plate": d.get("vehicle_plate",""),
+            "vehicle_type": d.get("vehicle_type",""),
+            "vehicle_owner": d.get("vehicle_owner",""),
+        }
+    })
 # =========================
 # 啟動
 # =========================
