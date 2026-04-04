@@ -2946,6 +2946,118 @@ async def new_customer_post(request: Request):
     push_text(A_GROUP_ID, "✅ 新客戶建立："+name+"（"+gname+"）\n請行政B判別方案")
     return RedirectResponse("/report", status_code=303)
 
+# =========================
+# 密碼管理頁面（管理員專用）
+# =========================
+@app.get("/admin/passwords", response_class=HTMLResponse)
+def passwords_page(request: Request):
+    from fastapi.responses import RedirectResponse
+    role = check_auth(request)
+    if role != "admin": return RedirectResponse("/login")
+    conn = get_conn(); cur = conn.cursor()
+    cur.execute("SELECT group_id, group_name FROM groups WHERE group_type='SALES_GROUP' AND is_active=1 ORDER BY group_name")
+    sales_groups = cur.fetchall(); conn.close()
+    grp_rows = "".join(f"""
+        <div style="display:grid;grid-template-columns:120px 1fr 100px;gap:10px;align-items:end;padding:10px 0;border-bottom:1px solid #e5e7eb">
+          <div style="font-size:14px;font-weight:500">{g["group_name"]}</div>
+          <input type="password" id="gpw_{g["group_id"]}" class="input" placeholder="輸入新密碼">
+          <button onclick="changePw('group','{g["group_id"]}','gpw_{g["group_id"]}')" class="btn btn-primary">更新</button>
+        </div>""" for g in sales_groups)
+    return f"""<!DOCTYPE html><html><head>{PAGE_CSS}<title>密碼管理</title></head><body>
+    {make_topnav("admin","passwords")}
+    <div class="page" style="max-width:680px">
+      <h2 style="font-size:18px;font-weight:600;margin-bottom:20px">🔑 密碼管理</h2>
+      <div id="msg"></div>
+      <div style="background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:20px;margin-bottom:16px">
+        <div style="font-size:13px;font-weight:600;color:#6b7280;margin-bottom:14px;padding-bottom:8px;border-bottom:1px solid #f3f4f6">系統角色密碼</div>
+        <div style="display:grid;grid-template-columns:120px 1fr 100px;gap:10px;align-items:end;padding:10px 0;border-bottom:1px solid #f3f4f6">
+          <div style="font-size:14px;font-weight:500">管理員</div>
+          <input type="password" id="admin_pw" class="input" placeholder="輸入新密碼">
+          <button onclick="changePw('admin','','admin_pw')" class="btn btn-primary">更新</button>
+        </div>
+        <div style="display:grid;grid-template-columns:120px 1fr 100px;gap:10px;align-items:end;padding:10px 0;border-bottom:1px solid #f3f4f6">
+          <div style="font-size:14px;font-weight:500">行政B</div>
+          <input type="password" id="adminB_pw" class="input" placeholder="輸入新密碼">
+          <button onclick="changePw('adminB','','adminB_pw')" class="btn btn-primary">更新</button>
+        </div>
+        <div style="display:grid;grid-template-columns:120px 1fr 100px;gap:10px;align-items:end;padding:10px 0;border-bottom:1px solid #f3f4f6">
+          <div style="font-size:14px;font-weight:500">行政A</div>
+          <input type="password" id="report_pw" class="input" placeholder="輸入新密碼">
+          <button onclick="changePw('normal','','report_pw')" class="btn btn-primary">更新</button>
+        </div>
+        <div style="display:grid;grid-template-columns:120px 1fr 100px;gap:10px;align-items:end;padding:10px 0">
+          <div style="font-size:14px;font-weight:500">VBA密鑰</div>
+          <input type="password" id="vba_secret" class="input" placeholder="輸入新密鑰">
+          <button onclick="changePw('vba','','vba_secret')" class="btn btn-primary">更新</button>
+        </div>
+      </div>
+      <div style="background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:20px;margin-bottom:16px">
+        <div style="font-size:13px;font-weight:600;color:#6b7280;margin-bottom:14px;padding-bottom:8px;border-bottom:1px solid #f3f4f6">業務群組密碼</div>
+        {grp_rows if grp_rows else '<div style="color:#9ca3af;font-size:13px;padding:10px 0">尚無業務群組</div>'}
+      </div>
+      <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:12px 16px;font-size:13px;color:#92400e">
+        ⚠️ 更新密碼後立即生效，請通知相關人員！
+      </div>
+    </div>
+    <script>
+    async function changePw(role, groupId, inputId) {{
+      const pw = document.getElementById(inputId).value.trim();
+      if (!pw) {{ alert("請輸入新密碼"); return; }}
+      if (pw.length < 6) {{ alert("密碼至少6個字元"); return; }}
+      const r = await fetch("/admin/update-password", {{
+        method: "POST",
+        headers: {{"Content-Type":"application/json"}},
+        body: JSON.stringify({{role, group_id: groupId, password: pw}})
+      }});
+      const d = await r.json();
+      const msg = document.getElementById("msg");
+      if (d.ok) {{
+        msg.innerHTML = '<div style="background:#dcfce7;color:#15803d;padding:10px 14px;border-radius:6px;margin-bottom:14px">✅ ' + d.message + '</div>';
+        document.getElementById(inputId).value = "";
+      }} else {{
+        msg.innerHTML = '<div style="background:#fef2f2;color:#dc2626;padding:10px 14px;border-radius:6px;margin-bottom:14px">❌ ' + d.message + '</div>';
+      }}
+      setTimeout(() => msg.innerHTML = "", 3000);
+    }}
+    </script>
+    </body></html>"""
+
+
+@app.post("/admin/update-password")
+async def update_password(request: Request):
+    role = check_auth(request)
+    if role != "admin":
+        return JSONResponse({"ok": False, "message": "無權限"}, status_code=403)
+    data = await request.json()
+    pw_role = data.get("role","")
+    group_id = data.get("group_id","")
+    password = data.get("password","").strip()
+    if not password or len(password) < 6:
+        return JSONResponse({"ok": False, "message": "密碼至少6個字元"})
+    hashed = hash_pw(password)
+    if pw_role == "admin":
+        set_setting("admin_pw", hashed)
+        return JSONResponse({"ok": True, "message": "管理員密碼已更新"})
+    elif pw_role == "adminB":
+        set_setting("adminB_pw", hashed)
+        return JSONResponse({"ok": True, "message": "行政B密碼已更新"})
+    elif pw_role == "normal":
+        set_setting("report_pw", hashed)
+        return JSONResponse({"ok": True, "message": "行政A密碼已更新"})
+    elif pw_role == "vba":
+        set_setting("vba_secret", hashed)
+        return JSONResponse({"ok": True, "message": "VBA密鑰已更新"})
+    elif pw_role == "group" and group_id:
+        conn = get_conn(); cur = conn.cursor()
+        cur.execute("UPDATE groups SET password_hash=? WHERE group_id=?", (hashed, group_id))
+        conn.commit(); conn.close()
+        return JSONResponse({"ok": True, "message": "群組密碼已更新"})
+    return JSONResponse({"ok": False, "message": "未知角色"})
+
+
+# =========================
+# 啟動
+# =========================
 @app.on_event("startup")
 def startup():
     init_db()
