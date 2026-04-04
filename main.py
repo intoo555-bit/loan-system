@@ -60,7 +60,7 @@ ACTION_KEYWORDS = [
 DELETE_KEYWORDS = ["結案", "刪掉", "不追了", "全部不送", "已撥款結案", "違約金結案", "已支付違約金", "以收到違約金", "收到違約金", "違約金已收", "以收到違約金", "違約金"]
 BLOCK_KEYWORDS = ["鼎信", "禾基"]
 
-# 專案別名對照（業務員內部名稱 → 日報分類名稱）
+# 專案別名對照
 COMPANY_ALIAS = {
     "熊速貸": "亞太商品",
     "工會機車動擔": "亞太工會",
@@ -69,7 +69,6 @@ COMPANY_ALIAS = {
     "維力機車專": "和裕機車",
 }
 
-# 核准排除關鍵字（這些出現時不算真正核准）
 APPROVAL_EXCLUDE_KEYWORDS = ["初估", "待補", "照會", "金主初估", "需補", "補資料才"]
 
 IGNORE_NAME_SET = {
@@ -179,7 +178,6 @@ def extract_id_no(text: str) -> str:
 
 
 def extract_company(text: str) -> str:
-    # 先檢查別名對照
     for alias, real in COMPANY_ALIAS.items():
         if alias in (text or ""):
             return real
@@ -610,90 +608,83 @@ def delete_pending_action(action_id):
 # =========================
 def extract_approved_amount(text: str) -> str:
     """
-    從訊息抓取核准金額。
-    支援格式：核准20萬 / 核准200,000 / 核准200000 / 核准6萬5 / 核准金額20萬
-    回傳字串如「20萬」「200,000元」，抓不到回傳空字串
+    從訊息抓取核准金額（改良版）。
+    支援格式：
+    - 20萬 / 6W / 6.5萬 / (5).(8)萬
+    - 降撥4萬 / 本利攤50萬
+    - 120,000 / 40000（大數字自動換算）
+    - 核准金額20萬 / 最高核貸金額20萬
+    注意：「核准30期」的30是期數不是金額，會自動跳過
     """
-    patterns = [
-        r"核[貸准貸]\s*金額?\s*[:：]?\s*(\d+[\d,]*)\s*萬?",
-        r"核准\s*(\d+[\d,]*萬?\d*)",
-        r"最高核[貸貸]\s*金額?\s*(\d+[\d,]*)\s*萬",
-        r"金額\s*[:：]?\s*(\d+[\d,]*)\s*萬?",
+    # 1. 先找有萬/W字的（最可靠）
+    wan_patterns = [
+        r"\((\d+)\)\s*\.\s*\((\d+)\)\s*萬",   # (5).(8)萬
+        r"降撥\s*(\d+(?:\.\d+)?)\s*萬",             # 降撥4萬
+        r"本利攤\s*(\d+(?:\.\d+)?)\s*萬",           # 本利攤50萬
+        r"金額[:：]?\s*(\d+(?:\.\d+)?)\s*萬",       # 金額20萬
+        r"核[准貸]\s*金額?\s*[:：]?\s*(\d+(?:\.\d+)?)\s*萬",  # 核准金額20萬
+        r"(\d+(?:\.\d+)?)\s*[Ww萬]",                 # 20萬 / 6W
     ]
-    for pat in patterns:
+    for pat in wan_patterns:
         m = re.search(pat, text)
         if m:
-            raw = m.group(1).replace(",", "")
-            # 判斷是否有萬
-            after = text[m.end():][:3]
-            if "萬" in m.group(0) or "萬" in after:
-                # 避免重複加萬
-                return f"{raw}萬" if not raw.endswith("萬") else raw
-            # 純數字判斷：超過1000當元，否則當萬
+            if m.lastindex == 2:  # (5).(8)萬格式
+                return f"{m.group(1)}.{m.group(2)}萬"
+            raw = m.group(1)
             try:
-                num = int(raw)
-                if num >= 1000:
-                    return f"{num:,}元"
-                else:
-                    return f"{num}萬"
+                num = float(raw)
+                if num > 0:
+                    return f"{int(num)}萬" if num == int(num) else f"{num}萬"
             except:
-                return raw
+                pass
+
+    # 2. 找大數字（超過10000視為元，換算成萬）
+    for m in re.finditer(r"(\d{1,3}(?:,\d{3})+|\d{5,})", text):
+        num_str = m.group(1).replace(",", "")
+        try:
+            num = int(num_str)
+            if num >= 10000:
+                wan = num // 10000
+                return f"{wan}萬"
+        except:
+            pass
+
+    # 3. 最後才用「核准+數字」，但排除期數
+    m = re.search(r"核准\s*(\d+)", text)
+    if m:
+        num = int(m.group(1))
+        after = text[m.end():][:5]
+        if num <= 60 and any(c in after for c in ["期", "，", ",", "/"]):
+            pass  # 這是期數，跳過
+        elif num > 0:
+            return f"{num}萬"
+
     return ""
 
 
+
 async def extract_approved_amount_with_ai(text: str) -> str:
-    """
-    用 Claude API 解析核准金額。
-    回傳金額字串（如「20萬」），抓不到回傳空字串。
-    """
-    import os
     api_key = os.getenv("ANTHROPIC_API_KEY", "")
     if not api_key:
         return ""
     try:
         resp = req_lib.post(
             "https://api.anthropic.com/v1/messages",
-            headers={
-                "x-api-key": api_key,
-                "anthropic-version": "2023-06-01",
-                "content-type": "application/json",
-            },
-            json={
-                "model": "claude-haiku-4-5-20251001",
-                "max_tokens": 100,
-                "messages": [{
-                    "role": "user",
-                    "content": f"""以下是貸款核准訊息，請判斷：
-1. 這是否為真正的核准（不是初估、不是待補、不是照會）？
-2. 如果是核准，核准金額是多少？
-
-訊息：
-{text}
-
-請只回傳JSON格式，不要其他說明：
-{{"is_approved": true或false, "amount": "金額字串或空字串"}}
-
-金額格式範例：「20萬」「6萬」「50萬」「12萬」
-注意：
-- 期數（如30期）不是金額
-- 月付金額（如4878元）不是核准金額
-- 初估/待補/需補資料才核准 → is_approved為false
-- 金額數字後面有/或%通常是利率不是金額"""
-                }],
-            },
+            headers={"x-api-key": api_key, "anthropic-version": "2023-06-01", "content-type": "application/json"},
+            json={"model": "claude-haiku-4-5-20251001", "max_tokens": 100, "messages": [{"role": "user", "content": f"""貸款核准訊息如下，請判斷是否為真正核准並抓出金額。
+訊息：{text}
+只回傳JSON，不要其他文字：{{"is_approved": true或false, "amount": "金額字串或空字串"}}
+金額格式如：20萬、6萬、50萬。注意：期數不是金額，月付不是金額，初估/待補/需補/照會=false。"""}]},
             timeout=15,
         )
         if resp.status_code == 200:
-            import json as json_lib
-            result_text = resp.json()["content"][0]["text"].strip()
-            # 清理可能的markdown格式
-            result_text = result_text.replace("```json", "").replace("```", "").strip()
-            data = json_lib.loads(result_text)
+            import json as jl
+            result = resp.json()["content"][0]["text"].strip().replace("```json","").replace("```","").strip()
+            data = jl.loads(result)
             if data.get("is_approved") and data.get("amount"):
                 return data["amount"]
-            return ""
     except Exception as e:
-        print(f"AI解析金額失敗: {e}")
+        print(f"AI解析失敗: {e}")
     return ""
 
 
@@ -960,13 +951,9 @@ def search_customer_info(name: str, group_id: str) -> str:
             lines.append("送件歷程：")
             for h in history[-3:]:
                 lines.append(f"  {h.get('date','')} {h.get('company','')} → {h.get('status','')}")
-    last_update = (r["last_update"] or "").strip()
-    if last_update:
-        last_lines = [l.strip() for l in last_update.splitlines() if l.strip()]
-        if last_lines:
-            lines.append(f"最新進度：{last_lines[0][:80]}")
-            for extra in last_lines[1:5]:
-                lines.append(f"  {extra[:80]}")
+    last = (r["last_update"] or "").splitlines()
+    if last:
+        lines.append(f"最新進度：{last[-1].strip()[:50]}")
     return "\n".join(lines)
 
 
@@ -1126,7 +1113,6 @@ def handle_special_command(cmd: Dict, reply_token: str, group_id: str):
         same = [r for r in rows if r["source_group_id"] == group_id]
         target = same[0] if same else (rows[0] if rows else None)
         if not target:
-            # A群也可以設定
             all_rows = find_active_by_name(name)
             target = all_rows[0] if all_rows else None
         if not target:
@@ -1231,12 +1217,11 @@ def handle_a_case_block(block_text, reply_token) -> Optional[str]:
         next_co = get_next_company(route)
         new_route = advance_route(route, "婉拒")
 
-    # 核准時抓金額，移到待撥款區（先用規則抓，再用AI補強）
+    # 核准時抓金額，移到待撥款區
     approved_amount = None
     new_report_section = None
     ai_amount_needed = False
     if is_approved:
-        # 先用規則快速抓
         quick_amount = extract_approved_amount(block_text)
         if quick_amount:
             approved_amount = quick_amount
@@ -1260,10 +1245,7 @@ def handle_a_case_block(block_text, reply_token) -> Optional[str]:
     if is_reject:
         msg += f"\n➡️ 下一家：{next_co}" if next_co else f"\n⚠️ {customer['customer_name']} 已無下一家送件方案"
 
-    # 如果規則抓不到金額，背景用AI補抓並通知
     if ai_amount_needed:
-        msg += f"\n⚠️ 核准金額未能自動辨識，正在AI解析..."
-        # 背景任務：AI解析後更新DB並通知
         import threading
         def ai_parse_and_update():
             import asyncio
@@ -1575,18 +1557,6 @@ ACTION_KEYWORDS = [
 DELETE_KEYWORDS = ["結案", "刪掉", "不追了", "全部不送", "已撥款結案", "違約金結案", "已支付違約金", "以收到違約金", "收到違約金", "違約金已收", "以收到違約金", "違約金"]
 BLOCK_KEYWORDS = ["鼎信", "禾基"]
 
-# 專案別名對照（業務員內部名稱 → 日報分類名稱）
-COMPANY_ALIAS = {
-    "熊速貸": "亞太商品",
-    "工會機車動擔": "亞太工會",
-    "機車動擔設定": "亞太機車",
-    "維力商品貸": "和裕商品",
-    "維力機車專": "和裕機車",
-}
-
-# 核准排除關鍵字（這些出現時不算真正核准）
-APPROVAL_EXCLUDE_KEYWORDS = ["初估", "待補", "照會", "金主初估", "需補", "補資料才"]
-
 IGNORE_NAME_SET = {
     "信用不良", "不需要了", "不用了", "不要了", "結案", "補件", "核准", "婉拒",
     "照會", "等保書", "待撥款", "缺資料", "補資料", "資料補", "補來", "退件",
@@ -1855,9 +1825,7 @@ def process_event(event: dict):
         results = []
         for idx, block in enumerate(blocks, 1):
             result = handle_a_case_block(block, reply_token)
-            if result == "QUICK_REPLY_SENT":
-                continue
-            if result:
+            if result and result != "QUICK_REPLY_SENT":
                 results.append(f"第{idx}筆：{result}" if len(blocks) > 1 else result)
         if results:
             reply_text(reply_token, "\n".join(results))
