@@ -55,7 +55,6 @@ ACTION_KEYWORDS = [
     "補件", "補資料", "缺資料", "婉拒", "核准", "照會", "退件", "等保書",
     "不承作", "待撥款", "補行照", "補照會", "補照片", "補時段", "補案件資料",
     "補聯徵", "補保人", "保密", "無可知情", "聯絡人皆可知情", "已補",
-    "違約金", "以收到違約金", "收到違約金", "違約金結案",
 ]
 
 DELETE_KEYWORDS = ["結案", "刪掉", "不追了", "全部不送", "已撥款結案", "違約金結案", "已支付違約金", "以收到違約金", "收到違約金", "違約金已收", "以收到違約金", "違約金"]
@@ -889,9 +888,13 @@ def search_customer_info(name: str, group_id: str) -> str:
             lines.append("送件歷程：")
             for h in history[-3:]:
                 lines.append(f"  {h.get('date','')} {h.get('company','')} → {h.get('status','')}")
-    last = (r["last_update"] or "").splitlines()
-    if last:
-        lines.append(f"最新進度：{last[-1].strip()[:50]}")
+    last_update = (r["last_update"] or "").strip()
+    if last_update:
+        last_lines = [l.strip() for l in last_update.splitlines() if l.strip()]
+        if last_lines:
+            lines.append(f"最新進度：{last_lines[0][:80]}")
+            for extra in last_lines[1:5]:
+                lines.append(f"  {extra[:80]}")
     return "\n".join(lines)
 
 
@@ -1453,7 +1456,6 @@ ACTION_KEYWORDS = [
     "補件", "補資料", "缺資料", "婉拒", "核准", "照會", "退件", "等保書",
     "不承作", "待撥款", "補行照", "補照會", "補照片", "補時段", "補案件資料",
     "補聯徵", "補保人", "保密", "無可知情", "聯絡人皆可知情", "已補",
-    "違約金", "以收到違約金", "收到違約金", "違約金結案",
 ]
 
 DELETE_KEYWORDS = ["結案", "刪掉", "不追了", "全部不送", "已撥款結案", "違約金結案", "已支付違約金", "以收到違約金", "收到違約金", "違約金已收", "以收到違約金", "違約金"]
