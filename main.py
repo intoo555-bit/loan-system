@@ -4910,22 +4910,15 @@ def _do_download_excel(request: Request, case_id: str):
                 "B21": c1_name, "D21": c1_rel_val,
                 "B25": c1_phone,
             }
-            # 行業/職務：有值才填，無值不動原儲存格
-            if industry_val is not None:
-                result["D17"] = industry_val
-            if role_val is not None:
-                result["G17"] = role_val
-            # 車輛資料（從 adminB 補充資料，有值才填，無值不動）
-            vehicle_fields = {
-                "A7": v("adminb_vehicle_type"),   # 車輛型式
-                "C7": v("adminb_engine_no"),      # 引擎號碼
-                "E7": v("adminb_displacement"),   # 排氣量
-                "G7": v("adminb_color"),          # 顏色
-                "J3": v("vehicle_plate"),         # 牌照號碼
-            }
-            for cell, fv in vehicle_fields.items():
-                if fv:
-                    result[cell] = fv
+            # 行業/職務：有值填入，無值清空（不留範本示範資料）
+            result["D17"] = industry_val if industry_val else ""
+            result["G17"] = role_val if role_val else ""
+            # 車輛資料：有值填入，無值清空（不留範本示範資料）
+            result["A7"] = v("adminb_vehicle_type") or ""
+            result["C7"] = v("adminb_engine_no") or ""
+            result["E7"] = v("adminb_displacement") or ""
+            result["G7"] = v("adminb_color") or ""
+            result["J3"] = v("vehicle_plate") or ""
             return result
 
         elif plan_name == "第一":
