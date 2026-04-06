@@ -693,6 +693,21 @@ def init_db():
         ("vehicle_duration", "TEXT"),
         ("vehicle_road_reg", "TEXT"),
         ("vehicle_space", "TEXT"),
+        ("adminb_fund_use", "TEXT"),
+        ("adminb_product", "TEXT"),
+        ("adminb_model", "TEXT"),
+        ("adminb_product_name", "TEXT"),
+        ("adminb_product_model", "TEXT"),
+        ("adminb_21car_project", "TEXT"),
+        ("adminb_21car_price", "TEXT"),
+        ("adminb_21car_ref_src", "TEXT"),
+        ("adminb_21car_ref_price", "TEXT"),
+        ("adminb_21car_rate", "TEXT"),
+        ("adminb_credit_bank", "TEXT"),
+        ("adminb_credit_no", "TEXT"),
+        ("adminb_credit_exp", "TEXT"),
+        ("adminb_credit_limit", "TEXT"),
+        ("adminb_credit_late", "TEXT"),
     ]:
         ensure_column(cur, "customers", col, defn)
     # groups 表新增業務群對應欄位
@@ -2161,7 +2176,7 @@ def reset_data_page(request: Request):
     role = check_auth(request)
     if role != "admin":
         return RedirectResponse("/login", status_code=303)
-    return """
+    return HTMLResponse("""<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>清除測試資料</title></head><body>
     <h2>⚠️ 清除測試資料</h2>
     <p>此操作將清除所有客戶案件紀錄，群組設定不受影響。</p>
     <p><b>清除後無法復原（除非從 Render Snapshot 還原）</b></p>
@@ -2182,7 +2197,7 @@ def reset_data_page(request: Request):
         document.getElementById('result').innerText = data.message;
     }
     </script>
-    """
+    </body></html>""")
 
 
 @app.post("/admin/add_group")
@@ -2549,10 +2564,10 @@ def render_customer_row(row) -> str:
 
     # 詳細資料 - 支援多家核准
     route_history = route_data.get("history", [])
-    approved_list = [h for h in route_history if h.get("status") in ("核准","待撥款","撥款") and h.get("amount")]
+    approved_list = [rh for rh in route_history if rh.get("status") in ("核准","待撥款","撥款") and rh.get("amount")]
     if (row["report_section"] or "") == "待撥款":
         if len(approved_list) > 1:
-            parts = [h.get("company","") + h.get("amount","") for h in approved_list if h.get("amount")]
+            parts = [rh.get("company","") + rh.get("amount","") for rh in approved_list if rh.get("amount")]
             sub = "多家核准：" + " + ".join(parts) + ("（撥款" + disb + "）" if disb else "（待撥款）")
         else:
             sub = co + (f" 核准{amt}" if amt else "") + (f"（撥款{disb}）" if disb else "（待撥款）")
@@ -2560,10 +2575,10 @@ def render_customer_row(row) -> str:
         next_co = order[idx+1] if idx+1 < len(order) else ""
         # 顯示各家進度摘要
         progress_parts = []
-        for h in route_history[-3:]:
-            hco = h.get("company","")
-            hst = h.get("status","")
-            hamt = h.get("amount","")
+        for rh in route_history[-3:]:
+            hco = rh.get("company","")
+            hst = rh.get("status","")
+            hamt = rh.get("amount","")
             if hst == "核准":
                 progress_parts.append(hco + "核准" + hamt)
             elif hst == "婉拒":
@@ -2657,7 +2672,12 @@ def render_seg(section_map: dict, sections: list, shown: set) -> str:
 
 @app.get("/login", response_class=HTMLResponse)
 def login_page(request: Request, error: str = ""):
-    err_html = '<div style="background:#fef2f2;color:#dc2626;padding:8px 12px;border-radius:6px;font-size:12px;margin-bottom:14px">密碼錯誤或帳號已鎖定，請稍後再試</div>' if error else ""
+    if error == "locked":
+        err_html = '<div style="background:#fef2f2;color:#dc2626;padding:8px 12px;border-radius:6px;font-size:12px;margin-bottom:14px">帳號已鎖定，請 15 分鐘後再試或聯繫管理員解鎖</div>'
+    elif error:
+        err_html = '<div style="background:#fef2f2;color:#dc2626;padding:8px 12px;border-radius:6px;font-size:12px;margin-bottom:14px">密碼錯誤，請重新輸入</div>'
+    else:
+        err_html = ""
     conn = get_conn(); cur = conn.cursor()
     cur.execute("SELECT group_id, group_name FROM groups WHERE group_type='SALES_GROUP' AND is_active=1 ORDER BY group_name")
     sales_groups = cur.fetchall(); conn.close()
@@ -2702,7 +2722,7 @@ async def login_post(request: Request):
     group_id = form.get("group_id","")
     identifier = role if role != "group" else f"group_{group_id}"
     if is_login_locked(identifier):
-        return RedirectResponse("/login?error=1", status_code=303)
+        return RedirectResponse("/login?error=locked", status_code=303)
     ok = False
     session_role = ""
     session_group = ""
@@ -2911,7 +2931,12 @@ def search_page(request: Request, q: str = "", grp: str = "", date_from: str = "
             route_data = parse_route_json(row["route_plan"] or "")
             order, idx = route_data.get("order",[]), route_data.get("current_index",0)
             history = route_data.get("history",[])
-            badge = '<span class="badge b-close">已結案</span>' if row["status"]!="ACTIVE" else get_badge(row)
+            if row["status"] == "PENDING":
+                badge = '<span class="badge b-doc">待處理</span>'
+            elif row["status"] != "ACTIVE":
+                badge = '<span class="badge b-close">已結案</span>'
+            else:
+                badge = get_badge(row)
             co = row["current_company"] or row["company"] or ""
             amt = row["approved_amount"] or ""
             disb = row["disbursement_date"] or ""
@@ -3649,9 +3674,9 @@ def history_page(request: Request, group: str = "", month: str = "", q: str = ""
         updated = row["updated_at"][:10].replace("-","/") if row["updated_at"] else ""
         # 多家核准
         route_data2 = parse_route_json(row.get("route_plan","") or "")
-        all_approved = [h for h in route_data2.get("history",[]) if h.get("status") in ("核准","待撥款","撥款") and h.get("amount")]
+        all_approved = [rh for rh in route_data2.get("history",[]) if rh.get("status") in ("核准","待撥款","撥款") and rh.get("amount")]
         if len(all_approved) > 1:
-            detail = "多家核准：" + " + ".join(h.get("company","") + h.get("amount","") for h in all_approved)
+            detail = "多家核准：" + " + ".join(rh.get("company","") + rh.get("amount","") for rh in all_approved)
         elif all_approved:
             detail = all_approved[0].get("company","") + " 核准" + all_approved[0].get("amount","")
         else:
@@ -3857,7 +3882,7 @@ def list_groups(request: Request):
 async def update_group(request: Request):
     role = check_auth(request)
     if role != "admin":
-        return JSONResponse({"status":"error","message":"無權限"})
+        return JSONResponse({"status":"error","message":"無權限"}, status_code=403)
     data = await request.json()
     gid = data.get("group_id","").strip()
     gname = data.get("group_name","").strip()
