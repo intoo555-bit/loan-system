@@ -4530,6 +4530,15 @@ def _do_download_excel(request: Request, case_id: str):
     # Build cell data mapping for each plan type
     def _build_cell_map(plan_name, r):
         """Build {cell_ref: value} map. Empty string = clear cell."""
+        CITY_TO_CODE = {
+            "台北市": "北市", "新北市": "新北市", "桃園市": "桃市", "台中市": "中市",
+            "台南市": "南市", "高雄市": "高市", "基隆市": "基市", "新竹市": "竹市",
+            "新竹縣": "竹縣", "苗栗縣": "苗縣", "彰化縣": "彰縣", "南投縣": "投縣",
+            "雲林縣": "雲縣", "嘉義市": "嘉市", "嘉義縣": "嘉縣", "屏東縣": "屏縣",
+            "宜蘭縣": "宜縣", "花蓮縣": "花縣", "台東縣": "東縣", "澎湖縣": "澎縣",
+            "金門縣": "金門", "連江縣": "連江",
+        }
+
         def v(key): return (r.get(key, "") or "").strip()
 
         name = v("customer_name")
@@ -4544,13 +4553,10 @@ def _do_download_excel(request: Request, case_id: str):
         id_place = v("id_issue_place")
         id_type = v("id_issue_type")
         reg_addr = v("reg_city") + v("reg_district") + v("reg_address")
-        reg_phone = v("reg_phone")
         live_same = v("live_same_as_reg") == "1"
         live_addr = reg_addr if live_same else (v("live_city") + v("live_district") + v("live_address"))
-        live_phone = v("live_phone")
         live_status = v("live_status")
         live_years = v("live_years")
-        live_months = v("live_months")
         company = v("company_name_detail") or v("company")
         co_phone_area = v("company_phone_area")
         co_phone_num = v("company_phone_num")
@@ -4569,44 +4575,39 @@ def _do_download_excel(request: Request, case_id: str):
         c2_known = v("contact2_known")
 
         if plan_name == "貸就補":
-            co_months = v("company_months") if v("company_months") else ""
+            id_place_code = CITY_TO_CODE.get(id_place, id_place)
+            id_type_val = id_type if id_type in ("初發", "換發", "補發") else ""
+            birth_roc = birth.replace("/", "") if birth else ""
+            id_date_roc = id_date.replace("/", "") if id_date else ""
+
             return {
                 "C4": name, "E4": id_no, "J4": phone,
-                "C5": birth, "E5": id_date, "F5": id_place, "G5": id_type,
+                "C5": birth_roc, "E5": id_date_roc, "F5": id_place_code, "G5": id_type_val,
                 "C7": reg_addr,
-                "C8": live_addr,
+                "C8": live_addr if not live_same else reg_addr,
                 "C9": co_addr,
                 "C10": company, "G10": co_phone,
-                "C11": co_role, "E11": co_salary, "G11": co_years, "I11": co_months,
+                "C11": co_role, "E11": co_salary, "G11": co_years,
                 "C18": c1_name, "E18": c1_rel, "H18": c1_phone,
                 "C19": c2_name, "E19": c2_rel, "H19": c2_phone,
             }
 
         elif plan_name in ("和裕機車", "和裕商品"):
-            # Format phone: 0953119943 -> 0953-119943
-            fmt_phone = phone
-            if phone and len(phone) >= 8 and phone.isdigit():
-                fmt_phone = phone[:4] + "-" + phone[4:]
-            # Format co_years+months: e.g. "1年8月"
-            co_months = v("company_months") if v("company_months") else ""
-            co_ym = ""
-            if co_years or co_months:
-                co_ym = (co_years + "年" if co_years else "") + (co_months + "月" if co_months else "")
-            # Format salary: e.g. "4萬4千"
-            industry = v("company_industry")
-            carrier = v("carrier")
-            co_salary_fmt = co_salary
+            id_place_code = CITY_TO_CODE.get(id_place, id_place)
+            marriage_val = marriage if marriage in ("已婚", "未婚") else ""
+            edu_map = {"大學": "專科、大學", "專科": "專科、大學", "高中": "高中職", "高職": "高中職", "研究所": "研究所以上"}
+            edu_val = edu_map.get(education, education)
+
             return {
                 "C11": name, "F11": id_no,
                 "C12": birth, "F12": (id_date + " " + id_type) if id_date else "",
-                "C13": marriage, "F13": id_place,
-                "C14": education, "F14": fmt_phone,
+                "C13": marriage_val, "F13": id_place_code,
+                "C14": edu_val, "F14": phone,
                 "C15": reg_addr,
                 "C16": live_addr, "H16": "同戶籍" if live_same else "",
                 "C17": line_id, "H17": co_phone,
-                "C18": company, "G18": co_role, "I18": co_ym,
-                "C19": co_addr, "G19": industry, "I19": co_salary_fmt,
-                "C20": carrier,
+                "C18": company, "G18": co_role, "I18": (co_years + "年") if co_years else "",
+                "C19": co_addr, "I19": (co_salary + "萬") if co_salary else "",
                 "C23": c1_name, "F23": c2_name,
                 "C24": c1_rel, "F24": c2_rel,
                 "C25": c1_phone, "F25": c2_phone,
@@ -4614,37 +4615,67 @@ def _do_download_excel(request: Request, case_id: str):
             }
 
         elif plan_name in ("亞太商品", "亞太機車15萬", "亞太工會機車", "亞太機車25萬"):
-            # F9 birth format: 1989/09/16
-            industry = v("company_industry")
+            reg_code = CITY_TO_CODE.get(v("reg_city"), "")
+            live_code = reg_code if live_same else CITY_TO_CODE.get(v("live_city"), "")
+            co_code = CITY_TO_CODE.get(v("company_city"), "")
+
+            # Validate dropdown values
+            marriage_val = marriage if marriage in ("未婚", "已婚") else ""
+            edu_val = education if education in ("小學/國中", "高中/職", "專科/大學", "研究所以上") else ""
+            id_type_val = id_type if id_type in ("初發", "補發", "換發") else ""
+            live_status_val = live_status if live_status in ("自有", "配偶", "親屬", "租屋", "宿舍") else ""
+
+            # Industry/role from adminb supplementary data
+            industry = v("adminb_industry") or ""
+            valid_industries = ["餐飲與服務業","製造業","建築與營造","軍警與公教","科技與資訊","運輸與物流","金融與保險業","批發與零售業","醫療與教育","農林漁牧業","自由職業","其他"]
+            industry = industry if industry in valid_industries else ""
+
+            valid_roles = ["行政與內勤","勞力與現場","銷售與業務","財務與專業","技術與工程","教學與醫護","管理與經營","自營與自由"]
+            at_role = v("adminb_role") or v("company_role") or ""
+            role_val = at_role if at_role in valid_roles else ""
+
+            # Relationship - must match dropdown
+            valid_rels = ["父母","配偶","子女","兄姊","弟妹","祖父母","旁系血親","姻親","朋友","其他"]
+            c1_rel_val = c1_rel if c1_rel in valid_rels else ""
+
+            # Phone area code must match dropdown
+            valid_areas = ["0","02","03","037","04","049","05","06","07","08","089","082","083"]
+            co_area = co_phone_area if co_phone_area in valid_areas else ""
+
             return {
                 "B9": name, "D9": id_no, "F9": birth,
-                "B10": marriage, "D10": education,
-                "B11": id_date, "D11": id_place, "F11": id_type,
-                "B12": v("reg_city"), "C12": v("reg_district"), "D12": v("reg_address"),
-                "B13": v("live_city") if not live_same else v("reg_city"),
+                "B10": marriage_val, "D10": edu_val,
+                "B11": id_date, "D11": CITY_TO_CODE.get(id_place, id_place), "F11": id_type_val,
+                "B12": reg_code, "C12": v("reg_district"), "D12": v("reg_address"),
+                "B13": live_code if not live_same else reg_code,
                 "C13": v("live_district") if not live_same else v("reg_district"),
                 "D13": v("live_address") if not live_same else v("reg_address"),
-                "B14": live_status, "D14": live_years, "F14": "0",
-                "B15": phone, "D15": "0", "E15": "0",
+                "B14": live_status_val, "D14": live_years,
+                "B15": phone,
                 "B16": email,
-                "B17": company, "E17": industry, "G17": co_role,
-                "B18": co_phone_area, "C18": co_phone_num, "G18": co_years, "H18": co_salary,
-                "B19": v("company_city"), "C19": v("company_district"), "D19": v("company_address"),
-                "B21": c1_name, "D21": c1_rel,
+                "B17": company, "D17": industry, "G17": role_val,
+                "B18": co_area, "C18": co_phone_num, "G18": co_years, "H18": co_salary,
+                "B19": co_code, "C19": v("company_district"), "D19": v("company_address"),
+                "B21": c1_name, "D21": c1_rel_val,
                 "B25": c1_phone,
             }
 
         elif plan_name == "第一":
-            co_months = v("company_months") if v("company_months") else ""
+            id_type_val = id_type if id_type in ("初發", "換發", "補發") else ""
+            id_place_code = CITY_TO_CODE.get(id_place, id_place)
+            # Convert birth/id_date to 民國 no-slash format
+            birth_roc = birth.replace("/", "") if birth else ""
+            id_date_roc = id_date.replace("/", "") if id_date else ""
+
             return {
                 "B5": name, "G5": id_no,
-                "B6": id_date, "G6": id_place, "J6": id_type,
-                "B7": birth, "G7": phone,
+                "B6": id_date_roc, "G6": id_place_code, "J6": id_type_val,
+                "B7": birth_roc, "G7": phone,
                 "B9": reg_addr,
                 "B10": "同上" if live_same else live_addr,
                 "M5": company, "T6": co_phone,
                 "M7": co_addr,
-                "M8": co_years, "O8": co_months, "M9": co_salary,
+                "M8": co_years, "M9": co_salary,
                 "M13": c1_name, "Q13": c1_rel, "T13": c1_phone,
                 "M14": c2_name, "Q14": c2_rel, "T14": c2_phone,
             }
