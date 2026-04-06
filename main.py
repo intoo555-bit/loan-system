@@ -3362,6 +3362,16 @@ async def adminb_save(request: Request):
         "adminb_fund_use": form.get("at_fund",""),
         "vehicle_plate": form.get("at_plate",""),
     }
+    # 套用「確認資料」自動調整規則，回寫到主要欄位
+    cur.execute("SELECT * FROM customers WHERE case_id=?", (case_id,))
+    row = cur.fetchone()
+    if row:
+        rules = apply_adminb_rules(dict(row))
+        fields["company_years"] = rules.get("company_years_val", "")
+        fields["company_salary"] = rules.get("salary_val", "")
+        fields["live_years"] = rules.get("live_years_val", "")
+        fields["live_status"] = rules.get("live_status_val", "")
+        fields["education"] = rules.get("edu_val", "")
     set_clause = ", ".join(f"{k}=?" for k in fields)
     vals = list(fields.values()) + [now_iso(), case_id]
     cur.execute(f"UPDATE customers SET {set_clause}, updated_at=? WHERE case_id=?", vals)
