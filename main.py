@@ -4404,97 +4404,75 @@ def adminb_download_excel(request: Request, case_id: str = ""):
         return JSONResponse({"error": f"下載失敗：{str(e)}"}, status_code=500)
 
 
-def _fill_excel_template(template_path: str, cell_data: dict) -> bytes:
+def _fill_excel_via_openpyxl(template_path: str, cell_map: dict) -> bytes:
     """
-    Fill data into Excel template via ZIP XML manipulation.
-    Preserves ALL original features (formulas, data validations, dropdowns, formatting).
-
-    cell_data: dict of {sheet_index: {cell_ref: value}} e.g. {0: {"B5": "王小明", "D5": "A123456789"}}
+    Fill customer data into Excel template using openpyxl.
+    cell_map: {cell_ref: value} for the first sheet, e.g. {"B5": "王小明"}
+    Empty/None values will CLEAR the cell (remove template sample data).
+    Preserves standard data validations. For x14 extensions, restores from original.
     """
+    import openpyxl
+    import warnings
     import zipfile
-    import re as _re
+    warnings.filterwarnings("ignore", category=UserWarning)
 
+    # Check if original has x14 extensions that need preserving
     with open(template_path, "rb") as f:
-        original_bytes = f.read()
+        orig_bytes = f.read()
+    has_x14 = False
+    orig_sheet_xml = None
+    with zipfile.ZipFile(io.BytesIO(orig_bytes)) as zf:
+        sheet_names = [n for n in zf.namelist() if 'sheet1.xml' in n]
+        if sheet_names:
+            sheet_data = zf.read(sheet_names[0])
+            has_x14 = b'x14:dataValidation' in sheet_data
+            if has_x14:
+                orig_sheet_xml = sheet_data
 
-    # Open as ZIP, modify sheet XMLs, repackage
-    input_zip = zipfile.ZipFile(io.BytesIO(original_bytes), 'r')
-    output_buf = io.BytesIO()
-    output_zip = zipfile.ZipFile(output_buf, 'w', zipfile.ZIP_DEFLATED)
+    # Load and fill with openpyxl
+    wb = openpyxl.load_workbook(io.BytesIO(orig_bytes))
+    ws = wb.worksheets[0]
 
-    # Find sheet XML files
-    sheet_files = sorted([f for f in input_zip.namelist() if _re.match(r'xl/worksheets/sheet\d+\.xml', f)])
+    for cell_ref, value in cell_map.items():
+        cell = ws[cell_ref]
+        if value is None or str(value).strip() == '':
+            cell.value = None  # Clear template sample data
+        else:
+            cell.value = str(value)
 
-    for item in input_zip.infolist():
-        data = input_zip.read(item.filename)
+    # Save to buffer
+    buf = io.BytesIO()
+    wb.save(buf)
 
-        # Check if this is a sheet we need to modify
-        sheet_idx = None
-        for i, sf in enumerate(sheet_files):
-            if item.filename == sf and i in cell_data:
-                sheet_idx = i
-                break
+    # If x14 extensions existed, restore them from original
+    if has_x14 and orig_sheet_xml:
+        import re as _re
+        buf.seek(0)
+        new_zip_buf = io.BytesIO()
+        with zipfile.ZipFile(buf, 'r') as saved_zf:
+            with zipfile.ZipFile(new_zip_buf, 'w', zipfile.ZIP_DEFLATED) as out_zf:
+                for item in saved_zf.infolist():
+                    data = saved_zf.read(item.filename)
+                    if 'sheet1.xml' in item.filename:
+                        # Restore extLst from original
+                        saved_xml = data.decode('utf-8')
+                        orig_xml = orig_sheet_xml.decode('utf-8')
 
-        if sheet_idx is not None:
-            # Modify this sheet's XML
-            xml_str = data.decode('utf-8')
-            cells = cell_data[sheet_idx]
+                        # Extract extLst from original
+                        ext_match = _re.search(r'(<extLst>.*?</extLst>)', orig_xml, _re.DOTALL)
+                        if ext_match:
+                            ext_block = ext_match.group(1)
+                            # Remove any extLst from saved (openpyxl may have stripped it)
+                            saved_xml = _re.sub(r'<extLst>.*?</extLst>', '', saved_xml, flags=_re.DOTALL)
+                            # Insert before </worksheet>
+                            saved_xml = saved_xml.replace('</worksheet>', ext_block + '</worksheet>')
+                        data = saved_xml.encode('utf-8')
+                    out_zf.writestr(item, data)
+        new_zip_buf.seek(0)
+        return new_zip_buf.getvalue()
 
-            for cell_ref, value in cells.items():
-                if value is None or str(value).strip() == '':
-                    continue
-                value_str = str(value)
-
-                # Parse column and row from cell ref (e.g., "B5" -> col="B", row="5")
-                col_match = _re.match(r'^([A-Z]+)(\d+)$', cell_ref)
-                if not col_match:
-                    continue
-                col_letter = col_match.group(1)
-                row_num = col_match.group(2)
-
-                # Check if cell already exists in XML
-                # Pattern: <c r="B5" ...>...</c> or <c r="B5" .../>
-                cell_pattern = _re.compile(
-                    r'<c\s+r="' + _re.escape(cell_ref) + r'"[^>]*(?:>(.*?)</c>|/>)',
-                    _re.DOTALL
-                )
-
-                cell_match = cell_pattern.search(xml_str)
-                if cell_match:
-                    # Cell exists - replace its value, set type to string
-                    old_cell = cell_match.group(0)
-                    new_cell = f'<c r="{cell_ref}" t="inlineStr"><is><t>{_xml_escape(value_str)}</t></is></c>'
-                    xml_str = xml_str.replace(old_cell, new_cell)
-                else:
-                    # Cell doesn't exist - insert it into the correct row
-                    row_pattern = _re.compile(
-                        r'(<row\s+r="' + row_num + r'"[^>]*>)(.*?)(</row>)',
-                        _re.DOTALL
-                    )
-                    row_match = row_pattern.search(xml_str)
-                    if row_match:
-                        row_start = row_match.group(1)
-                        row_content = row_match.group(2)
-                        row_end = row_match.group(3)
-                        new_cell = f'<c r="{cell_ref}" t="inlineStr"><is><t>{_xml_escape(value_str)}</t></is></c>'
-                        xml_str = xml_str.replace(
-                            row_match.group(0),
-                            row_start + row_content + new_cell + row_end
-                        )
-
-            data = xml_str.encode('utf-8')
-
-        output_zip.writestr(item, data)
-
-    input_zip.close()
-    output_zip.close()
-    output_buf.seek(0)
-    return output_buf.getvalue()
-
-
-def _xml_escape(s: str) -> str:
-    """Escape special XML characters"""
-    return s.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;').replace('"', '&quot;').replace("'", '&apos;')
+    buf.seek(0)
+    return buf.getvalue()
 
 
 def _do_download_excel(request: Request, case_id: str):
@@ -4533,104 +4511,110 @@ def _do_download_excel(request: Request, case_id: str):
     name = r.get("customer_name", "")
 
     # Build cell data mapping for each plan type
-    def _build_cell_data(plan_name, r):
-        """Build cell_data dict based on plan type and customer data"""
-        name = r.get("customer_name", "")
-        id_no = r.get("id_no", "")
-        birth = r.get("birth_date", "")
-        phone = r.get("phone", "")
-        email = r.get("email", "")
-        marriage = r.get("marriage", "")
-        education = r.get("education", "")
-        id_date = r.get("id_issue_date", "")
-        id_place = r.get("id_issue_place", "")
-        id_type = r.get("id_issue_type", "")
-        reg_addr = (r.get("reg_city","") or "") + (r.get("reg_district","") or "") + (r.get("reg_address","") or "")
-        reg_phone = r.get("reg_phone", "")
-        live_same = r.get("live_same_as_reg", "") == "1"
-        live_addr = reg_addr if live_same else ((r.get("live_city","") or "") + (r.get("live_district","") or "") + (r.get("live_address","") or ""))
-        live_phone = r.get("live_phone", "")
-        live_status = r.get("live_status", "")
-        live_years = r.get("live_years", "")
-        company_name = r.get("company_name_detail", "") or r.get("company", "")
-        company_phone = (r.get("company_phone_area","") or "") + "-" + (r.get("company_phone_num","") or "")
-        company_role = r.get("company_role", "")
-        company_years = r.get("company_years", "")
-        company_salary = r.get("company_salary", "")
-        company_addr = (r.get("company_city","") or "") + (r.get("company_district","") or "") + (r.get("company_address","") or "")
-        c1_name = r.get("contact1_name", "")
-        c1_rel = r.get("contact1_relation", "")
-        c1_phone = r.get("contact1_phone", "")
-        c1_known = r.get("contact1_known", "")
-        c2_name = r.get("contact2_name", "")
-        c2_rel = r.get("contact2_relation", "")
-        c2_phone = r.get("contact2_phone", "")
+    def _build_cell_map(plan_name, r):
+        """Build {cell_ref: value} map. Empty string = clear cell."""
+        def v(key): return (r.get(key, "") or "").strip()
 
-        if plan_name in ("亞太商品", "亞太機車15萬", "亞太工會機車", "亞太機車25萬"):
-            # 亞太 templates - sheet 0 (工作表3)
-            return {0: {
-                "B9": name, "D9": id_no, "F9": birth,
-                "B10": marriage, "F10": education,
-                "B11": id_date, "D11": id_place, "F11": id_type,
-                "B12": reg_addr, "F12": reg_phone,
-                "B13": live_addr, "F13": live_phone,
-                "B14": live_status, "D14": live_years,
-                "B15": phone, "D15": live_phone, "F15": reg_phone,
-                "B17": company_name, "F17": company_role,
-                "B18": company_phone, "F18": company_years + "年/" + company_salary + "萬",
-                "B19": company_addr,
-                "B21": c1_name, "F21": birth,
-                "B25": c1_phone, "D25": live_phone,
-            }}
+        name = v("customer_name")
+        id_no = v("id_no")
+        birth = v("birth_date")
+        phone = v("phone")
+        email = v("email")
+        line_id = v("line_id")
+        marriage = v("marriage")
+        education = v("education")
+        id_date = v("id_issue_date")
+        id_place = v("id_issue_place")
+        id_type = v("id_issue_type")
+        reg_addr = v("reg_city") + v("reg_district") + v("reg_address")
+        reg_phone = v("reg_phone")
+        live_same = v("live_same_as_reg") == "1"
+        live_addr = reg_addr if live_same else (v("live_city") + v("live_district") + v("live_address"))
+        live_phone = v("live_phone")
+        live_status = v("live_status")
+        live_years = v("live_years")
+        live_months = v("live_months")
+        company = v("company_name_detail") or v("company")
+        co_phone_area = v("company_phone_area")
+        co_phone_num = v("company_phone_num")
+        co_phone = (co_phone_area + "-" + co_phone_num) if co_phone_area and co_phone_num else co_phone_num
+        co_role = v("company_role")
+        co_years = v("company_years")
+        co_salary = v("company_salary")
+        co_addr = v("company_city") + v("company_district") + v("company_address")
+        c1_name = v("contact1_name")
+        c1_rel = v("contact1_relation")
+        c1_phone = v("contact1_phone")
+        c1_known = v("contact1_known")
+        c2_name = v("contact2_name")
+        c2_rel = v("contact2_relation")
+        c2_phone = v("contact2_phone")
+        c2_known = v("contact2_known")
+
+        if plan_name == "貸就補":
+            return {
+                "C4": name, "E4": id_no, "J4": phone,
+                "C5": birth, "E5": id_date, "F5": id_place, "G5": id_type,
+                "C7": reg_addr,
+                "C8": live_addr if not live_same else reg_addr,
+                "C9": co_addr,
+                "C10": company, "G10": co_phone,
+                "C11": co_role, "E11": co_salary, "G11": co_years, "I11": "",
+                "C18": c1_name, "E18": c1_rel, "H18": c1_phone,
+                "C19": c2_name, "E19": c2_rel, "H19": c2_phone,
+            }
 
         elif plan_name in ("和裕機車", "和裕商品"):
-            # 和裕 template - sheet 0
-            return {0: {
+            return {
                 "C11": name, "F11": id_no,
-                "C12": birth, "F12": id_date,
-                "D13": marriage, "F13": id_place,
+                "C12": birth, "F12": (id_date + " " + id_type) if id_date else "",
+                "C13": marriage, "F13": id_place,
                 "C14": education, "F14": phone,
-                "C15": reg_addr, "H15": reg_phone,
-                "C16": live_addr, "H16": live_phone,
-                "C18": company_name, "F18": company_role, "H18": company_years,
-                "C19": company_addr, "H19": company_salary,
-                "H17": company_phone,
+                "C15": reg_addr, "G15": reg_phone,
+                "C16": live_addr, "G16": live_phone, "H16": "同戶籍" if live_same else "",
+                "C17": line_id, "H17": co_phone,
+                "C18": company, "F18": co_role, "H18": co_years, "I18": co_salary + "萬" if co_salary else "",
+                "C19": co_addr,
                 "C23": c1_name, "F23": c2_name,
+                "C24": c1_rel, "F24": c2_rel,
                 "C25": c1_phone, "F25": c2_phone,
-            }}
+                "D22": c1_known, "G22": c2_known,
+            }
+
+        elif plan_name in ("亞太商品", "亞太機車15萬", "亞太工會機車", "亞太機車25萬"):
+            return {
+                "B9": name, "D9": id_no, "F9": birth,
+                "B10": marriage, "D10": education,
+                "B11": id_date, "D11": id_place, "F11": id_type,
+                "B12": v("reg_city"), "C12": v("reg_district"), "D12": v("reg_address"),
+                "B13": v("live_city") if not live_same else v("reg_city"),
+                "C13": v("live_district") if not live_same else v("reg_district"),
+                "D13": v("live_address") if not live_same else v("reg_address"),
+                "B14": live_status, "D14": live_years, "F14": live_months,
+                "B15": phone,
+                "B16": email, "D16": line_id,
+                "B17": company, "G17": co_role,
+                "B18": co_phone_area, "C18": co_phone_num, "G18": co_years, "H18": co_salary,
+                "B19": v("company_city"), "C19": v("company_district"), "D19": v("company_address"),
+                "B21": c1_name, "D21": c1_rel,
+                "B25": c1_phone,
+            }
 
         elif plan_name == "第一":
-            # 第一 template - sheet 0 (申請書)
-            return {0: {
+            return {
                 "B5": name, "G5": id_no,
-                "B6": id_date, "G6": id_place,
+                "B6": id_date, "G6": id_place, "J6": id_type,
                 "B7": birth, "G7": phone,
-                "M8": company_years,
-                "B9": company_name,
-                "B10": company_addr,
-                "G10": company_phone,
-                "B11": reg_addr, "G11": reg_phone,
-                "B12": live_addr, "G12": live_phone,
-                "B13": c1_name + "(" + c1_rel + ")", "G13": c1_phone,
-                "B14": c2_name + "(" + c2_rel + ")", "G14": c2_phone,
-            }}
+                "B9": reg_addr,
+                "B10": "同上" if live_same else live_addr,
+                "M5": company, "T6": co_phone,
+                "M7": co_addr,
+                "M8": co_years, "O8": "", "M9": co_salary,
+                "M13": c1_name, "Q13": c1_rel, "T13": c1_phone, "X13": c1_known,
+                "M14": c2_name, "Q14": c2_rel, "T14": c2_phone, "X14": c2_known,
+            }
 
-        elif plan_name == "貸就補":
-            # 貸就補 template - sheet 0
-            return {0: {
-                "C4": name, "E4": id_no,
-                "C5": birth, "E5": id_date,
-                "C7": reg_addr,
-                "C8": live_addr,
-                "C9": company_addr,
-                "C10": company_name, "F10": company_phone,
-                "C11": company_role, "D11": company_salary, "F11": company_years,
-                "C13": c1_name + "(" + c1_rel + ")", "F13": c1_phone,
-                "D4": phone,
-            }}
-
-        # Default: no data fill (just copy template)
-        return {}
+        return {}  # Unknown plan - no data fill
 
     for plan in plans:
         template_path = PLAN_TEMPLATE_MAP.get(plan)
@@ -4638,15 +4622,16 @@ def _do_download_excel(request: Request, case_id: str):
             continue
 
         try:
-            cell_data = _build_cell_data(plan, r)
-            if cell_data:
-                filled_bytes = _fill_excel_template(template_path, cell_data)
+            cell_map = _build_cell_map(plan, r)
+            if cell_map:
+                filled_bytes = _fill_excel_via_openpyxl(template_path, cell_map)
             else:
                 with open(template_path, "rb") as f:
                     filled_bytes = f.read()
             files_to_zip.append((f"{name}_{plan}.xlsx", filled_bytes))
         except Exception as e:
             print(f"Excel generate error for {plan}: {e}")
+            import traceback; traceback.print_exc()
             continue
 
     if not files_to_zip:
