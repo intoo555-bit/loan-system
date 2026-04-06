@@ -711,6 +711,8 @@ def init_db():
         ("adminb_credit_late", "TEXT"),
         ("eval_license", "TEXT"),
         ("eval_law", "TEXT"),
+        ("carrier", "TEXT"),
+        ("fb", "TEXT"),
         ("company_months", "TEXT"),
     ]:
         ensure_column(cur, "customers", col, defn)
@@ -3426,6 +3428,8 @@ label{{display:block;font-size:12px;font-weight:600;color:#5a4e40;margin-bottom:
   <div><label>行動電話</label><input name="phone" class="ep" value="{h(v("phone"))}"></div>
   <div><label>Email</label><input name="email" class="ep" value="{h(v("email"))}"></div>
   <div><label>LINE ID</label><input name="line" class="ep" value="{h(v("line_id"))}"></div>
+  <div><label>電信業者</label><select name="carrier" class="ep"><option value="">請選擇</option><option {"selected" if v("carrier")=="中華電信" else ""}>中華電信</option><option {"selected" if v("carrier")=="遠傳電信" else ""}>遠傳電信</option><option {"selected" if v("carrier")=="台灣大哥大" else ""}>台灣大哥大</option><option {"selected" if v("carrier")=="台灣之星" else ""}>台灣之星</option><option {"selected" if v("carrier")=="亞太電信" else ""}>亞太電信</option><option {"selected" if v("carrier")=="其他" else ""}>其他</option></select></div>
+  <div><label>客戶FB</label><input name="fb" class="ep" value="{h(v("fb"))}"></div>
   <div><label>婚姻狀態</label><select name="marry" class="ep"><option value="">請選擇</option><option {"selected" if v("marriage")=="未婚" else ""}>未婚</option><option {"selected" if v("marriage")=="已婚" else ""}>已婚</option></select></div>
   <div><label>最高學歷</label><select name="edu" class="ep"><option value="">請選擇</option><option {"selected" if v("education")=="高中/職" else ""}>高中/職</option><option {"selected" if v("education")=="專科/大學" else ""}>專科/大學</option><option {"selected" if v("education")=="研究所以上" else ""}>研究所以上</option><option {"selected" if v("education")=="其他" else ""}>其他</option></select></div>
 </div></div>
@@ -3510,6 +3514,7 @@ async def edit_pending_post(request: Request):
     conn = get_conn(); cur = conn.cursor()
     cur.execute("""UPDATE customers SET
         customer_name=?,id_no=?,birth_date=?,phone=?,email=?,line_id=?,
+        carrier=?,fb=?,
         source_group_id=?,marriage=?,education=?,
         id_issue_date=?,id_issue_place=?,id_issue_type=?,
         reg_city=?,reg_district=?,reg_address=?,reg_phone=?,live_same_as_reg=?,
@@ -3521,6 +3526,7 @@ async def edit_pending_post(request: Request):
         contact2_name=?,contact2_relation=?,contact2_phone=?,contact2_known=?,
         updated_at=? WHERE case_id=?""",
         (f.get("cname",""),f.get("idno","").upper(),f.get("birth",""),f.get("phone",""),f.get("email",""),f.get("line",""),
+         f.get("carrier",""),f.get("fb",""),
          f.get("grp",""),f.get("marry",""),f.get("edu",""),
          f.get("iddate",""),f.get("idplace",""),f.get("idtype",""),
          f.get("rcity",""),f.get("rdist",""),f.get("raddr",""),f.get("rphone",""),live_same,
@@ -4281,6 +4287,7 @@ async def new_customer_post(request: Request):
         eval_property=f.get("eprop",""), eval_fine=f.get("efine",""),
         eval_fuel_tax=f.get("efuel",""), eval_late=f.get("elate",""), eval_late_days=f.get("elateday",""), eval_note=f.get("enote",""),
         debt_list=f.get("debt_list",""),
+        carrier=f.get("carrier",""), fb=f.get("fb",""),
         sales_name=f.get("sales",""), source_group_id=source_group_id, created_by_role=role,
     )
     flds = ", ".join(k+" = ?" for k in extra)
@@ -4445,16 +4452,37 @@ def _fill_excel_template(template_path: str, cell_map: dict) -> bytes:
 
     orig_zip = zipfile.ZipFile(io.BytesIO(original_bytes), 'r')
 
-    # Step 1: Find which shared string index each cell references
+    # Step 1: Find the FIRST visible sheet's XML file via workbook.xml + rels
     sheet_xml_name = None
-    for name in orig_zip.namelist():
-        if _re.match(r'xl/worksheets/sheet\d+\.xml$', name):
-            sheet_xml_name = name
-            break
+    try:
+        wb_xml = orig_zip.read('xl/workbook.xml').decode('utf-8')
+        rels_xml = orig_zip.read('xl/_rels/workbook.xml.rels').decode('utf-8')
+        # Get first sheet's r:id from workbook.xml
+        first_sheet = _re.search(r'<sheet\s+name="[^"]*"\s+sheetId="\d+"[^>]*r:id="([^"]+)"', wb_xml)
+        if first_sheet:
+            rid = first_sheet.group(1)
+            # Find the target file for this r:id in rels
+            rel_match = _re.search(r'Id="' + _re.escape(rid) + r'"[^>]*Target="([^"]+)"', rels_xml)
+            if rel_match:
+                target = rel_match.group(1)
+                sheet_xml_name = 'xl/' + target if not target.startswith('/') else target.lstrip('/')
+    except Exception:
+        pass
+    # Fallback: if above fails, scan all sheets for the one that has our target cells
+    if not sheet_xml_name or sheet_xml_name not in orig_zip.namelist():
+        target_cells = set(cell_map.keys())
+        for name in sorted(orig_zip.namelist()):
+            if _re.match(r'xl/worksheets/sheet\d+\.xml$', name):
+                xml_content = orig_zip.read(name).decode('utf-8')
+                # Check if this sheet has any of our target cells
+                found = sum(1 for c in target_cells if f'r="{c}"' in xml_content)
+                if found > len(target_cells) // 2:  # More than half match
+                    sheet_xml_name = name
+                    break
 
     if not sheet_xml_name:
         orig_zip.close()
-        return original_bytes  # Can't find sheet, return original
+        return original_bytes
 
     sheet_xml = orig_zip.read(sheet_xml_name).decode('utf-8')
 
@@ -4477,38 +4505,50 @@ def _fill_excel_template(template_path: str, cell_map: dict) -> bytes:
     # Find all <si>...</si> blocks
     si_blocks = list(_re.finditer(r'(<si>)(.*?)(</si>)', ss_xml, _re.DOTALL))
 
-    # Step 3: Determine which shared string indexes need to change
-    changes = {}  # ss_index -> new_value
+    # Step 3: Split cell_map into shared-string changes and direct-value changes
+    ss_changes = {}  # ss_index -> new_value (for t="s" cells)
+    direct_changes = {}  # cell_ref -> new_value (for numeric/direct cells)
     for cell_ref, new_value in cell_map.items():
         if cell_ref in cell_to_ss_idx:
             ss_idx = cell_to_ss_idx[cell_ref]
-            changes[ss_idx] = new_value if new_value else ""
+            ss_changes[ss_idx] = new_value if new_value else ""
+        else:
+            # Cell not using shared string — modify <v> directly in sheet XML
+            direct_changes[cell_ref] = new_value if new_value else ""
 
-    if not changes:
+    if not ss_changes and not direct_changes:
         orig_zip.close()
-        return original_bytes  # Nothing to change
+        return original_bytes
 
     # Step 4: Rebuild sharedStrings.xml with changes
     new_ss_xml = ss_xml
-    # Process in reverse order to maintain string positions
-    for idx in sorted(changes.keys(), reverse=True):
+    for idx in sorted(ss_changes.keys(), reverse=True):
         if idx < len(si_blocks):
             old_block = si_blocks[idx].group(0)
-            new_value = changes[idx]
-            # Escape XML special chars
+            new_value = ss_changes[idx]
             escaped = new_value.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
             new_block = f'<si><t>{escaped}</t></si>'
             new_ss_xml = new_ss_xml.replace(old_block, new_block, 1)
 
-    # Step 5: Repackage ZIP with only sharedStrings.xml changed
+    # Step 4b: Modify sheet XML for direct-value cells
+    new_sheet_xml = sheet_xml
+    for cell_ref, new_value in direct_changes.items():
+        # Match <c r="G18" s="48"><v>5.4</v></c>
+        pattern = _re.compile(r'(<c\s+r="' + _re.escape(cell_ref) + r'"[^>]*>)\s*<v>[^<]*</v>\s*(</c>)')
+        m = pattern.search(new_sheet_xml)
+        if m:
+            new_sheet_xml = new_sheet_xml[:m.start()] + m.group(1) + f'<v>{new_value}</v>' + m.group(2) + new_sheet_xml[m.end():]
+
+    # Step 5: Repackage ZIP
     output_buf = io.BytesIO()
     output_zip = zipfile.ZipFile(output_buf, 'w', zipfile.ZIP_DEFLATED)
 
     for item in orig_zip.infolist():
         if item.filename == ss_xml_name:
             output_zip.writestr(item, new_ss_xml.encode('utf-8'))
+        elif item.filename == sheet_xml_name and direct_changes:
+            output_zip.writestr(item, new_sheet_xml.encode('utf-8'))
         else:
-            # Copy original bytes exactly
             output_zip.writestr(item, orig_zip.read(item.filename))
 
     orig_zip.close()
