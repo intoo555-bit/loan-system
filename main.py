@@ -4823,7 +4823,17 @@ def _do_download_excel(request: Request, case_id: str):
             marriage_val = marriage if marriage in ("未婚", "已婚") else ""
 
             # === 教育程度（D10）必須完全匹配下拉 ===
-            edu_val = education if education in ("小學/國中", "高中/職", "專科/大學", "研究所以上") else ""
+            valid_edu_at = ["小學/國中", "高中/職", "專科/大學", "研究所以上"]
+            if education in valid_edu_at:
+                edu_val = education
+            else:
+                # 轉換常見格式
+                edu_at_map = {"國中": "小學/國中", "國小": "小學/國中", "小學": "小學/國中",
+                              "高中": "高中/職", "高職": "高中/職", "高中職": "高中/職",
+                              "大學": "專科/大學", "專科": "專科/大學", "專科、大學": "專科/大學",
+                              "研究所": "研究所以上", "碩士": "研究所以上", "博士": "研究所以上",
+                              "其他": "小學/國中"}
+                edu_val = edu_at_map.get(education, "")
 
             # === 發證狀態（F11）===
             id_type_val = id_type if id_type in ("初發", "補發", "換發") else ""
@@ -4910,15 +4920,10 @@ def _do_download_excel(request: Request, case_id: str):
                 "B21": c1_name, "D21": c1_rel_val,
                 "B25": c1_phone,
             }
-            # 行業/職務：有值填入，無值清空（不留範本示範資料）
+            # 行業/職務：有值填入，無值清空
             result["D17"] = industry_val if industry_val else ""
             result["G17"] = role_val if role_val else ""
-            # 車輛資料：有值填入，無值清空（不留範本示範資料）
-            result["A7"] = v("adminb_vehicle_type") or ""
-            result["C7"] = v("adminb_engine_no") or ""
-            result["E7"] = v("adminb_displacement") or ""
-            result["G7"] = v("adminb_color") or ""
-            result["J3"] = v("vehicle_plate") or ""
+            # 車輛資料不在此處填入（A7/C7/E7/G7/J2/J3 是標籤，值在 B7/D7/F7/H7 但為空的 self-closing 無法用 shared string 替換）
             return result
 
         elif plan_name == "第一":
