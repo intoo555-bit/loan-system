@@ -2290,16 +2290,36 @@ REPORT_PASSWORD = os.getenv("REPORT_PASSWORD", "admin123")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin_secret")
 
 
+def _ensure_sessions_table():
+    """確保 sessions 表存在（相容舊版 DB）"""
+    try:
+        conn = get_conn(); cur = conn.cursor()
+        cur.execute("""CREATE TABLE IF NOT EXISTS sessions (
+            token TEXT PRIMARY KEY NOT NULL,
+            role TEXT NOT NULL,
+            group_id TEXT DEFAULT '',
+            created_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL
+        )""")
+        conn.commit(); conn.close()
+    except Exception:
+        pass
+
+
 def _create_session(role: str, group_id: str = "") -> str:
     """產生隨機 session token 並存入 DB"""
     from datetime import timedelta
+    _ensure_sessions_table()
     token = secrets.token_urlsafe(32)
     now = now_iso()
     expires = (datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d %H:%M:%S")
-    conn = get_conn(); cur = conn.cursor()
-    cur.execute("INSERT INTO sessions (token,role,group_id,created_at,expires_at) VALUES (?,?,?,?,?)",
-        (token, role, group_id, now, expires))
-    conn.commit(); conn.close()
+    try:
+        conn = get_conn(); cur = conn.cursor()
+        cur.execute("INSERT INTO sessions (token,role,group_id,created_at,expires_at) VALUES (?,?,?,?,?)",
+            (token, role, group_id, now, expires))
+        conn.commit(); conn.close()
+    except Exception as e:
+        print(f"Session create error: {e}")
     return token
 
 
@@ -2307,27 +2327,34 @@ def _lookup_session(token: str) -> Optional[Dict]:
     """查找 session，回傳 {role, group_id} 或 None"""
     if not token:
         return None
-    conn = get_conn(); cur = conn.cursor()
-    cur.execute("SELECT role, group_id, expires_at FROM sessions WHERE token=?", (token,))
-    row = cur.fetchone(); conn.close()
-    if not row:
+    try:
+        _ensure_sessions_table()
+        conn = get_conn(); cur = conn.cursor()
+        cur.execute("SELECT role, group_id, expires_at FROM sessions WHERE token=?", (token,))
+        row = cur.fetchone(); conn.close()
+        if not row:
+            return None
+        if row["expires_at"] < now_iso():
+            conn2 = get_conn(); cur2 = conn2.cursor()
+            cur2.execute("DELETE FROM sessions WHERE token=?", (token,))
+            conn2.commit(); conn2.close()
+            return None
+        return {"role": row["role"], "group_id": row["group_id"]}
+    except Exception as e:
+        print(f"Session lookup error: {e}")
         return None
-    if row["expires_at"] < now_iso():
-        # 過期，清除
-        conn2 = get_conn(); cur2 = conn2.cursor()
-        cur2.execute("DELETE FROM sessions WHERE token=?", (token,))
-        conn2.commit(); conn2.close()
-        return None
-    return {"role": row["role"], "group_id": row["group_id"]}
 
 
 def _delete_session(token: str):
     """登出時刪除 session"""
     if not token:
         return
-    conn = get_conn(); cur = conn.cursor()
-    cur.execute("DELETE FROM sessions WHERE token=?", (token,))
-    conn.commit(); conn.close()
+    try:
+        conn = get_conn(); cur = conn.cursor()
+        cur.execute("DELETE FROM sessions WHERE token=?", (token,))
+        conn.commit(); conn.close()
+    except Exception:
+        pass
 
 PAGE_CSS = """
 <meta name="viewport" content="width=device-width,initial-scale=1">
