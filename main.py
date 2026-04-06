@@ -4445,17 +4445,10 @@ def _do_download_excel(request: Request, case_id: str):
             continue
 
         try:
-            import openpyxl
-            import warnings
-            warnings.filterwarnings("ignore", category=UserWarning)
-            wb = openpyxl.load_workbook(template_path)
-            ws = wb.active
-
-            # Save to bytes buffer
-            buf = io.BytesIO()
-            wb.save(buf)
-            buf.seek(0)
-            files_to_zip.append((f"{name}_{plan}.xlsx", buf.getvalue()))
+            # 直接複製原始範本（不經 openpyxl），保留所有公式、下拉選單、格式
+            with open(template_path, "rb") as f:
+                raw_bytes = f.read()
+            files_to_zip.append((f"{name}_{plan}.xlsx", raw_bytes))
         except Exception as e:
             print(f"Excel generate error for {plan}: {e}")
             continue
