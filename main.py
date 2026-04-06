@@ -4396,6 +4396,16 @@ td {{ background: #fff; }}
 @app.get("/adminb/download-excel")
 def adminb_download_excel(request: Request, case_id: str = ""):
     from fastapi.responses import StreamingResponse
+    try:
+        return _do_download_excel(request, case_id)
+    except Exception as e:
+        print(f"Download Excel error: {e}")
+        import traceback; traceback.print_exc()
+        return JSONResponse({"error": f"下載失敗：{str(e)}"}, status_code=500)
+
+
+def _do_download_excel(request: Request, case_id: str):
+    from fastapi.responses import StreamingResponse
     role = check_auth(request)
     if not role or role not in ("admin", "adminB"):
         return JSONResponse({"error": "無權限"}, status_code=403)
@@ -4451,28 +4461,30 @@ def adminb_download_excel(request: Request, case_id: str = ""):
             continue
 
     if not files_to_zip:
-        return JSONResponse({"error": "沒有可下載的範本檔案"}, status_code=404)
+        return JSONResponse({"error": "沒有可下載的範本檔案，請確認已勾選方案並儲存"}, status_code=400)
+
+    from urllib.parse import quote
 
     if len(files_to_zip) == 1:
-        # Single file - return directly
         fname, data = files_to_zip[0]
+        encoded_fname = quote(fname)
         return StreamingResponse(
             io.BytesIO(data),
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            headers={"Content-Disposition": f'attachment; filename="{fname}"'}
+            headers={"Content-Disposition": f"attachment; filename*=UTF-8''{encoded_fname}"}
         )
     else:
-        # Multiple files - zip them
         zip_buf = io.BytesIO()
         import zipfile
         with zipfile.ZipFile(zip_buf, 'w', zipfile.ZIP_DEFLATED) as zf:
             for fname, data in files_to_zip:
                 zf.writestr(fname, data)
         zip_buf.seek(0)
+        zip_fname = quote(f"{name}_申請書.zip")
         return StreamingResponse(
             zip_buf,
             media_type="application/zip",
-            headers={"Content-Disposition": f'attachment; filename="{name}_申請書.zip"'}
+            headers={"Content-Disposition": f"attachment; filename*=UTF-8''{zip_fname}"}
         )
 
 
