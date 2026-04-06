@@ -4139,9 +4139,9 @@ function doConfirmSubmit(){collectDebt();localStorage.removeItem('nc_draft');doc
 function saveForm(){var data={};document.querySelectorAll('#cf input,#cf select,#cf textarea').forEach(function(el){if(!el.name)return;if(el.type==='checkbox')data[el.name]=el.checked;else data[el.name]=el.value;});localStorage.setItem('nc_draft',JSON.stringify(data));}
 function restoreForm(){var raw=localStorage.getItem('nc_draft');if(!raw)return;var data=JSON.parse(raw);Object.keys(data).forEach(function(k){var el=document.querySelector('#cf [name="'+k+'"]');if(!el)return;if(el.type==='checkbox')el.checked=data[k];else el.value=data[k];});var ck=document.getElementById('sameck');if(ck)document.getElementById('lsec').style.display=ck.checked?'none':'block';}
 window.addEventListener('DOMContentLoaded',function(){restoreForm();document.getElementById('cf').addEventListener('input',saveForm);document.getElementById('cf').addEventListener('change',saveForm);});
-"+pdf_js+"
+// page-init
 """
-    HTML_PAGE = HTML_PAGE.replace('// page-init', inject_js)
+    HTML_PAGE = HTML_PAGE.replace('// page-init', inject_js + '\n' + (pdf_js or ''))
     return HTML_PAGE
 
 
