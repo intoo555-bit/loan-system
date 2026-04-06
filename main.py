@@ -4404,75 +4404,92 @@ def adminb_download_excel(request: Request, case_id: str = ""):
         return JSONResponse({"error": f"下載失敗：{str(e)}"}, status_code=500)
 
 
-def _fill_excel_via_openpyxl(template_path: str, cell_map: dict) -> bytes:
+def _fill_excel_template(template_path: str, cell_map: dict) -> bytes:
     """
-    Fill customer data into Excel template using openpyxl.
-    cell_map: {cell_ref: value} for the first sheet, e.g. {"B5": "王小明"}
-    Empty/None values will CLEAR the cell (remove template sample data).
-    Preserves standard data validations. For x14 extensions, restores from original.
+    Fill customer data into Excel template by modifying ONLY sharedStrings.xml.
+    All other files (styles, formulas, calcChain, comments, VML, validations) stay untouched.
+
+    cell_map: {"C4": "王小明", "E4": "A123456789", ...}
+    Empty string values will clear the cell's text.
     """
-    import openpyxl
-    import warnings
     import zipfile
-    warnings.filterwarnings("ignore", category=UserWarning)
+    import re as _re
 
-    # Check if original has x14 extensions that need preserving
     with open(template_path, "rb") as f:
-        orig_bytes = f.read()
-    has_x14 = False
-    orig_sheet_xml = None
-    with zipfile.ZipFile(io.BytesIO(orig_bytes)) as zf:
-        sheet_names = [n for n in zf.namelist() if 'sheet1.xml' in n]
-        if sheet_names:
-            sheet_data = zf.read(sheet_names[0])
-            has_x14 = b'x14:dataValidation' in sheet_data
-            if has_x14:
-                orig_sheet_xml = sheet_data
+        original_bytes = f.read()
 
-    # Load and fill with openpyxl
-    wb = openpyxl.load_workbook(io.BytesIO(orig_bytes))
-    ws = wb.worksheets[0]
+    orig_zip = zipfile.ZipFile(io.BytesIO(original_bytes), 'r')
 
-    for cell_ref, value in cell_map.items():
-        cell = ws[cell_ref]
-        if value is None or str(value).strip() == '':
-            cell.value = None  # Clear template sample data
+    # Step 1: Find which shared string index each cell references
+    sheet_xml_name = None
+    for name in orig_zip.namelist():
+        if _re.match(r'xl/worksheets/sheet\d+\.xml$', name):
+            sheet_xml_name = name
+            break
+
+    if not sheet_xml_name:
+        orig_zip.close()
+        return original_bytes  # Can't find sheet, return original
+
+    sheet_xml = orig_zip.read(sheet_xml_name).decode('utf-8')
+
+    # Parse cells: find <c r="XX" ... t="s"><v>INDEX</v></c>
+    # Build map: cell_ref -> shared_string_index
+    cell_to_ss_idx = {}
+    for m in _re.finditer(r'<c\s+r="([A-Z]+\d+)"[^>]*\s+t="s"[^>]*>\s*<v>(\d+)</v>', sheet_xml):
+        cell_ref = m.group(1)
+        ss_idx = int(m.group(2))
+        cell_to_ss_idx[cell_ref] = ss_idx
+
+    # Step 2: Parse sharedStrings.xml
+    ss_xml_name = 'xl/sharedStrings.xml'
+    if ss_xml_name not in orig_zip.namelist():
+        orig_zip.close()
+        return original_bytes
+
+    ss_xml = orig_zip.read(ss_xml_name).decode('utf-8')
+
+    # Find all <si>...</si> blocks
+    si_blocks = list(_re.finditer(r'(<si>)(.*?)(</si>)', ss_xml, _re.DOTALL))
+
+    # Step 3: Determine which shared string indexes need to change
+    changes = {}  # ss_index -> new_value
+    for cell_ref, new_value in cell_map.items():
+        if cell_ref in cell_to_ss_idx:
+            ss_idx = cell_to_ss_idx[cell_ref]
+            changes[ss_idx] = new_value if new_value else ""
+
+    if not changes:
+        orig_zip.close()
+        return original_bytes  # Nothing to change
+
+    # Step 4: Rebuild sharedStrings.xml with changes
+    new_ss_xml = ss_xml
+    # Process in reverse order to maintain string positions
+    for idx in sorted(changes.keys(), reverse=True):
+        if idx < len(si_blocks):
+            old_block = si_blocks[idx].group(0)
+            new_value = changes[idx]
+            # Escape XML special chars
+            escaped = new_value.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+            new_block = f'<si><t>{escaped}</t></si>'
+            new_ss_xml = new_ss_xml.replace(old_block, new_block, 1)
+
+    # Step 5: Repackage ZIP with only sharedStrings.xml changed
+    output_buf = io.BytesIO()
+    output_zip = zipfile.ZipFile(output_buf, 'w', zipfile.ZIP_DEFLATED)
+
+    for item in orig_zip.infolist():
+        if item.filename == ss_xml_name:
+            output_zip.writestr(item, new_ss_xml.encode('utf-8'))
         else:
-            cell.value = str(value)
+            # Copy original bytes exactly
+            output_zip.writestr(item, orig_zip.read(item.filename))
 
-    # Save to buffer
-    buf = io.BytesIO()
-    wb.save(buf)
-
-    # If x14 extensions existed, restore them from original
-    if has_x14 and orig_sheet_xml:
-        import re as _re
-        buf.seek(0)
-        new_zip_buf = io.BytesIO()
-        with zipfile.ZipFile(buf, 'r') as saved_zf:
-            with zipfile.ZipFile(new_zip_buf, 'w', zipfile.ZIP_DEFLATED) as out_zf:
-                for item in saved_zf.infolist():
-                    data = saved_zf.read(item.filename)
-                    if 'sheet1.xml' in item.filename:
-                        # Restore extLst from original
-                        saved_xml = data.decode('utf-8')
-                        orig_xml = orig_sheet_xml.decode('utf-8')
-
-                        # Extract extLst from original
-                        ext_match = _re.search(r'(<extLst>.*?</extLst>)', orig_xml, _re.DOTALL)
-                        if ext_match:
-                            ext_block = ext_match.group(1)
-                            # Remove any extLst from saved (openpyxl may have stripped it)
-                            saved_xml = _re.sub(r'<extLst>.*?</extLst>', '', saved_xml, flags=_re.DOTALL)
-                            # Insert before </worksheet>
-                            saved_xml = saved_xml.replace('</worksheet>', ext_block + '</worksheet>')
-                        data = saved_xml.encode('utf-8')
-                    out_zf.writestr(item, data)
-        new_zip_buf.seek(0)
-        return new_zip_buf.getvalue()
-
-    buf.seek(0)
-    return buf.getvalue()
+    orig_zip.close()
+    output_zip.close()
+    output_buf.seek(0)
+    return output_buf.getvalue()
 
 
 def _do_download_excel(request: Request, case_id: str):
@@ -4552,29 +4569,44 @@ def _do_download_excel(request: Request, case_id: str):
         c2_known = v("contact2_known")
 
         if plan_name == "貸就補":
+            co_months = v("company_months") if v("company_months") else ""
             return {
                 "C4": name, "E4": id_no, "J4": phone,
                 "C5": birth, "E5": id_date, "F5": id_place, "G5": id_type,
                 "C7": reg_addr,
-                "C8": live_addr if not live_same else reg_addr,
+                "C8": live_addr,
                 "C9": co_addr,
                 "C10": company, "G10": co_phone,
-                "C11": co_role, "E11": co_salary, "G11": co_years, "I11": "",
+                "C11": co_role, "E11": co_salary, "G11": co_years, "I11": co_months,
                 "C18": c1_name, "E18": c1_rel, "H18": c1_phone,
                 "C19": c2_name, "E19": c2_rel, "H19": c2_phone,
             }
 
         elif plan_name in ("和裕機車", "和裕商品"):
+            # Format phone: 0953119943 -> 0953-119943
+            fmt_phone = phone
+            if phone and len(phone) >= 8 and phone.isdigit():
+                fmt_phone = phone[:4] + "-" + phone[4:]
+            # Format co_years+months: e.g. "1年8月"
+            co_months = v("company_months") if v("company_months") else ""
+            co_ym = ""
+            if co_years or co_months:
+                co_ym = (co_years + "年" if co_years else "") + (co_months + "月" if co_months else "")
+            # Format salary: e.g. "4萬4千"
+            industry = v("company_industry")
+            carrier = v("carrier")
+            co_salary_fmt = co_salary
             return {
                 "C11": name, "F11": id_no,
                 "C12": birth, "F12": (id_date + " " + id_type) if id_date else "",
                 "C13": marriage, "F13": id_place,
-                "C14": education, "F14": phone,
-                "C15": reg_addr, "G15": reg_phone,
-                "C16": live_addr, "G16": live_phone, "H16": "同戶籍" if live_same else "",
+                "C14": education, "F14": fmt_phone,
+                "C15": reg_addr,
+                "C16": live_addr, "H16": "同戶籍" if live_same else "",
                 "C17": line_id, "H17": co_phone,
-                "C18": company, "F18": co_role, "H18": co_years, "I18": co_salary + "萬" if co_salary else "",
-                "C19": co_addr,
+                "C18": company, "G18": co_role, "I18": co_ym,
+                "C19": co_addr, "G19": industry, "I19": co_salary_fmt,
+                "C20": carrier,
                 "C23": c1_name, "F23": c2_name,
                 "C24": c1_rel, "F24": c2_rel,
                 "C25": c1_phone, "F25": c2_phone,
@@ -4582,6 +4614,8 @@ def _do_download_excel(request: Request, case_id: str):
             }
 
         elif plan_name in ("亞太商品", "亞太機車15萬", "亞太工會機車", "亞太機車25萬"):
+            # F9 birth format: 1989/09/16
+            industry = v("company_industry")
             return {
                 "B9": name, "D9": id_no, "F9": birth,
                 "B10": marriage, "D10": education,
@@ -4590,10 +4624,10 @@ def _do_download_excel(request: Request, case_id: str):
                 "B13": v("live_city") if not live_same else v("reg_city"),
                 "C13": v("live_district") if not live_same else v("reg_district"),
                 "D13": v("live_address") if not live_same else v("reg_address"),
-                "B14": live_status, "D14": live_years, "F14": live_months,
-                "B15": phone,
-                "B16": email, "D16": line_id,
-                "B17": company, "G17": co_role,
+                "B14": live_status, "D14": live_years, "F14": "0",
+                "B15": phone, "D15": "0", "E15": "0",
+                "B16": email,
+                "B17": company, "E17": industry, "G17": co_role,
                 "B18": co_phone_area, "C18": co_phone_num, "G18": co_years, "H18": co_salary,
                 "B19": v("company_city"), "C19": v("company_district"), "D19": v("company_address"),
                 "B21": c1_name, "D21": c1_rel,
@@ -4601,6 +4635,7 @@ def _do_download_excel(request: Request, case_id: str):
             }
 
         elif plan_name == "第一":
+            co_months = v("company_months") if v("company_months") else ""
             return {
                 "B5": name, "G5": id_no,
                 "B6": id_date, "G6": id_place, "J6": id_type,
@@ -4609,9 +4644,9 @@ def _do_download_excel(request: Request, case_id: str):
                 "B10": "同上" if live_same else live_addr,
                 "M5": company, "T6": co_phone,
                 "M7": co_addr,
-                "M8": co_years, "O8": "", "M9": co_salary,
-                "M13": c1_name, "Q13": c1_rel, "T13": c1_phone, "X13": c1_known,
-                "M14": c2_name, "Q14": c2_rel, "T14": c2_phone, "X14": c2_known,
+                "M8": co_years, "O8": co_months, "M9": co_salary,
+                "M13": c1_name, "Q13": c1_rel, "T13": c1_phone,
+                "M14": c2_name, "Q14": c2_rel, "T14": c2_phone,
             }
 
         return {}  # Unknown plan - no data fill
@@ -4624,7 +4659,7 @@ def _do_download_excel(request: Request, case_id: str):
         try:
             cell_map = _build_cell_map(plan, r)
             if cell_map:
-                filled_bytes = _fill_excel_via_openpyxl(template_path, cell_map)
+                filled_bytes = _fill_excel_template(template_path, cell_map)
             else:
                 with open(template_path, "rb") as f:
                     filled_bytes = f.read()
