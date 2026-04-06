@@ -6,6 +6,7 @@ import os
 import re
 import sqlite3
 import json
+import io
 from datetime import datetime
 import uuid
 import secrets
@@ -3082,7 +3083,7 @@ def apply_adminb_rules(row: dict) -> dict:
 
 
 @app.get("/adminb", response_class=HTMLResponse)
-def adminb_page(request: Request, case_id: str = ""):
+def adminb_page(request: Request, case_id: str = "", saved: str = ""):
     from fastapi.responses import RedirectResponse
     role = check_auth(request)
     if not role: return RedirectResponse("/login")
@@ -3156,6 +3157,8 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
         icon = "→" if adj else "✓"
         return f'<div class="rule-item {cls}"><span style="font-size:11px;font-weight:700;">{h(label)}</span>　{icon} {h(display)}</div>'
 
+    saved_html = '<div style="background:#dcfce7;border:1px solid #86efac;border-radius:8px;padding:12px 16px;margin-bottom:12px;font-size:14px;font-weight:600;color:#166534;">✅ 資料已儲存完成</div>' if saved else ""
+
     rules_html = ""
     rules_html += rule_item("年資", rules["company_years_display"], rules["company_years_adj"])
     rules_html += rule_item("月薪", rules["salary_display"], rules["salary_adj"])
@@ -3187,6 +3190,7 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
         <div><div style="font-size:11px;font-weight:600;color:#6a5e4e;">勞保</div><div style="font-size:13px;color:#1a1208;font-weight:500;">{h(labor)}</div></div>
       </div>
     </div>
+    {saved_html}
     <div class="ab-card">
       <div class="ab-sec">確認資料（系統自動調整）</div>
       {rules_html}{warns_html}
@@ -3291,17 +3295,12 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
       </div>
     </div>
     <div class="ab-card">
-      <div class="ab-sec">下載申請書</div>
-      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px;">
+      <div class="ab-sec">儲存與下載</div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
         <button type="submit" class="btn-save">💾 儲存資料</button>
+        <a href="/adminb/download-excel?case_id={h(case_id)}" class="btn-dl" onclick="return confirm('將根據勾選的方案下載 Excel，確定嗎？')">📥 下載EXCEL</a>
       </div>
-      <div style="display:flex;gap:10px;flex-wrap:wrap;">
-        <a href="/adminb/download?case_id={h(case_id)}&plan=亞太商品" class="btn-dl">亞太商品 Excel</a>
-        <a href="/adminb/download?case_id={h(case_id)}&plan=和裕機車" class="btn-dl">和裕機車 Excel</a>
-        <a href="/adminb/download?case_id={h(case_id)}&plan=21機車12萬" class="btn-dl">21機車12萬 Excel</a>
-        <a href="/adminb/sign?case_id={h(case_id)}" class="btn-qm">喬美申請書 PDF</a>
-      </div>
-      <div style="font-size:12px;color:#8a7a68;margin-top:8px;">下載前請先儲存資料</div>
+      <div style="font-size:12px;color:#8a7a68;margin-top:8px;">請先儲存資料再下載</div>
     </div>
     </form>
     </div>
@@ -3362,7 +3361,7 @@ async def adminb_save(request: Request):
     vals = list(fields.values()) + [now_iso(), case_id]
     cur.execute(f"UPDATE customers SET {set_clause}, updated_at=? WHERE case_id=?", vals)
     conn.commit(); conn.close()
-    return RedirectResponse(f"/adminb?case_id={case_id}", status_code=303)
+    return RedirectResponse(f"/adminb?case_id={case_id}&saved=1", status_code=303)
 
 
 
@@ -4390,6 +4389,92 @@ td {{ background: #fff; }}
 </table>
 {"<div style='font-size:13px;font-weight:700;color:#3a3530;margin-bottom:8px;'>負債明細</div>" + debt_html if debt_html else ""}
 </body></html>"""
+
+# =========================
+# 下載 Excel 申請書
+# =========================
+@app.get("/adminb/download-excel")
+def adminb_download_excel(request: Request, case_id: str = ""):
+    from fastapi.responses import StreamingResponse
+    role = check_auth(request)
+    if not role or role not in ("admin", "adminB"):
+        return JSONResponse({"error": "無權限"}, status_code=403)
+    if not case_id:
+        return JSONResponse({"error": "缺少 case_id"}, status_code=400)
+
+    conn = get_conn(); cur = conn.cursor()
+    cur.execute("SELECT * FROM customers WHERE case_id=?", (case_id,))
+    row = cur.fetchone(); conn.close()
+    if not row:
+        return JSONResponse({"error": "找不到客戶"}, status_code=404)
+
+    r = dict(row)
+    plans = (r.get("adminb_selected_plans", "") or "").split(",")
+    plans = [p.strip() for p in plans if p.strip()]
+
+    if not plans:
+        return JSONResponse({"error": "尚未勾選任何方案，請先勾選並儲存"}, status_code=400)
+
+    _base = os.path.dirname(os.path.abspath(__file__))
+    PLAN_TEMPLATE_MAP = {
+        "亞太商品": os.path.join(_base, "申請書", "亞太商品範本.xlsx"),
+        "亞太機車15萬": os.path.join(_base, "申請書", "亞太15萬機車範本.xlsx"),
+        "亞太工會機車": os.path.join(_base, "申請書", "亞太工會範本.xlsx"),
+        "和裕機車": os.path.join(_base, "申請書", "和裕維力貸機車範本).xlsx"),
+        "和裕商品": os.path.join(_base, "申請書", "和裕維力貸商品範本.xlsx"),
+        "第一": os.path.join(_base, "申請書", "第一申請書範本.xlsx"),
+        "貸就補": os.path.join(_base, "申請書", "貸就補範本.xlsx"),
+    }
+
+    files_to_zip = []
+    name = r.get("customer_name", "")
+
+    for plan in plans:
+        template_path = PLAN_TEMPLATE_MAP.get(plan)
+        if not template_path or not os.path.exists(template_path):
+            continue
+
+        try:
+            import openpyxl
+            import warnings
+            warnings.filterwarnings("ignore", category=UserWarning)
+            wb = openpyxl.load_workbook(template_path)
+            ws = wb.active
+
+            # Save to bytes buffer
+            buf = io.BytesIO()
+            wb.save(buf)
+            buf.seek(0)
+            files_to_zip.append((f"{name}_{plan}.xlsx", buf.getvalue()))
+        except Exception as e:
+            print(f"Excel generate error for {plan}: {e}")
+            continue
+
+    if not files_to_zip:
+        return JSONResponse({"error": "沒有可下載的範本檔案"}, status_code=404)
+
+    if len(files_to_zip) == 1:
+        # Single file - return directly
+        fname, data = files_to_zip[0]
+        return StreamingResponse(
+            io.BytesIO(data),
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f'attachment; filename="{fname}"'}
+        )
+    else:
+        # Multiple files - zip them
+        zip_buf = io.BytesIO()
+        import zipfile
+        with zipfile.ZipFile(zip_buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+            for fname, data in files_to_zip:
+                zf.writestr(fname, data)
+        zip_buf.seek(0)
+        return StreamingResponse(
+            zip_buf,
+            media_type="application/zip",
+            headers={"Content-Disposition": f'attachment; filename="{name}_申請書.zip"'}
+        )
+
 
 # =========================
 # 密碼管理頁面（管理員專用）
