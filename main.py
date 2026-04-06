@@ -2154,7 +2154,7 @@ async def reset_data(request: Request):
         conn.close()
 
 
-@app.get("/admin/reset_data", response_class=HTMLResponse)
+@app.get("/admin/reset_data")
 def reset_data_page(request: Request):
     """清除測試資料的網頁介面"""
     from fastapi.responses import RedirectResponse
@@ -4405,17 +4405,13 @@ async def update_password(request: Request):
 
 
 # =========================
-# 啟動
+# 啟動（模組載入時就初始化 DB，確保任何情況下都能正常運作）
 # =========================
-@app.on_event("startup")
-def startup():
-    init_db()
-    seed_groups()
+init_db()
+seed_groups()
 
 
 if __name__ == "__main__":
-    init_db()
-    seed_groups()
     uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 10000)))
 
 
