@@ -4532,15 +4532,17 @@ def _fill_excel_template(template_path: str, cell_map: dict) -> bytes:
         orig_zip.close()
         return original_bytes
 
-    # Step 4: Rebuild sharedStrings.xml with changes
-    new_ss_xml = ss_xml
-    for idx in sorted(ss_changes.keys(), reverse=True):
-        if idx < len(si_blocks):
-            old_block = si_blocks[idx].group(0)
-            new_value = ss_changes[idx]
+    # Step 4: Rebuild sharedStrings.xml — 用索引定位，避免重複值替換錯位
+    # 先把所有 <si> 塊提取成列表，按索引修改，再重組
+    si_list = [m.group(0) for m in si_blocks]
+    for idx, new_value in ss_changes.items():
+        if idx < len(si_list):
             escaped = new_value.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
-            new_block = f'<si><t>{escaped}</t></si>'
-            new_ss_xml = new_ss_xml.replace(old_block, new_block, 1)
+            si_list[idx] = f'<si><t>{escaped}</t></si>'
+    # 重組 XML：保留頭尾，替換中間的 <si> 區塊
+    first_si = si_blocks[0].start()
+    last_si_end = si_blocks[-1].end()
+    new_ss_xml = ss_xml[:first_si] + ''.join(si_list) + ss_xml[last_si_end:]
 
     # Step 4b: Modify sheet XML for direct-value cells
     new_sheet_xml = sheet_xml
