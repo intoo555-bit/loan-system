@@ -4516,14 +4516,16 @@ def _fill_excel_template(template_path: str, cell_map: dict) -> bytes:
     si_blocks = list(_re.finditer(r'(<si>)(.*?)(</si>)', ss_xml, _re.DOTALL))
 
     # Step 3: Split cell_map into shared-string changes and direct-value changes
-    ss_changes = {}  # ss_index -> new_value (for t="s" cells)
-    direct_changes = {}  # cell_ref -> new_value (for numeric/direct cells)
+    # None = skip (don't change cell), "" = clear cell
+    ss_changes = {}
+    direct_changes = {}
     for cell_ref, new_value in cell_map.items():
+        if new_value is None:
+            continue  # None = 不動原儲存格
         if cell_ref in cell_to_ss_idx:
             ss_idx = cell_to_ss_idx[cell_ref]
             ss_changes[ss_idx] = new_value if new_value else ""
         else:
-            # Cell not using shared string — modify <v> directly in sheet XML
             direct_changes[cell_ref] = new_value if new_value else ""
 
     if not ss_changes and not direct_changes:
@@ -4693,50 +4695,119 @@ def _do_download_excel(request: Request, case_id: str):
             }
 
         elif plan_name in ("亞太商品", "亞太機車15萬", "亞太工會機車", "亞太機車25萬"):
-            reg_code = CITY_TO_CODE.get(v("reg_city"), "")
-            live_code = reg_code if live_same else CITY_TO_CODE.get(v("live_city"), "")
-            co_code = CITY_TO_CODE.get(v("company_city"), "")
+            # === 資金用途（B5）從 adminB 補充資料 ===
+            fund_use = v("adminb_fund_use")
+            valid_funds = ["I-1教育費","I-2醫藥費","I-3出國旅遊","I-4創業","II-1購買交通工具","II-2購買手機","II-3購買3C產品","III-1交友","III-2健身&醫美","III-3美容課程","IV-1個人理財投資(含不動產、裝修、理財商品)","V-1生活周轉金","V-2整合負債(償還銀行/融資等)"]
+            fund_val = fund_use if fund_use in valid_funds else ""
 
-            # Validate dropdown values
+            # === 婚姻（B10）===
             marriage_val = marriage if marriage in ("未婚", "已婚") else ""
+
+            # === 教育程度（D10）必須完全匹配下拉 ===
             edu_val = education if education in ("小學/國中", "高中/職", "專科/大學", "研究所以上") else ""
+
+            # === 發證狀態（F11）===
             id_type_val = id_type if id_type in ("初發", "補發", "換發") else ""
-            live_status_val = live_status if live_status in ("自有", "配偶", "親屬", "租屋", "宿舍") else ""
 
-            # Industry/role from adminb supplementary data
-            industry = v("adminb_industry") or ""
+            # === 居住狀況（B14）：父母→親屬 ===
+            live_map = {"父母": "親屬", "租屋": "親屬", "宿舍": "親屬"}
+            ls_raw = live_status
+            live_status_val = live_map.get(ls_raw, ls_raw) if ls_raw else ""
+            if live_status_val and live_status_val not in ("自有", "配偶", "親屬", "租屋", "宿舍"):
+                live_status_val = ""
+
+            # === 行業（D17）從 adminB，無則不填 ===
+            industry = v("adminb_industry")
             valid_industries = ["餐飲與服務業","製造業","建築與營造","軍警與公教","科技與資訊","運輸與物流","金融與保險業","批發與零售業","醫療與教育","農林漁牧業","自由職業","其他"]
-            industry = industry if industry in valid_industries else ""
+            industry_val = industry if industry in valid_industries else None  # None = 不動原值
 
+            # === 職務（G17）從 adminB，無則不填 ===
             valid_roles = ["行政與內勤","勞力與現場","銷售與業務","財務與專業","技術與工程","教學與醫護","管理與經營","自營與自由"]
-            at_role = v("adminb_role") or v("company_role") or ""
-            role_val = at_role if at_role in valid_roles else ""
+            at_role = v("adminb_role")
+            role_val = at_role if at_role in valid_roles else None  # None = 不動原值
 
-            # Relationship - must match dropdown
+            # === 聯絡人關係（D21）：常用詞轉換 ===
             valid_rels = ["父母","配偶","子女","兄姊","弟妹","祖父母","旁系血親","姻親","朋友","其他"]
-            c1_rel_val = c1_rel if c1_rel in valid_rels else ""
+            rel_map = {"媽媽":"父母","爸爸":"父母","母":"父母","父":"父母","母親":"父母","父親":"父母",
+                       "妻":"配偶","夫":"配偶","老婆":"配偶","老公":"配偶","太太":"配偶","先生":"配偶",
+                       "兒":"子女","女":"子女","兒子":"子女","女兒":"子女",
+                       "哥":"兄姊","姊":"兄姊","姐":"兄姊","哥哥":"兄姊","姊姊":"兄姊","姐姐":"兄姊",
+                       "弟":"弟妹","妹":"弟妹","弟弟":"弟妹","妹妹":"弟妹",
+                       "友":"朋友","同事":"朋友","同學":"朋友"}
+            c1_rel_mapped = rel_map.get(c1_rel, c1_rel)
+            c1_rel_val = c1_rel_mapped if c1_rel_mapped in valid_rels else ""
 
-            # Phone area code must match dropdown
+            # === 公司電話區碼（B18）===
             valid_areas = ["0","02","03","037","04","049","05","06","07","08","089","082","083"]
             co_area = co_phone_area if co_phone_area in valid_areas else ""
 
-            return {
+            # === 年資（G18）：5年6個月→5.6 ===
+            try:
+                yrs = float(co_years) if co_years else 0
+                mos_raw = v("company_months") or "0"
+                mos = float(mos_raw) if mos_raw and mos_raw != "0" else 0
+                if mos > 0:
+                    years_decimal = str(int(yrs)) + "." + str(int(mos))
+                else:
+                    years_decimal = str(int(yrs)) if yrs == int(yrs) else str(yrs)
+            except:
+                years_decimal = co_years
+
+            # === 月薪（H18）：58000→5.8萬 ===
+            try:
+                sal_raw = float(co_salary) if co_salary else 0
+                if sal_raw >= 1000:  # 如果是元，轉換為萬
+                    sal_wan = round(sal_raw / 10000, 1)
+                else:  # 已經是萬
+                    sal_wan = sal_raw
+                salary_str = str(sal_wan) if sal_wan else ""
+            except:
+                salary_str = co_salary
+
+            # === 城市：B12/B13/B19 用完整名稱（桃園市非桃市）===
+            reg_city_full = v("reg_city")  # 直接用完整名稱
+            live_city_full = reg_city_full if live_same else v("live_city")
+            co_city_full = v("company_city")
+
+            # === 發證地（D11）用短碼 ===
+            id_place_code = CITY_TO_CODE.get(id_place, id_place)
+
+            result = {
+                "B5": fund_val if fund_val else None,  # None = 不動
                 "B9": name, "D9": id_no, "F9": birth,
                 "B10": marriage_val, "D10": edu_val,
-                "B11": id_date, "D11": CITY_TO_CODE.get(id_place, id_place), "F11": id_type_val,
-                "B12": reg_code, "C12": v("reg_district"), "D12": v("reg_address"),
-                "B13": live_code if not live_same else reg_code,
+                "B11": id_date, "D11": id_place_code, "F11": id_type_val,
+                "B12": reg_city_full, "C12": v("reg_district"), "D12": v("reg_address"),
+                "B13": live_city_full,
                 "C13": v("live_district") if not live_same else v("reg_district"),
                 "D13": v("live_address") if not live_same else v("reg_address"),
                 "B14": live_status_val, "D14": live_years,
                 "B15": phone,
                 "B16": email,
-                "B17": company, "D17": industry, "G17": role_val,
-                "B18": co_area, "C18": co_phone_num, "G18": co_years, "H18": co_salary,
-                "B19": co_code, "C19": v("company_district"), "D19": v("company_address"),
+                "B17": company,
+                "B18": co_area, "C18": co_phone_num,
+                "G18": years_decimal, "H18": salary_str,
+                "B19": co_city_full, "C19": v("company_district"), "D19": v("company_address"),
                 "B21": c1_name, "D21": c1_rel_val,
                 "B25": c1_phone,
             }
+            # 行業/職務：有值才填，無值不動原儲存格
+            if industry_val is not None:
+                result["D17"] = industry_val
+            if role_val is not None:
+                result["G17"] = role_val
+            # 車輛資料（從 adminB 補充資料，有值才填，無值不動）
+            vehicle_fields = {
+                "A7": v("adminb_vehicle_type"),   # 車輛型式
+                "C7": v("adminb_engine_no"),      # 引擎號碼
+                "E7": v("adminb_displacement"),   # 排氣量
+                "G7": v("adminb_color"),          # 顏色
+                "J3": v("vehicle_plate"),         # 牌照號碼
+            }
+            for cell, fv in vehicle_fields.items():
+                if fv:
+                    result[cell] = fv
+            return result
 
         elif plan_name == "第一":
             id_type_val = id_type if id_type in ("初發", "換發", "補發") else ""
