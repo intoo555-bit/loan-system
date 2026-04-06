@@ -4811,8 +4811,8 @@ def _do_download_excel(request: Request, case_id: str):
             id_date_ad = roc_to_ad(id_date)
 
             # === 公司電話區碼（B18）：手機時選 0 ===
-            if phone and phone.startswith("09") and not co_phone_area:
-                co_phone_area = "0"  # 手機時區碼填0
+            if co_phone_area == "mobile" or (co_phone_num and co_phone_num.startswith("09")):
+                co_phone_area = "0"
 
             # === 資金用途（B5）從 adminB 補充資料 ===
             fund_use = v("adminb_fund_use")
