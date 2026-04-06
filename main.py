@@ -2674,9 +2674,9 @@ def login_page(request: Request, error: str = ""):
         <div style="margin-bottom:14px">
           <label style="font-size:12px;color:#5a4e40;font-weight:600;display:block;margin-bottom:6px">身份</label>
           <select name="role" class="input" style="padding:9px 12px" onchange="document.getElementById('grp_sec').style.display=this.value==='group'?'block':'none'">
+            <option value="admin">管理員</option>
             <option value="normal">行政A</option>
             <option value="adminB">行政B</option>
-            <option value="admin">管理員</option>
             <option value="group">業務（選群組）</option>
           </select>
         </div>
@@ -4404,18 +4404,7 @@ async def update_password(request: Request):
     return JSONResponse({"ok": False, "message": "未知角色"})
 
 
-# =========================
-# 啟動（模組載入時就初始化 DB，確保任何情況下都能正常運作）
-# =========================
-init_db()
-seed_groups()
-
-
-if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 10000)))
-
-
-# ── PDF exportPDF override (injected at module level) ──
+# ── PDF export JS（必須在 init_db 之前定義，因為 /new-customer 頁面需要引用）──
 _PDF_EXPORT_JS = '''
 function exportPDF(){
   var grpMap=__GRP_MAP__;
@@ -4510,3 +4499,14 @@ function exportPDF(){
   w.document.write(html);w.document.close();
 }
 '''
+
+
+# =========================
+# 啟動（模組載入時就初始化 DB，確保任何情況下都能正常運作）
+# =========================
+init_db()
+seed_groups()
+
+
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 10000)))
