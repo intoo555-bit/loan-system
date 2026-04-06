@@ -709,6 +709,9 @@ def init_db():
         ("adminb_credit_exp", "TEXT"),
         ("adminb_credit_limit", "TEXT"),
         ("adminb_credit_late", "TEXT"),
+        ("eval_license", "TEXT"),
+        ("eval_law", "TEXT"),
+        ("company_months", "TEXT"),
     ]:
         ensure_column(cur, "customers", col, defn)
     # groups 表新增業務群對應欄位
@@ -3374,10 +3377,14 @@ def edit_pending_get(request: Request, case_id: str = ""):
     if not case_id: return RedirectResponse("/pending-customers")
     conn = get_conn(); cur = conn.cursor()
     cur.execute("SELECT * FROM customers WHERE case_id=?", (case_id,))
-    row = cur.fetchone(); conn.close()
-    if not row: return RedirectResponse("/pending-customers")
+    row = cur.fetchone()
+    if not row: conn.close(); return RedirectResponse("/pending-customers")
     r = dict(row)
+    cur.execute("SELECT group_id, group_name FROM groups WHERE group_type='SALES_GROUP' AND is_active=1 ORDER BY group_name")
+    all_groups = cur.fetchall()
+    conn.close()
     def v(k): return r.get(k,"") or ""
+    grp_opts = '<option value="">請選擇</option>' + "".join(f'<option value="{h(g["group_id"])}" {"selected" if v("source_group_id")==g["group_id"] else ""}>{h(g["group_name"])}</option>' for g in all_groups)
     cities = ["台北市","新北市","桃園市","台中市","台南市","高雄市","基隆市","新竹市","新竹縣","苗栗縣","彰化縣","南投縣","雲林縣","嘉義市","嘉義縣","屏東縣","宜蘭縣","花蓮縣","台東縣","澎湖縣","金門縣","連江縣"]
     def csel(nm,val): return f'<select name="{nm}" class="ep">' + "".join(f'<option {"selected" if o==val else ""}>{o}</option>' for o in cities) + "</select>"
     lsame = v("live_same_as_reg")=="1"
@@ -3409,6 +3416,9 @@ label{{display:block;font-size:12px;font-weight:600;color:#5a4e40;margin-bottom:
 <div style="font-size:20px;font-weight:700;margin-bottom:18px;">{h(v("customer_name"))} 資料編輯</div>
 <form method="post" action="/edit-pending">
 <input type="hidden" name="case_id" value="{h(case_id)}">
+<div class="card"><div class="sec">所屬群組</div>
+  <div><label>群組</label><select name="grp" class="ep">{grp_opts}</select></div>
+</div>
 <div class="card"><div class="sec">基本資料</div><div class="g2">
   <div><label>姓名</label><input name="cname" class="ep" value="{h(v("customer_name"))}"></div>
   <div><label>身分證</label><input name="idno" class="ep" value="{h(v("id_no"))}" style="text-transform:uppercase"></div>
@@ -3416,13 +3426,20 @@ label{{display:block;font-size:12px;font-weight:600;color:#5a4e40;margin-bottom:
   <div><label>行動電話</label><input name="phone" class="ep" value="{h(v("phone"))}"></div>
   <div><label>Email</label><input name="email" class="ep" value="{h(v("email"))}"></div>
   <div><label>LINE ID</label><input name="line" class="ep" value="{h(v("line_id"))}"></div>
+  <div><label>婚姻狀態</label><select name="marry" class="ep"><option value="">請選擇</option><option {"selected" if v("marriage")=="未婚" else ""}>未婚</option><option {"selected" if v("marriage")=="已婚" else ""}>已婚</option></select></div>
+  <div><label>最高學歷</label><select name="edu" class="ep"><option value="">請選擇</option><option {"selected" if v("education")=="高中/職" else ""}>高中/職</option><option {"selected" if v("education")=="專科/大學" else ""}>專科/大學</option><option {"selected" if v("education")=="研究所以上" else ""}>研究所以上</option><option {"selected" if v("education")=="其他" else ""}>其他</option></select></div>
+</div></div>
+<div class="card"><div class="sec">身分證發證資料</div><div class="g3">
+  <div><label>發證日期</label><input name="iddate" class="ep" value="{h(v("id_issue_date"))}"></div>
+  <div><label>發證地</label><select name="idplace" class="ep"><option value="">請選擇</option>{"".join(f'<option {"selected" if v("id_issue_place")==p else ""}>{p}</option>' for p in ["北市","新北市","桃市","中市","南市","高市","基市","竹市","竹縣","苗縣","彰縣","投縣","雲縣","嘉市","嘉縣","屏縣","宜縣","花縣","東縣","澎縣","金門","連江"])}</select></div>
+  <div><label>換補發類別</label><select name="idtype" class="ep"><option value="">請選擇</option><option {"selected" if v("id_issue_type")=="初發" else ""}>初發</option><option {"selected" if v("id_issue_type")=="補發" else ""}>補發</option><option {"selected" if v("id_issue_type")=="換發" else ""}>換發</option></select></div>
 </div></div>
 <div class="card"><div class="sec">地址資料</div>
   <div style="font-size:13px;font-weight:700;color:#4a3e30;margin-bottom:8px">戶籍地址</div>
   <div class="g3" style="margin-bottom:10px"><div><label>縣市</label>{csel("rcity",v("reg_city"))}</div><div><label>區/鄉鎮</label><input name="rdist" class="ep" value="{h(v("reg_district"))}"></div><div><label>詳細地址</label><input name="raddr" class="ep" value="{h(v("reg_address"))}"></div></div>
   <div style="margin-bottom:10px"><label>戶籍電話</label><input name="rphone" class="ep" value="{h(v("reg_phone"))}" style="max-width:200px"></div>
   <label style="display:flex;align-items:center;gap:8px;font-size:14px;color:#3a3020;margin-bottom:10px;cursor:pointer;font-weight:600">
-    <input type="checkbox" id="sameck" {"checked" if lsame else ""} onchange="document.getElementById('lsec').style.display=this.checked?'none':'block'">住家地址與戶籍相同</label>
+    <input type="checkbox" id="sameck" name="sameck" {"checked" if lsame else ""} onchange="document.getElementById('lsec').style.display=this.checked?'none':'block'">住家地址與戶籍相同</label>
   <div id="lsec" style="{"display:none" if lsame else ""};margin-bottom:10px">
     <div class="g3"><div><label>縣市</label>{csel("lcity",v("live_city"))}</div><div><label>區/鄉鎮</label><input name="ldist" class="ep" value="{h(v("live_district"))}"></div><div><label>詳細地址</label><input name="laddr" class="ep" value="{h(v("live_address"))}"></div></div>
   </div>
@@ -3434,9 +3451,9 @@ label{{display:block;font-size:12px;font-weight:600;color:#5a4e40;margin-bottom:
 </div>
 <div class="card"><div class="sec">職業資料</div><div class="g2">
   <div style="grid-column:1/-1"><label>公司名稱</label><input name="cmpname" class="ep" value="{h(v("company_name_detail"))}"></div>
-  <div><label>公司電話</label><input name="cphone" class="ep" value="{h(v("company_phone_num"))}"></div>
+  <div><label>公司電話</label><div style="display:flex;gap:6px;align-items:center"><select name="carea" class="ep" style="width:82px"><option value="">區碼</option>{"".join(f'<option {"selected" if v("company_phone_area")==a else ""}>{a}</option>' for a in ["02","03","037","04","049","05","06","07","08","089"])}<option {"selected" if v("company_phone_area")=="mobile" else ""} value="mobile">手機</option></select><input name="cnum" class="ep" value="{h(v("company_phone_num"))}"><input name="cext" class="ep" value="{h(v("company_phone_ext"))}" placeholder="分機" style="width:68px"></div></div>
   <div><label>職稱</label><input name="crole" class="ep" value="{h(v("company_role"))}"></div>
-  <div><label>年資</label><input name="cyear" class="ep" value="{h(v("company_years"))}"></div>
+  <div><label>年資</label><div style="display:flex;gap:6px;align-items:center"><input name="cyear" class="ep" value="{h(v("company_years"))}" style="width:60px"><span>年</span><input name="cmon" class="ep" value="{h(v("company_months"))}" style="width:60px"><span>月</span></div></div>
   <div><label>月薪</label><input name="csal" class="ep" value="{h(v("company_salary"))}"></div>
   <div style="grid-column:1/-1"><label>公司地址</label><div class="g3">{csel("ccity",v("company_city"))}<input name="cdist" class="ep" value="{h(v("company_district"))}"><input name="caddr" class="ep" value="{h(v("company_address"))}"></div></div>
 </div></div>
@@ -3457,12 +3474,14 @@ label{{display:block;font-size:12px;font-weight:600;color:#5a4e40;margin-bottom:
   <div><label>當鋪私設</label><select name="eprivate" class="ep"><option {"selected" if v("eval_alert")=="無" else ""}>無</option><option {"selected" if v("eval_alert")=="有" else ""}>有</option></select></div>
   <div><label>勞保狀態</label><select name="elabor" class="ep"><option {"selected" if v("eval_labor_ins")=="公司保" else ""}>公司保</option><option {"selected" if v("eval_labor_ins")=="工會保" else ""}>工會保</option><option {"selected" if v("eval_labor_ins")=="自行投保" else ""}>自行投保</option><option {"selected" if v("eval_labor_ins")=="無勞保" else ""}>無勞保</option></select></div>
   <div><label>有無薪轉</label><select name="esal" class="ep"><option {"selected" if v("eval_salary_transfer")=="有薪轉" else ""}>有薪轉</option><option {"selected" if v("eval_salary_transfer")=="無薪轉" else ""}>無薪轉</option></select></div>
+  <div><label>有無證照</label><select name="elicense" class="ep"><option {"selected" if v("eval_license")=="無" else ""}>無</option><option {"selected" if v("eval_license")=="有" else ""}>有</option></select></div>
   <div><label>貸款遲繳</label><select name="elate" class="ep"><option {"selected" if v("eval_late")=="無" else ""}>無</option><option {"selected" if v("eval_late")=="有" else ""}>有</option></select></div>
   <div><label>遲繳天數</label><input name="elateday" class="ep" value="{h(v("eval_late_days"))}"></div>
   <div><label>罰單欠費 $</label><input name="efine" class="ep" value="{h(v("eval_fine"))}"></div>
   <div><label>燃料稅 $</label><input name="efuel" class="ep" value="{h(v("eval_fuel_tax"))}"></div>
   <div><label>名下信用卡</label><input name="ecard" class="ep" value="{h(v("eval_credit_card"))}"></div>
   <div><label>動產/不動產</label><input name="eprop" class="ep" value="{h(v("eval_property"))}"></div>
+  <div><label>法學</label><input name="elaw" class="ep" value="{h(v("eval_law"))}"></div>
   <div style="grid-column:1/-1"><label>備註</label><textarea name="enote" class="ep" style="min-height:60px">{h(v("eval_note"))}</textarea></div>
 </div></div>
 <div class="card"><div class="sec">負債明細</div>
@@ -3491,20 +3510,26 @@ async def edit_pending_post(request: Request):
     conn = get_conn(); cur = conn.cursor()
     cur.execute("""UPDATE customers SET
         customer_name=?,id_no=?,birth_date=?,phone=?,email=?,line_id=?,
+        source_group_id=?,marriage=?,education=?,
+        id_issue_date=?,id_issue_place=?,id_issue_type=?,
         reg_city=?,reg_district=?,reg_address=?,reg_phone=?,live_same_as_reg=?,
         live_city=?,live_district=?,live_address=?,live_phone=?,live_status=?,live_years=?,live_months=?,
-        company_name_detail=?,company_phone_num=?,company_role=?,company_years=?,company_salary=?,
+        company_name_detail=?,company_phone_area=?,company_phone_num=?,company_phone_ext=?,
+        company_role=?,company_years=?,company_months=?,company_salary=?,
         company_city=?,company_district=?,company_address=?,
         contact1_name=?,contact1_relation=?,contact1_phone=?,contact1_known=?,
         contact2_name=?,contact2_relation=?,contact2_phone=?,contact2_known=?,
         updated_at=? WHERE case_id=?""",
         (f.get("cname",""),f.get("idno","").upper(),f.get("birth",""),f.get("phone",""),f.get("email",""),f.get("line",""),
+         f.get("grp",""),f.get("marry",""),f.get("edu",""),
+         f.get("iddate",""),f.get("idplace",""),f.get("idtype",""),
          f.get("rcity",""),f.get("rdist",""),f.get("raddr",""),f.get("rphone",""),live_same,
          f.get("lcity","") if live_same=="0" else f.get("rcity",""),
          f.get("ldist","") if live_same=="0" else f.get("rdist",""),
          f.get("laddr","") if live_same=="0" else f.get("raddr",""),
          f.get("lphone",""),f.get("lstatus",""),f.get("lyear",""),f.get("lmon",""),
-         f.get("cmpname",""),f.get("cphone",""),f.get("crole",""),f.get("cyear",""),f.get("csal",""),
+         f.get("cmpname",""),f.get("carea",""),f.get("cnum",""),f.get("cext",""),
+         f.get("crole",""),f.get("cyear",""),f.get("cmon",""),f.get("csal",""),
          f.get("ccity",""),f.get("cdist",""),f.get("caddr",""),
          f.get("c1name",""),f.get("c1rel",""),f.get("c1tel",""),f.get("c1know",""),
          f.get("c2name",""),f.get("c2rel",""),f.get("c2tel",""),f.get("c2know",""),
@@ -3512,10 +3537,10 @@ async def edit_pending_post(request: Request):
     # 更新諮詢事項
     cur.execute("""UPDATE customers SET
         eval_fund_need=?,eval_sent_3m=?,eval_alert=?,eval_labor_ins=?,eval_salary_transfer=?,
-        eval_late=?,eval_late_days=?,eval_fine=?,eval_fuel_tax=?,eval_credit_card=?,eval_property=?,eval_note=?,
+        eval_license=?,eval_late=?,eval_late_days=?,eval_fine=?,eval_fuel_tax=?,eval_credit_card=?,eval_property=?,eval_law=?,eval_note=?,
         updated_at=? WHERE case_id=?""",
         (f.get("efund",""),f.get("esent",""),f.get("eprivate",""),f.get("elabor",""),f.get("esal",""),
-         f.get("elate",""),f.get("elateday",""),f.get("efine",""),f.get("efuel",""),f.get("ecard",""),f.get("eprop",""),f.get("enote",""),
+         f.get("elicense",""),f.get("elate",""),f.get("elateday",""),f.get("efine",""),f.get("efuel",""),f.get("ecard",""),f.get("eprop",""),f.get("elaw",""),f.get("enote",""),
          now, case_id))
     conn.commit(); conn.close()
     return RedirectResponse("/pending-customers", status_code=303)
