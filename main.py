@@ -4597,6 +4597,9 @@ def _do_download_excel(request: Request, case_id: str):
         "和裕商品": os.path.join(_base, "申請書", "和裕維力貸商品範本.xlsx"),
         "第一": os.path.join(_base, "申請書", "第一申請書範本.xlsx"),
         "貸就補": os.path.join(_base, "申請書", "貸就補範本.xlsx"),
+        "21機車12萬": os.path.join(_base, "申請書", "21機車申請書範本xlsx.xlsx"),
+        "21機車25萬": os.path.join(_base, "申請書", "21機25萬範本.xlsx"),
+        "21商品": os.path.join(_base, "申請書", "21商品範本.xlsx"),
     }
 
     files_to_zip = []
@@ -4753,6 +4756,39 @@ def _do_download_excel(request: Request, case_id: str):
                 "M8": co_years, "M9": co_salary,
                 "M13": c1_name, "Q13": c1_rel, "T13": c1_phone,
                 "M14": c2_name, "Q14": c2_rel, "T14": c2_phone,
+            }
+
+        elif plan_name in ("21機車12萬", "21機車25萬", "21商品"):
+            CITY_TO_21CODE = {
+                "台北市": "北縣", "新北市": "北縣", "桃園市": "桃縣", "台中市": "中縣",
+                "台南市": "南縣", "高雄市": "高縣", "基隆市": "基市",
+                "新竹縣": "竹縣", "苗栗縣": "苗縣", "彰化縣": "彰縣", "南投縣": "投縣",
+                "雲林縣": "雲縣", "嘉義縣": "嘉縣", "屏東縣": "屏縣",
+                "宜蘭縣": "宜縣", "花蓮縣": "花縣", "台東縣": "東縣", "澎湖縣": "澎縣",
+                "金門縣": "金門", "連江縣": "連江",
+            }
+            id_place_code = CITY_TO_21CODE.get(id_place, id_place)
+            id_type_val = id_type if id_type in ("初發", "補發", "換發") else ""
+            # 21 uses full city name with 臺 instead of 台
+            reg_city_21 = v("reg_city").replace("台", "臺") if v("reg_city") else ""
+            live_city_21 = reg_city_21 if live_same else (v("live_city").replace("台", "臺") if v("live_city") else "")
+
+            # Relationship mapping
+            valid_21_rels = ["配偶","父母","子女","兄弟姐妹","祖父母","外祖父母","孫子女","外孫子女","朋友","其他"]
+            c1_rel_21 = c1_rel if c1_rel in valid_21_rels else ""
+            c2_rel_21 = c2_rel if c2_rel in valid_21_rels else ""
+
+            return {
+                "C3": name, "E3": id_no, "J3": phone,
+                "C4": birth, "E4": id_date, "F4": id_place_code, "G4": id_type_val,
+                "C6": reg_city_21, "E6": v("reg_address"),
+                "C7": live_city_21 if not live_same else reg_city_21,
+                "E7": v("live_address") if not live_same else v("reg_address"),
+                "C8": email,
+                "C9": company, "G9": co_phone_area + co_phone_num,
+                "C10": co_role, "E10": co_salary, "G10": (co_years + "年") if co_years else "",
+                "C17": c1_name, "E17": c1_rel_21, "H17": c1_phone, "K17": "保密" if c1_known == "保密" else "",
+                "C18": c2_name, "E18": c2_rel_21, "H18": c2_phone, "K18": "保密" if c2_known == "保密" else "",
             }
 
         return {}  # Unknown plan - no data fill
