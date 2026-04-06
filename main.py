@@ -4673,28 +4673,145 @@ def _do_download_excel(request: Request, case_id: str):
             }
 
         elif plan_name in ("和裕機車", "和裕商品"):
+            # === 發證地（F13）必須匹配下拉 ===
             id_place_code = CITY_TO_CODE.get(id_place, id_place)
-            marriage_val = marriage if marriage in ("已婚", "未婚") else ""
-            edu_map = {"大學": "專科、大學", "專科": "專科、大學", "高中": "高中職", "高職": "高中職", "研究所": "研究所以上"}
-            edu_val = edu_map.get(education, education)
 
-            return {
+            # === 婚姻（C13）===
+            marriage_val = marriage if marriage in ("已婚", "未婚") else ""
+
+            # === 學歷（C14）必須匹配下拉 ===
+            valid_edu_hr = ["高中職", "專科、大學", "研究所以上", "其他"]
+            edu_map = {"高中/職": "高中職", "高中": "高中職", "高職": "高中職",
+                       "專科/大學": "專科、大學", "大學": "專科、大學", "專科": "專科、大學",
+                       "研究所以上": "研究所以上", "研究所": "研究所以上"}
+            edu_val = edu_map.get(education, education)
+            edu_val = edu_val if edu_val in valid_edu_hr else ""
+
+            # === 公司電話（H17）格式：02-27189890 或 0989-615422 ===
+            if co_phone_area and co_phone_num:
+                co_phone_fmt = co_phone_area + "-" + co_phone_num
+            elif co_phone_num:
+                co_phone_fmt = co_phone_num
+            else:
+                co_phone_fmt = ""
+
+            # === 年資（I18）格式：5年6月 ===
+            co_mos = v("company_months") or "0"
+            try:
+                yr_int = int(float(co_years)) if co_years else 0
+                mo_int = int(float(co_mos)) if co_mos and co_mos != "0" else 0
+                if mo_int > 0:
+                    years_fmt = f"{yr_int}年{mo_int}月"
+                elif yr_int > 0:
+                    years_fmt = f"{yr_int}年"
+                else:
+                    years_fmt = ""
+            except:
+                years_fmt = co_years
+
+            # === 月薪（I19）格式：45000→4.5萬 ===
+            try:
+                sal_raw = float(co_salary) if co_salary else 0
+                if sal_raw >= 1000:
+                    sal_wan = round(sal_raw / 10000, 1)
+                else:
+                    sal_wan = sal_raw
+                sal_fmt = f"{sal_wan}萬" if sal_wan else ""
+            except:
+                sal_fmt = co_salary
+
+            # === 行業（G19）必須匹配下拉，從 adminB ===
+            valid_hr_ind = ["服務業","餐飲業","科技業","軍人","運輸業","倉儲業","金融業","製造業",
+                           "營造業","電商網拍業","農狩林牧業","礦業","漁業","證券期貨業","保險業",
+                           "不動產業","公教人員","水電燃氣業","通信業","社團個人服務","其它"]
+            hr_industry = v("adminb_industry") or ""
+            # 行業名稱可能不完全一致，嘗試映射
+            ind_map = {"製造業":"製造業","餐飲與服務業":"服務業","建築與營造":"營造業",
+                       "軍警與公教":"公教人員","科技與資訊":"科技業","運輸與物流":"運輸業",
+                       "金融與保險業":"金融業","批發與零售業":"服務業","醫療與教育":"服務業",
+                       "農林漁牧業":"農狩林牧業","自由職業":"其它"}
+            hr_ind_val = ind_map.get(hr_industry, hr_industry)
+            hr_ind_val = hr_ind_val if hr_ind_val in valid_hr_ind else None  # None=不動
+
+            # === 手機電信（C20）必須匹配下拉 ===
+            carrier_raw = v("carrier") or ""
+            valid_carriers = ["中華電信", "遠傳電信", "台灣大哥大", "其他"]
+            carrier_val = carrier_raw if carrier_raw in valid_carriers else None
+
+            # === 聯絡人知情（D22/G22）必須匹配：知情/保密 ===
+            valid_known = ["知情", "保密"]
+            c1_known_map = {"可知情": "知情", "保密": "保密"}
+            c2_known_map = {"可知情": "知情", "保密": "保密"}
+            c1_known_val = c1_known_map.get(c1_known, c1_known)
+            c2_known_val = c2_known_map.get(c2_known, c2_known)
+            c1_known_val = c1_known_val if c1_known_val in valid_known else ""
+            c2_known_val = c2_known_val if c2_known_val in valid_known else ""
+
+            # === 聯絡人電話格式：0955-389338 ===
+            def fmt_phone(p):
+                p = (p or "").replace("-", "").replace(" ", "")
+                if len(p) == 10 and p.startswith("09"):
+                    return p[:4] + "-" + p[4:]
+                return p
+            c1_ph_fmt = fmt_phone(c1_phone)
+            c2_ph_fmt = fmt_phone(c2_phone)
+
+            # === 行動電話（F14）也要格式化 ===
+            phone_fmt = fmt_phone(phone)
+
+            result = {
                 "C11": name, "F11": id_no,
                 "C12": birth, "F12": (id_date + " " + id_type) if id_date else "",
                 "C13": marriage_val, "F13": id_place_code,
-                "C14": edu_val, "F14": phone,
-                "C15": reg_addr,
-                "C16": live_addr, "H16": "同戶籍" if live_same else "",
-                "C17": line_id, "H17": co_phone,
-                "C18": company, "G18": co_role, "I18": (co_years + "年") if co_years else "",
-                "C19": co_addr, "I19": (co_salary + "萬") if co_salary else "",
+                "C14": edu_val, "F14": phone_fmt,
+                "C15": reg_addr, "G15": v("reg_phone") or None,
+                "C16": live_addr, "G16": v("live_phone") or None, "H16": "同戶籍" if live_same else "",
+                "C17": line_id, "F17": "家用",  # 資金用途固定家用
+                "H17": co_phone_fmt,
+                "C18": company, "G18": co_role, "I18": years_fmt,
+                "C19": co_addr, "I19": sal_fmt,
                 "C23": c1_name, "F23": c2_name,
                 "C24": c1_rel, "F24": c2_rel,
-                "C25": c1_phone, "F25": c2_phone,
-                "D22": c1_known, "G22": c2_known,
+                "C25": c1_ph_fmt, "F25": c2_ph_fmt,
+                "D22": c1_known_val, "G22": c2_known_val,
+                # 撥款資訊
+                "C37": v("adminb_bank") or None,
+                "C38": v("adminb_branch") or None,
+                # 商品資訊
+                "C42": v("adminb_product") or None,
+                "F42": v("adminb_model") or None,
             }
+            # 行業/電信：有值才填
+            if hr_ind_val is not None:
+                result["G19"] = hr_ind_val
+            if carrier_val is not None:
+                result["C20"] = carrier_val
+            return result
 
         elif plan_name in ("亞太商品", "亞太機車15萬", "亞太工會機車", "亞太機車25萬"):
+            # === 日期轉換：民國→西元 ===
+            def roc_to_ad(date_str):
+                """民國日期轉西元：086/12/15 → 1989/12/15"""
+                if not date_str:
+                    return ""
+                parts = date_str.replace("-", "/").split("/")
+                if len(parts) == 3:
+                    try:
+                        y = int(parts[0])
+                        if y < 200:  # 是民國年
+                            y += 1911
+                        return f"{y}/{parts[1].zfill(2)}/{parts[2].zfill(2)}"
+                    except:
+                        pass
+                return date_str  # 已是西元或無法轉換
+
+            birth_ad = roc_to_ad(birth)
+            id_date_ad = roc_to_ad(id_date)
+
+            # === 公司電話區碼（B18）：手機時選 0 ===
+            if phone and phone.startswith("09") and not co_phone_area:
+                co_phone_area = "0"  # 手機時區碼填0
+
             # === 資金用途（B5）從 adminB 補充資料 ===
             fund_use = v("adminb_fund_use")
             valid_funds = ["I-1教育費","I-2醫藥費","I-3出國旅遊","I-4創業","II-1購買交通工具","II-2購買手機","II-3購買3C產品","III-1交友","III-2健身&醫美","III-3美容課程","IV-1個人理財投資(含不動產、裝修、理財商品)","V-1生活周轉金","V-2整合負債(償還銀行/融資等)"]
@@ -4774,9 +4891,9 @@ def _do_download_excel(request: Request, case_id: str):
 
             result = {
                 "B5": fund_val if fund_val else None,  # None = 不動
-                "B9": name, "D9": id_no, "F9": birth,
+                "B9": name, "D9": id_no, "F9": birth_ad,
                 "B10": marriage_val, "D10": edu_val,
-                "B11": id_date, "D11": id_place_code, "F11": id_type_val,
+                "B11": id_date_ad, "D11": id_place_code, "F11": id_type_val,
                 "B12": reg_city_full, "C12": v("reg_district"), "D12": v("reg_address"),
                 "B13": live_city_full,
                 "C13": v("live_district") if not live_same else v("reg_district"),
