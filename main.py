@@ -4109,7 +4109,7 @@ function doSubmit(){
   if(lc&&cc&&lc!==cc)w.push('居住('+lc+')與公司('+cc+')不同縣市，請確認距離合理');
   w.push('請逐字確認所有欄位填寫正確');
   var b2=document.getElementById('err-box');
-  b2.innerHTML='<div style="color:#854d0e;font-weight:700;margin-bottom:8px;">人工確認事項：</div>'+w.map(function(x){return '<div style="color:#854d0e;padding:2px 0;">'+x+'</div>';}).join('')+'<div style="margin-top:10px;"><button onclick="localStorage.removeItem(\'nc_draft\');document.forms[0].submit()" style="background:#6a5e4e;color:#fff;border:none;padding:8px 18px;border-radius:6px;cursor:pointer;">確認無誤，送出</button></div>';
+  b2.innerHTML='<div style="color:#854d0e;font-weight:700;margin-bottom:8px;">人工確認事項：</div>'+w.map(function(x){return '<div style="color:#854d0e;padding:2px 0;">'+x+'</div>';}).join('')+'<div style="margin-top:10px;"><button onclick="doConfirmSubmit()" style="background:#6a5e4e;color:#fff;border:none;padding:8px 18px;border-radius:6px;cursor:pointer;">確認無誤，送出</button></div>';
   b2.style.display='block';b2.scrollIntoView({behavior:'smooth',block:'center'});
 }
 function collectDebt(){
