@@ -5136,9 +5136,14 @@ def _do_download_excel(request: Request, case_id: str):
             return {
                 "C3": name, "E3": id_no, "J3": phone,
                 "C4": birth, "E4": id_date, "F4": id_place_code, "G4": id_type_val,
-                "C6": reg_city_21, "E6": v("reg_address"),
-                "C7": live_city_21 if not live_same else reg_city_21,
-                "E7": v("live_address") if not live_same else v("reg_address"),
+                # 戶籍地址：C6=縣市、D6=鄉鎮區、E6=詳細地址
+                "C6": reg_city_21,
+                "D6": v("reg_district"),
+                "E6": v("reg_address"),
+                # 住家地址：同戶籍時用戶籍資料
+                "C7": reg_city_21 if live_same else live_city_21,
+                "D7": v("reg_district") if live_same else v("live_district"),
+                "E7": v("reg_address") if live_same else v("live_address"),
                 "C8": email,
                 "C9": company, "G9": co_phone_area + co_phone_num,
                 "C10": co_role, "E10": sal_e10,
