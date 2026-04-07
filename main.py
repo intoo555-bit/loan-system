@@ -5016,6 +5016,9 @@ def _do_download_excel(request: Request, case_id: str):
         company = v("company_name_detail") or v("company")
         co_phone_area = v("company_phone_area")
         co_phone_num = v("company_phone_num")
+        # 手機（mobile）→ 區碼留空，只用號碼
+        if co_phone_area == "mobile":
+            co_phone_area = ""
         co_phone = (co_phone_area + "-" + co_phone_num) if co_phone_area and co_phone_num else co_phone_num
         co_role = v("company_role")
         co_years = v("company_years")
