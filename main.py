@@ -4719,21 +4719,79 @@ def _do_download_excel(request: Request, case_id: str):
         c2_known = v("contact2_known")
 
         if plan_name == "貸就補":
-            id_place_code = CITY_TO_CODE.get(id_place, id_place)
+            # F5 發證地下拉
+            valid_lj_place = ["北市","新北市","北縣","基市","宜縣","桃市","桃縣","竹市","竹縣",
+                              "苗縣","中市","中縣","嘉市","彰縣","投縣","雲縣","嘉縣","南市",
+                              "南縣","高市","高縣","屏縣","東縣","花縣","澎縣","連江","金門"]
+            lj_place_map = {"台北市":"北市","桃園市":"桃市","台中市":"中市","台南市":"南市",
+                            "高雄市":"高市","基隆市":"基市","新竹市":"竹市","新竹縣":"竹縣",
+                            "苗栗縣":"苗縣","彰化縣":"彰縣","南投縣":"投縣","雲林縣":"雲縣",
+                            "嘉義市":"嘉市","嘉義縣":"嘉縣","屏東縣":"屏縣","宜蘭縣":"宜縣",
+                            "花蓮縣":"花縣","台東縣":"東縣","澎湖縣":"澎縣","金門縣":"金門",
+                            "連江縣":"連江","新北市":"新北市"}
+            lj_place = lj_place_map.get(id_place, id_place)
+            lj_place = lj_place if lj_place in valid_lj_place else ""
+
+            # G5 換補發
             id_type_val = id_type if id_type in ("初發", "換發", "補發") else ""
-            birth_roc = birth.replace("/", "") if birth else ""
-            id_date_roc = id_date.replace("/", "") if id_date else ""
+
+            # 日期民國 7 位（無斜線）
+            def to_roc7(d):
+                if not d: return ""
+                parts = d.replace("-", "/").split("/")
+                if len(parts) != 3: return ""
+                try:
+                    y = int(parts[0])
+                    if y >= 1911:
+                        y -= 1911
+                    return f"{str(y).zfill(3)}{parts[1].zfill(2)}{parts[2].zfill(2)}"
+                except:
+                    return ""
+            birth_roc7 = to_roc7(birth)
+            id_date_roc7 = to_roc7(id_date)
+
+            # 現住電話：優先 live_phone，無則用 reg_phone
+            live_phone_lj = v("live_phone") or v("reg_phone")
+
+            # 月薪 E11 純數字（4萬→40000）
+            try:
+                sal_c = co_salary.replace("萬","").replace(",","").strip() if co_salary else ""
+                sn = float(sal_c) if sal_c else 0
+                if 0 < sn < 1000:
+                    e11_val = int(sn * 10000)
+                elif sn >= 1000:
+                    e11_val = int(sn)
+                else:
+                    e11_val = ""
+            except:
+                e11_val = ""
+
+            # 年資 G11 年數 / I11 月數（純數字）
+            try:
+                g11_val = int(float(co_years)) if co_years else 0
+                co_mos_lj = v("company_months") or "0"
+                i11_val = int(float(co_mos_lj)) if co_mos_lj and co_mos_lj != "0" else 0
+            except:
+                g11_val = 0
+                i11_val = 0
 
             return {
                 "C4": name, "E4": id_no, "J4": phone,
-                "C5": birth_roc, "E5": id_date_roc, "F5": id_place_code, "G5": id_type_val,
+                "C5": birth_roc7, "E5": id_date_roc7,
+                "F5": lj_place, "G5": id_type_val,
+                "J5": live_phone_lj,
                 "C7": reg_addr,
-                "C8": live_addr if not live_same else reg_addr,
+                "C8": reg_addr if live_same else live_addr,
                 "C9": co_addr,
-                "C10": company, "G10": co_phone,
-                "C11": co_role, "E11": co_salary, "G11": co_years,
+                "C10": company, "G10": v("company_phone_area") + v("company_phone_num"),
+                "J10": v("company_phone_ext"),
+                "C11": co_role, "E11": e11_val,
+                "G11": g11_val, "I11": i11_val,
                 "C18": c1_name, "E18": c1_rel, "H18": c1_phone,
                 "C19": c2_name, "E19": c2_rel, "H19": c2_phone,
+                # 商品名稱/型號（J7/J8）從 adminB 補充資料，無填寫清空
+                "J7": v("adminb_product"),
+                "J8": v("adminb_model"),
             }
 
         elif plan_name in ("和裕機車", "和裕商品"):
