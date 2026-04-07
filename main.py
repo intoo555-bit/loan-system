@@ -4523,17 +4523,21 @@ def _fill_excel_template(template_path: str, cell_map: dict) -> bytes:
     # Step 3: 分類 cell_map
     # 策略：不修改現有 shared string（避免破壞下拉選單），
     # 而是新增新的 shared string 並修改 sheet XML 中的引用索引
-    ss_cell_changes = {}  # cell_ref -> new_value (cells that use shared strings)
-    direct_changes = {}   # cell_ref -> new_value (cells with direct values or empty)
+    ss_cell_changes = {}  # cell_ref -> new_value
+    direct_changes = {}   # cell_ref -> new_value
+    formula_recalc = []   # cells whose cached <v> should be cleared (force Excel recalc)
     for cell_ref, new_value in cell_map.items():
         if new_value is None:
+            continue
+        if new_value == "__FORMULA_RECALC__":
+            formula_recalc.append(cell_ref)
             continue
         if cell_ref in cell_to_ss_idx:
             ss_cell_changes[cell_ref] = new_value if new_value else ""
         else:
             direct_changes[cell_ref] = new_value if new_value else ""
 
-    if not ss_cell_changes and not direct_changes:
+    if not ss_cell_changes and not direct_changes and not formula_recalc:
         orig_zip.close()
         return original_bytes
 
@@ -4589,6 +4593,27 @@ def _fill_excel_template(template_path: str, cell_map: dict) -> bytes:
             new_cell = f'<c r="{cell_ref}" {attrs} t="inlineStr"><is><t>{escaped_val}</t></is></c>'
             new_sheet_xml = new_sheet_xml[:m2.start()] + new_cell + new_sheet_xml[m2.end():]
 
+    # Step 4c: 清除公式儲存格的快取值（強制 Excel 重算）
+    # <c r="C39" s="99" t="str"><f>C11</f><v>陳耀晨</v></c>
+    # → <c r="C39" s="99"><f>C11</f></c>
+    if formula_recalc:
+        if not ss_cell_changes and not direct_changes:
+            new_sheet_xml = sheet_xml
+        for cell_ref in formula_recalc:
+            # 匹配公式儲存格：含 <f>...</f> 和 <v>...</v>
+            pattern = _re.compile(
+                r'<c\s+r="' + _re.escape(cell_ref) + r'"([^>]*)>(.*?)<v>[^<]*</v>(.*?)</c>',
+                _re.DOTALL
+            )
+            m = pattern.search(new_sheet_xml)
+            if m:
+                attrs = m.group(1)
+                # 移除 t="..." 屬性（避免類型衝突）
+                attrs = _re.sub(r'\s+t="[^"]*"', '', attrs)
+                inner = m.group(2) + m.group(3)
+                new_cell = f'<c r="{cell_ref}"{attrs}>{inner}</c>'
+                new_sheet_xml = new_sheet_xml[:m.start()] + new_cell + new_sheet_xml[m.end():]
+
     # Step 5: Repackage ZIP
     output_buf = io.BytesIO()
     output_zip = zipfile.ZipFile(output_buf, 'w', zipfile.ZIP_DEFLATED)
@@ -4596,7 +4621,7 @@ def _fill_excel_template(template_path: str, cell_map: dict) -> bytes:
     for item in orig_zip.infolist():
         if item.filename == ss_xml_name:
             output_zip.writestr(item, new_ss_xml.encode('utf-8'))
-        elif item.filename == sheet_xml_name and (ss_cell_changes or direct_changes):
+        elif item.filename == sheet_xml_name and (ss_cell_changes or direct_changes or formula_recalc):
             output_zip.writestr(item, new_sheet_xml.encode('utf-8'))
         else:
             output_zip.writestr(item, orig_zip.read(item.filename))
@@ -4805,7 +4830,8 @@ def _do_download_excel(request: Request, case_id: str):
             phone_fmt = fmt_phone(phone)
 
             result = {
-                "C11": name, "C39": name,  # 戶名（公式快取值同步更新）
+                "C11": name,
+                "C39": "__FORMULA_RECALC__",  # 戶名是公式 =C11，清快取值強制重算
                 "F11": id_no,
                 "C12": birth, "F12": (id_date + " " + id_type) if id_date else "",
                 "C13": marriage_val, "F13": id_place_code,
