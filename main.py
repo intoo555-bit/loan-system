@@ -4759,28 +4759,28 @@ def _do_download_excel(request: Request, case_id: str):
             else:
                 co_phone_fmt = ""
 
-            # === 年資（I18）只填數字（單位由儲存格格式處理）===
+            # === 年資（I18）格式：1年8月（文字儲存格，需含單位）===
             co_mos = v("company_months") or "0"
             try:
                 yr_int = int(float(co_years)) if co_years else 0
                 mo_int = int(float(co_mos)) if co_mos and co_mos != "0" else 0
                 if mo_int > 0:
-                    years_fmt = f"{yr_int}.{mo_int}"
+                    years_fmt = f"{yr_int}年{mo_int}月"
                 elif yr_int > 0:
-                    years_fmt = str(yr_int)
+                    years_fmt = f"{yr_int}年"
                 else:
                     years_fmt = ""
             except:
                 years_fmt = co_years
 
-            # === 月薪（I19）只填數字（單位由儲存格格式處理）===
+            # === 月薪（I19）格式：4.5萬（文字儲存格，需含單位）===
             try:
                 sal_raw = float(co_salary) if co_salary else 0
                 if sal_raw >= 1000:
                     sal_wan = round(sal_raw / 10000, 1)
                 else:
                     sal_wan = sal_raw
-                sal_fmt = str(sal_wan) if sal_wan else ""
+                sal_fmt = f"{sal_wan}萬" if sal_wan else ""
             except:
                 sal_fmt = co_salary
 
