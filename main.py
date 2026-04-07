@@ -687,6 +687,7 @@ def init_db():
         ("adminb_industry", "TEXT"),
         ("adminb_brand", "TEXT"),
         ("adminb_hr_role", "TEXT"),
+        ("adminb_hr_industry", "TEXT"),
         ("adminb_role", "TEXT"),
         ("adminb_vehicle_type", "TEXT"),
         ("adminb_engine_no", "TEXT"),
@@ -3249,8 +3250,7 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
       <div class="ab-block" style="background:#f0fdf4;">
         <div style="font-size:12px;font-weight:700;color:#166534;margin-bottom:10px;">和裕（機車／商品）</div>
         <div class="ab-g2" style="margin-bottom:10px;">
-          <div><div class="ab-lbl">行業類別</div><select name="hr_industry" class="ab-sel"><option value="">請選擇</option>{"".join(f"<option>{o}</option>" for o in ["服務業","餐飲業","科技業","軍人","運輸業","倉儲業","金融業","製造業","營造業","電商網拍業","農狩林牧業","礦業","漁業","證券期貨業","保險業","不動產業","公教人員","水電燃氣業","通信業","社團個人服務","其它"])}</select></div>
-          <div><div class="ab-lbl">職稱</div><input name="hr_role" class="ab-inp" placeholder="技師" value="{h(customer.get('adminb_role','') or '')}"></div>
+          <div><div class="ab-lbl">行業類別</div><select name="hr_industry" class="ab-sel"><option value="">請選擇</option>{"".join(f'<option {"selected" if customer.get("adminb_hr_industry","")==o else ""}>{o}</option>' for o in ["服務業","餐飲業","科技業","軍人","運輸業","倉儲業","金融業","製造業","營造業","電商網拍業","農狩林牧業","礦業","漁業","證券期貨業","保險業","不動產業","公教人員","水電燃氣業","通信業","社團個人服務","其它"])}</select></div>
           <div><div class="ab-lbl">照會時間</div><input name="hr_contact" class="ab-inp" placeholder="平日下午2-5點" value="{h(customer.get('adminb_contact_time','') or '')}"></div>
         </div>
         <div style="font-size:11px;font-weight:700;color:#166534;margin-bottom:8px;">撥款資料</div>
@@ -3336,9 +3336,9 @@ async def adminb_save(request: Request):
     fields = {
         "adminb_selected_plans": plans,
         "adminb_industry": form.get("at_industry",""),
+        "adminb_hr_industry": form.get("hr_industry",""),
         "adminb_brand": form.get("at_brand",""),
         "adminb_role": form.get("at_role",""),
-        "adminb_hr_role": form.get("hr_role",""),
         "adminb_contact_time": form.get("contact_time","") or form.get("hr_contact",""),
         "adminb_bank": form.get("hr_bank",""),
         "adminb_branch": form.get("hr_branch",""),
@@ -4788,7 +4788,8 @@ def _do_download_excel(request: Request, case_id: str):
             valid_hr_ind = ["服務業","餐飲業","科技業","軍人","運輸業","倉儲業","金融業","製造業",
                            "營造業","電商網拍業","農狩林牧業","礦業","漁業","證券期貨業","保險業",
                            "不動產業","公教人員","水電燃氣業","通信業","社團個人服務","其它"]
-            hr_industry = v("adminb_industry") or ""
+            # 優先用和裕專屬欄位 adminb_hr_industry，fallback 到 adminb_industry（亞太用）並轉換
+            hr_industry = v("adminb_hr_industry") or v("adminb_industry") or ""
             ind_map = {"製造業":"製造業","餐飲與服務業":"服務業","建築與營造":"營造業",
                        "軍警與公教":"公教人員","科技與資訊":"科技業","運輸與物流":"運輸業",
                        "金融與保險業":"金融業","批發與零售業":"服務業","醫療與教育":"服務業",
