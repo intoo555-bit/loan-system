@@ -5327,7 +5327,7 @@ def _do_download_excel(request: Request, case_id: str):
                 "C7": reg_addr,
                 "C8": reg_addr if live_same else live_addr,
                 "C9": co_addr,
-                "C10": company, "G10": v("company_phone_area") + v("company_phone_num"),
+                "C10": company, "G10": co_phone_area + co_phone_num,
                 "J10": v("company_phone_ext"),
                 "C11": co_role, "E11": e11_val,
                 "G11": g11_val, "I11": i11_val,
@@ -5375,14 +5375,20 @@ def _do_download_excel(request: Request, case_id: str):
             except:
                 years_fmt = co_years
 
-            # === 月薪（I19）格式：4.5萬（文字儲存格，需含單位）===
+            # === 月薪（I19）格式：整數顯示整數（5萬），小數顯示小數（4.5萬）===
             try:
                 sal_raw = float(co_salary) if co_salary else 0
                 if sal_raw >= 1000:
                     sal_wan = round(sal_raw / 10000, 1)
                 else:
                     sal_wan = sal_raw
-                sal_fmt = f"{sal_wan}萬" if sal_wan else ""
+                if sal_wan:
+                    if sal_wan == int(sal_wan):
+                        sal_fmt = f"{int(sal_wan)}萬"  # 5萬（非 5.0萬）
+                    else:
+                        sal_fmt = f"{sal_wan}萬"        # 4.5萬
+                else:
+                    sal_fmt = ""
             except:
                 sal_fmt = co_salary
 
