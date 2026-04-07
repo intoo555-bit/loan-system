@@ -759,6 +759,8 @@ def init_db():
         ("adminb_brand", "TEXT"),
         ("adminb_hr_role", "TEXT"),
         ("adminb_hr_industry", "TEXT"),
+        ("signature_applicant", "TEXT"),
+        ("signature_legal_rep", "TEXT"),
         ("adminb_role", "TEXT"),
         ("adminb_vehicle_type", "TEXT"),
         ("adminb_engine_no", "TEXT"),
@@ -3377,9 +3379,61 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
       <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
         <button type="submit" class="btn-save">💾 儲存資料</button>
         <a href="/adminb/download-excel?case_id={h(case_id)}" class="btn-dl" onclick="return confirm('將根據勾選的方案下載 Excel，確定嗎？')">📥 下載EXCEL</a>
+        <button type="button" class="btn-dl" style="background:#7c4dff;border-color:#7c4dff;" onclick="openSignPad('applicant')">✍️ 申請人簽名</button>
+        <button type="button" class="btn-dl" style="background:#7c4dff;border-color:#7c4dff;" onclick="openSignPad('legal_rep')">✍️ 法定代理人簽名</button>
+        <a href="/adminb/download-qiaomei?case_id={h(case_id)}" class="btn-dl" style="background:#e91e63;border-color:#e91e63;">📄 下載喬美 PDF</a>
       </div>
-      <div style="font-size:12px;color:#8a7a68;margin-top:8px;">請先儲存資料再下載</div>
+      <div style="font-size:12px;color:#8a7a68;margin-top:8px;">請先儲存資料、簽名後再下載 PDF</div>
     </div>
+
+    <!-- 簽名 Modal -->
+    <div id="signModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9999;align-items:center;justify-content:center;">
+      <div style="background:#fff;padding:20px;border-radius:10px;max-width:520px;">
+        <h3 id="signTitle" style="margin:0 0 10px;">簽名</h3>
+        <canvas id="signCanvas" width="480" height="200" style="border:2px solid #999;background:#fff;cursor:crosshair;display:block;"></canvas>
+        <div style="margin-top:10px;display:flex;gap:10px;">
+          <button type="button" onclick="clearSign()" style="padding:8px 16px;background:#999;color:#fff;border:none;border-radius:6px;cursor:pointer;">清除</button>
+          <button type="button" onclick="saveSign()" style="padding:8px 16px;background:#4caf50;color:#fff;border:none;border-radius:6px;cursor:pointer;">儲存</button>
+          <button type="button" onclick="closeSignPad()" style="padding:8px 16px;background:#999;color:#fff;border:none;border-radius:6px;cursor:pointer;">取消</button>
+        </div>
+      </div>
+    </div>
+    <script>
+    var signType = '';
+    var signCanvas, signCtx, signing = false;
+    function openSignPad(type) {{
+      signType = type;
+      document.getElementById('signTitle').textContent = type === 'applicant' ? '申請人正楷簽名' : '法定代理人正楷簽名';
+      document.getElementById('signModal').style.display = 'flex';
+      signCanvas = document.getElementById('signCanvas');
+      signCtx = signCanvas.getContext('2d');
+      signCtx.clearRect(0, 0, signCanvas.width, signCanvas.height);
+      signCtx.lineWidth = 2;
+      signCtx.lineCap = 'round';
+      signCtx.strokeStyle = '#000';
+      signCanvas.onmousedown = function(e) {{ signing = true; signCtx.beginPath(); signCtx.moveTo(e.offsetX, e.offsetY); }};
+      signCanvas.onmousemove = function(e) {{ if(!signing) return; signCtx.lineTo(e.offsetX, e.offsetY); signCtx.stroke(); }};
+      signCanvas.onmouseup = function() {{ signing = false; }};
+      signCanvas.onmouseleave = function() {{ signing = false; }};
+      // Touch
+      signCanvas.ontouchstart = function(e) {{ e.preventDefault(); var t = e.touches[0]; var r = signCanvas.getBoundingClientRect(); signing = true; signCtx.beginPath(); signCtx.moveTo(t.clientX - r.left, t.clientY - r.top); }};
+      signCanvas.ontouchmove = function(e) {{ e.preventDefault(); if(!signing) return; var t = e.touches[0]; var r = signCanvas.getBoundingClientRect(); signCtx.lineTo(t.clientX - r.left, t.clientY - r.top); signCtx.stroke(); }};
+      signCanvas.ontouchend = function() {{ signing = false; }};
+    }}
+    function clearSign() {{ signCtx.clearRect(0, 0, signCanvas.width, signCanvas.height); }}
+    function closeSignPad() {{ document.getElementById('signModal').style.display = 'none'; }}
+    function saveSign() {{
+      var dataUrl = signCanvas.toDataURL('image/png');
+      fetch('/adminb/save-signature', {{
+        method: 'POST',
+        headers: {{'Content-Type': 'application/json'}},
+        body: JSON.stringify({{case_id: '{h(case_id)}', type: signType, data: dataUrl}})
+      }}).then(r => r.json()).then(d => {{
+        if (d.ok) {{ alert('簽名已儲存'); closeSignPad(); }}
+        else alert('儲存失敗：' + (d.error || '未知錯誤'));
+      }});
+    }}
+    </script>
     </form>
     </div>
     <script>
@@ -4744,6 +4798,181 @@ def customer_pdf_batch(request: Request, ids: str = ""):
 # =========================
 # 下載 Excel 申請書
 # =========================
+@app.post("/adminb/save-signature")
+async def adminb_save_signature(request: Request):
+    role = check_auth(request)
+    if not role or role not in ("admin", "adminB"):
+        return JSONResponse({"ok": False, "error": "無權限"}, status_code=403)
+    try:
+        data = await request.json()
+        case_id = data.get("case_id", "")
+        sig_type = data.get("type", "")
+        sig_data = data.get("data", "")
+        if not case_id or not sig_type or not sig_data:
+            return JSONResponse({"ok": False, "error": "缺少參數"})
+        col = "signature_applicant" if sig_type == "applicant" else "signature_legal_rep"
+        conn = get_conn(); cur = conn.cursor()
+        cur.execute(f"UPDATE customers SET {col}=? WHERE case_id=?", (sig_data, case_id))
+        conn.commit(); conn.close()
+        return JSONResponse({"ok": True})
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)})
+
+
+@app.get("/adminb/download-qiaomei")
+def adminb_download_qiaomei(request: Request, case_id: str = ""):
+    from fastapi.responses import StreamingResponse
+    role = check_auth(request)
+    if not role or role not in ("admin", "adminB"):
+        return JSONResponse({"error": "無權限"}, status_code=403)
+    if not case_id:
+        return JSONResponse({"error": "缺少 case_id"}, status_code=400)
+    try:
+        conn = get_conn(); cur = conn.cursor()
+        cur.execute("SELECT * FROM customers WHERE case_id=?", (case_id,))
+        row = cur.fetchone(); conn.close()
+        if not row:
+            return JSONResponse({"error": "找不到客戶"}, status_code=404)
+        r = dict(row)
+        pdf_bytes = _fill_qiaomei_pdf(r)
+        if not pdf_bytes:
+            return JSONResponse({"error": "PDF 生成失敗"}, status_code=500)
+        from urllib.parse import quote
+        fname = quote(f"{r.get('customer_name','')}_喬美申請書.pdf")
+        return StreamingResponse(
+            io.BytesIO(pdf_bytes),
+            media_type="application/pdf",
+            headers={"Content-Disposition": f"attachment; filename*=UTF-8''{fname}"}
+        )
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return JSONResponse({"error": f"下載失敗：{str(e)}"}, status_code=500)
+
+
+def _fill_qiaomei_pdf(r: dict) -> bytes:
+    """填入客戶資料到喬美 PDF 範本（reportlab 疊加文字層）"""
+    try:
+        from pypdf import PdfReader, PdfWriter
+        from reportlab.pdfgen import canvas
+        from reportlab.pdfbase import pdfmetrics
+        from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+        from reportlab.lib.pagesizes import A4
+        import base64
+
+        # 註冊中文字型
+        try:
+            pdfmetrics.registerFont(UnicodeCIDFont('STSong-Light'))
+            font_name = 'STSong-Light'
+        except:
+            font_name = 'Helvetica'
+
+        _base = os.path.dirname(os.path.abspath(__file__))
+        template_path = os.path.join(_base, "申請書", "喬美3-14萬.pdf")
+        if not os.path.exists(template_path):
+            return b""
+
+        def v(k): return (r.get(k, "") or "").strip()
+
+        # 公司電話組合（mobile 不顯示）
+        co_area = v("company_phone_area")
+        if co_area == "mobile":
+            co_area = ""
+        co_phone = (co_area + "-" + v("company_phone_num")) if co_area and v("company_phone_num") else v("company_phone_num")
+        co_ext = v("company_phone_ext")
+        if co_ext:
+            co_phone = co_phone + "#" + co_ext if co_phone else ""
+
+        live_same = v("live_same_as_reg") == "1"
+        reg_addr = v("reg_city") + v("reg_district") + v("reg_address")
+        live_addr = reg_addr if live_same else (v("live_city") + v("live_district") + v("live_address"))
+
+        # 欄位座標表（PDF 點坐標，原點左下，y 反轉）
+        # PDF page1 size: 612 x 859
+        # 這些座標基於對 PDF 標籤位置的分析，可能需要微調
+        page_h = 859
+        def yp(top): return page_h - top  # PDF y 反轉
+
+        fields_p1 = [
+            # (x, top_from_top, value)
+            (130, 81, v("customer_name")),       # 申請人姓名
+            (240, 81, v("birth_date")),          # 出生日期（標籤右側）
+            (130, 106, v("id_no")),              # 身分證字號
+            (130, 129, v("id_issue_date")),      # 發證日期
+            (240, 129, v("id_issue_place")),     # 發證地點
+            (130, 204, reg_addr),                # 戶籍地址
+            (130, 228, live_addr),               # 住宅地址
+            (130, 275, v("reg_phone")),          # 戶籍電話
+            (240, 275, v("live_phone")),         # 住家電話
+            (130, 301, v("phone")),              # 行動電話
+            (130, 412, v("company_name_detail")), # 公司名稱
+            (240, 412, co_phone),                # 公司電話
+            (130, 431, v("company_city") + v("company_district") + v("company_address")),  # 公司地址
+            (380, 148, v("contact1_name")),      # 親屬姓名
+            (510, 148, v("contact1_phone")),     # 親屬電話
+            (480, 148, v("contact1_relation")),  # 親屬關係
+            (380, 196, v("contact2_name")),      # 親友姓名
+            (510, 196, v("contact2_phone")),     # 親友電話
+            (480, 196, v("contact2_relation")),  # 親友關係
+        ]
+
+        # 建立疊加層
+        overlay = io.BytesIO()
+        c = canvas.Canvas(overlay, pagesize=(612, 859))
+        c.setFont(font_name, 9)
+        for x, top, val in fields_p1:
+            if val:
+                c.drawString(x, yp(top + 6), str(val))
+
+        # 簽名圖
+        sig_app = r.get("signature_applicant", "") or ""
+        sig_leg = r.get("signature_legal_rep", "") or ""
+
+        def draw_signature(c, sig_data, x, y, w, h):
+            if not sig_data or not sig_data.startswith("data:image"):
+                return
+            try:
+                _, b64 = sig_data.split(",", 1)
+                img_bytes = base64.b64decode(b64)
+                from reportlab.lib.utils import ImageReader
+                img = ImageReader(io.BytesIO(img_bytes))
+                c.drawImage(img, x, y, width=w, height=h, mask='auto')
+            except Exception:
+                pass
+
+        # 申請人正楷簽名 (53, 791) → 在標籤右側 / 下方
+        draw_signature(c, sig_app, 130, yp(810), 120, 30)
+        # 法定代理人正楷簽名 (303, 791)
+        draw_signature(c, sig_leg, 380, yp(810), 120, 30)
+
+        c.showPage()
+        c.save()
+        overlay.seek(0)
+
+        # 合併疊加層到原 PDF
+        from pypdf import PdfReader as Reader2, PdfWriter as Writer2
+        reader = Reader2(template_path)
+        overlay_reader = Reader2(overlay)
+        writer = Writer2()
+
+        # Page 1 with overlay
+        page1 = reader.pages[0]
+        page1.merge_page(overlay_reader.pages[0])
+        writer.add_page(page1)
+
+        # Other pages unchanged
+        for i in range(1, len(reader.pages)):
+            writer.add_page(reader.pages[i])
+
+        out = io.BytesIO()
+        writer.write(out)
+        out.seek(0)
+        return out.getvalue()
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        print(f"喬美 PDF 生成錯誤: {e}")
+        return b""
+
+
 @app.get("/adminb/download-excel")
 def adminb_download_excel(request: Request, case_id: str = ""):
     from fastapi.responses import StreamingResponse
