@@ -4515,43 +4515,68 @@ def _fill_excel_template(template_path: str, cell_map: dict) -> bytes:
     # Find all <si>...</si> blocks
     si_blocks = list(_re.finditer(r'(<si>)(.*?)(</si>)', ss_xml, _re.DOTALL))
 
-    # Step 3: Split cell_map into shared-string changes and direct-value changes
-    # None = skip (don't change cell), "" = clear cell
-    ss_changes = {}
-    direct_changes = {}
+    # Step 3: 分類 cell_map
+    # 策略：不修改現有 shared string（避免破壞下拉選單），
+    # 而是新增新的 shared string 並修改 sheet XML 中的引用索引
+    ss_cell_changes = {}  # cell_ref -> new_value (cells that use shared strings)
+    direct_changes = {}   # cell_ref -> new_value (cells with direct values or empty)
     for cell_ref, new_value in cell_map.items():
         if new_value is None:
-            continue  # None = 不動原儲存格
+            continue
         if cell_ref in cell_to_ss_idx:
-            ss_idx = cell_to_ss_idx[cell_ref]
-            ss_changes[ss_idx] = new_value if new_value else ""
+            ss_cell_changes[cell_ref] = new_value if new_value else ""
         else:
             direct_changes[cell_ref] = new_value if new_value else ""
 
-    if not ss_changes and not direct_changes:
+    if not ss_cell_changes and not direct_changes:
         orig_zip.close()
         return original_bytes
 
-    # Step 4: Rebuild sharedStrings.xml — 用索引定位，避免重複值替換錯位
-    # 先把所有 <si> 塊提取成列表，按索引修改，再重組
+    # Step 4: 新增 shared strings + 修改 sheet XML 引用
     si_list = [m.group(0) for m in si_blocks]
-    for idx, new_value in ss_changes.items():
-        if idx < len(si_list):
-            escaped = new_value.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
-            si_list[idx] = f'<si><t>{escaped}</t></si>'
-    # 重組 XML：保留頭尾，替換中間的 <si> 區塊
+    new_sheet_xml = sheet_xml
+    for cell_ref, new_value in ss_cell_changes.items():
+        escaped = new_value.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+        # 新增一個 shared string
+        new_idx = len(si_list)
+        si_list.append(f'<si><t>{escaped}</t></si>')
+        # 修改 sheet XML 中該 cell 的 <v> 指向新索引
+        old_idx = cell_to_ss_idx[cell_ref]
+        cell_pattern = _re.compile(
+            r'(<c\s+r="' + _re.escape(cell_ref) + r'"[^>]*>)\s*<v>' + str(old_idx) + r'</v>\s*(</c>)')
+        m = cell_pattern.search(new_sheet_xml)
+        if m:
+            new_sheet_xml = new_sheet_xml[:m.start()] + m.group(1) + f'<v>{new_idx}</v>' + m.group(2) + new_sheet_xml[m.end():]
+    # 更新 sharedStrings 的 count 和 uniqueCount
     first_si = si_blocks[0].start()
     last_si_end = si_blocks[-1].end()
-    new_ss_xml = ss_xml[:first_si] + ''.join(si_list) + ss_xml[last_si_end:]
+    new_si_content = ''.join(si_list)
+    new_count = len(si_list)
+    header_xml = ss_xml[:first_si]
+    header_xml = _re.sub(r'count="\d+"', f'count="{new_count}"', header_xml)
+    header_xml = _re.sub(r'uniqueCount="\d+"', f'uniqueCount="{new_count}"', header_xml)
+    new_ss_xml = header_xml + new_si_content + ss_xml[last_si_end:]
 
     # Step 4b: Modify sheet XML for direct-value cells
-    new_sheet_xml = sheet_xml
+    if not ss_cell_changes:
+        new_sheet_xml = sheet_xml  # 只有在 Step 4 沒修改時才重新賦值
     for cell_ref, new_value in direct_changes.items():
-        # Match <c r="G18" s="48"><v>5.4</v></c>
-        pattern = _re.compile(r'(<c\s+r="' + _re.escape(cell_ref) + r'"[^>]*>)\s*<v>[^<]*</v>\s*(</c>)')
-        m = pattern.search(new_sheet_xml)
+        if not new_value:
+            continue  # 空值不寫入空儲存格
+        escaped_val = new_value.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+        # Case 1: 已有值 <c r="G18" s="48"><v>5.4</v></c>
+        pattern1 = _re.compile(r'(<c\s+r="' + _re.escape(cell_ref) + r'"[^>]*>)\s*<v>[^<]*</v>\s*(</c>)')
+        m = pattern1.search(new_sheet_xml)
         if m:
-            new_sheet_xml = new_sheet_xml[:m.start()] + m.group(1) + f'<v>{new_value}</v>' + m.group(2) + new_sheet_xml[m.end():]
+            new_sheet_xml = new_sheet_xml[:m.start()] + m.group(1) + f'<v>{escaped_val}</v>' + m.group(2) + new_sheet_xml[m.end():]
+            continue
+        # Case 2: 空的 self-closing <c r="B7" s="77"/> → 改為 <c r="B7" s="77" t="inlineStr"><is><t>值</t></is></c>
+        pattern2 = _re.compile(r'<c\s+r="' + _re.escape(cell_ref) + r'"([^/]*)/>')
+        m2 = pattern2.search(new_sheet_xml)
+        if m2:
+            attrs = m2.group(1).strip()
+            new_cell = f'<c r="{cell_ref}" {attrs} t="inlineStr"><is><t>{escaped_val}</t></is></c>'
+            new_sheet_xml = new_sheet_xml[:m2.start()] + new_cell + new_sheet_xml[m2.end():]
 
     # Step 5: Repackage ZIP
     output_buf = io.BytesIO()
@@ -4560,7 +4585,7 @@ def _fill_excel_template(template_path: str, cell_map: dict) -> bytes:
     for item in orig_zip.infolist():
         if item.filename == ss_xml_name:
             output_zip.writestr(item, new_ss_xml.encode('utf-8'))
-        elif item.filename == sheet_xml_name and direct_changes:
+        elif item.filename == sheet_xml_name and (ss_cell_changes or direct_changes):
             output_zip.writestr(item, new_sheet_xml.encode('utf-8'))
         else:
             output_zip.writestr(item, orig_zip.read(item.filename))
@@ -4923,7 +4948,17 @@ def _do_download_excel(request: Request, case_id: str):
             # 行業/職務：有值填入，無值清空
             result["D17"] = industry_val if industry_val else ""
             result["G17"] = role_val if role_val else ""
-            # 車輛資料不在此處填入（A7/C7/E7/G7/J2/J3 是標籤，值在 B7/D7/F7/H7 但為空的 self-closing 無法用 shared string 替換）
+            # 車輛資料：寫入正確的值位置（B7/D7/F7/H7），有值才填，無值不動
+            vt = v("adminb_vehicle_type")
+            if vt: result["B7"] = vt
+            en = v("adminb_engine_no")
+            if en: result["D7"] = en
+            dp = v("adminb_displacement")
+            if dp: result["F7"] = dp
+            cl = v("adminb_color")
+            if cl: result["H7"] = cl
+            pl = v("vehicle_plate")
+            if pl: result["K3"] = pl
             return result
 
         elif plan_name == "第一":
