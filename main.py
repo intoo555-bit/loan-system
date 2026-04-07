@@ -4629,6 +4629,7 @@ def _do_download_excel(request: Request, case_id: str):
     PLAN_TEMPLATE_MAP = {
         "亞太商品": os.path.join(_base, "申請書", "亞太商品範本.xlsx"),
         "亞太機車15萬": os.path.join(_base, "申請書", "亞太15萬機車範本.xlsx"),
+        "亞太機車25萬": os.path.join(_base, "申請書", "亞太15萬機車範本.xlsx"),
         "亞太工會機車": os.path.join(_base, "申請書", "亞太工會範本.xlsx"),
         "和裕機車": os.path.join(_base, "申請書", "和裕維力貸機車範本).xlsx"),
         "和裕商品": os.path.join(_base, "申請書", "和裕維力貸商品範本.xlsx"),
@@ -4961,7 +4962,7 @@ def _do_download_excel(request: Request, case_id: str):
             result["D7"] = v("adminb_engine_no") or ""      # 引擎號碼
             result["F7"] = v("adminb_displacement") or ""   # 排氣量
             result["H7"] = v("adminb_color") or ""          # 顏色
-            result["K2"] = ""                               # 廠牌（無對應網站欄位，清空範本示範值）
+            result["K2"] = v("adminb_brand") or ""          # 廠牌（從 adminB 補充資料）
             result["K3"] = v("vehicle_plate") or ""         # 牌照號碼
             return result
 
