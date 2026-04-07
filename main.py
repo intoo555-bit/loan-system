@@ -4561,19 +4561,25 @@ def _fill_excel_template(template_path: str, cell_map: dict) -> bytes:
     if not ss_cell_changes:
         new_sheet_xml = sheet_xml  # 只有在 Step 4 沒修改時才重新賦值
     for cell_ref, new_value in direct_changes.items():
-        if not new_value:
-            continue  # 空值不寫入空儲存格
-        escaped_val = new_value.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+        escaped_val = new_value.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;') if new_value else ""
         # Case 1: 已有值 <c r="G18" s="48"><v>5.4</v></c>
         pattern1 = _re.compile(r'(<c\s+r="' + _re.escape(cell_ref) + r'"[^>]*>)\s*<v>[^<]*</v>\s*(</c>)')
         m = pattern1.search(new_sheet_xml)
         if m:
-            new_sheet_xml = new_sheet_xml[:m.start()] + m.group(1) + f'<v>{escaped_val}</v>' + m.group(2) + new_sheet_xml[m.end():]
+            if new_value:
+                new_sheet_xml = new_sheet_xml[:m.start()] + m.group(1) + f'<v>{escaped_val}</v>' + m.group(2) + new_sheet_xml[m.end():]
+            else:
+                # 清空：移除 <v> 標籤
+                attrs_match = _re.search(r'<c\s+r="' + _re.escape(cell_ref) + r'"([^>]*)>', m.group(1))
+                if attrs_match:
+                    attrs = _re.sub(r'\s+t="[^"]*"', '', attrs_match.group(1))
+                    new_cell = f'<c r="{cell_ref}"{attrs}/>'
+                    new_sheet_xml = new_sheet_xml[:m.start()] + new_cell + new_sheet_xml[m.end():]
             continue
-        # Case 2: 空的 self-closing <c r="B7" s="77"/> → 改為 <c r="B7" s="77" t="inlineStr"><is><t>值</t></is></c>
+        # Case 2: 空的 self-closing <c r="B7" s="77"/>
         pattern2 = _re.compile(r'<c\s+r="' + _re.escape(cell_ref) + r'"([^/]*)/>')
         m2 = pattern2.search(new_sheet_xml)
-        if m2:
+        if m2 and new_value:  # 只在有值時寫入
             attrs = m2.group(1).strip()
             new_cell = f'<c r="{cell_ref}" {attrs} t="inlineStr"><is><t>{escaped_val}</t></is></c>'
             new_sheet_xml = new_sheet_xml[:m2.start()] + new_cell + new_sheet_xml[m2.end():]
@@ -4948,17 +4954,13 @@ def _do_download_excel(request: Request, case_id: str):
             # 行業/職務：有值填入，無值清空
             result["D17"] = industry_val if industry_val else ""
             result["G17"] = role_val if role_val else ""
-            # 車輛資料：寫入正確的值位置（B7/D7/F7/H7），有值才填，無值不動
-            vt = v("adminb_vehicle_type")
-            if vt: result["B7"] = vt
-            en = v("adminb_engine_no")
-            if en: result["D7"] = en
-            dp = v("adminb_displacement")
-            if dp: result["F7"] = dp
-            cl = v("adminb_color")
-            if cl: result["H7"] = cl
-            pl = v("vehicle_plate")
-            if pl: result["K3"] = pl
+            # 車輛資料：有值填入，無值清空（清除範本示範資料）
+            result["B7"] = v("adminb_vehicle_type") or ""   # 車輛型式
+            result["D7"] = v("adminb_engine_no") or ""      # 引擎號碼
+            result["F7"] = v("adminb_displacement") or ""   # 排氣量
+            result["H7"] = v("adminb_color") or ""          # 顏色
+            result["K2"] = ""                               # 廠牌（無對應網站欄位，清空範本示範值）
+            result["K3"] = v("vehicle_plate") or ""         # 牌照號碼
             return result
 
         elif plan_name == "第一":
