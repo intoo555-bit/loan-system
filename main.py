@@ -4764,27 +4764,33 @@ def _do_download_excel(request: Request, case_id: str):
                            "營造業","電商網拍業","農狩林牧業","礦業","漁業","證券期貨業","保險業",
                            "不動產業","公教人員","水電燃氣業","通信業","社團個人服務","其它"]
             hr_industry = v("adminb_industry") or ""
-            # 行業名稱可能不完全一致，嘗試映射
             ind_map = {"製造業":"製造業","餐飲與服務業":"服務業","建築與營造":"營造業",
                        "軍警與公教":"公教人員","科技與資訊":"科技業","運輸與物流":"運輸業",
                        "金融與保險業":"金融業","批發與零售業":"服務業","醫療與教育":"服務業",
                        "農林漁牧業":"農狩林牧業","自由職業":"其它"}
             hr_ind_val = ind_map.get(hr_industry, hr_industry)
-            hr_ind_val = hr_ind_val if hr_ind_val in valid_hr_ind else None  # None=不動
+            hr_ind_val = hr_ind_val if hr_ind_val in valid_hr_ind else ""  # 無值清空
 
-            # === 手機電信（C20）必須匹配下拉 ===
+            # === 手機電信（C20）：不在下拉清單就選「其他」 ===
             carrier_raw = v("carrier") or ""
             valid_carriers = ["中華電信", "遠傳電信", "台灣大哥大", "其他"]
-            carrier_val = carrier_raw if carrier_raw in valid_carriers else None
+            if carrier_raw in valid_carriers:
+                carrier_val = carrier_raw
+            elif carrier_raw:
+                carrier_val = "其他"
+            else:
+                carrier_val = ""
 
-            # === 聯絡人知情（D22/G22）必須匹配：知情/保密 ===
+            # === 聯絡人知情（D22/G22）智能判別 ===
             valid_known = ["知情", "保密"]
-            c1_known_map = {"可知情": "知情", "保密": "保密"}
-            c2_known_map = {"可知情": "知情", "保密": "保密"}
-            c1_known_val = c1_known_map.get(c1_known, c1_known)
-            c2_known_val = c2_known_map.get(c2_known, c2_known)
-            c1_known_val = c1_known_val if c1_known_val in valid_known else ""
-            c2_known_val = c2_known_val if c2_known_val in valid_known else ""
+            def map_known(raw):
+                if not raw: return ""
+                if raw in valid_known: return raw
+                if "知情" in raw or "可知" in raw: return "知情"
+                if "保密" in raw or "不知" in raw or "無可" in raw: return "保密"
+                return ""
+            c1_known_val = map_known(c1_known)
+            c2_known_val = map_known(c2_known)
 
             # === 聯絡人電話格式：0955-389338 ===
             def fmt_phone(p):
@@ -4803,8 +4809,8 @@ def _do_download_excel(request: Request, case_id: str):
                 "C12": birth, "F12": (id_date + " " + id_type) if id_date else "",
                 "C13": marriage_val, "F13": id_place_code,
                 "C14": edu_val, "F14": phone_fmt,
-                "C15": reg_addr, "G15": v("reg_phone") or None,
-                "C16": live_addr, "G16": v("live_phone") or None, "H16": "同戶籍" if live_same else "",
+                "C15": reg_addr, "G15": v("reg_phone") or "",
+                "C16": live_addr, "G16": v("live_phone") or "", "H16": "同戶籍" if live_same else "",
                 "C17": line_id, "F17": "家用",  # 資金用途固定家用
                 "H17": co_phone_fmt,
                 "C18": company, "G18": co_role, "I18": years_fmt,
@@ -4813,18 +4819,16 @@ def _do_download_excel(request: Request, case_id: str):
                 "C24": c1_rel, "F24": c2_rel,
                 "C25": c1_ph_fmt, "F25": c2_ph_fmt,
                 "D22": c1_known_val, "G22": c2_known_val,
-                # 撥款資訊
-                "C37": v("adminb_bank") or None,
-                "C38": v("adminb_branch") or None,
-                # 商品資訊
-                "C42": v("adminb_product") or None,
-                "F42": v("adminb_model") or None,
+                # 撥款資訊（無填寫則清空，戶名 C39 不動有公式）
+                "C37": v("adminb_bank") or "",
+                "C38": v("adminb_branch") or "",
+                # 商品資訊（無填寫則清空）
+                "C42": v("adminb_product") or "",
+                "F42": v("adminb_model") or "",
+                # 行業/電信
+                "G19": hr_ind_val,
+                "C20": carrier_val,
             }
-            # 行業/電信：有值才填
-            if hr_ind_val is not None:
-                result["G19"] = hr_ind_val
-            if carrier_val is not None:
-                result["C20"] = carrier_val
             return result
 
         elif plan_name in ("亞太商品", "亞太機車15萬", "亞太工會機車", "亞太機車25萬"):
@@ -4875,12 +4879,22 @@ def _do_download_excel(request: Request, case_id: str):
             # === 發證狀態（F11）===
             id_type_val = id_type if id_type in ("初發", "補發", "換發") else ""
 
-            # === 居住狀況（B14）：父母→親屬 ===
-            live_map = {"父母": "親屬", "租屋": "親屬", "宿舍": "親屬"}
-            ls_raw = live_status
-            live_status_val = live_map.get(ls_raw, ls_raw) if ls_raw else ""
-            if live_status_val and live_status_val not in ("自有", "配偶", "親屬", "租屋", "宿舍"):
-                live_status_val = ""
+            # === 居住狀況（B14）：智能判別對照 ===
+            valid_live = ("自有", "配偶", "親屬", "租屋", "宿舍")
+            def map_live_status(raw):
+                if not raw: return ""
+                if raw in valid_live: return raw
+                # 自有相關
+                for k in ["自有","本人","名下","自宅","自有房屋"]:
+                    if k in raw: return "自有"
+                # 配偶相關
+                for k in ["配偶","老公","老婆","太太","先生","夫","妻"]:
+                    if k in raw: return "配偶"
+                # 親屬（含父母/兄弟姊妹/家人/父母名下/租屋/宿舍）
+                for k in ["父母","媽媽","爸爸","母親","父親","親屬","親戚","家人","兄","弟","姊","妹","祖","外公","外婆","租","宿舍","借住","寄住"]:
+                    if k in raw: return "親屬"
+                return ""
+            live_status_val = map_live_status(live_status)
 
             # === 行業（E17）從 adminB，無則不填（D17 是標籤「行業類別」不能動） ===
             industry = v("adminb_industry")
@@ -4984,13 +4998,14 @@ def _do_download_excel(request: Request, case_id: str):
             # 行業/職務：有值填入，無值清空
             result["E17"] = industry_val if industry_val else ""
             result["G17"] = role_val if role_val else ""
-            # 車輛資料：有值填入，無值清空（清除範本示範資料）
-            result["B7"] = v("adminb_vehicle_type") or ""   # 車輛型式
-            result["D7"] = v("adminb_engine_no") or ""      # 引擎號碼
-            result["F7"] = v("adminb_displacement") or ""   # 排氣量
-            result["H7"] = v("adminb_color") or ""          # 顏色
-            result["K2"] = v("adminb_brand") or ""          # 廠牌（從 adminB 補充資料）
-            result["K3"] = v("vehicle_plate") or ""         # 牌照號碼
+            # 車輛資料：只有機車範本才填，亞太商品不填寫車輛欄位
+            if plan_name in ("亞太機車15萬", "亞太工會機車", "亞太機車25萬"):
+                result["B7"] = v("adminb_vehicle_type") or ""   # 車輛型式
+                result["D7"] = v("adminb_engine_no") or ""      # 引擎號碼
+                result["F7"] = v("adminb_displacement") or ""   # 排氣量
+                result["H7"] = v("adminb_color") or ""          # 顏色
+                result["K2"] = v("adminb_brand") or ""          # 廠牌
+                result["K3"] = v("vehicle_plate") or ""         # 牌照號碼
             return result
 
         elif plan_name == "第一":
