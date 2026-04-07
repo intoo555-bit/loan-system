@@ -5037,23 +5037,121 @@ def _do_download_excel(request: Request, case_id: str):
             return result
 
         elif plan_name == "第一":
+            # 換發類型（J6）
             id_type_val = id_type if id_type in ("初發", "換發", "補發") else ""
-            id_place_code = CITY_TO_CODE.get(id_place, id_place)
-            # Convert birth/id_date to 民國 no-slash format
-            birth_roc = birth.replace("/", "") if birth else ""
-            id_date_roc = id_date.replace("/", "") if id_date else ""
+
+            # 換證地點（G6）下拉匹配
+            valid_dy1_place = ["北市","新北市","北縣","基市","宜縣","桃市","桃縣","竹市","竹縣",
+                               "苗縣","中市","中縣","嘉市","彰縣","投縣","雲縣","嘉縣","南市",
+                               "南縣","高市","高縣","屏縣","東縣","花縣","澎縣","連江","金門"]
+            dy1_place_map = {"台北市":"北市","桃園市":"桃市","台中市":"中市","台南市":"南市",
+                             "高雄市":"高市","基隆市":"基市","新竹市":"竹市","新竹縣":"竹縣",
+                             "苗栗縣":"苗縣","彰化縣":"彰縣","南投縣":"投縣","雲林縣":"雲縣",
+                             "嘉義市":"嘉市","嘉義縣":"嘉縣","屏東縣":"屏縣","宜蘭縣":"宜縣",
+                             "花蓮縣":"花縣","台東縣":"東縣","澎湖縣":"澎縣","金門縣":"金門",
+                             "連江縣":"連江","新北市":"新北市"}
+            raw_place = id_place
+            dy1_place = dy1_place_map.get(raw_place, raw_place)
+            dy1_place = dy1_place if dy1_place in valid_dy1_place else ""
+
+            # 日期轉民國無斜線 7 位 (113/12/24 → 1131224, 87/02/24 → 0870224)
+            def to_roc_7digit(d):
+                if not d: return ""
+                parts = d.replace("-", "/").split("/")
+                if len(parts) != 3: return ""
+                try:
+                    y = int(parts[0])
+                    if y >= 1911:
+                        y -= 1911
+                    return f"{str(y).zfill(3)}{parts[1].zfill(2)}{parts[2].zfill(2)}"
+                except:
+                    return ""
+            birth_roc = to_roc_7digit(birth)
+            id_date_roc = to_roc_7digit(id_date)
+
+            # 公司電話：區碼+號碼+分機 (0223570707#722865)
+            co_ext = v("company_phone_ext")
+            if co_phone_area and co_phone_num:
+                dy1_co_phone = co_phone_area + co_phone_num
+            else:
+                dy1_co_phone = co_phone_num
+            if dy1_co_phone and co_ext:
+                dy1_co_phone += "#" + co_ext
+
+            # 年資：M8 年數、O8 月數（純數字）
+            try:
+                m8_val = int(float(co_years)) if co_years else 0
+                co_mos_dy1 = v("company_months") or "0"
+                o8_val = int(float(co_mos_dy1)) if co_mos_dy1 and co_mos_dy1 != "0" else 0
+            except:
+                m8_val = 0
+                o8_val = 0
+
+            # 月薪：M9 純數字（4.5萬→45000）
+            try:
+                sal_c = co_salary.replace("萬","").replace(",","").strip() if co_salary else ""
+                sn = float(sal_c) if sal_c else 0
+                if 0 < sn < 1000:
+                    m9_val = str(int(sn * 10000))
+                elif sn >= 1000:
+                    m9_val = str(int(sn))
+                else:
+                    m9_val = ""
+            except:
+                m9_val = ""
+
+            # 關係智能判別（第一下拉清單）
+            valid_dy1_rels = ["父母","夫妻","兄弟姐妹","子女","朋友","同事","祖父母","外祖父母",
+                              "孫子女","姪子女","岳父母","女婿","堂兄弟姊","表兄弟姊","伯父母",
+                              "叔/嬸","舅/舅媽","姨/姨丈","姑/姑丈","公婆媳","大伯小叔","姑嫂","妯娌"]
+            def map_dy1_rel(raw):
+                if not raw: return ""
+                if raw in valid_dy1_rels: return raw
+                # 夫妻
+                for k in ["夫妻","配偶","老公","老婆","太太","先生","夫","妻"]:
+                    if k in raw: return "夫妻"
+                # 父母
+                for k in ["媽媽","爸爸","母親","父親","媽","爸","母","父"]:
+                    if k in raw: return "父母"
+                # 子女
+                for k in ["兒子","女兒","兒","女","子女"]:
+                    if k in raw: return "子女"
+                # 兄弟姐妹
+                for k in ["哥哥","姊姊","姐姐","弟弟","妹妹","哥","姊","姐","兄","弟","妹"]:
+                    if k in raw: return "兄弟姐妹"
+                # 外祖父母
+                for k in ["外公","外婆","外祖"]:
+                    if k in raw: return "外祖父母"
+                # 祖父母
+                for k in ["祖父","祖母","爺爺","奶奶"]:
+                    if k in raw: return "祖父母"
+                # 岳父母
+                for k in ["岳父","岳母"]:
+                    if k in raw: return "岳父母"
+                # 公婆媳
+                for k in ["公公","婆婆","媳"]:
+                    if k in raw: return "公婆媳"
+                # 朋友/同事
+                if "同事" in raw: return "同事"
+                if "朋友" in raw or "友" in raw or "同學" in raw: return "朋友"
+                return ""
+            c1_rel_dy1 = map_dy1_rel(c1_rel)
+            c2_rel_dy1 = map_dy1_rel(c2_rel)
 
             return {
                 "B5": name, "G5": id_no,
-                "B6": id_date_roc, "G6": id_place_code, "J6": id_type_val,
+                "B6": id_date_roc, "G6": dy1_place, "J6": id_type_val,
                 "B7": birth_roc, "G7": phone,
+                "B8": v("reg_phone"), "G8": v("live_phone"),
                 "B9": reg_addr,
                 "B10": "同上" if live_same else live_addr,
-                "M5": company, "T6": co_phone,
+                "M5": company,
+                "T6": dy1_co_phone,
                 "M7": co_addr,
-                "M8": co_years, "M9": co_salary,
-                "M13": c1_name, "Q13": c1_rel, "T13": c1_phone,
-                "M14": c2_name, "Q14": c2_rel, "T14": c2_phone,
+                "M8": m8_val, "O8": o8_val,
+                "M9": m9_val,
+                "M13": c1_name, "Q13": c1_rel_dy1, "T13": c1_phone,
+                "M14": c2_name, "Q14": c2_rel_dy1, "T14": c2_phone,
             }
 
         elif plan_name in ("21機車12萬", "21機車25萬", "21商品"):
