@@ -4759,15 +4759,15 @@ def _do_download_excel(request: Request, case_id: str):
             else:
                 co_phone_fmt = ""
 
-            # === 年資（I18）格式：1年8月（文字儲存格，需含單位）===
+            # === 年資（I18）格式：N年M月（年月字保留，缺少數字以空白代替）===
             co_mos = v("company_months") or "0"
             try:
                 yr_int = int(float(co_years)) if co_years else 0
                 mo_int = int(float(co_mos)) if co_mos and co_mos != "0" else 0
-                if mo_int > 0:
-                    years_fmt = f"{yr_int}年{mo_int}月"
-                elif yr_int > 0:
-                    years_fmt = f"{yr_int}年"
+                yr_str = str(yr_int) if yr_int > 0 else ""
+                mo_str = str(mo_int) if mo_int > 0 else ""
+                if yr_str or mo_str:
+                    years_fmt = f"{yr_str}年{mo_str}月"
                 else:
                     years_fmt = ""
             except:
