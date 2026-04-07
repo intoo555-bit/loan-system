@@ -685,6 +685,7 @@ def init_db():
         ("adminb_branch", "TEXT"),
         ("adminb_account", "TEXT"),
         ("adminb_industry", "TEXT"),
+        ("adminb_brand", "TEXT"),
         ("adminb_role", "TEXT"),
         ("adminb_vehicle_type", "TEXT"),
         ("adminb_engine_no", "TEXT"),
@@ -3235,7 +3236,7 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
         </div>
         <div style="font-size:11px;font-weight:700;color:#0369a1;margin-bottom:8px;">機車額外資料</div>
         <div class="ab-g3">
-          <div><div class="ab-lbl">廠牌</div><input name="at_brand" class="ab-inp" placeholder="光陽機車" value="{h(customer.get('adminb_industry','') or '')}"></div>
+          <div><div class="ab-lbl">廠牌</div><input name="at_brand" class="ab-inp" placeholder="光陽機車" value="{h(customer.get('adminb_brand','') or '')}"></div>
           <div><div class="ab-lbl">牌照號碼</div><input name="at_plate" class="ab-inp" placeholder="MMX-0286" value="{h(customer.get('vehicle_plate','') or '')}"></div>
           <div><div class="ab-lbl">車輛型式</div><input name="at_vtype" class="ab-inp" placeholder="SE22BJ" value="{h(customer.get('adminb_vehicle_type','') or '')}"></div>
           <div><div class="ab-lbl">引擎號碼</div><input name="at_engine" class="ab-inp" placeholder="SE22BJ-105579" value="{h(customer.get('adminb_engine_no','') or '')}"></div>
@@ -3334,7 +3335,8 @@ async def adminb_save(request: Request):
     fields = {
         "adminb_selected_plans": plans,
         "adminb_industry": form.get("at_industry",""),
-        "adminb_role": form.get("hr_role",""),
+        "adminb_brand": form.get("at_brand",""),
+        "adminb_role": form.get("at_role","") or form.get("hr_role",""),
         "adminb_contact_time": form.get("contact_time","") or form.get("hr_contact",""),
         "adminb_bank": form.get("hr_bank",""),
         "adminb_branch": form.get("hr_branch",""),
