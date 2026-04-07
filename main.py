@@ -4734,28 +4734,28 @@ def _do_download_excel(request: Request, case_id: str):
             else:
                 co_phone_fmt = ""
 
-            # === 年資（I18）格式：5年6月 ===
+            # === 年資（I18）只填數字（單位由儲存格格式處理）===
             co_mos = v("company_months") or "0"
             try:
                 yr_int = int(float(co_years)) if co_years else 0
                 mo_int = int(float(co_mos)) if co_mos and co_mos != "0" else 0
                 if mo_int > 0:
-                    years_fmt = f"{yr_int}年{mo_int}月"
+                    years_fmt = f"{yr_int}.{mo_int}"
                 elif yr_int > 0:
-                    years_fmt = f"{yr_int}年"
+                    years_fmt = str(yr_int)
                 else:
                     years_fmt = ""
             except:
                 years_fmt = co_years
 
-            # === 月薪（I19）格式：45000→4.5萬 ===
+            # === 月薪（I19）只填數字（單位由儲存格格式處理）===
             try:
                 sal_raw = float(co_salary) if co_salary else 0
                 if sal_raw >= 1000:
                     sal_wan = round(sal_raw / 10000, 1)
                 else:
                     sal_wan = sal_raw
-                sal_fmt = f"{sal_wan}萬" if sal_wan else ""
+                sal_fmt = str(sal_wan) if sal_wan else ""
             except:
                 sal_fmt = co_salary
 
@@ -4805,7 +4805,8 @@ def _do_download_excel(request: Request, case_id: str):
             phone_fmt = fmt_phone(phone)
 
             result = {
-                "C11": name, "F11": id_no,
+                "C11": name, "C39": name,  # 戶名（公式快取值同步更新）
+                "F11": id_no,
                 "C12": birth, "F12": (id_date + " " + id_type) if id_date else "",
                 "C13": marriage_val, "F13": id_place_code,
                 "C14": edu_val, "F14": phone_fmt,
