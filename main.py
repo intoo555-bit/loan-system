@@ -3636,56 +3636,137 @@ async def edit_pending_post(request: Request):
     conn.commit(); conn.close()
     return RedirectResponse("/pending-customers", status_code=303)
 
+# 計算客戶資料完整度（填寫欄位比例 0-100）
+_COMPLETENESS_EXCLUDE = {
+    "id", "case_id", "status", "created_at", "updated_at", "last_update",
+    "source_group_id", "route_plan", "current_company", "report_section",
+    "customer_name", "created_by_role",
+}
+
+
+def calc_completeness(row: dict) -> int:
+    """計算客戶資料填寫率：非空欄位 / 總欄位 × 100"""
+    fields = [k for k in row.keys() if k not in _COMPLETENESS_EXCLUDE]
+    if not fields:
+        return 0
+    filled = sum(1 for k in fields if (row.get(k) not in (None, "", "0")))
+    return int(round(filled * 100 / len(fields)))
+
+
 @app.get("/pending-customers", response_class=HTMLResponse)
-def pending_customers_page(request: Request, q: str = "", grp: str = "", date_from: str = "", date_to: str = ""):
+def pending_customers_page(request: Request, q: str = "", grp: str = "", date_from: str = "", date_to: str = "", page: int = 1):
     from fastapi.responses import RedirectResponse
     role = check_auth(request)
     if not role: return RedirectResponse("/login")
+    PAGE_SIZE = 50
+    if page < 1: page = 1
     conn = get_conn(); cur = conn.cursor()
     cur.execute("SELECT group_id, group_name FROM groups WHERE group_type='SALES_GROUP' AND is_active=1 ORDER BY group_name")
     all_groups = cur.fetchall()
-    sql = "SELECT * FROM customers WHERE status='PENDING'"
-    params = []
-    if q: sql += " AND (customer_name LIKE ? OR id_no LIKE ?)"; params += [f"%{q}%", f"%{q}%"]
-    if grp: sql += " AND source_group_id=?"; params.append(grp)
-    if date_from: sql += " AND DATE(created_at) >= ?"; params.append(date_from)
-    if date_to: sql += " AND DATE(created_at) <= ?"; params.append(date_to)
-    sql += " ORDER BY created_at DESC"
-    cur.execute(sql, params)
+
+    where = "WHERE status='PENDING'"
+    params: list = []
+    if q: where += " AND (customer_name LIKE ? OR id_no LIKE ?)"; params += [f"%{q}%", f"%{q}%"]
+    if grp: where += " AND source_group_id=?"; params.append(grp)
+    if date_from: where += " AND DATE(created_at) >= ?"; params.append(date_from)
+    if date_to: where += " AND DATE(created_at) <= ?"; params.append(date_to)
+
+    cur.execute(f"SELECT COUNT(*) AS c FROM customers {where}", params)
+    total = cur.fetchone()["c"]
+    total_pages = max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE)
+    if page > total_pages: page = total_pages
+    offset = (page - 1) * PAGE_SIZE
+
+    cur.execute(f"SELECT * FROM customers {where} ORDER BY created_at DESC LIMIT ? OFFSET ?", params + [PAGE_SIZE, offset])
     rows = [dict(r) for r in cur.fetchall()]
     conn.close()
-    grp_opts = "<option value=''>全部群組</option>" + "".join(f'<option value="{h(g["group_id"])}" {"selected" if grp==g["group_id"] else ""}>{h(g["group_name"])}</option>' for g in all_groups)
+
+    # 一次取所有群組名稱（修掉迴圈內 N+1）
+    group_name_map = get_all_group_names()
+
+    grp_opts = "<option value=''>全部群組</option>" + "".join(
+        f'<option value="{h(g["group_id"])}" {"selected" if grp==g["group_id"] else ""}>{h(g["group_name"])}</option>'
+        for g in all_groups
+    )
+
     rows_html = ""
     for r in rows:
-        name = r.get("customer_name",""); id_no = r.get("id_no","") or ""; phone = r.get("phone","") or "-"
-        created = (r.get("created_at","") or "")[:10]; gname = get_group_name(r.get("source_group_id","")); case_id = r.get("case_id","")
+        name = r.get("customer_name", "") or ""
+        id_no = r.get("id_no", "") or ""
+        created = (r.get("created_at", "") or "")[:10]
+        gname = group_name_map.get(r.get("source_group_id", ""), "未知群組")
+        case_id = r.get("case_id", "")
+        pct = calc_completeness(r)
+        dot_cls = "dot-green" if pct >= 70 else ("dot-yellow" if pct >= 30 else "dot-red")
         rows_html += f'''<tr>
-            <td style="padding:10px 12px;font-weight:600;">{h(name)}</td>
-            <td style="padding:10px 12px;color:#6a5e4e;">{h(id_no)}</td>
-            <td style="padding:10px 12px;">{h(phone)}</td>
+            <td style="padding:10px 12px;width:36px;"><input type="checkbox" class="case-chk" value="{h(case_id)}"></td>
+            <td style="padding:10px 12px;color:#8a7a68;font-size:12px;white-space:nowrap;">{h(created)}</td>
+            <td style="padding:10px 12px;font-weight:600;white-space:nowrap;"><span class="dot {dot_cls}" title="完整度 {pct}%"></span>{h(name)}</td>
+            <td style="padding:10px 12px;color:#6a5e4e;font-family:monospace;">{h(id_no)}</td>
             <td style="padding:10px 12px;">{h(gname)}</td>
-            <td style="padding:10px 12px;color:#8a7a68;font-size:12px;">{h(created)}</td>
             <td style="padding:10px 12px;text-align:center;">
                 <a href="/edit-pending?case_id={h(case_id)}" style="background:#6a5e4e;color:#fff;padding:4px 12px;border-radius:6px;font-size:12px;text-decoration:none;">編輯</a>
-                <a href="/customer-pdf?case_id={h(case_id)}" style="background:#4e7055;color:#fff;padding:4px 12px;border-radius:6px;font-size:12px;text-decoration:none;margin-left:4px;">PDF</a>
             </td>
         </tr>'''
     empty = "" if rows else '<tr><td colspan="6" style="text-align:center;padding:30px;color:#8a7a68;">目前沒有待確認客戶</td></tr>'
+
+    # 建分頁連結（保留篩選參數）
+    from urllib.parse import urlencode
+    def page_url(p: int) -> str:
+        qs = {"q": q, "grp": grp, "date_from": date_from, "date_to": date_to, "page": p}
+        qs = {k: v for k, v in qs.items() if v not in ("", None)}
+        return "/pending-customers?" + urlencode(qs)
+
+    pager_html = ""
+    if total_pages > 1:
+        parts = []
+        if page > 1:
+            parts.append(f'<a href="{page_url(page-1)}">‹ 上一頁</a>')
+        start = max(1, page - 3)
+        end = min(total_pages, start + 6)
+        start = max(1, end - 6)
+        if start > 1:
+            parts.append(f'<a href="{page_url(1)}">1</a>')
+            if start > 2:
+                parts.append('<span style="padding:6px 4px;color:#8a7a68;">…</span>')
+        for p in range(start, end + 1):
+            cls = ' class="current"' if p == page else ''
+            parts.append(f'<a{cls} href="{page_url(p)}">{p}</a>')
+        if end < total_pages:
+            if end < total_pages - 1:
+                parts.append('<span style="padding:6px 4px;color:#8a7a68;">…</span>')
+            parts.append(f'<a href="{page_url(total_pages)}">{total_pages}</a>')
+        if page < total_pages:
+            parts.append(f'<a href="{page_url(page+1)}">下一頁 ›</a>')
+        pager_html = '<div class="pager">' + "".join(parts) + '</div>'
+
     return f"""<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>客戶資料庫</title>
 {PAGE_CSS}
 <style>
-.page{{max-width:960px;margin:24px auto;padding:0 16px 40px;}}
+.page{{max-width:1040px;margin:24px auto;padding:0 16px 40px;}}
 .card{{background:#faf7f4;border:1px solid #ddd5ca;border-radius:10px;overflow:hidden;}}
 table{{width:100%;border-collapse:collapse;}}thead tr{{background:#f0ebe4;}}
+thead th{{position:sticky;top:0;background:#f0ebe4;z-index:2;}}
 th{{padding:10px 12px;text-align:left;font-size:12px;font-weight:700;color:#5a4e40;}}
 tbody tr{{border-bottom:1px solid #ece8e2;}}tbody tr:hover{{background:#faf6f2;}}
 h2{{font-size:18px;font-weight:700;color:#2c2820;margin-bottom:14px;}}
 input,select{{padding:7px 10px;border:1px solid #c8bfb5;border-radius:6px;font-size:13px;font-family:inherit;}}
+input[type=checkbox]{{padding:0;width:16px;height:16px;cursor:pointer;}}
+.dot{{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:7px;vertical-align:middle;}}
+.dot-red{{background:#dc2626;}}
+.dot-yellow{{background:#eab308;}}
+.dot-green{{background:#16a34a;}}
+.pager{{text-align:center;padding:16px;}}
+.pager a{{display:inline-block;padding:6px 12px;margin:0 2px;border:1px solid #c8bfb5;border-radius:6px;color:#4a3e30;text-decoration:none;font-size:13px;background:#fff;}}
+.pager a:hover{{background:#f0ebe4;}}
+.pager a.current{{background:#6a5e4e;color:#fff;border-color:#6a5e4e;font-weight:700;}}
+.btn-export{{background:#4e7055;color:#fff;border:none;padding:8px 16px;border-radius:6px;font-size:13px;cursor:pointer;font-weight:600;font-family:inherit;}}
+.btn-export:disabled{{background:#b8b0a5;cursor:not-allowed;}}
 </style></head><body>
 {make_topnav(role, "pending")}
 <div class="page">
-  <h2>客戶資料庫 共 {len(rows)} 筆</h2>
+  <h2>客戶資料庫 共 {total} 筆</h2>
   <form method="get" action="/pending-customers">
     <div style="background:#faf7f4;border:1px solid #ddd5ca;border-radius:10px;padding:14px 16px;margin-bottom:14px;display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;">
       <div><div style="font-size:12px;font-weight:600;color:#5a4e40;margin-bottom:3px">姓名／身分證</div><input name="q" value="{h(q)}" placeholder="搜尋..." style="width:150px"></div>
@@ -3696,13 +3777,41 @@ input,select{{padding:7px 10px;border:1px solid #c8bfb5;border-radius:6px;font-s
         <button type="submit" style="background:#6a5e4e;color:#fff;border:none;padding:8px 18px;border-radius:6px;font-size:13px;cursor:pointer;font-weight:600;font-family:inherit">🔍 搜尋</button>
         <a href="/pending-customers" style="background:#e8e2da;color:#4a3e30;border:1px solid #c8bfb5;padding:8px 14px;border-radius:6px;font-size:13px;text-decoration:none;">清除</a>
       </div>
+      <div style="margin-left:auto;display:flex;gap:8px;align-items:flex-end;">
+        <button type="button" id="btnExport" class="btn-export" disabled onclick="exportPdf()">📄 匯出 PDF（<span id="selCount">0</span>）</button>
+      </div>
     </div>
   </form>
   <div class="card"><table>
-    <thead><tr><th>姓名</th><th>身分證</th><th>電話</th><th>群組</th><th>建立日期</th><th>操作</th></tr></thead>
+    <thead><tr>
+      <th style="width:36px;"><input type="checkbox" id="chkAll" onclick="toggleAll(this)"></th>
+      <th>日期</th><th>姓名</th><th>身分證</th><th>群組</th><th>操作</th>
+    </tr></thead>
     <tbody>{rows_html}{empty}</tbody>
   </table></div>
-</div></body></html>"""
+  {pager_html}
+</div>
+<script>
+function updateSelCount() {{
+  var n = document.querySelectorAll('.case-chk:checked').length;
+  document.getElementById('selCount').textContent = n;
+  document.getElementById('btnExport').disabled = (n === 0);
+}}
+function toggleAll(src) {{
+  document.querySelectorAll('.case-chk').forEach(function(c) {{ c.checked = src.checked; }});
+  updateSelCount();
+}}
+document.querySelectorAll('.case-chk').forEach(function(c) {{
+  c.addEventListener('change', updateSelCount);
+}});
+function exportPdf() {{
+  var ids = [];
+  document.querySelectorAll('.case-chk:checked').forEach(function(c) {{ ids.push(c.value); }});
+  if (ids.length === 0) return;
+  window.open('/customer-pdf-batch?ids=' + encodeURIComponent(ids.join(',')));
+}}
+</script>
+</body></html>"""
 
 
 @app.get("/history", response_class=HTMLResponse)
@@ -4508,6 +4617,130 @@ td {{ background: #fff; }}
 {"<div style='font-size:13px;font-weight:700;color:#3a3530;margin-bottom:8px;'>負債明細</div>" + debt_html if debt_html else ""}
 </body></html>"""
 
+
+def _build_customer_pdf_body(r: dict) -> str:
+    """組出單一客戶在 PDF 內的內容（header + 兩頁表格），給單筆與批次共用"""
+    def v(k): return h(r.get(k, "") or "")
+    gname = h(get_group_name(r.get("source_group_id", "")))
+    created = h((r.get("created_at", "") or "")[:10])
+
+    import json as _json
+    try:
+        debt_data = _json.loads(r.get("debt_list", "") or "[]") if r.get("debt_list") else []
+    except Exception:
+        debt_data = []
+    debt_html = ""
+    if debt_data:
+        debt_html = '<table style="width:100%;border-collapse:collapse;font-size:13px;margin-top:8px;">'
+        debt_html += '<tr style="background:#e8e2da;font-weight:600;"><th style="padding:6px;border:1px solid #bbb;">貸款商家</th><th style="padding:6px;border:1px solid #bbb;">金額</th><th style="padding:6px;border:1px solid #bbb;">期數/已繳</th><th style="padding:6px;border:1px solid #bbb;">月繳</th><th style="padding:6px;border:1px solid #bbb;">剩餘</th><th style="padding:6px;border:1px solid #bbb;">日期</th><th style="padding:6px;border:1px solid #bbb;">動保</th></tr>'
+        for d in debt_data:
+            debt_html += f'<tr><td style="padding:5px;border:1px solid #bbb;">{h(d.get("co",""))}</td><td style="padding:5px;border:1px solid #bbb;">{h(d.get("lo",""))}</td><td style="padding:5px;border:1px solid #bbb;">{h(d.get("pe",""))}/{h(d.get("pa",""))}</td><td style="padding:5px;border:1px solid #bbb;">{h(d.get("mo",""))}</td><td style="padding:5px;border:1px solid #bbb;">{h(d.get("re",""))}</td><td style="padding:5px;border:1px solid #bbb;">{h(d.get("da",""))}</td><td style="padding:5px;border:1px solid #bbb;">{h(d.get("dy",""))}</td></tr>'
+        debt_html += '</table>'
+
+    lsame = r.get("live_same_as_reg", "") == "1"
+    live_addr = f'{v("reg_city")}{v("reg_district")}{v("reg_address")}' if lsame else f'{v("live_city")}{v("live_district")}{v("live_address")}'
+    reg_addr = f'{v("reg_city")}{v("reg_district")}{v("reg_address")}'
+    company_addr = f'{v("company_city")}{v("company_district")}{v("company_address")}'
+    note_html = "<tr><th>備註</th><td colspan='3'>" + v("eval_note") + "</td></tr>" if r.get("eval_note") else ""
+    debt_section = "<div style='font-size:13px;font-weight:700;color:#3a3530;margin-bottom:8px;'>負債明細</div>" + debt_html if debt_html else ""
+
+    return f"""<div class="header">
+  <div><div class="header-name">{v("customer_name")}</div><div class="header-sub">群組：{gname}　建立日期：{created}</div></div>
+  <div style="font-size:13px;color:#c8bfb5;font-weight:600;">客戶資料表</div>
+</div>
+<table>
+<tr class="sec"><td colspan="4">基本資料</td></tr>
+<tr><th>姓名</th><td>{v("customer_name")}</td><th>身分證</th><td>{v("id_no")}</td></tr>
+<tr><th>出生日期</th><td>{v("birth_date")}</td><th>行動電話</th><td>{v("phone")}</td></tr>
+<tr><th>Email</th><td>{v("email")}</td><th>LINE ID</th><td>{v("line_id")}</td></tr>
+<tr><th>婚姻</th><td>{v("marriage")}</td><th>學歷</th><td>{v("education")}</td></tr>
+<tr class="sec"><td colspan="4">身分證發證</td></tr>
+<tr><th>發證日期</th><td>{v("id_issue_date")}</td><th>發證地</th><td>{v("id_issue_place")}</td></tr>
+<tr><th>換補發</th><td colspan="3">{v("id_issue_type")}</td></tr>
+<tr class="sec"><td colspan="4">地址資料</td></tr>
+<tr><th>戶籍地址</th><td colspan="3">{reg_addr}</td></tr>
+<tr><th>戶籍電話</th><td>{v("reg_phone")}</td><th>現住電話</th><td>{v("live_phone")}</td></tr>
+<tr><th>住家地址</th><td colspan="3">{live_addr}</td></tr>
+<tr><th>居住狀況</th><td>{v("live_status")}</td><th>居住時間</th><td>{v("live_years")}年{v("live_months")}月</td></tr>
+<tr class="sec"><td colspan="4">職業資料</td></tr>
+<tr><th>公司名稱</th><td colspan="3">{v("company_name_detail")}</td></tr>
+<tr><th>公司電話</th><td>{v("company_phone_area")}-{v("company_phone_num")}</td><th>職稱</th><td>{v("company_role")}</td></tr>
+<tr><th>年資</th><td>{v("company_years")}年</td><th>月薪</th><td>{v("company_salary")}萬</td></tr>
+<tr><th>公司地址</th><td colspan="3">{company_addr}</td></tr>
+<tr><th>行業</th><td colspan="3">{v("company_industry")}</td></tr>
+<tr class="sec"><td colspan="4">聯絡人</td></tr>
+<tr><th>聯絡人1</th><td>{v("contact1_name")}（{v("contact1_relation")}）</td><th>電話</th><td>{v("contact1_phone")}</td></tr>
+<tr><th>知情</th><td>{v("contact1_known")}</td><th>聯絡人2</th><td>{v("contact2_name")}（{v("contact2_relation")}）</td></tr>
+<tr><th>電話</th><td>{v("contact2_phone")}</td><th>知情</th><td>{v("contact2_known")}</td></tr>
+</table>
+<div style="page-break-before:always;margin-top:20px;"></div>
+<table>
+<tr class="sec"><td colspan="4">貸款諮詢</td></tr>
+<tr><th>資金需求</th><td>{v("eval_fund_need")}</td><th>近三月送件</th><td>{v("eval_sent_3m")}</td></tr>
+<tr><th>當鋪私設</th><td>{v("eval_alert")}</td><th>勞保</th><td>{v("eval_labor_ins")}</td></tr>
+<tr><th>薪轉</th><td>{v("eval_salary_transfer")}</td><th>遲繳</th><td>{v("eval_late")} {v("eval_late_days")}天</td></tr>
+<tr><th>罰單</th><td>{v("eval_fine")}</td><th>燃料稅</th><td>{v("eval_fuel_tax")}</td></tr>
+<tr><th>信用卡</th><td>{v("eval_credit_card")}</td><th>動產</th><td>{v("eval_property")}</td></tr>
+<tr><th>證照</th><td>{v("eval_license")}</td><th>車輛</th><td>{v("eval_vehicle")}</td></tr>
+<tr><th>法學</th><td colspan="3">{v("eval_law")}</td></tr>
+{note_html}
+</table>
+{debt_section}"""
+
+
+_PDF_STYLE = """<style>
+@media print { @page { size: A4 portrait; margin: 10mm 12mm; } .no-print { display: none !important; } }
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Microsoft JhengHei', 'PingFang TC', sans-serif; background: #fff; color: #1a1a1a; font-size: 13px; padding: 20px; }
+.header { background: #3a3530; color: #fff; padding: 16px 20px; border-radius: 8px; margin-bottom: 16px; display: flex; justify-content: space-between; align-items: center; }
+.header-name { font-size: 22px; font-weight: 700; }
+.header-sub { font-size: 12px; color: #c8bfb5; margin-top: 4px; }
+table { width: 100%; border-collapse: collapse; margin-bottom: 16px; }
+th, td { border: 1px solid #bbb; padding: 7px 10px; font-size: 13px; line-height: 1.5; }
+th { background: #f0ebe4; color: #3a3020; font-weight: 700; width: 100px; white-space: nowrap; text-align: left; }
+td { background: #fff; }
+.sec { background: #3a3530; color: #fff; font-size: 12px; font-weight: 700; padding: 6px 10px; }
+.sec td { background: #3a3530; color: #fff; font-weight: 700; }
+</style>"""
+
+
+@app.get("/customer-pdf-batch", response_class=HTMLResponse)
+def customer_pdf_batch(request: Request, ids: str = ""):
+    from fastapi.responses import RedirectResponse
+    role = check_auth(request)
+    if not role: return RedirectResponse("/login")
+    id_list = [i.strip() for i in (ids or "").split(",") if i.strip()]
+    if not id_list:
+        return RedirectResponse("/pending-customers")
+    conn = get_conn(); cur = conn.cursor()
+    placeholders = ",".join(["?"] * len(id_list))
+    cur.execute(f"SELECT * FROM customers WHERE case_id IN ({placeholders})", id_list)
+    rows = cur.fetchall(); conn.close()
+    # 依使用者選取順序排序
+    row_map = {dict(r)["case_id"]: dict(r) for r in rows}
+    ordered = [row_map[i] for i in id_list if i in row_map]
+    if not ordered:
+        return RedirectResponse("/pending-customers")
+
+    bodies = []
+    for idx, r in enumerate(ordered):
+        if idx > 0:
+            bodies.append('<div style="page-break-before:always;"></div>')
+        bodies.append(_build_customer_pdf_body(r))
+    body_html = "".join(bodies)
+
+    return f"""<!DOCTYPE html><html lang="zh-TW"><head><meta charset="UTF-8">
+<title>客戶資料批次列印（{len(ordered)} 筆）</title>
+{_PDF_STYLE}
+</head><body>
+<div class="no-print" style="text-align:center;margin-bottom:16px;">
+  <button onclick="window.print()" style="background:#4e7055;color:#fff;border:none;padding:10px 28px;border-radius:6px;font-size:14px;cursor:pointer;font-weight:600;">列印 / 存 PDF（共 {len(ordered)} 筆）</button>
+  <button onclick="window.close()" style="background:#6a5e4e;color:#fff;border:none;padding:10px 28px;border-radius:6px;font-size:14px;cursor:pointer;font-weight:600;margin-left:8px;">關閉</button>
+</div>
+{body_html}
+</body></html>"""
+
+
 # =========================
 # 下載 Excel 申請書
 # =========================
@@ -4630,14 +4863,19 @@ def _fill_excel_template(template_path: str, cell_map: dict) -> bytes:
         m = cell_pattern.search(new_sheet_xml)
         if m:
             new_sheet_xml = new_sheet_xml[:m.start()] + m.group(1) + f'<v>{new_idx}</v>' + m.group(2) + new_sheet_xml[m.end():]
-    # 更新 sharedStrings 的 count 和 uniqueCount
+    # 更新 sharedStrings：count 是引用總次數（保留原值+新增數），uniqueCount 是 si 數量
     first_si = si_blocks[0].start()
     last_si_end = si_blocks[-1].end()
     new_si_content = ''.join(si_list)
-    new_count = len(si_list)
+    new_unique = len(si_list)
+    added = new_unique - len(si_blocks)  # 新增的 si 數量
     header_xml = ss_xml[:first_si]
-    header_xml = _re.sub(r'count="\d+"', f'count="{new_count}"', header_xml)
-    header_xml = _re.sub(r'uniqueCount="\d+"', f'uniqueCount="{new_count}"', header_xml)
+    # 取得原始 count 並加上新增數（每個新 si 至少被引用 1 次）
+    orig_count_m = _re.search(r'count="(\d+)"', header_xml)
+    if orig_count_m:
+        new_count = int(orig_count_m.group(1)) + added
+        header_xml = _re.sub(r'count="\d+"', f'count="{new_count}"', header_xml)
+    header_xml = _re.sub(r'uniqueCount="\d+"', f'uniqueCount="{new_unique}"', header_xml)
     new_ss_xml = header_xml + new_si_content + ss_xml[last_si_end:]
 
     # Step 4b: Modify sheet XML for direct-value cells
