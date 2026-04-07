@@ -3230,7 +3230,7 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
       <div class="ab-block" style="background:#e0f2fe;">
         <div style="font-size:12px;font-weight:700;color:#0369a1;margin-bottom:10px;">亞太（商品／機車／工會）</div>
         <div class="ab-g3" style="margin-bottom:10px;">
-          <div><div class="ab-lbl">資金用途</div><select name="at_fund" class="ab-sel"><option value="">請選擇</option><option value="II-3購買3C產品">II-3購買3C產品</option><option value="II-1購買交通工具">II-1購買交通工具</option><option value="II-2購買手機">II-2購買手機</option><option value="V-1生活周轉金">V-1生活周轉金</option></select></div>
+          <div><div class="ab-lbl">資金用途</div><select name="at_fund" class="ab-sel"><option value="">請選擇</option>{"".join(f'<option value="{o}" {"selected" if customer.get("adminb_fund_use","")==o else ""}>{o}</option>' for o in ["I-1教育費","I-2醫藥費","I-3出國旅遊","I-4創業","II-1購買交通工具","II-2購買手機","II-3購買3C產品","III-1交友","III-2健身&醫美","III-3美容課程","IV-1個人理財投資(含不動產、裝修、理財商品)","V-1生活周轉金","V-2整合負債(償還銀行/融資等)"])}</select></div>
           <div><div class="ab-lbl">行業類別</div><select name="at_industry" class="ab-sel"><option value="">請選擇</option>{"".join(f"<option>{o}</option>" for o in ["餐飲與服務業","製造業","建築與營造","軍警與公教","科技與資訊","運輸與物流","金融與保險業","批發與零售業","醫療與教育","農林漁牧業","自由職業","其他"])}</select></div>
           <div><div class="ab-lbl">職務</div><select name="at_role" class="ab-sel"><option value="">請選擇</option>{"".join(f"<option>{o}</option>" for o in ["行政與內勤","勞力與現場","銷售與業務","財務與專業","技術與工程","教學與醫護","管理與經營","自營與自由"])}</select></div>
         </div>
@@ -4947,7 +4947,7 @@ def _do_download_excel(request: Request, case_id: str):
                 "B15": phone,
                 "B16": email,
                 "B17": company,
-                "B18": co_area, "C18": co_phone_num,
+                "B18": co_area, "C18": co_phone_num, "E18": v("company_phone_ext"),
                 "G18": years_decimal, "H18": salary_str,
                 "B19": co_city_full, "C19": v("company_district"), "D19": v("company_address"),
                 "B21": c1_name, "D21": c1_rel_val,
