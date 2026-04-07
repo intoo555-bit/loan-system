@@ -4287,6 +4287,7 @@ async def new_customer_post(request: Request):
         company_name_detail=f.get("cmpname",""), company_phone_area=f.get("carea",""),
         company_phone_num=f.get("cnum",""), company_phone_ext=f.get("cext",""),
         company_role=f.get("crole",""), company_years=f.get("cyear",""),
+        company_months=f.get("cmon",""),
         company_salary=f.get("csal",""), company_city=f.get("ccity",""),
         company_district=f.get("cdist",""), company_address=f.get("caddr",""),
         contact1_name=f.get("c1name",""), contact1_relation=f.get("c1rel",""),
@@ -4891,14 +4892,38 @@ def _do_download_excel(request: Request, case_id: str):
 
             # === 聯絡人關係（D21）：常用詞轉換 ===
             valid_rels = ["父母","配偶","子女","兄姊","弟妹","祖父母","旁系血親","姻親","朋友","其他"]
-            rel_map = {"媽媽":"父母","爸爸":"父母","母":"父母","父":"父母","母親":"父母","父親":"父母",
-                       "妻":"配偶","夫":"配偶","老婆":"配偶","老公":"配偶","太太":"配偶","先生":"配偶",
-                       "兒":"子女","女":"子女","兒子":"子女","女兒":"子女",
-                       "哥":"兄姊","姊":"兄姊","姐":"兄姊","哥哥":"兄姊","姊姊":"兄姊","姐姐":"兄姊",
-                       "弟":"弟妹","妹":"弟妹","弟弟":"弟妹","妹妹":"弟妹",
-                       "友":"朋友","同事":"朋友","同學":"朋友"}
-            c1_rel_mapped = rel_map.get(c1_rel, c1_rel)
-            c1_rel_val = c1_rel_mapped if c1_rel_mapped in valid_rels else ""
+            def map_relation(raw):
+                if not raw: return ""
+                if raw in valid_rels: return raw
+                # 配偶相關
+                for k in ["夫妻","妻","夫","老婆","老公","太太","先生","配偶"]:
+                    if k in raw: return "配偶"
+                # 父母相關
+                for k in ["媽媽","爸爸","母親","父親","媽","爸","母","父"]:
+                    if k in raw: return "父母"
+                # 子女
+                for k in ["兒子","女兒","兒","女","子女"]:
+                    if k in raw: return "子女"
+                # 兄姊
+                for k in ["哥哥","姊姊","姐姐","哥","姊","姐","兄"]:
+                    if k in raw: return "兄姊"
+                # 弟妹
+                for k in ["弟弟","妹妹","弟","妹"]:
+                    if k in raw: return "弟妹"
+                # 祖父母
+                for k in ["祖父","祖母","爺爺","奶奶","外公","外婆","祖父母"]:
+                    if k in raw: return "祖父母"
+                # 旁系血親
+                for k in ["叔","伯","姑","舅","姨","堂","表","侄","甥","旁系"]:
+                    if k in raw: return "旁系血親"
+                # 姻親
+                for k in ["公公","婆婆","岳父","岳母","媳","婿","姻"]:
+                    if k in raw: return "姻親"
+                # 朋友
+                for k in ["朋友","友","同事","同學"]:
+                    if k in raw: return "朋友"
+                return ""
+            c1_rel_val = map_relation(c1_rel)
 
             # === 公司電話區碼（B18）===
             valid_areas = ["0","02","03","037","04","049","05","06","07","08","089","082","083"]
