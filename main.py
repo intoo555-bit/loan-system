@@ -5071,10 +5071,49 @@ def _do_download_excel(request: Request, case_id: str):
             reg_city_21 = v("reg_city").replace("台", "臺") if v("reg_city") else ""
             live_city_21 = reg_city_21 if live_same else (v("live_city").replace("台", "臺") if v("live_city") else "")
 
-            # Relationship mapping
-            valid_21_rels = ["配偶","父母","子女","兄弟姐妹","祖父母","外祖父母","孫子女","外孫子女","朋友","其他"]
-            c1_rel_21 = c1_rel if c1_rel in valid_21_rels else ""
-            c2_rel_21 = c2_rel if c2_rel in valid_21_rels else ""
+            # 關係智能判別（21 下拉清單）
+            valid_21_rels = ["配偶","父母","子女","兄弟姐妹","祖父母","外祖父母","孫子女","外孫子女","配偶之父母","配偶之兄弟姐妹","其他親屬","負責人"]
+            def map_21_rel(raw):
+                if not raw: return ""
+                if raw in valid_21_rels: return raw
+                # 配偶
+                for k in ["夫妻","配偶","老公","老婆","太太","先生","夫","妻"]:
+                    if k in raw: return "配偶"
+                # 父母
+                for k in ["媽媽","爸爸","母親","父親","媽","爸","母","父"]:
+                    if k in raw: return "父母"
+                # 子女
+                for k in ["兒子","女兒","兒","女","子女"]:
+                    if k in raw: return "子女"
+                # 兄弟姐妹
+                for k in ["哥哥","姊姊","姐姐","弟弟","妹妹","哥","姊","姐","兄","弟","妹"]:
+                    if k in raw: return "兄弟姐妹"
+                # 外祖父母
+                for k in ["外公","外婆","外祖"]:
+                    if k in raw: return "外祖父母"
+                # 祖父母
+                for k in ["祖父","祖母","爺爺","奶奶"]:
+                    if k in raw: return "祖父母"
+                # 配偶之父母
+                for k in ["公公","婆婆","岳父","岳母"]:
+                    if k in raw: return "配偶之父母"
+                # 其他親屬（含朋友/同事/同學）
+                for k in ["朋友","友","同事","同學","叔","伯","姑","舅","姨","堂","表"]:
+                    if k in raw: return "其他親屬"
+                return ""
+            c1_rel_21 = map_21_rel(c1_rel)
+            c2_rel_21 = map_21_rel(c2_rel)
+
+            # 年資 G10：填「N年」（年字保留），月份在 H10 填「M月」
+            try:
+                yr_int = int(float(co_years)) if co_years else 0
+                co_mos_21 = v("company_months") or "0"
+                mo_int = int(float(co_mos_21)) if co_mos_21 and co_mos_21 != "0" else 0
+                g10_val = f"{yr_int}年"
+                h10_val = f"{mo_int}月" if mo_int > 0 else "月"
+            except:
+                g10_val = (co_years + "年") if co_years else ""
+                h10_val = "月"
 
             return {
                 "C3": name, "E3": id_no, "J3": phone,
@@ -5084,7 +5123,8 @@ def _do_download_excel(request: Request, case_id: str):
                 "E7": v("live_address") if not live_same else v("reg_address"),
                 "C8": email,
                 "C9": company, "G9": co_phone_area + co_phone_num,
-                "C10": co_role, "E10": co_salary, "G10": (co_years + "年") if co_years else "",
+                "C10": co_role, "E10": co_salary,
+                "G10": g10_val, "H10": h10_val,
                 "C17": c1_name, "E17": c1_rel_21, "H17": c1_phone, "K17": "保密" if c1_known == "保密" else "",
                 "C18": c2_name, "E18": c2_rel_21, "H18": c2_phone, "K18": "保密" if c2_known == "保密" else "",
             }
