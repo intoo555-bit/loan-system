@@ -5057,19 +5057,76 @@ def _do_download_excel(request: Request, case_id: str):
             }
 
         elif plan_name in ("21機車12萬", "21機車25萬", "21商品"):
+            # 21 發證地短碼
             CITY_TO_21CODE = {
-                "台北市": "北縣", "新北市": "北縣", "桃園市": "桃縣", "台中市": "中縣",
-                "台南市": "南縣", "高雄市": "高縣", "基隆市": "基市",
+                "台北市": "北市", "新北市": "北縣", "桃園市": "桃縣", "台中市": "中縣",
+                "台南市": "南縣", "高雄市": "高縣", "基隆市": "基市", "新竹市": "竹市",
                 "新竹縣": "竹縣", "苗栗縣": "苗縣", "彰化縣": "彰縣", "南投縣": "投縣",
-                "雲林縣": "雲縣", "嘉義縣": "嘉縣", "屏東縣": "屏縣",
+                "雲林縣": "雲縣", "嘉義市": "嘉市", "嘉義縣": "嘉縣", "屏東縣": "屏縣",
                 "宜蘭縣": "宜縣", "花蓮縣": "花縣", "台東縣": "東縣", "澎湖縣": "澎縣",
                 "金門縣": "金門", "連江縣": "連江",
             }
-            id_place_code = CITY_TO_21CODE.get(id_place, id_place)
+            id_place_code = CITY_TO_21CODE.get(id_place, id_place) if id_place else ""
+            # 補換發（F4 用短碼，實際是 G4）：初發/補發/換發
             id_type_val = id_type if id_type in ("初發", "補發", "換發") else ""
-            # 21 uses full city name with 臺 instead of 台
-            reg_city_21 = v("reg_city").replace("台", "臺") if v("reg_city") else ""
-            live_city_21 = reg_city_21 if live_same else (v("live_city").replace("台", "臺") if v("live_city") else "")
+            # 21 地址城市用全名且「台」改「臺」
+            def city_to_21full(c):
+                if not c: return ""
+                return c.replace("台", "臺")
+            reg_city_21 = city_to_21full(v("reg_city"))
+            live_city_21 = reg_city_21 if live_same else city_to_21full(v("live_city"))
+
+            # 從範本載入 D 欄下拉選項（郵遞區號+鄉鎮區）做智能匹配
+            def match_21_district(city_full, district):
+                """把區名匹配到「郵遞區號  區名」格式"""
+                if not district:
+                    return ""
+                try:
+                    import openpyxl as _opx
+                    import warnings as _w
+                    _w.filterwarnings("ignore")
+                    _tpl = PLAN_TEMPLATE_MAP.get(plan_name)
+                    if not _tpl or not os.path.exists(_tpl):
+                        return district
+                    _wb = _opx.load_workbook(_tpl, data_only=True)
+                    if '工作表3' not in _wb.sheetnames:
+                        return district
+                    _ws = _wb['工作表3']
+                    # 找城市對應的欄位
+                    city_col = None
+                    for c_idx in range(1, 30):
+                        col_letter = _opx.utils.get_column_letter(c_idx)
+                        if _ws[f'{col_letter}1'].value == city_full:
+                            city_col = col_letter
+                            break
+                    if not city_col:
+                        return district
+                    # 遍歷該欄尋找匹配
+                    for r_idx in range(2, 40):
+                        v_cell = _ws[f'{city_col}{r_idx}'].value
+                        if v_cell and district in str(v_cell):
+                            return str(v_cell)
+                    return district
+                except Exception:
+                    return district
+
+            reg_district_21 = match_21_district(reg_city_21, v("reg_district"))
+            live_district_21 = reg_district_21 if live_same else match_21_district(live_city_21, v("live_district"))
+
+            # 日期轉民國格式（帶斜線）
+            def to_roc_slash(d):
+                if not d: return ""
+                parts = d.replace("-", "/").split("/")
+                if len(parts) != 3: return d
+                try:
+                    y = int(parts[0])
+                    if y >= 1911:  # 西元
+                        y -= 1911
+                    return f"{str(y).zfill(3)}/{parts[1].zfill(2)}/{parts[2].zfill(2)}"
+                except:
+                    return d
+            birth_roc = to_roc_slash(birth)
+            id_date_roc = to_roc_slash(id_date)
 
             # 關係智能判別（21 下拉清單）
             valid_21_rels = ["配偶","父母","子女","兄弟姐妹","祖父母","外祖父母","孫子女","外孫子女","配偶之父母","配偶之兄弟姐妹","其他親屬","負責人"]
@@ -5135,14 +5192,16 @@ def _do_download_excel(request: Request, case_id: str):
 
             return {
                 "C3": name, "E3": id_no, "J3": phone,
-                "C4": birth, "E4": id_date, "F4": id_place_code, "G4": id_type_val,
+                "C4": birth_roc, "E4": id_date_roc,
+                "F4": id_place_code, "G4": id_type_val,
+                "J4": v("live_phone"),
                 # 戶籍地址：C6=縣市、D6=鄉鎮區、E6=詳細地址
                 "C6": reg_city_21,
-                "D6": v("reg_district"),
+                "D6": reg_district_21,
                 "E6": v("reg_address"),
                 # 住家地址：同戶籍時用戶籍資料
                 "C7": reg_city_21 if live_same else live_city_21,
-                "D7": v("reg_district") if live_same else v("live_district"),
+                "D7": reg_district_21 if live_same else live_district_21,
                 "E7": v("reg_address") if live_same else v("live_address"),
                 "C8": email,
                 "C9": company, "G9": co_phone_area + co_phone_num,
