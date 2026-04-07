@@ -2797,7 +2797,7 @@ def report_web(request: Request):
     # 統計
     total_new = 0; total_supp = 0; total_active = 0; total_unverified = 0; total_closed = 0
     month_start = datetime.now().strftime("%Y-%m-01")
-    cur.execute("SELECT COUNT(*) as c FROM customers WHERE status!='ACTIVE' AND updated_at>=?", (month_start,))
+    cur.execute("SELECT COUNT(*) as c FROM customers WHERE status IN ('CLOSED','PENALTY','ABANDONED','REJECTED') AND updated_at>=?", (month_start,))
     total_closed = cur.fetchone()["c"]
 
     groups_html = ""
@@ -2805,7 +2805,7 @@ def report_web(request: Request):
         gid, gname = grp["group_id"], grp["group_name"]
         cur.execute("SELECT * FROM customers WHERE source_group_id=? AND status='ACTIVE' ORDER BY updated_at DESC", (gid,))
         active_rows = cur.fetchall()
-        cur.execute("SELECT * FROM customers WHERE source_group_id=? AND status!='ACTIVE' AND updated_at>=? ORDER BY updated_at DESC", (gid, month_start))
+        cur.execute("SELECT * FROM customers WHERE source_group_id=? AND status IN ('CLOSED','PENALTY','ABANDONED','REJECTED') AND updated_at>=? ORDER BY updated_at DESC", (gid, month_start))
         closed_rows = cur.fetchall()
 
         cats = classify_rows(active_rows)
@@ -3649,7 +3649,7 @@ def history_page(request: Request, group: str = "", month: str = "", q: str = ""
     if auth_group and not group:
         group = auth_group
 
-    query = "SELECT * FROM customers WHERE status!='ACTIVE'"
+    query = "SELECT * FROM customers WHERE status IN ('CLOSED','PENALTY','ABANDONED','REJECTED')"
     params = []
     if group:
         query += " AND source_group_id=?"
