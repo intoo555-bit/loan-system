@@ -686,6 +686,7 @@ def init_db():
         ("adminb_account", "TEXT"),
         ("adminb_industry", "TEXT"),
         ("adminb_brand", "TEXT"),
+        ("adminb_hr_role", "TEXT"),
         ("adminb_role", "TEXT"),
         ("adminb_vehicle_type", "TEXT"),
         ("adminb_engine_no", "TEXT"),
@@ -3336,7 +3337,8 @@ async def adminb_save(request: Request):
         "adminb_selected_plans": plans,
         "adminb_industry": form.get("at_industry",""),
         "adminb_brand": form.get("at_brand",""),
-        "adminb_role": form.get("at_role","") or form.get("hr_role",""),
+        "adminb_role": form.get("at_role",""),
+        "adminb_hr_role": form.get("hr_role",""),
         "adminb_contact_time": form.get("contact_time","") or form.get("hr_contact",""),
         "adminb_bank": form.get("hr_bank",""),
         "adminb_branch": form.get("hr_branch",""),
@@ -4885,10 +4887,10 @@ def _do_download_excel(request: Request, case_id: str):
             valid_industries = ["餐飲與服務業","製造業","建築與營造","軍警與公教","科技與資訊","運輸與物流","金融與保險業","批發與零售業","醫療與教育","農林漁牧業","自由職業","其他"]
             industry_val = industry if industry in valid_industries else None  # None = 不動原值
 
-            # === 職務（G17）從 adminB，無則不填 ===
+            # === 職務（G17）從 adminB，無選填則清空 ===
             valid_roles = ["行政與內勤","勞力與現場","銷售與業務","財務與專業","技術與工程","教學與醫護","管理與經營","自營與自由"]
             at_role = v("adminb_role")
-            role_val = at_role if at_role in valid_roles else None  # None = 不動原值
+            role_val = at_role if at_role in valid_roles else ""  # 不在下拉清單中則清空
 
             # === 聯絡人關係（D21）：常用詞轉換 ===
             valid_rels = ["父母","配偶","子女","兄姊","弟妹","祖父母","旁系血親","姻親","朋友","其他"]
