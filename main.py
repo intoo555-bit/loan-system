@@ -4878,7 +4878,7 @@ def _do_download_excel(request: Request, case_id: str):
             if live_status_val and live_status_val not in ("自有", "配偶", "親屬", "租屋", "宿舍"):
                 live_status_val = ""
 
-            # === 行業（D17）從 adminB，無則不填 ===
+            # === 行業（E17）從 adminB，無則不填（D17 是標籤「行業類別」不能動） ===
             industry = v("adminb_industry")
             valid_industries = ["餐飲與服務業","製造業","建築與營造","軍警與公教","科技與資訊","運輸與物流","金融與保險業","批發與零售業","醫療與教育","農林漁牧業","自由職業","其他"]
             industry_val = industry if industry in valid_industries else None  # None = 不動原值
@@ -4954,7 +4954,7 @@ def _do_download_excel(request: Request, case_id: str):
                 "B25": c1_phone,
             }
             # 行業/職務：有值填入，無值清空
-            result["D17"] = industry_val if industry_val else ""
+            result["E17"] = industry_val if industry_val else ""
             result["G17"] = role_val if role_val else ""
             # 車輛資料：有值填入，無值清空（清除範本示範資料）
             result["B7"] = v("adminb_vehicle_type") or ""   # 車輛型式
