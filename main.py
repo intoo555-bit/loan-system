@@ -5104,16 +5104,34 @@ def _do_download_excel(request: Request, case_id: str):
             c1_rel_21 = map_21_rel(c1_rel)
             c2_rel_21 = map_21_rel(c2_rel)
 
-            # 年資 G10：填「N年」（年字保留），月份在 H10 填「M月」
+            # 年資 G10：偵測儲存格類型，數值型填純數字，文字型填「N年」
+            # 月份 H10：固定文字「N月」或「月」
             try:
                 yr_int = int(float(co_years)) if co_years else 0
                 co_mos_21 = v("company_months") or "0"
                 mo_int = int(float(co_mos_21)) if co_mos_21 and co_mos_21 != "0" else 0
-                g10_val = f"{yr_int}年"
+                # G10：25萬範本是數值型，其他是文字型
+                if plan_name == "21機車25萬":
+                    g10_val = str(yr_int) if yr_int > 0 else "0"
+                else:
+                    g10_val = f"{yr_int}年"
                 h10_val = f"{mo_int}月" if mo_int > 0 else "月"
             except:
-                g10_val = (co_years + "年") if co_years else ""
+                g10_val = co_years
                 h10_val = "月"
+
+            # 月薪 E10：填純數字（4.5萬→45000）
+            try:
+                sal_clean = co_salary.replace("萬","").replace(",","").strip() if co_salary else ""
+                sal_num = float(sal_clean) if sal_clean else 0
+                if sal_num > 0 and sal_num < 1000:  # 萬為單位
+                    sal_e10 = str(int(sal_num * 10000))
+                elif sal_num >= 1000:
+                    sal_e10 = str(int(sal_num))
+                else:
+                    sal_e10 = ""
+            except:
+                sal_e10 = co_salary
 
             return {
                 "C3": name, "E3": id_no, "J3": phone,
@@ -5123,7 +5141,7 @@ def _do_download_excel(request: Request, case_id: str):
                 "E7": v("live_address") if not live_same else v("reg_address"),
                 "C8": email,
                 "C9": company, "G9": co_phone_area + co_phone_num,
-                "C10": co_role, "E10": co_salary,
+                "C10": co_role, "E10": sal_e10,
                 "G10": g10_val, "H10": h10_val,
                 "C17": c1_name, "E17": c1_rel_21, "H17": c1_phone, "K17": "保密" if c1_known == "保密" else "",
                 "C18": c2_name, "E18": c2_rel_21, "H18": c2_phone, "K18": "保密" if c2_known == "保密" else "",
