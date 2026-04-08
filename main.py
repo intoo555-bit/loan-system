@@ -233,13 +233,10 @@ def short_id() -> str:
 
 
 def get_conn():
-    """取得 DB 連線（保持原有 API 不變，向後相容）
-
-    ⚠️ 注意：此函式回傳的連線需手動 close。
-    建議改用 db_conn() context manager（Bug 5 修復）
-    """
+    """取得 DB 連線（向後相容，需手動 close）"""
     pathlib.Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(DB_PATH, timeout=10)
+    # Bug 16: timeout 從 10 加到 30 秒，給 BEGIN IMMEDIATE 排隊更多時間
+    conn = sqlite3.connect(DB_PATH, timeout=30)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     return conn
@@ -249,30 +246,26 @@ from contextlib import contextmanager
 
 @contextmanager
 def db_conn(commit: bool = False):
-    """DB 連線 context manager（Bug 5/6 修復）
-
-    用法：
-        with db_conn() as conn:           # 唯讀，例外時自動 close
-            cur = conn.cursor()
-            cur.execute("SELECT ...")
-
-        with db_conn(commit=True) as conn:  # 寫入，例外時 rollback + close
-            cur = conn.cursor()
-            cur.execute("UPDATE ...")
-            # commit=True 自動 commit
+    """DB 連線 context manager（Bug 5/6/16 修復）
 
     保證：
-    - 例外時連線一定會 close（修復 Bug 5 連線洩漏）
-    - 寫入時自動包在 transaction 內（修復 Bug 6 交易隔離）
+    - 例外時連線一定會 close（Bug 5 連線洩漏）
+    - commit=True 時用 BEGIN IMMEDIATE 立刻拿寫鎖，防 race（Bug 6/16）
+    - 例外時自動 rollback
     """
     conn = get_conn()
     try:
+        if commit:
+            # Bug 16: 切換為手動交易模式，立刻拿寫鎖（避免 read-modify-write race）
+            conn.isolation_level = None
+            conn.execute("BEGIN IMMEDIATE")
         yield conn
         if commit:
-            conn.commit()
+            conn.execute("COMMIT")
     except Exception:
         try:
-            conn.rollback()
+            if commit:
+                conn.execute("ROLLBACK")
         except Exception:
             pass
         raise
@@ -281,6 +274,49 @@ def db_conn(commit: bool = False):
             conn.close()
         except Exception:
             pass
+
+
+# =========================
+# Bug 16: 姓名並發鎖
+# =========================
+import threading as _threading
+
+_name_locks: Dict[str, "_threading.Lock"] = {}
+_name_locks_guard = _threading.Lock()
+
+
+def get_name_lock(name: str):
+    """取得姓名鎖（同名訊息排隊處理）
+
+    用法：
+        with get_name_lock("王小明"):
+            # 同名訊息會排隊
+            customer = find_active_by_name(...)
+            update_customer(...)
+
+    沒姓名時返回 dummy 鎖（不阻塞任何東西）
+    """
+    name = (name or "").strip()
+    if not name:
+        return _DummyLock()
+    with _name_locks_guard:
+        lock = _name_locks.get(name)
+        if lock is None:
+            lock = _threading.Lock()
+            _name_locks[name] = lock
+        return lock
+
+
+class _DummyLock:
+    """空鎖，給沒姓名的訊息用"""
+    def __enter__(self):
+        return self
+    def __exit__(self, *args):
+        pass
+    def acquire(self, *args, **kwargs):
+        return True
+    def release(self):
+        pass
 
 
 def normalize_id_no(id_no) -> str:
@@ -1764,6 +1800,12 @@ def handle_a_case_block(block_text, reply_token) -> Optional[str]:
         return "❌ 含禁止關鍵字，已略過"
     id_no = extract_id_no(block_text)
     name = extract_name(block_text)
+    # Bug 16: 用姓名鎖防止同客戶並發更新
+    with get_name_lock(name):
+        return _handle_a_case_block_locked(block_text, reply_token, id_no, name)
+
+
+def _handle_a_case_block_locked(block_text, reply_token, id_no, name) -> Optional[str]:
     customer = None
     if id_no:
         customer = find_active_by_id_no(id_no)
@@ -1822,20 +1864,40 @@ def handle_a_case_block(block_text, reply_token) -> Optional[str]:
 
     if ai_amount_needed:
         import threading
+        # Bug 16: 只捕獲 id_no/name/case_id/company，不要捕獲整個 customer 物件
+        cap_id_no = customer["id_no"]
+        cap_name = customer["customer_name"]
+        cap_case_id = customer["case_id"]
+        cap_company = company
+
         def ai_parse_and_update():
             import asyncio
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             try:
                 ai_amount = loop.run_until_complete(extract_approved_amount_with_ai(block_text))
-                if ai_amount:
-                    # 同時更新 approved_amount 和 route_plan history
-                    cur_route = customer["route_plan"] or ""
-                    new_r = update_company_amount_in_history(cur_route, company, ai_amount)
-                    update_customer(customer["case_id"], approved_amount=ai_amount, route_plan=new_r, from_group_id=A_GROUP_ID)
-                    push_text(A_GROUP_ID, f"💰 {customer['customer_name']} {company} 核准金額已辨識：{ai_amount}")
-                else:
-                    push_text(A_GROUP_ID, f"⚠️ {customer['customer_name']} 核准金額無法辨識\n請手動補：{customer['customer_name']} 核准金額XX萬@AI")
+                if not ai_amount:
+                    push_text(A_GROUP_ID, f"⚠️ {cap_name} 核准金額無法辨識\n請手動補：{cap_name} 核准金額XX萬@AI")
+                    return
+
+                # Bug 16: 進姓名鎖，確保不與其他訊息打架
+                with get_name_lock(cap_name):
+                    # Bug 16: 重新從 DB 讀最新狀態（不用快照）
+                    fresh = find_active_by_id_no(cap_id_no) if cap_id_no else None
+                    if not fresh:
+                        # 客戶已被結案，AI 結果無效
+                        push_text(A_GROUP_ID,
+                            f"⚠️ {cap_name} AI 辨識完成（金額：{ai_amount}），"
+                            f"但客戶在背景處理期間已被結案，未更新。\n"
+                            f"如需處理，請手動重啟案件。")
+                        return
+
+                    # 客戶還活著 → 用最新的 route 計算（不是快照）
+                    cur_route = fresh["route_plan"] or ""
+                    new_r = update_company_amount_in_history(cur_route, cap_company, ai_amount)
+                    update_customer(fresh["case_id"], approved_amount=ai_amount,
+                                    route_plan=new_r, from_group_id=A_GROUP_ID)
+                    push_text(A_GROUP_ID, f"💰 {cap_name} {cap_company} 核准金額已辨識：{ai_amount}")
             finally:
                 loop.close()
         threading.Thread(target=ai_parse_and_update, daemon=True).start()
@@ -2079,6 +2141,13 @@ def handle_disbursement_list(text: str, reply_token: str):
 def handle_bc_case_block(block_text, source_group_id, reply_token, source_text="") -> Optional[str]:
     if is_blocked(block_text):
         return "❌ 含禁止關鍵字，已略過"
+    # Bug 16: 用姓名鎖防止同客戶並發
+    name_for_lock = extract_name(block_text)
+    with get_name_lock(name_for_lock):
+        return _handle_bc_case_block_locked(block_text, source_group_id, reply_token, source_text)
+
+
+def _handle_bc_case_block_locked(block_text, source_group_id, reply_token, source_text="") -> Optional[str]:
     if is_route_order_line(extract_first_line(block_text)):
         return handle_route_order_block(block_text, source_group_id, reply_token)
     # 單公司核准/婉拒格式：03/04-黃娫柔-房地核准20萬
@@ -2301,6 +2370,28 @@ def process_event(event: dict):
                 results.append(f"第{idx}筆：{result}" if len(blocks) > 1 else result)
         if results:
             reply_text(reply_token, "\n".join(results))
+        return
+
+    # Bug 2: 未知群組 — 自動註冊為 UNASSIGNED 待審 + 主動回覆
+    if group_id:
+        try:
+            with db_conn(commit=True) as conn:
+                cur = conn.cursor()
+                cur.execute("SELECT 1 FROM groups WHERE group_id=?", (group_id,))
+                if not cur.fetchone():
+                    # 自動建立待審群組
+                    cur.execute("""INSERT INTO groups
+                        (group_id, group_name, group_type, is_active, created_at)
+                        VALUES (?, ?, 'UNASSIGNED', 0, ?)""",
+                        (group_id, f"待審群組 {group_id[:8]}", now_iso()))
+                    # 主動回覆
+                    reply_text(reply_token,
+                        f"⚠️ 此群組尚未註冊\n"
+                        f"群組 ID：{group_id}\n"
+                        f"請管理員到後台「群組管理」設定類型並啟用，"
+                        f"設定完成後即可正常處理訊息。")
+        except Exception as e:
+            print(f"[unknown_group] failed: {e}")
 
 
 @app.post("/callback")
@@ -2374,9 +2465,19 @@ def reset_data_page(request: Request):
     </body></html>""")
 
 
+VALID_GROUP_TYPES = {"SALES_GROUP", "ADMIN_GROUP", "A_GROUP", "UNASSIGNED"}
+
 @app.post("/admin/add_group")
 async def add_group(request: Request):
-    """新增群組 API。Body: {group_id, group_name, group_type: SALES_GROUP/ADMIN_GROUP/A_GROUP}"""
+    """新增群組 API（Bug 3 修復：類型 whitelist + 防覆蓋）
+
+    Body: {group_id, group_name, group_type: SALES_GROUP/ADMIN_GROUP/A_GROUP}
+
+    行為：
+    - 若 group_id 已存在 → 改用 UPDATE 只更新 name/type/linked，**保留 password_hash**
+    - 若不存在 → INSERT 新群組
+    - 類型必須在 whitelist 內，否則拒絕
+    """
     role = check_auth(request)
     if role != "admin":
         return JSONResponse({"status": "error", "message": "無權限"}, status_code=403)
@@ -2386,22 +2487,36 @@ async def add_group(request: Request):
     gtype = body.get("group_type", "SALES_GROUP").strip()
     if not gid or not gname:
         return {"status": "error", "message": "group_id 和 group_name 必填"}
+    # Bug 3-1: 類型 whitelist 驗證
+    if gtype not in VALID_GROUP_TYPES:
+        return {"status": "error",
+                "message": f"無效的群組類型：{gtype}（需為 SALES_GROUP/ADMIN_GROUP/A_GROUP）"}
     linked = body.get("linked_sales_group_id", "").strip()
-    conn = get_conn(); cur = conn.cursor()
     try:
-        cur.execute("""INSERT OR REPLACE INTO groups
-            (group_id,group_name,group_type,is_active,linked_sales_group_id,created_at)
-            VALUES (?,?,?,1,?,?)""",
+        with db_conn(commit=True) as conn:
+            cur = conn.cursor()
+            # Bug 3-2: 先檢查是否已存在
+            cur.execute("SELECT 1 FROM groups WHERE group_id=?", (gid,))
+            existing = cur.fetchone()
+            if existing:
+                # 已存在 → UPDATE 不動 password_hash 和 created_at
+                cur.execute("""UPDATE groups
+                    SET group_name=?, group_type=?, is_active=1, linked_sales_group_id=?
+                    WHERE group_id=?""",
+                    (gname, gtype, linked or None, gid))
+                msg = f"已更新群組：{gname}（{gtype}）— 密碼保留不動"
+            else:
+                # 新增
+                cur.execute("""INSERT INTO groups
+                    (group_id,group_name,group_type,is_active,linked_sales_group_id,created_at)
+                    VALUES (?,?,?,1,?,?)""",
                     (gid, gname, gtype, linked or None, now_iso()))
-        conn.commit()
-        msg = f"已新增/更新群組：{gname}({gtype})"
-        if linked:
-            msg += f"，對應業務群：{get_group_name(linked)}"
-        return {"status": "ok", "message": msg}
+                msg = f"已新增群組：{gname}（{gtype}）— 請到「密碼管理」設定密碼"
+            if linked:
+                msg += f"，對應業務群：{get_group_name(linked)}"
+            return {"status": "ok", "message": msg}
     except Exception as e:
         return {"status": "error", "message": str(e)}
-    finally:
-        conn.close()
 
 
 
@@ -5285,23 +5400,20 @@ def _fill_qiaomei_pdf(r: dict) -> bytes:
         c2.save()
         overlay2.seek(0)
 
-        # 合併
-        reader = PdfReader(template_path)
-        ov1_reader = PdfReader(overlay1)
-        writer = PdfWriter()
-        page1 = reader.pages[0]
-        page1.merge_page(ov1_reader.pages[0])
-        writer.add_page(page1)
-        if len(reader.pages) >= 2:
-            ov2_reader = PdfReader(overlay2)
-            page2 = reader.pages[1]
-            page2.merge_page(ov2_reader.pages[0])
-            writer.add_page(page2)
-        for i in range(2, len(reader.pages)):
-            writer.add_page(reader.pages[i])
+        # 用 pikepdf 合併（pypdf 對此範本會把所有字元重複輸出）
+        # 必須傳 Rectangle 強制使用 mediabox 而非 trimbox（範本 trimbox 會造成 ~10pt 偏移）
+        import pikepdf
+        src = pikepdf.open(template_path)
+        ov1_pdf = pikepdf.open(overlay1)
+        rect1 = pikepdf.Rectangle(0, 0, p1_w, p1_h)
+        src.pages[0].add_overlay(ov1_pdf.pages[0], rect1)
+        if len(src.pages) >= 2:
+            ov2_pdf = pikepdf.open(overlay2)
+            rect2 = pikepdf.Rectangle(0, 0, p2_w, p2_h)
+            src.pages[1].add_overlay(ov2_pdf.pages[0], rect2)
 
         out = io.BytesIO()
-        writer.write(out)
+        src.save(out)
         out.seek(0)
         return out.getvalue()
     except Exception as e:
