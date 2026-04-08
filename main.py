@@ -1359,8 +1359,7 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
     section_map: Dict[str, List[str]] = {}
     for row in all_rows:
         section = row["report_section"] or row["current_company"] or row["company"] or "送件"
-        section = normalize_section(section)
-        section = normalize_section(section)
+        section = normalize_section(section)  # Bug 20: 移除多餘的第二次呼叫
         updated = row["updated_at"] or ""
         date_str = updated[5:10].replace("-", "/") if updated else ""
         company_str = row["current_company"] or row["company"] or ""
@@ -3709,24 +3708,31 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
     }}
     function qmSignAndDownload() {{
       if (!qmCanvas) {{ alert('簽名版未載入'); return; }}
-      // 檢查是否有簽名（檢查 canvas 是否為純白）
       var imgData = qmCtx.getImageData(0, 0, qmCanvas.width, qmCanvas.height).data;
       var hasInk = false;
       for (var i = 3; i < imgData.length; i += 40) {{ if (imgData[i] > 0) {{ hasInk = true; break; }} }}
       if (!hasInk) {{ alert('請先簽名'); return; }}
       var dataUrl = qmCanvas.toDataURL('image/png');
-      // 儲存簽名後直接下載
-      fetch('/adminb/save-signature', {{
-        method: 'POST',
-        headers: {{'Content-Type': 'application/json'}},
-        body: JSON.stringify({{case_id: '{h(case_id)}', type: 'both', data: dataUrl}})
-      }}).then(r => r.json()).then(d => {{
-        if (d.ok) {{
-          window.location.href = '/adminb/download-qiaomei?case_id={h(case_id)}';
-        }} else {{
-          alert('簽名儲存失敗：' + (d.error || '未知錯誤'));
-        }}
-      }}).catch(function(e) {{ alert('錯誤：' + e); }});
+      // 1. 先送出整個 adminB 表單（含型號/IMEI/信用卡等補充資料）
+      var form = document.querySelector('form');
+      var fd = new FormData(form);
+      fetch('/adminb/save', {{ method: 'POST', body: fd }})
+        .then(function() {{
+          // 2. 存簽名
+          return fetch('/adminb/save-signature', {{
+            method: 'POST',
+            headers: {{'Content-Type': 'application/json'}},
+            body: JSON.stringify({{case_id: '{h(case_id)}', type: 'both', data: dataUrl}})
+          }});
+        }})
+        .then(r => r.json()).then(d => {{
+          if (d.ok) {{
+            // 3. 下載 PDF
+            window.location.href = '/adminb/download-qiaomei?case_id={h(case_id)}';
+          }} else {{
+            alert('簽名儲存失敗：' + (d.error || '未知錯誤'));
+          }}
+        }}).catch(function(e) {{ alert('錯誤：' + e); }});
     }}
     window.addEventListener('DOMContentLoaded', qmInit);
     </script>
