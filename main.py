@@ -4916,7 +4916,6 @@ def _fill_qiaomei_pdf(r: dict) -> bytes:
 
         # === 解析日期為年/月/日 ===
         def parse_ymd(d):
-            """民國 086/12/15 或西元 1989/09/16 → (年, 月, 日)"""
             if not d:
                 return ("", "", "")
             parts = d.replace("-", "/").split("/")
@@ -4932,70 +4931,78 @@ def _fill_qiaomei_pdf(r: dict) -> bytes:
         b_y, b_m, b_d = parse_ymd(v("birth_date"))
         i_y, i_m, i_d = parse_ymd(v("id_issue_date"))
 
-        # 申請日期 = 今天（民國）
         from datetime import datetime as _dt
         now = _dt.now()
         ap_y = str(now.year - 1911)
         ap_m = str(now.month)
         ap_d = str(now.day)
 
-        # 身分證 10 字元，每格 19 點寬，從 x=98 開始
         id_no_str = v("id_no").upper()
 
+        # 喬美補充資料
+        qm_model = v("product_model")  # 手機型號
+        qm_imei = v("product_imei")    # IMEI
+
+        # === 用矩形位置定位欄位 ===
+        # 每個 row 的 rect: (x0, top, x1, bottom)
+        # 欄位列表：(x_value_start, row_top, value, [max_width])
+        # row_top 會自動轉為 baseline = page_h - (top + 16)
         fields_p1 = [
-            # === 申請日期（基本資料區頂部）===
-            (200, 62, ap_y),     # 年
-            (224, 62, ap_m),     # 月
-            (250, 62, ap_d),     # 日
-            # === 申請人姓名 ===
-            (90, 81, v("customer_name")),
-            # === 出生日期（年/月/日分開）===
-            (210, 80, b_y),      # 年
-            (240, 80, b_m),      # 月
-            (267, 80, b_d),      # 日
-            # === 婚姻狀況（標籤在 153）===
-            # 暫不勾選（無法從網站對應）
-            # === 教育程度（標籤在 179）===
-            # 暫不勾選
-            # === 戶籍地址（標籤 44, 204）===
-            (90, 200, reg_addr),
-            # === 住宅地址（標籤 44, 228）===
-            (90, 224, live_addr if not live_same else ""),
-            # 同戶籍 checkbox (標籤 115, 226)
-            ("CHECK_SAME", 226, "1" if live_same else ""),
-            # === 電子帳單 E-mail (44, 256) ===
-            (95, 252, v("email")),
-            # === 戶籍電話 (44, 275) ===
-            (90, 271, v("reg_phone")),
-            # === 住家電話 (170, 276) ===
-            (215, 271, v("live_phone")),
-            # === 行動電話 (44, 301) ===
-            (90, 297, v("phone")),
-            # === 居住時間 (44, 325) ===
-            # 暫略
-            # === LINE ID (44, 367) ===
-            (90, 363, v("line_id")),
-            # === 公司名稱 (39, 412) ===
-            (95, 408, v("company_name_detail")),
-            # === 公司電話 (149, 412) - 標籤 + 分機 ===
-            (190, 408, co_phone),
-            # === 公司地址 (39, 431) ===
-            (95, 427, v("company_city") + v("company_district") + v("company_address")),
-            # === 職稱 (39, 451) ===
-            (90, 447, v("company_role")),
-            # === 年資 (148, 451 區域) ===
-            (175, 447, v("company_years")),  # 年數
-            (210, 447, v("company_months")),  # 月數
-            # === 月薪 (39, 472) ===
-            (90, 468, v("company_salary")),
-            # === 親屬姓名 (310, 148) ===
-            (370, 144, v("contact1_name")),
-            (430, 144, v("contact1_relation")),
-            (480, 144, v("contact1_phone")),
-            # === 親友姓名 (310, 196) ===
-            (370, 192, v("contact2_name")),
-            (430, 192, v("contact2_relation")),
-            (480, 192, v("contact2_phone")),
+            # === 基本資料區 ===
+            # 申請人姓名 row top=71, label "申請人姓名" 約佔 75 寬, value 從 x=100 開始
+            (100, 71, v("customer_name"), 180),
+            # 出生日期 (rect 195-291 top=73 width=96) - 年月日分填
+            (200, 73, b_y, 25),
+            (228, 73, b_m, 22),
+            (252, 73, b_d, 22),
+            # 身分證字號 row 96 - 用 ID_GRID 特殊處理
+            # 發證日期 row 120 - 標籤 "身分證發證日期" + 年月日
+            (105, 120, i_y, 25),
+            (133, 120, i_m, 22),
+            (157, 120, i_d, 22),
+            # 發證地點 (171, 120) w=66 - dropdown box
+            (200, 120, v("id_issue_place") + v("id_issue_type"), 90),
+            # 戶籍地址 row 193
+            (100, 193, reg_addr, 188),
+            # 住宅地址 row 217
+            (100, 217, live_addr if not live_same else "", 188),
+            # 同戶籍 checkbox
+            ("CHECK_SAME", 217, "1" if live_same else ""),
+            # 電子帳單 E-mail row 242
+            (95, 242, v("email"), 195),
+            # 戶籍電話 row 266 (label 44+box 至 163)
+            (100, 266, v("reg_phone"), 60),
+            # 住家電話 (163, 266) w=47
+            (220, 266, v("live_phone"), 65),
+            # 行動電話 row 291
+            (100, 291, v("phone"), 188),
+            # LINE ID row 364
+            (100, 364, v("line_id"), 188),
+            # === 職業資料區 ===
+            # 公司名稱 + 公司電話 + 分機 row 405
+            (95, 405, v("company_name_detail"), 50),
+            (148, 405, co_phone, 90),
+            (245, 405, v("company_phone_ext"), 45),
+            # 公司地址 row 425
+            (95, 425, v("company_city") + v("company_district") + v("company_address"), 195),
+            # 職稱 + 年資 row 445
+            (95, 445, v("company_role"), 75),
+            (180, 445, v("company_years"), 25),
+            (215, 445, v("company_months"), 25),
+            # 月薪 row 465
+            (95, 465, v("company_salary"), 195),
+            # === 右側聯絡人區 ===
+            # 親屬姓名 row 138
+            (350, 138, v("contact1_name"), 80),
+            (440, 138, v("contact1_relation"), 50),
+            (495, 138, v("contact1_phone"), 85),
+            # 親友姓名 row 211
+            (350, 211, v("contact2_name"), 80),
+            (440, 211, v("contact2_relation"), 50),
+            (495, 211, v("contact2_phone"), 85),
+            # === 補充資料：手機型號 + IMEI（畫面下方藍色區）===
+            (305, 315, qm_model, 200),
+            (305, 339, qm_imei, 200),
         ]
 
         sig_app = r.get("signature_applicant", "") or ""
@@ -5013,52 +5020,86 @@ def _fill_qiaomei_pdf(r: dict) -> bytes:
             except Exception as ex:
                 print(f"draw_signature error: {ex}")
 
-        # === Page 1 疊加層 (612 x 859) ===
-        overlay1 = io.BytesIO()
-        c1 = canvas.Canvas(overlay1, pagesize=(612, 859))
-        c1.setFont(font_name, 8)  # 縮小字型避免溢出
+        # === Page 1 疊加層 ===
+        # 用 PDF 實際 mediabox（612.288 x 858.898）
+        from pypdf import PdfReader as _PR
+        _r = _PR(template_path)
+        p1_w = float(_r.pages[0].mediabox.width)
+        p1_h = float(_r.pages[0].mediabox.height)
+        def yp1(top): return p1_h - top  # PDF y 反轉
 
-        # 一般欄位
-        for item in fields_p1:
-            x, top, val = item
+        overlay1 = io.BytesIO()
+        c1 = canvas.Canvas(overlay1, pagesize=(p1_w, p1_h))
+        DEFAULT_FONT_SIZE = 8
+
+        def draw_value_in_box(c, x, top, val, max_w):
+            """在 row top 開始的框內繪製文字，自動縮小字型避免溢出"""
             if not val:
+                return
+            val = str(val)
+            font_size = DEFAULT_FONT_SIZE
+            # 估算文字寬度（中文字 ≈ font_size，英數字 ≈ font_size * 0.55）
+            def estimate_w(s, fs):
+                w = 0
+                for ch in s:
+                    w += fs if ord(ch) > 127 else fs * 0.55
+                return w
+            while font_size >= 5 and estimate_w(val, font_size) > max_w:
+                font_size -= 0.5
+            c.setFont(font_name, font_size)
+            # baseline = row_top + (row_height - font_size) / 2 + font_size
+            # row 通常 24 高，文字垂直置中
+            baseline_top = top + 24 - (24 - font_size) / 2 - 2
+            c.drawString(x, yp1(baseline_top), val)
+            c.setFont(font_name, DEFAULT_FONT_SIZE)
+
+        for item in fields_p1:
+            if len(item) == 4:
+                x, top, val, max_w = item
+            else:
+                x, top, val = item
+                max_w = 180
+            if not val and val != 0:
                 continue
             if x == "CHECK_SAME":
-                # 同戶籍 checkbox：在標籤左側畫個 ✓
+                # 同戶籍 checkbox（在標籤右側）
                 c1.setFont(font_name, 11)
-                c1.drawString(108, yp(top + 6), "✓")
-                c1.setFont(font_name, 8)
+                c1.drawString(140, yp1(top + 16), "✓")
+                c1.setFont(font_name, DEFAULT_FONT_SIZE)
                 continue
-            c1.drawString(x, yp(top + 6), str(val))
+            draw_value_in_box(c1, x, top, val, max_w)
 
         # === 身分證字號 10 格 ===
+        # rect: (98+19i, 96, 19w, 24h) for i in 0..9
         if id_no_str:
-            c1.setFont(font_name, 12)
-            id_x_start = 98
-            id_cell_w = 19
-            id_y = yp(96 + 16)  # 框內中央
+            c1.setFont(font_name, 11)
             for i, ch in enumerate(id_no_str[:10]):
-                # 每格中央偏移
-                cx = id_x_start + i * id_cell_w + (id_cell_w - 7) / 2
-                c1.drawString(cx, id_y, ch)
-            c1.setFont(font_name, 8)
+                # 每格中央：x = 98 + i*19 + (19-6)/2
+                cx = 98 + i * 19 + 6.5
+                c1.drawString(cx, yp1(96 + 17), ch)
+            c1.setFont(font_name, DEFAULT_FONT_SIZE)
 
-        # 申請人正楷簽名（避開合約區，往上移到簽名欄位上方）
-        draw_signature(c1, sig_app, 100, yp(800), 130, 25)
-        # 法定代理人不簽（依用戶要求）
+        # 申請人正楷簽名（在簽名標籤位置：53, 791）
+        draw_signature(c1, sig_app, 130, yp1(805), 110, 22)
+        # 法定代理人不簽
 
         c1.showPage()
         c1.save()
         overlay1.seek(0)
 
-        # === Page 2 疊加層 (542 x 746) ===
-        # 立約定書人位置 (268, 725)
-        page2_h = 746
-        def yp2(top): return page2_h - top
+        # === Page 2 疊加層 ===
+        p2_w = float(_r.pages[1].mediabox.width) if len(_r.pages) >= 2 else 541.68
+        p2_h = float(_r.pages[1].mediabox.height) if len(_r.pages) >= 2 else 745.68
+        def yp2(top): return p2_h - top
         overlay2 = io.BytesIO()
-        c2 = canvas.Canvas(overlay2, pagesize=(542, 746))
+        c2 = canvas.Canvas(overlay2, pagesize=(p2_w, p2_h))
         # 立約定書人簽名 → 標籤在 (268, 725)，簽名在標籤右側
-        draw_signature(c2, sig_app, 335, yp2(740), 100, 22)
+        draw_signature(c2, sig_app, 330, yp2(737), 100, 22)
+        # 日期：今天民國年（標籤在 415, 721）
+        c2.setFont(font_name, 9)
+        c2.drawString(440, yp2(733), ap_y)
+        c2.drawString(475, yp2(733), ap_m)
+        c2.drawString(505, yp2(733), ap_d)
         c2.showPage()
         c2.save()
         overlay2.seek(0)
