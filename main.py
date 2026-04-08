@@ -3360,6 +3360,15 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
           <div><div class="ab-lbl">手機型號</div><input name="qm_model" class="ab-inp" placeholder="iPhone 16 Pro Max" value="{h(customer.get('product_model','') or '')}"></div>
           <div><div class="ab-lbl">IMEI</div><input name="qm_imei" class="ab-inp" placeholder="356194482654922" value="{h(customer.get('product_imei','') or '')}"></div>
         </div>
+        <div style="background:#fff;border:1px dashed #5b21b6;border-radius:8px;padding:12px;margin:10px 0;">
+          <div style="font-size:12px;font-weight:700;color:#5b21b6;margin-bottom:8px;">📝 電子簽名（一鍵簽名+下載 PDF）</div>
+          <div style="font-size:11px;color:#6b5b8e;margin-bottom:8px;">說明：下方畫板簽一次，即可同時用於 第1頁「申請人正楷簽名」+ 第2頁「立約定書人」</div>
+          <canvas id="qmSignPad" width="500" height="150" style="border:2px solid #5b21b6;background:#fff;cursor:crosshair;display:block;border-radius:6px;width:100%;max-width:500px;"></canvas>
+          <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;">
+            <button type="button" onclick="qmClear()" style="padding:6px 14px;background:#888;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:13px;">🗑 清除</button>
+            <button type="button" onclick="qmSignAndDownload()" style="padding:6px 14px;background:#e91e63;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:13px;font-weight:700;">✍️ 簽名並下載喬美 PDF</button>
+          </div>
+        </div>
         <div style="font-size:11px;font-weight:700;color:#5b21b6;margin-bottom:8px;">信用資料</div>
         <div class="ab-g3">
           <div><div class="ab-lbl">發卡銀行</div><input name="qm_cbank" class="ab-inp" placeholder="星展銀行" value="{h(customer.get('adminb_credit_bank','') or '')}"></div>
@@ -3379,60 +3388,62 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
       <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
         <button type="submit" class="btn-save">💾 儲存資料</button>
         <a href="/adminb/download-excel?case_id={h(case_id)}" class="btn-dl" onclick="return confirm('將根據勾選的方案下載 Excel，確定嗎？')">📥 下載EXCEL</a>
-        <button type="button" class="btn-dl" style="background:#7c4dff;border-color:#7c4dff;" onclick="openSignPad('applicant')">✍️ 申請人簽名</button>
-        <button type="button" class="btn-dl" style="background:#7c4dff;border-color:#7c4dff;" onclick="openSignPad('legal_rep')">✍️ 法定代理人簽名</button>
-        <a href="/adminb/download-qiaomei?case_id={h(case_id)}" class="btn-dl" style="background:#e91e63;border-color:#e91e63;">📄 下載喬美 PDF</a>
       </div>
-      <div style="font-size:12px;color:#8a7a68;margin-top:8px;">請先儲存資料、簽名後再下載 PDF</div>
+      <div style="font-size:12px;color:#8a7a68;margin-top:8px;">請先儲存資料再下載；喬美 PDF 請使用「補充資料」區的「簽名並下載」按鈕</div>
     </div>
 
-    <!-- 簽名 Modal -->
-    <div id="signModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9999;align-items:center;justify-content:center;">
-      <div style="background:#fff;padding:20px;border-radius:10px;max-width:520px;">
-        <h3 id="signTitle" style="margin:0 0 10px;">簽名</h3>
-        <canvas id="signCanvas" width="480" height="200" style="border:2px solid #999;background:#fff;cursor:crosshair;display:block;"></canvas>
-        <div style="margin-top:10px;display:flex;gap:10px;">
-          <button type="button" onclick="clearSign()" style="padding:8px 16px;background:#999;color:#fff;border:none;border-radius:6px;cursor:pointer;">清除</button>
-          <button type="button" onclick="saveSign()" style="padding:8px 16px;background:#4caf50;color:#fff;border:none;border-radius:6px;cursor:pointer;">儲存</button>
-          <button type="button" onclick="closeSignPad()" style="padding:8px 16px;background:#999;color:#fff;border:none;border-radius:6px;cursor:pointer;">取消</button>
-        </div>
-      </div>
-    </div>
     <script>
-    var signType = '';
-    var signCanvas, signCtx, signing = false;
-    function openSignPad(type) {{
-      signType = type;
-      document.getElementById('signTitle').textContent = type === 'applicant' ? '申請人正楷簽名' : '法定代理人正楷簽名';
-      document.getElementById('signModal').style.display = 'flex';
-      signCanvas = document.getElementById('signCanvas');
-      signCtx = signCanvas.getContext('2d');
-      signCtx.clearRect(0, 0, signCanvas.width, signCanvas.height);
-      signCtx.lineWidth = 2;
-      signCtx.lineCap = 'round';
-      signCtx.strokeStyle = '#000';
-      signCanvas.onmousedown = function(e) {{ signing = true; signCtx.beginPath(); signCtx.moveTo(e.offsetX, e.offsetY); }};
-      signCanvas.onmousemove = function(e) {{ if(!signing) return; signCtx.lineTo(e.offsetX, e.offsetY); signCtx.stroke(); }};
-      signCanvas.onmouseup = function() {{ signing = false; }};
-      signCanvas.onmouseleave = function() {{ signing = false; }};
-      // Touch
-      signCanvas.ontouchstart = function(e) {{ e.preventDefault(); var t = e.touches[0]; var r = signCanvas.getBoundingClientRect(); signing = true; signCtx.beginPath(); signCtx.moveTo(t.clientX - r.left, t.clientY - r.top); }};
-      signCanvas.ontouchmove = function(e) {{ e.preventDefault(); if(!signing) return; var t = e.touches[0]; var r = signCanvas.getBoundingClientRect(); signCtx.lineTo(t.clientX - r.left, t.clientY - r.top); signCtx.stroke(); }};
-      signCanvas.ontouchend = function() {{ signing = false; }};
+    // 喬美簽名 canvas（補充資料區）
+    var qmCanvas, qmCtx, qmDrawing = false;
+    function qmInit() {{
+      qmCanvas = document.getElementById('qmSignPad');
+      if (!qmCanvas) return;
+      qmCtx = qmCanvas.getContext('2d');
+      qmCtx.lineWidth = 2.5;
+      qmCtx.lineCap = 'round';
+      qmCtx.strokeStyle = '#000';
+      function getXY(e) {{
+        var r = qmCanvas.getBoundingClientRect();
+        var sx = qmCanvas.width / r.width;
+        var sy = qmCanvas.height / r.height;
+        if (e.touches) {{
+          return [(e.touches[0].clientX - r.left) * sx, (e.touches[0].clientY - r.top) * sy];
+        }}
+        return [(e.clientX - r.left) * sx, (e.clientY - r.top) * sy];
+      }}
+      qmCanvas.onmousedown = function(e) {{ var p = getXY(e); qmDrawing = true; qmCtx.beginPath(); qmCtx.moveTo(p[0], p[1]); }};
+      qmCanvas.onmousemove = function(e) {{ if(!qmDrawing) return; var p = getXY(e); qmCtx.lineTo(p[0], p[1]); qmCtx.stroke(); }};
+      qmCanvas.onmouseup = function() {{ qmDrawing = false; }};
+      qmCanvas.onmouseleave = function() {{ qmDrawing = false; }};
+      qmCanvas.ontouchstart = function(e) {{ e.preventDefault(); var p = getXY(e); qmDrawing = true; qmCtx.beginPath(); qmCtx.moveTo(p[0], p[1]); }};
+      qmCanvas.ontouchmove = function(e) {{ e.preventDefault(); if(!qmDrawing) return; var p = getXY(e); qmCtx.lineTo(p[0], p[1]); qmCtx.stroke(); }};
+      qmCanvas.ontouchend = function() {{ qmDrawing = false; }};
     }}
-    function clearSign() {{ signCtx.clearRect(0, 0, signCanvas.width, signCanvas.height); }}
-    function closeSignPad() {{ document.getElementById('signModal').style.display = 'none'; }}
-    function saveSign() {{
-      var dataUrl = signCanvas.toDataURL('image/png');
+    function qmClear() {{
+      if (qmCtx) qmCtx.clearRect(0, 0, qmCanvas.width, qmCanvas.height);
+    }}
+    function qmSignAndDownload() {{
+      if (!qmCanvas) {{ alert('簽名版未載入'); return; }}
+      // 檢查是否有簽名（檢查 canvas 是否為純白）
+      var imgData = qmCtx.getImageData(0, 0, qmCanvas.width, qmCanvas.height).data;
+      var hasInk = false;
+      for (var i = 3; i < imgData.length; i += 40) {{ if (imgData[i] > 0) {{ hasInk = true; break; }} }}
+      if (!hasInk) {{ alert('請先簽名'); return; }}
+      var dataUrl = qmCanvas.toDataURL('image/png');
+      // 儲存簽名後直接下載
       fetch('/adminb/save-signature', {{
         method: 'POST',
         headers: {{'Content-Type': 'application/json'}},
-        body: JSON.stringify({{case_id: '{h(case_id)}', type: signType, data: dataUrl}})
+        body: JSON.stringify({{case_id: '{h(case_id)}', type: 'both', data: dataUrl}})
       }}).then(r => r.json()).then(d => {{
-        if (d.ok) {{ alert('簽名已儲存'); closeSignPad(); }}
-        else alert('儲存失敗：' + (d.error || '未知錯誤'));
-      }});
+        if (d.ok) {{
+          window.location.href = '/adminb/download-qiaomei?case_id={h(case_id)}';
+        }} else {{
+          alert('簽名儲存失敗：' + (d.error || '未知錯誤'));
+        }}
+      }}).catch(function(e) {{ alert('錯誤：' + e); }});
     }}
+    window.addEventListener('DOMContentLoaded', qmInit);
     </script>
     </form>
     </div>
@@ -4810,9 +4821,14 @@ async def adminb_save_signature(request: Request):
         sig_data = data.get("data", "")
         if not case_id or not sig_type or not sig_data:
             return JSONResponse({"ok": False, "error": "缺少參數"})
-        col = "signature_applicant" if sig_type == "applicant" else "signature_legal_rep"
         conn = get_conn(); cur = conn.cursor()
-        cur.execute(f"UPDATE customers SET {col}=? WHERE case_id=?", (sig_data, case_id))
+        if sig_type == "both":
+            # 同一個簽名同時存到申請人和立約定書人
+            cur.execute("UPDATE customers SET signature_applicant=?, signature_legal_rep=? WHERE case_id=?",
+                        (sig_data, sig_data, case_id))
+        else:
+            col = "signature_applicant" if sig_type == "applicant" else "signature_legal_rep"
+            cur.execute(f"UPDATE customers SET {col}=? WHERE case_id=?", (sig_data, case_id))
         conn.commit(); conn.close()
         return JSONResponse({"ok": True})
     except Exception as e:
@@ -4915,15 +4931,6 @@ def _fill_qiaomei_pdf(r: dict) -> bytes:
             (480, 196, v("contact2_relation")),  # 親友關係
         ]
 
-        # 建立疊加層
-        overlay = io.BytesIO()
-        c = canvas.Canvas(overlay, pagesize=(612, 859))
-        c.setFont(font_name, 9)
-        for x, top, val in fields_p1:
-            if val:
-                c.drawString(x, yp(top + 6), str(val))
-
-        # 簽名圖
         sig_app = r.get("signature_applicant", "") or ""
         sig_leg = r.get("signature_legal_rep", "") or ""
 
@@ -4936,31 +4943,49 @@ def _fill_qiaomei_pdf(r: dict) -> bytes:
                 from reportlab.lib.utils import ImageReader
                 img = ImageReader(io.BytesIO(img_bytes))
                 c.drawImage(img, x, y, width=w, height=h, mask='auto')
-            except Exception:
-                pass
+            except Exception as ex:
+                print(f"draw_signature error: {ex}")
 
-        # 申請人正楷簽名 (53, 791) → 在標籤右側 / 下方
-        draw_signature(c, sig_app, 130, yp(810), 120, 30)
-        # 法定代理人正楷簽名 (303, 791)
-        draw_signature(c, sig_leg, 380, yp(810), 120, 30)
+        # === Page 1 疊加層 (612 x 859) ===
+        overlay1 = io.BytesIO()
+        c1 = canvas.Canvas(overlay1, pagesize=(612, 859))
+        c1.setFont(font_name, 9)
+        for x, top, val in fields_p1:
+            if val:
+                c1.drawString(x, yp(top + 6), str(val))
+        # 申請人正楷簽名（標籤在 53,791）
+        draw_signature(c1, sig_app, 140, yp(805), 100, 22)
+        # 法定代理人正楷簽名（標籤在 303,791）
+        draw_signature(c1, sig_leg, 410, yp(805), 100, 22)
+        c1.showPage()
+        c1.save()
+        overlay1.seek(0)
 
-        c.showPage()
-        c.save()
-        overlay.seek(0)
+        # === Page 2 疊加層 (542 x 746) ===
+        # 立約定書人位置 (268, 725)
+        page2_h = 746
+        def yp2(top): return page2_h - top
+        overlay2 = io.BytesIO()
+        c2 = canvas.Canvas(overlay2, pagesize=(542, 746))
+        # 立約定書人簽名 → 標籤在 (268, 725)，簽名在標籤右側
+        draw_signature(c2, sig_app, 335, yp2(740), 100, 22)
+        c2.showPage()
+        c2.save()
+        overlay2.seek(0)
 
-        # 合併疊加層到原 PDF
-        from pypdf import PdfReader as Reader2, PdfWriter as Writer2
-        reader = Reader2(template_path)
-        overlay_reader = Reader2(overlay)
-        writer = Writer2()
-
-        # Page 1 with overlay
+        # 合併
+        reader = PdfReader(template_path)
+        ov1_reader = PdfReader(overlay1)
+        writer = PdfWriter()
         page1 = reader.pages[0]
-        page1.merge_page(overlay_reader.pages[0])
+        page1.merge_page(ov1_reader.pages[0])
         writer.add_page(page1)
-
-        # Other pages unchanged
-        for i in range(1, len(reader.pages)):
+        if len(reader.pages) >= 2:
+            ov2_reader = PdfReader(overlay2)
+            page2 = reader.pages[1]
+            page2.merge_page(ov2_reader.pages[0])
+            writer.add_page(page2)
+        for i in range(2, len(reader.pages)):
             writer.add_page(reader.pages[i])
 
         out = io.BytesIO()
