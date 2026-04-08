@@ -4850,9 +4850,15 @@ def adminb_download_qiaomei(request: Request, case_id: str = ""):
         if not row:
             return JSONResponse({"error": "找不到客戶"}, status_code=404)
         r = dict(row)
-        pdf_bytes = _fill_qiaomei_pdf(r)
+        try:
+            pdf_bytes = _fill_qiaomei_pdf(r)
+        except Exception as gen_e:
+            import traceback
+            tb = traceback.format_exc()
+            print(f"喬美 PDF 詳細錯誤:\n{tb}")
+            return JSONResponse({"error": f"PDF 生成失敗：{str(gen_e)}"}, status_code=500)
         if not pdf_bytes:
-            return JSONResponse({"error": "PDF 生成失敗"}, status_code=500)
+            return JSONResponse({"error": "PDF 生成失敗：範本檔案不存在或內容為空"}, status_code=500)
         from urllib.parse import quote
         fname = quote(f"{r.get('customer_name','')}_喬美申請書.pdf")
         return StreamingResponse(
@@ -4995,7 +5001,7 @@ def _fill_qiaomei_pdf(r: dict) -> bytes:
     except Exception as e:
         import traceback; traceback.print_exc()
         print(f"喬美 PDF 生成錯誤: {e}")
-        return b""
+        raise  # 讓上層 catch 到具體錯誤
 
 
 @app.get("/adminb/download-excel")
