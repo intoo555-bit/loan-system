@@ -4947,12 +4947,12 @@ def _fill_qiaomei_pdf(r: dict) -> bytes:
             # 申請人姓名
             (105, 78, v("customer_name")),
             # 出生日期 年/月/日
-            (238, 80, b_y),
-            (262, 80, b_m),
-            (282, 80, b_d),
+            (240, 80, b_y),
+            (258, 80, b_m),
+            (275, 80, b_d),
             # 發證日期 年/月/日 (113 12 24)
             (98, 129, i_y),
-            (124, 129, i_m),
+            (126, 129, i_m),
             (148, 129, i_d),
             # 發證地（短碼）
             (241, 128, v("id_issue_place")),
@@ -5029,13 +5029,13 @@ def _fill_qiaomei_pdf(r: dict) -> bytes:
         c1 = canvas.Canvas(overlay1, pagesize=(p1_w, p1_h))
         DEFAULT_FONT_SIZE = 10
 
-        # 一般欄位：top 是用戶範本中字元的 top（pdfplumber），baseline = top + font_size
+        # 一般欄位：pdfplumber top → PDF baseline ≈ top + ascent (≈7.5 for 10pt)
+        ASCENT = 7.5
         c1.setFont(font_name, DEFAULT_FONT_SIZE)
         for x, top, val in fields_p1:
             if not val:
                 continue
-            # pdfplumber top → reportlab baseline ≈ p1_h - (top + font_size)
-            c1.drawString(x, yp1(top + DEFAULT_FONT_SIZE), str(val))
+            c1.drawString(x, yp1(top + ASCENT), str(val))
 
         # === 身分證字號 10 格（每格中心填一字）===
         # 範本中顯示位置 y=106，x=107 起，每格 19pt
@@ -5043,12 +5043,12 @@ def _fill_qiaomei_pdf(r: dict) -> bytes:
             c1.setFont(font_name, 11)
             for i, ch in enumerate(id_no_str[:10]):
                 cx = 107 + i * 19
-                c1.drawString(cx, yp1(106 + 11), ch)
+                c1.drawString(cx, yp1(106 + 8), ch)
             c1.setFont(font_name, DEFAULT_FONT_SIZE)
 
         # === 勾選方塊（用線條畫 X，避免中文 CID 字型缺 ✓ 字元）===
         def tick(x, top):
-            cy = yp1(top + 5)
+            cy = yp1(top + 4)
             c1.setLineWidth(1.2)
             c1.line(x, cy - 4, x + 8, cy + 4)
             c1.line(x, cy + 4, x + 8, cy - 4)
