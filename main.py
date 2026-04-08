@@ -4900,9 +4900,15 @@ def _fill_qiaomei_pdf(r: dict) -> bytes:
 
         # 公司電話組合（mobile 不顯示）
         co_area = v("company_phone_area")
+        co_num = v("company_phone_num")
         if co_area == "mobile":
             co_area = ""
-        co_phone = (co_area + "-" + v("company_phone_num")) if co_area and v("company_phone_num") else v("company_phone_num")
+        # 手機（10碼 09 開頭）：不加區碼橫線，純數字
+        combined = (co_area + co_num) if co_area else co_num
+        if combined.startswith("09") and len(combined.replace("-","")) == 10:
+            co_phone = combined.replace("-", "")
+        else:
+            co_phone = (co_area + "-" + co_num) if co_area and co_num else co_num
 
         live_same = v("live_same_as_reg") == "1"
         reg_addr = v("reg_city") + v("reg_district") + v("reg_address")
@@ -4996,7 +5002,9 @@ def _fill_qiaomei_pdf(r: dict) -> bytes:
             (371, 285, v("adminb_credit_bank")),
             (359, 317, v("adminb_credit_no")),
             (511, 316, v("adminb_credit_limit")),
-            (554, 316, v("adminb_credit_exp")),
+            # 有效日期：分 年/月 (格式 yyy/mm)
+            (532, 316, v("adminb_credit_exp").split("/")[0] if "/" in v("adminb_credit_exp") else ""),
+            (554, 316, v("adminb_credit_exp").split("/")[1] if "/" in v("adminb_credit_exp") else v("adminb_credit_exp")),
             # 月付金
             (385, 345, v("adminb_credit_pay")),
             # 商品名稱（手機型號）+ IMEI
@@ -5048,22 +5056,22 @@ def _fill_qiaomei_pdf(r: dict) -> bytes:
                 c1.drawString(cx, yp1(106 + 8), ch)
             c1.setFont(font_name, DEFAULT_FONT_SIZE)
 
-        # === 勾選方塊（線條 X 畫在範本實際 rect 中心；rect 7x7pt）===
+        # === 勾選方塊（畫 ✓ 勾號；rect 7x7pt）===
         def tick_box(box_x, box_top):
-            # box 中心
             cx = box_x + 3.5
             ct = box_top + 3.5
             cy = yp1(ct)
             c1.setLineWidth(1.4)
-            c1.line(cx - 4, cy - 4, cx + 4, cy + 4)
-            c1.line(cx - 4, cy + 4, cx + 4, cy - 4)
+            # 勾號：左下短斜→右上長斜
+            c1.line(cx - 3.5, cy, cx - 1, cy - 3)
+            c1.line(cx - 1, cy - 3, cx + 4, cy + 4)
 
-        # 換補發：範本沒有 rect，直接在標籤前畫 X（y≈124）
+        # 換補發：範本沒有 rect，直接在標籤前畫 ✓
         def tick_inline(x, top):
             cy = yp1(top + 3)
             c1.setLineWidth(1.4)
-            c1.line(x, cy - 4, x + 7, cy + 4)
-            c1.line(x, cy + 4, x + 7, cy - 4)
+            c1.line(x, cy, x + 2.5, cy - 3)
+            c1.line(x + 2.5, cy - 3, x + 7, cy + 4)
 
         issue_kind = v("id_issue_kind")
         if "初" in issue_kind:
