@@ -4938,71 +4938,59 @@ def _fill_qiaomei_pdf(r: dict) -> bytes:
         ap_d = str(now.day)
 
         id_no_str = v("id_no").upper()
+        qm_model = v("product_model")
+        qm_imei = v("product_imei")
 
-        # 喬美補充資料
-        qm_model = v("product_model")  # 手機型號
-        qm_imei = v("product_imei")    # IMEI
-
-        # === 用矩形位置定位欄位 ===
-        # 每個 row 的 rect: (x0, top, x1, bottom)
-        # 欄位列表：(x_value_start, row_top, value, [max_width])
-        # row_top 會自動轉為 baseline = page_h - (top + 16)
+        # === 精準座標表（從用戶填好的範本 PDF 提取）===
+        # 格式：(x, top, value)
         fields_p1 = [
-            # === 基本資料區 ===
-            # 申請人姓名 row top=71, label "申請人姓名" 約佔 75 寬, value 從 x=100 開始
-            (100, 71, v("customer_name"), 180),
-            # 出生日期 (rect 195-291 top=73 width=96) - 年月日分填
-            (200, 73, b_y, 25),
-            (228, 73, b_m, 22),
-            (252, 73, b_d, 22),
-            # 身分證字號 row 96 - 用 ID_GRID 特殊處理
-            # 發證日期 row 120 - 標籤 "身分證發證日期" + 年月日
-            (105, 120, i_y, 25),
-            (133, 120, i_m, 22),
-            (157, 120, i_d, 22),
-            # 發證地點 (171, 120) w=66 - dropdown box
-            (200, 120, v("id_issue_place") + v("id_issue_type"), 90),
-            # 戶籍地址 row 193
-            (100, 193, reg_addr, 188),
-            # 住宅地址 row 217
-            (100, 217, live_addr if not live_same else "", 188),
-            # 同戶籍 checkbox
-            ("CHECK_SAME", 217, "1" if live_same else ""),
-            # 電子帳單 E-mail row 242
-            (95, 242, v("email"), 195),
-            # 戶籍電話 row 266 (label 44+box 至 163)
-            (100, 266, v("reg_phone"), 60),
-            # 住家電話 (163, 266) w=47
-            (220, 266, v("live_phone"), 65),
-            # 行動電話 row 291
-            (100, 291, v("phone"), 188),
-            # LINE ID row 364
-            (100, 364, v("line_id"), 188),
-            # === 職業資料區 ===
-            # 公司名稱 + 公司電話 + 分機 row 405
-            (95, 405, v("company_name_detail"), 50),
-            (148, 405, co_phone, 90),
-            (245, 405, v("company_phone_ext"), 45),
-            # 公司地址 row 425
-            (95, 425, v("company_city") + v("company_district") + v("company_address"), 195),
-            # 職稱 + 年資 row 445
-            (95, 445, v("company_role"), 75),
-            (180, 445, v("company_years"), 25),
-            (215, 445, v("company_months"), 25),
-            # 月薪 row 465
-            (95, 465, v("company_salary"), 195),
-            # === 右側聯絡人區 ===
-            # 親屬姓名 row 138
-            (350, 138, v("contact1_name"), 80),
-            (440, 138, v("contact1_relation"), 50),
-            (495, 138, v("contact1_phone"), 85),
-            # 親友姓名 row 211
-            (350, 211, v("contact2_name"), 80),
-            (440, 211, v("contact2_relation"), 50),
-            (495, 211, v("contact2_phone"), 85),
-            # === 補充資料：手機型號 + IMEI（畫面下方藍色區）===
-            (305, 315, qm_model, 200),
-            (305, 339, qm_imei, 200),
+            # 申請人姓名
+            (105, 78, v("customer_name")),
+            # 出生日期 年/月/日
+            (238, 80, b_y),
+            (262, 80, b_m),
+            (282, 80, b_d),
+            # 發證日期 年/月/日 (113 12 24)
+            (98, 129, i_y),
+            (124, 129, i_m),
+            (148, 129, i_d),
+            # 發證地（短碼）
+            (241, 128, v("id_issue_place")),
+            # 親屬姓名 / 關係 / 電話
+            (367, 147, v("contact1_name")),
+            (416, 151, v("contact1_relation")),
+            (504, 150, v("contact1_phone")),
+            # 親友姓名 / 關係+電話
+            (367, 196, v("contact2_name")),
+            (416, 199, v("contact2_relation") + v("contact2_phone")),
+            # 戶籍地址
+            (107, 201, reg_addr),
+            # 住宅地址（同戶籍時清空）
+            (151, 223, live_addr if not live_same else ""),
+            # E-mail
+            (107, 250, v("email")),
+            # 戶籍電話
+            (101, 276, v("reg_phone")),
+            # 行動電話
+            (105, 300, v("phone")),
+            # LINE ID
+            (112, 373, v("line_id")),
+            # 公司名稱 / 電話 / 分機
+            (98, 410, v("company_name_detail")),
+            (188, 412, co_phone),
+            (260, 413, v("company_phone_ext")),
+            # 公司地址
+            (105, 429, v("company_city") + v("company_district") + v("company_address")),
+            # 職稱
+            (105, 450, v("company_role")),
+            # 年資 年 / 月（位置：年=229, 月=267）
+            (229, 452, v("company_years")),
+            (267, 451, v("company_months")),
+            # 月薪
+            (110, 472, v("company_salary")),
+            # 商品名稱（手機型號）+ IMEI
+            (93, 565, qm_model),
+            (80, 588, qm_imei),
         ]
 
         sig_app = r.get("signature_applicant", "") or ""
@@ -5030,57 +5018,27 @@ def _fill_qiaomei_pdf(r: dict) -> bytes:
 
         overlay1 = io.BytesIO()
         c1 = canvas.Canvas(overlay1, pagesize=(p1_w, p1_h))
-        DEFAULT_FONT_SIZE = 8
+        DEFAULT_FONT_SIZE = 10
 
-        def draw_value_in_box(c, x, top, val, max_w):
-            """在 row top 開始的框內繪製文字，自動縮小字型避免溢出"""
+        # 一般欄位：top 是用戶範本中字元的 top（pdfplumber），baseline = top + font_size
+        c1.setFont(font_name, DEFAULT_FONT_SIZE)
+        for x, top, val in fields_p1:
             if not val:
-                return
-            val = str(val)
-            font_size = DEFAULT_FONT_SIZE
-            # 估算文字寬度（中文字 ≈ font_size，英數字 ≈ font_size * 0.55）
-            def estimate_w(s, fs):
-                w = 0
-                for ch in s:
-                    w += fs if ord(ch) > 127 else fs * 0.55
-                return w
-            while font_size >= 5 and estimate_w(val, font_size) > max_w:
-                font_size -= 0.5
-            c.setFont(font_name, font_size)
-            # baseline = row_top + (row_height - font_size) / 2 + font_size
-            # row 通常 24 高，文字垂直置中
-            baseline_top = top + 24 - (24 - font_size) / 2 - 2
-            c.drawString(x, yp1(baseline_top), val)
-            c.setFont(font_name, DEFAULT_FONT_SIZE)
-
-        for item in fields_p1:
-            if len(item) == 4:
-                x, top, val, max_w = item
-            else:
-                x, top, val = item
-                max_w = 180
-            if not val and val != 0:
                 continue
-            if x == "CHECK_SAME":
-                # 同戶籍 checkbox（在標籤右側）
-                c1.setFont(font_name, 11)
-                c1.drawString(140, yp1(top + 16), "✓")
-                c1.setFont(font_name, DEFAULT_FONT_SIZE)
-                continue
-            draw_value_in_box(c1, x, top, val, max_w)
+            # pdfplumber top → reportlab baseline ≈ p1_h - (top + font_size)
+            c1.drawString(x, yp1(top + DEFAULT_FONT_SIZE), str(val))
 
-        # === 身分證字號 10 格 ===
-        # rect: (98+19i, 96, 19w, 24h) for i in 0..9
+        # === 身分證字號 10 格（每格中心填一字）===
+        # 範本中顯示位置 y=106，x=107 起，每格 19pt
         if id_no_str:
             c1.setFont(font_name, 11)
             for i, ch in enumerate(id_no_str[:10]):
-                # 每格中央：x = 98 + i*19 + (19-6)/2
-                cx = 98 + i * 19 + 6.5
-                c1.drawString(cx, yp1(96 + 17), ch)
+                cx = 107 + i * 19
+                c1.drawString(cx, yp1(106 + 11), ch)
             c1.setFont(font_name, DEFAULT_FONT_SIZE)
 
-        # 申請人正楷簽名（在簽名標籤位置：53, 791）
-        draw_signature(c1, sig_app, 130, yp1(805), 110, 22)
+        # 申請人正楷簽名（標籤位置 53, 791，簽名圖在標籤右側）
+        draw_signature(c1, sig_app, 140, yp1(803), 130, 22)
         # 法定代理人不簽
 
         c1.showPage()
@@ -5093,13 +5051,13 @@ def _fill_qiaomei_pdf(r: dict) -> bytes:
         def yp2(top): return p2_h - top
         overlay2 = io.BytesIO()
         c2 = canvas.Canvas(overlay2, pagesize=(p2_w, p2_h))
-        # 立約定書人簽名 → 標籤在 (268, 725)，簽名在標籤右側
-        draw_signature(c2, sig_app, 330, yp2(737), 100, 22)
-        # 日期：今天民國年（標籤在 415, 721）
-        c2.setFont(font_name, 9)
-        c2.drawString(440, yp2(733), ap_y)
-        c2.drawString(475, yp2(733), ap_m)
-        c2.drawString(505, yp2(733), ap_d)
+        # 立約定書人簽名 → 標籤 (268, 725)，簽名圖在標籤右側
+        draw_signature(c2, sig_app, 330, yp2(736), 100, 20)
+        # 日期：今天民國年（範本位置 y=719, x=433/472/505）
+        c2.setFont(font_name, 10)
+        c2.drawString(433, yp2(719 + 10), ap_y)
+        c2.drawString(472, yp2(719 + 10), ap_m)
+        c2.drawString(505, yp2(719 + 10), ap_d)
         c2.showPage()
         c2.save()
         overlay2.seek(0)
