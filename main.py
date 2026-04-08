@@ -785,6 +785,7 @@ def init_db():
         ("adminb_credit_exp", "TEXT"),
         ("adminb_credit_limit", "TEXT"),
         ("adminb_credit_late", "TEXT"),
+        ("adminb_credit_pay", "TEXT"),
         ("eval_license", "TEXT"),
         ("eval_law", "TEXT"),
         ("carrier", "TEXT"),
@@ -3376,6 +3377,7 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
           <div><div class="ab-lbl">有效日期（年/月）</div><div style="display:flex;gap:6px;"><input name="qm_exp_y" class="ab-inp" placeholder="年" style="width:50%;" value="{h((customer.get('adminb_credit_exp','') or '').split('/')[0] if '/' in (customer.get('adminb_credit_exp','') or '') else '')}"><input name="qm_exp_m" class="ab-inp" placeholder="月" style="width:50%;" value="{h((customer.get('adminb_credit_exp','') or '').split('/')[1] if '/' in (customer.get('adminb_credit_exp','') or '') else '')}"></div></div>
           <div><div class="ab-lbl">額度（萬）</div><input name="qm_climit" class="ab-inp" placeholder="10" value="{h(customer.get('adminb_credit_limit','') or '')}"></div>
           <div><div class="ab-lbl">近二月有無遲繳</div><select name="qm_clate" class="ab-sel"><option value="無">無</option><option value="有" {"selected" if (customer.get('adminb_credit_late','') or '')=='有' else ''}>有</option></select></div>
+          <div><div class="ab-lbl">月付金</div><input name="qm_cpay" class="ab-inp" placeholder="3000" value="{h(customer.get('adminb_credit_pay','') or '')}"></div>
         </div>
       </div>
       <div class="ab-block" style="background:#ece8e2;">
@@ -3494,6 +3496,7 @@ async def adminb_save(request: Request):
         "adminb_credit_exp": credit_exp,
         "adminb_credit_limit": form.get("qm_climit",""),
         "adminb_credit_late": form.get("qm_clate","無"),
+        "adminb_credit_pay": form.get("qm_cpay",""),
         "adminb_vehicle_type": form.get("at_vtype",""),
         "adminb_engine_no": form.get("at_engine",""),
         "adminb_displacement": form.get("at_disp",""),
@@ -4900,9 +4903,6 @@ def _fill_qiaomei_pdf(r: dict) -> bytes:
         if co_area == "mobile":
             co_area = ""
         co_phone = (co_area + "-" + v("company_phone_num")) if co_area and v("company_phone_num") else v("company_phone_num")
-        co_ext = v("company_phone_ext")
-        if co_ext:
-            co_phone = co_phone + "#" + co_ext if co_phone else ""
 
         live_same = v("live_same_as_reg") == "1"
         reg_addr = v("reg_city") + v("reg_district") + v("reg_address")
@@ -4997,9 +4997,11 @@ def _fill_qiaomei_pdf(r: dict) -> bytes:
             (359, 317, v("adminb_credit_no")),
             (511, 316, v("adminb_credit_limit")),
             (554, 316, v("adminb_credit_exp")),
-            # 商品名稱（手機型號）+ IMEI（往上 2pt 避免覆蓋標籤）
-            (93, 563, qm_model),
-            (80, 586, qm_imei),
+            # 月付金
+            (385, 345, v("adminb_credit_pay")),
+            # 商品名稱（手機型號）+ IMEI
+            (93, 565, qm_model),
+            (80, 588, qm_imei),
         ]
 
         sig_app = r.get("signature_applicant", "") or ""
