@@ -233,11 +233,65 @@ def short_id() -> str:
 
 
 def get_conn():
+    """取得 DB 連線（保持原有 API 不變，向後相容）
+
+    ⚠️ 注意：此函式回傳的連線需手動 close。
+    建議改用 db_conn() context manager（Bug 5 修復）
+    """
     pathlib.Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(DB_PATH, timeout=10)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     return conn
+
+
+from contextlib import contextmanager
+
+@contextmanager
+def db_conn(commit: bool = False):
+    """DB 連線 context manager（Bug 5/6 修復）
+
+    用法：
+        with db_conn() as conn:           # 唯讀，例外時自動 close
+            cur = conn.cursor()
+            cur.execute("SELECT ...")
+
+        with db_conn(commit=True) as conn:  # 寫入，例外時 rollback + close
+            cur = conn.cursor()
+            cur.execute("UPDATE ...")
+            # commit=True 自動 commit
+
+    保證：
+    - 例外時連線一定會 close（修復 Bug 5 連線洩漏）
+    - 寫入時自動包在 transaction 內（修復 Bug 6 交易隔離）
+    """
+    conn = get_conn()
+    try:
+        yield conn
+        if commit:
+            conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def normalize_id_no(id_no) -> str:
+    """正規化身分證字號（Bug 12 修復）
+
+    處理：
+    - None → ""
+    - 大小寫不一致 → 全大寫
+    - 前後空白 → 去除
+    """
+    return (id_no or "").strip().upper()
 
 
 def extract_first_line(text: str) -> str:
@@ -893,44 +947,44 @@ def init_settings():
 # =========================
 def create_customer_record(name, id_no, company, source_group_id, text,
                             route_plan="", current_company="", report_section="") -> str:
-    conn = get_conn()
-    cur = conn.cursor()
+    """建立客戶（Bug 5/6/12 修復：context manager + transaction + id_no normalize）"""
+    id_no = normalize_id_no(id_no)
     now = now_iso()
-    # 先找有沒有行政A已填的 PENDING 客戶（同身分證號）
-    if id_no:
-        cur.execute("SELECT * FROM customers WHERE id_no=? AND status='PENDING' ORDER BY updated_at DESC LIMIT 1", (id_no,))
-        pending = cur.fetchone()
-    else:
-        pending = None
-    if pending:
-        # 找到 PENDING 客戶 → 改成 ACTIVE，更新資料
-        case_id = pending["case_id"]
-        cur.execute("""UPDATE customers SET
-            status='ACTIVE', customer_name=?, company=?,
-            source_group_id=?, route_plan=?, current_company=?,
-            report_section=?, last_update=?, updated_at=?
-            WHERE case_id=?""",
-            (name, company, source_group_id, route_plan, current_company,
-             report_section, text, now, case_id))
-        conn.commit(); conn.close()
-        return case_id
-    else:
-        # 找不到 PENDING → 正常建立新 ACTIVE 客戶
-        case_id = short_id()
-        cur.execute("""INSERT INTO customers
-            (case_id,customer_name,id_no,source_group_id,company,route_plan,current_company,report_section,last_update,status,created_at,updated_at)
-            VALUES (?,?,?,?,?,?,?,?,?,'PENDING',?,?)""",
-            (case_id, name, id_no, source_group_id, company, route_plan, current_company, report_section, text, now, now))
-        conn.commit(); conn.close()
-        return case_id
+    with db_conn(commit=True) as conn:
+        cur = conn.cursor()
+        # 先找有沒有行政A已填的 PENDING 客戶（同身分證號）
+        if id_no:
+            cur.execute("SELECT * FROM customers WHERE id_no=? AND status='PENDING' ORDER BY updated_at DESC LIMIT 1", (id_no,))
+            pending = cur.fetchone()
+        else:
+            pending = None
+        if pending:
+            case_id = pending["case_id"]
+            cur.execute("""UPDATE customers SET
+                status='ACTIVE', customer_name=?, company=?,
+                source_group_id=?, route_plan=?, current_company=?,
+                report_section=?, last_update=?, updated_at=?
+                WHERE case_id=?""",
+                (name, company, source_group_id, route_plan, current_company,
+                 report_section, text, now, case_id))
+            return case_id
+        else:
+            case_id = short_id()
+            cur.execute("""INSERT INTO customers
+                (case_id,customer_name,id_no,source_group_id,company,route_plan,current_company,report_section,last_update,status,created_at,updated_at)
+                VALUES (?,?,?,?,?,?,?,?,?,'PENDING',?,?)""",
+                (case_id, name, id_no, source_group_id, company, route_plan, current_company, report_section, text, now, now))
+            return case_id
 
 
 def update_customer(case_id, company=None, text=None, from_group_id="", status=None,
                     name=None, source_group_id=None, route_plan=None,
                     current_company=None, report_section=None,
                     approved_amount=None, disbursement_date=None):
-    conn = get_conn()
-    cur = conn.cursor()
+    """更新客戶（Bug 5/6 修復：context manager + transaction）
+
+    UPDATE + INSERT case_logs 包在同一交易內，確保原子性。
+    """
     now = now_iso()
     fields, values = [], []
     for col, val in [("company", company), ("last_update", text), ("status", status),
@@ -942,39 +996,46 @@ def update_customer(case_id, company=None, text=None, from_group_id="", status=N
         if val is not None:
             fields.append(f"{col} = ?"); values.append(val)
     fields.append("updated_at = ?"); values.append(now); values.append(case_id)
-    cur.execute(f"UPDATE customers SET {', '.join(fields)} WHERE case_id=?", values)
-    cur.execute("SELECT * FROM customers WHERE case_id=?", (case_id,))
-    row = cur.fetchone()
-    if row and text is not None:
-        cur.execute("INSERT INTO case_logs (case_id,customer_name,id_no,company,message_text,from_group_id,created_at) VALUES (?,?,?,?,?,?,?)",
-            (row["case_id"], row["customer_name"], row["id_no"], row["company"], text, from_group_id, now))
-    conn.commit(); conn.close()
+    with db_conn(commit=True) as conn:
+        cur = conn.cursor()
+        cur.execute(f"UPDATE customers SET {', '.join(fields)} WHERE case_id=?", values)
+        cur.execute("SELECT * FROM customers WHERE case_id=?", (case_id,))
+        row = cur.fetchone()
+        if row and text is not None:
+            cur.execute("INSERT INTO case_logs (case_id,customer_name,id_no,company,message_text,from_group_id,created_at) VALUES (?,?,?,?,?,?,?)",
+                (row["case_id"], row["customer_name"], row["id_no"], row["company"], text, from_group_id, now))
 
 
 def find_active_by_id_no(id_no):
+    id_no = normalize_id_no(id_no)
     if not id_no: return None
-    conn = get_conn(); cur = conn.cursor()
-    cur.execute("SELECT * FROM customers WHERE id_no=? AND status='ACTIVE' ORDER BY updated_at DESC LIMIT 1", (id_no,))
-    row = cur.fetchone(); conn.close(); return row
+    with db_conn() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM customers WHERE id_no=? AND status='ACTIVE' ORDER BY updated_at DESC LIMIT 1", (id_no,))
+        return cur.fetchone()
 
 
 def find_active_by_name(name):
-    conn = get_conn(); cur = conn.cursor()
-    cur.execute("SELECT * FROM customers WHERE customer_name=? AND status='ACTIVE' ORDER BY updated_at DESC", (name,))
-    rows = cur.fetchall(); conn.close(); return rows
+    with db_conn() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM customers WHERE customer_name=? AND status='ACTIVE' ORDER BY updated_at DESC", (name,))
+        return cur.fetchall()
 
 
 def find_any_by_name(name):
-    conn = get_conn(); cur = conn.cursor()
-    cur.execute("SELECT * FROM customers WHERE customer_name=? ORDER BY updated_at DESC", (name,))
-    rows = cur.fetchall(); conn.close(); return rows
+    with db_conn() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM customers WHERE customer_name=? ORDER BY updated_at DESC", (name,))
+        return cur.fetchall()
 
 
 def find_any_by_id_no(id_no):
+    id_no = normalize_id_no(id_no)
     if not id_no: return []
-    conn = get_conn(); cur = conn.cursor()
-    cur.execute("SELECT * FROM customers WHERE id_no=? ORDER BY updated_at DESC", (id_no,))
-    rows = cur.fetchall(); conn.close(); return rows
+    with db_conn() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM customers WHERE id_no=? ORDER BY updated_at DESC", (id_no,))
+        return cur.fetchall()
 
 
 def save_pending_action(action_id, action_type, payload):
@@ -991,7 +1052,7 @@ def get_pending_action(action_id):
     if not row: return None
     data = dict(row)
     try: data["payload"] = json.loads(data["payload"])
-    except: data["payload"] = {}
+    except Exception: data["payload"] = {}
     return data
 
 
@@ -1033,7 +1094,7 @@ def extract_approved_amount(text: str) -> str:
                 num = float(raw)
                 if num > 0:
                     return f"{int(num)}萬" if num == int(num) else f"{num}萬"
-            except:
+            except Exception:
                 pass
 
     # 2. 找大數字（超過10000視為元，換算成萬）
@@ -1044,7 +1105,7 @@ def extract_approved_amount(text: str) -> str:
             if num >= 10000:
                 wan = num // 10000
                 return f"{wan}萬"
-        except:
+        except Exception:
             pass
 
     # 3. 最後才用「核准+數字」，但排除期數
@@ -3162,7 +3223,7 @@ def apply_adminb_rules(row: dict) -> dict:
             result["company_years_display"] = f"填入：{yr}年"
             result["company_years_val"] = yr
             result["company_years_adj"] = False
-    except:
+    except Exception:
         result["company_years_display"] = f"填入：1年（原值：{yr}）"
         result["company_years_val"] = "1"
         result["company_years_adj"] = True
@@ -3179,7 +3240,7 @@ def apply_adminb_rules(row: dict) -> dict:
             result["salary_display"] = f"填入：{sal}"
             result["salary_val"] = sal
             result["salary_adj"] = False
-    except:
+    except Exception:
         result["salary_display"] = f"填入：3.5萬（原值：{sal}）"
         result["salary_val"] = "3.5"
         result["salary_adj"] = True
@@ -3195,7 +3256,7 @@ def apply_adminb_rules(row: dict) -> dict:
             result["live_years_display"] = f"填入：{ly}年"
             result["live_years_val"] = ly
             result["live_years_adj"] = False
-    except:
+    except Exception:
         result["live_years_display"] = f"填入：5年（原值：{ly}）"
         result["live_years_val"] = "5"
         result["live_years_adj"] = True
@@ -3614,7 +3675,7 @@ def edit_pending_get(request: Request, case_id: str = ""):
     import json as _json
     try:
         debt_data = _json.loads(v("debt_list")) if v("debt_list") else []
-    except:
+    except Exception:
         debt_data = []
     if debt_data:
         debt_rows_html = "".join(f'<div style="padding:6px 0;border-bottom:1px solid #ece8e2;display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:4px"><span><b>商家:</b>{h(d.get("co",""))}</span><span><b>金額:</b>{h(d.get("lo",""))}</span><span><b>期數:</b>{h(d.get("pe",""))}期</span><span><b>月繳:</b>{h(d.get("mo",""))}</span><span><b>已繳:</b>{h(d.get("pa",""))}期</span><span><b>剩餘:</b>{h(d.get("re",""))}</span><span><b>日期:</b>{h(d.get("da",""))}</span><span><b>動保:</b>{h(d.get("dy",""))}</span></div>' for d in debt_data)
@@ -4328,7 +4389,7 @@ async def customer_lookup(
         try:
             y = int(created[:4]) - 1911
             created_roc = f"{y}/{created[5:7]}/{created[8:10]}"
-        except:
+        except Exception:
             created_roc = ""
         if date in [created_fmt, created_roc]:
             if row["status"] == "ACTIVE":
@@ -4679,7 +4740,7 @@ def customer_pdf(request: Request, case_id: str = ""):
     import json as _json
     try:
         debt_data = _json.loads(r.get("debt_list", "") or "[]") if r.get("debt_list") else []
-    except:
+    except Exception:
         debt_data = []
     debt_html = ""
     if debt_data:
@@ -4962,7 +5023,7 @@ def _fill_qiaomei_pdf(r: dict) -> bytes:
         try:
             pdfmetrics.registerFont(UnicodeCIDFont('STSong-Light'))
             font_name = 'STSong-Light'
-        except:
+        except Exception:
             font_name = 'Helvetica'
 
         _base = os.path.dirname(os.path.abspath(__file__))
@@ -5006,7 +5067,7 @@ def _fill_qiaomei_pdf(r: dict) -> bytes:
                 if y >= 1911:
                     y -= 1911
                 return (str(y), str(int(parts[1])), str(int(parts[2])))
-            except:
+            except Exception:
                 return ("", "", "")
         b_y, b_m, b_d = parse_ymd(v("birth_date"))
         i_y, i_m, i_d = parse_ymd(v("id_issue_date"))
@@ -5026,14 +5087,14 @@ def _fill_qiaomei_pdf(r: dict) -> bytes:
         fields_p1 = [
             # 申請人姓名
             (105, 78, v("customer_name")),
-            # 出生日期 年/月/日
-            (240, 80, b_y),
-            (258, 80, b_m),
-            (275, 80, b_d),
-            # 發證日期 年/月/日 (113 12 24)
+            # 出生日期 年/月/日 (避開範本字 年=249.4 月=265.2 日=284.2)
+            (235, 80, b_y),
+            (253, 80, b_m),
+            (270, 80, b_d),
+            # 發證日期 年/月/日 (避開 年=115.4 月=137 日=160.3)
             (98, 129, i_y),
-            (126, 129, i_m),
-            (148, 129, i_d),
+            (122, 129, i_m),
+            (145, 129, i_d),
             # 發證地（短碼）
             (241, 128, v("id_issue_place")),
             # 親屬姓名 / 關係 / 電話
@@ -5072,15 +5133,15 @@ def _fill_qiaomei_pdf(r: dict) -> bytes:
             # 居住時間 年/月
             (119.8, 326, v("live_years")),
             (174.8, 326, v("live_months")),
-            # 信用卡：發卡銀行 / 卡號 / 額度 / 有效期
+            # 信用卡：發卡銀行 / 卡號 / 有效日期年/月 (同卡號行 y=323) / 額度 (下行 y=353)
             (371, 285, v("adminb_credit_bank")),
-            (359, 317, v("adminb_credit_no")),
-            (511, 316, v("adminb_credit_limit")),
-            # 有效日期：分 年/月 (格式 yyy/mm)
-            (532, 316, v("adminb_credit_exp").split("/")[0] if "/" in v("adminb_credit_exp") else ""),
-            (554, 316, v("adminb_credit_exp").split("/")[1] if "/" in v("adminb_credit_exp") else v("adminb_credit_exp")),
-            # 月付金
-            (385, 345, v("adminb_credit_pay")),
+            (359, 323, v("adminb_credit_no")),
+            # 有效日期年：在「年」字 (538.1) 之前
+            (505, 323, v("adminb_credit_exp").split("/")[0] if "/" in v("adminb_credit_exp") else ""),
+            # 有效日期月：在「年」(538) 和「月」(569) 之間
+            (548, 323, v("adminb_credit_exp").split("/")[1] if "/" in v("adminb_credit_exp") else v("adminb_credit_exp")),
+            # 額度：在「萬」字 (423.9) 之前的空白
+            (380, 353, v("adminb_credit_limit")),
             # 商品名稱（手機型號）+ IMEI
             (93, 565, qm_model),
             (80, 588, qm_imei),
@@ -5147,13 +5208,14 @@ def _fill_qiaomei_pdf(r: dict) -> bytes:
             c1.line(x, cy, x + 2.5, cy - 3)
             c1.line(x + 2.5, cy - 3, x + 7, cy + 4)
 
+        # 換補發 (3 vertical rect at x=268.8): 初=122.2, 換=129.3, 補=136.5
         issue_kind = v("id_issue_kind")
         if "初" in issue_kind:
-            tick_inline(243, 124)
-        elif "補" in issue_kind:
-            tick_inline(263, 124)
+            tick_box(268.8, 122.2)
         elif "換" in issue_kind:
-            tick_inline(287, 124)
+            tick_box(268.8, 129.3)
+        elif "補" in issue_kind:
+            tick_box(268.8, 136.5)
 
         # 婚姻 (y=153.5): 已婚=105.9, 未婚=142.5, 離婚=177.2, 喪偶=212.6
         marriage = v("marriage")
@@ -5564,7 +5626,7 @@ def _do_download_excel(request: Request, case_id: str):
                     if y >= 1911:
                         y -= 1911
                     return f"{str(y).zfill(3)}{parts[1].zfill(2)}{parts[2].zfill(2)}"
-                except:
+                except Exception:
                     return ""
             birth_roc7 = to_roc7(birth)
             id_date_roc7 = to_roc7(id_date)
@@ -5582,7 +5644,7 @@ def _do_download_excel(request: Request, case_id: str):
                     e11_val = int(sn)
                 else:
                     e11_val = ""
-            except:
+            except Exception:
                 e11_val = ""
 
             # 年資 G11 年數 / I11 月數（純數字）
@@ -5590,7 +5652,7 @@ def _do_download_excel(request: Request, case_id: str):
                 g11_val = int(float(co_years)) if co_years else 0
                 co_mos_lj = v("company_months") or "0"
                 i11_val = int(float(co_mos_lj)) if co_mos_lj and co_mos_lj != "0" else 0
-            except:
+            except Exception:
                 g11_val = 0
                 i11_val = 0
 
@@ -5647,7 +5709,7 @@ def _do_download_excel(request: Request, case_id: str):
                     years_fmt = f"{yr_str}年{mo_str}月"
                 else:
                     years_fmt = ""
-            except:
+            except Exception:
                 years_fmt = co_years
 
             # === 月薪（I19）格式：整數顯示整數（5萬），小數顯示小數（4.5萬）===
@@ -5664,7 +5726,7 @@ def _do_download_excel(request: Request, case_id: str):
                         sal_fmt = f"{sal_wan}萬"        # 4.5萬
                 else:
                     sal_fmt = ""
-            except:
+            except Exception:
                 sal_fmt = co_salary
 
             # === 行業（G19）必須匹配下拉，從 adminB ===
@@ -5755,7 +5817,7 @@ def _do_download_excel(request: Request, case_id: str):
                         if y < 200:  # 是民國年
                             y += 1911
                         return f"{y}/{parts[1].zfill(2)}/{parts[2].zfill(2)}"
-                    except:
+                    except Exception:
                         pass
                 return date_str  # 已是西元或無法轉換
 
@@ -5865,7 +5927,7 @@ def _do_download_excel(request: Request, case_id: str):
                     years_decimal = str(int(yrs)) + "." + str(int(mos))
                 else:
                     years_decimal = str(int(yrs)) if yrs == int(yrs) else str(yrs)
-            except:
+            except Exception:
                 years_decimal = co_years
 
             # === 月薪（H18）：58000→5.8萬 ===
@@ -5876,7 +5938,7 @@ def _do_download_excel(request: Request, case_id: str):
                 else:  # 已經是萬
                     sal_wan = sal_raw
                 salary_str = str(sal_wan) if sal_wan else ""
-            except:
+            except Exception:
                 salary_str = co_salary
 
             # === 城市：B12/B13/B19 用完整名稱（桃園市非桃市）===
@@ -5947,7 +6009,7 @@ def _do_download_excel(request: Request, case_id: str):
                     if y >= 1911:
                         y -= 1911
                     return f"{str(y).zfill(3)}{parts[1].zfill(2)}{parts[2].zfill(2)}"
-                except:
+                except Exception:
                     return ""
             birth_roc = to_roc_7digit(birth)
             id_date_roc = to_roc_7digit(id_date)
@@ -5966,7 +6028,7 @@ def _do_download_excel(request: Request, case_id: str):
                 m8_val = int(float(co_years)) if co_years else 0
                 co_mos_dy1 = v("company_months") or "0"
                 o8_val = int(float(co_mos_dy1)) if co_mos_dy1 and co_mos_dy1 != "0" else 0
-            except:
+            except Exception:
                 m8_val = 0
                 o8_val = 0
 
@@ -5980,7 +6042,7 @@ def _do_download_excel(request: Request, case_id: str):
                     m9_val = str(int(sn))
                 else:
                     m9_val = ""
-            except:
+            except Exception:
                 m9_val = ""
 
             # 關係智能判別（第一下拉清單）
@@ -6104,7 +6166,7 @@ def _do_download_excel(request: Request, case_id: str):
                     if y >= 1911:  # 西元
                         y -= 1911
                     return f"{str(y).zfill(3)}/{parts[1].zfill(2)}/{parts[2].zfill(2)}"
-                except:
+                except Exception:
                     return d
             birth_roc = to_roc_slash(birth)
             id_date_roc = to_roc_slash(id_date)
@@ -6154,7 +6216,7 @@ def _do_download_excel(request: Request, case_id: str):
                 else:
                     g10_val = f"{yr_int}年"
                 h10_val = f"{mo_int}月" if mo_int > 0 else "月"
-            except:
+            except Exception:
                 g10_val = co_years
                 h10_val = "月"
 
@@ -6168,7 +6230,7 @@ def _do_download_excel(request: Request, case_id: str):
                     sal_e10 = str(int(sal_num))
                 else:
                     sal_e10 = ""
-            except:
+            except Exception:
                 sal_e10 = co_salary
 
             return {
