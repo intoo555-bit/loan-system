@@ -4992,14 +4992,14 @@ def _fill_qiaomei_pdf(r: dict) -> bytes:
             # 居住時間 年/月
             (119.8, 326, v("live_years")),
             (174.8, 326, v("live_months")),
-            # 信用卡：發卡銀行 / 卡號 / 額度 / 月付金
+            # 信用卡：發卡銀行 / 卡號 / 額度 / 有效期
             (371, 285, v("adminb_credit_bank")),
             (359, 317, v("adminb_credit_no")),
             (511, 316, v("adminb_credit_limit")),
-            (385, 345, v("adminb_credit_pay")),
-            # 商品名稱（手機型號）+ IMEI
-            (93, 565, qm_model),
-            (80, 588, qm_imei),
+            (554, 316, v("adminb_credit_exp")),
+            # 商品名稱（手機型號）+ IMEI（往上 2pt 避免覆蓋標籤）
+            (93, 563, qm_model),
+            (80, 586, qm_imei),
         ]
 
         sig_app = r.get("signature_applicant", "") or ""
@@ -5046,11 +5046,12 @@ def _fill_qiaomei_pdf(r: dict) -> bytes:
                 c1.drawString(cx, yp1(106 + 11), ch)
             c1.setFont(font_name, DEFAULT_FONT_SIZE)
 
-        # === 勾選方塊（✓）===
+        # === 勾選方塊（用線條畫 X，避免中文 CID 字型缺 ✓ 字元）===
         def tick(x, top):
-            c1.setFont(font_name, 11)
-            c1.drawString(x, yp1(top + 11), "✓")
-            c1.setFont(font_name, DEFAULT_FONT_SIZE)
+            cy = yp1(top + 5)
+            c1.setLineWidth(1.2)
+            c1.line(x, cy - 4, x + 8, cy + 4)
+            c1.line(x, cy + 4, x + 8, cy - 4)
 
         # 換補發：初發 / 補發 / 換發（標籤約 y=129.7）
         issue_kind = v("id_issue_kind")
@@ -5090,8 +5091,8 @@ def _fill_qiaomei_pdf(r: dict) -> bytes:
         if live_same:
             tick(141, 223)
 
-        # 申請人正楷簽名（標籤位置 53, 791，簽名圖在標籤右側）
-        draw_signature(c1, sig_app, 140, yp1(803), 130, 22)
+        # 申請人正楷簽名（標籤右側，往上調整避免覆蓋特別約定事項）
+        draw_signature(c1, sig_app, 130, yp1(795), 140, 18)
         # 法定代理人不簽
 
         c1.showPage()
@@ -5104,8 +5105,8 @@ def _fill_qiaomei_pdf(r: dict) -> bytes:
         def yp2(top): return p2_h - top
         overlay2 = io.BytesIO()
         c2 = canvas.Canvas(overlay2, pagesize=(p2_w, p2_h))
-        # 立約定書人簽名 → 標籤 (268, 725)，簽名圖在標籤右側
-        draw_signature(c2, sig_app, 330, yp2(736), 100, 20)
+        # 立約定書人簽名 → 標籤右側（微調對齊）
+        draw_signature(c2, sig_app, 320, yp2(728), 110, 18)
         # 日期：今天民國年（範本位置 y=719, x=433/472/505）
         c2.setFont(font_name, 10)
         c2.drawString(433, yp2(719 + 10), ap_y)
