@@ -3648,13 +3648,11 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
         </div>
       </div>
       <div class="ab-block" style="background:#fef2f2;">
-        <div style="font-size:12px;font-weight:700;color:#991b1b;margin-bottom:10px;">21汽車</div>
+        <div style="font-size:12px;font-weight:700;color:#991b1b;margin-bottom:10px;">21汽車（利率固定 16%）</div>
         <div class="ab-g2">
           <div><div class="ab-lbl">專案名稱</div><input name="car_proj" class="ab-inp" value="{h(customer.get('adminb_21car_project','') or '')}"></div>
-          <div><div class="ab-lbl">實際售價</div><input name="car_price" class="ab-inp" value="{h(customer.get('adminb_21car_price','') or '')}"></div>
-          <div><div class="ab-lbl">車價參考來源/天書</div><input name="car_src" class="ab-inp" value="{h(customer.get('adminb_21car_ref_src','') or '')}"></div>
-          <div><div class="ab-lbl">參考車價金額</div><input name="car_refp" class="ab-inp" value="{h(customer.get('adminb_21car_ref_price','') or '')}"></div>
-          <div><div class="ab-lbl">選擇利率</div><select name="car_rate" class="ab-sel"><option value="14%">14%</option><option value="15%">15%</option><option value="16%" selected>16%</option></select></div>
+          <div><div class="ab-lbl">車價（實際售價＝參考車價金額共用）</div><input name="car_price" class="ab-inp" value="{h(customer.get('adminb_21car_price','') or '')}"></div>
+          <div><div class="ab-lbl">天書</div><input name="car_src" class="ab-inp" value="{h(customer.get('adminb_21car_ref_src','') or '')}"></div>
           <div><div class="ab-lbl">貸款金額</div><input name="car_amt" class="ab-inp" placeholder="50萬" value="{h(customer.get('adminb_21car_amount','') or '')}"></div>
           <div><div class="ab-lbl">期數</div><input name="car_period" class="ab-inp" placeholder="60" value="{h(customer.get('adminb_21car_period','') or '')}"></div>
           <div><div class="ab-lbl">月付金</div><input name="car_monthly" class="ab-inp" placeholder="9500" value="{h(customer.get('adminb_21car_monthly','') or '')}"></div>
@@ -3802,7 +3800,8 @@ async def adminb_save(request: Request):
         "adminb_21car_price": form.get("car_price",""),
         "adminb_21car_ref_src": form.get("car_src",""),
         "adminb_21car_ref_price": form.get("car_refp",""),
-        "adminb_21car_rate": form.get("car_rate","16%"),
+        "adminb_21car_rate": "16%",
+        "adminb_21car_ref_price": form.get("car_price",""),
         "adminb_21car_amount": form.get("car_amt",""),
         "adminb_21car_period": form.get("car_period",""),
         "adminb_21car_monthly": form.get("car_monthly",""),
