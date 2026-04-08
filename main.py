@@ -5274,8 +5274,8 @@ def _fill_qiaomei_pdf(r: dict) -> bytes:
             (105, 300, v("phone")),
             # LINE ID
             (112, 373, v("line_id")),
-            # 公司名稱 / 電話 / 分機
-            (98, 410, v("company_name_detail")),
+            # 公司名稱（長字串自動換較小字體，由下方迴圈處理）
+            # (98, 410, company_name_detail) — 用 _LONG_FIELDS 處理
             (188, 412, co_phone),
             (260, 413, v("company_phone_ext")),
             # 公司地址
@@ -5338,6 +5338,19 @@ def _fill_qiaomei_pdf(r: dict) -> bytes:
             if not val:
                 continue
             c1.drawString(x, yp1(top + ASCENT), str(val))
+
+        # === 公司名稱：超長自動縮字體（避免覆蓋電話欄位）===
+        co_name = v("company_name_detail")
+        if co_name:
+            # 公司名稱欄寬約 90pt（x=98 到 188）
+            max_w = 88
+            fs = DEFAULT_FONT_SIZE
+            # CJK 字符約 1 字 = 字體大小寬度
+            while fs > 6 and c1.stringWidth(co_name, font_name, fs) > max_w:
+                fs -= 0.5
+            c1.setFont(font_name, fs)
+            c1.drawString(98, yp1(410 + ASCENT), co_name)
+            c1.setFont(font_name, DEFAULT_FONT_SIZE)
 
         # === 身分證字號 10 格（每格中心填一字）===
         # 範本中顯示位置 y=106，x=107 起，每格 19pt
