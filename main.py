@@ -4962,7 +4962,8 @@ def _fill_qiaomei_pdf(r: dict) -> bytes:
             (504, 150, v("contact1_phone")),
             # 親友姓名 / 關係+電話
             (367, 196, v("contact2_name")),
-            (416, 199, v("contact2_relation") + v("contact2_phone")),
+            (416, 199, v("contact2_relation")),
+            (501, 199, v("contact2_phone")),
             # 戶籍地址
             (107, 201, reg_addr),
             # 住宅地址（同戶籍時清空）
@@ -4988,6 +4989,14 @@ def _fill_qiaomei_pdf(r: dict) -> bytes:
             (267, 451, v("company_months")),
             # 月薪
             (110, 472, v("company_salary")),
+            # 居住時間 年/月
+            (119.8, 326, v("live_years")),
+            (174.8, 326, v("live_months")),
+            # 信用卡：發卡銀行 / 卡號 / 額度 / 月付金
+            (371, 285, v("adminb_credit_bank")),
+            (359, 317, v("adminb_credit_no")),
+            (511, 316, v("adminb_credit_limit")),
+            (385, 345, v("adminb_credit_pay")),
             # 商品名稱（手機型號）+ IMEI
             (93, 565, qm_model),
             (80, 588, qm_imei),
@@ -5036,6 +5045,50 @@ def _fill_qiaomei_pdf(r: dict) -> bytes:
                 cx = 107 + i * 19
                 c1.drawString(cx, yp1(106 + 11), ch)
             c1.setFont(font_name, DEFAULT_FONT_SIZE)
+
+        # === 勾選方塊（✓）===
+        def tick(x, top):
+            c1.setFont(font_name, 11)
+            c1.drawString(x, yp1(top + 11), "✓")
+            c1.setFont(font_name, DEFAULT_FONT_SIZE)
+
+        # 換補發：初發 / 補發 / 換發（標籤約 y=129.7）
+        issue_kind = v("id_issue_kind")
+        if "初" in issue_kind:
+            tick(265, 129)
+        elif "補" in issue_kind:
+            tick(295, 129)
+        elif "換" in issue_kind:
+            tick(325, 129)
+
+        # 婚姻：已婚 / 未婚（y≈153.7）
+        marriage = v("marriage")
+        if "已婚" in marriage:
+            tick(105, 153)
+        elif "未婚" in marriage:
+            tick(143, 153)
+
+        # 教育：大學以上 / 高中職 / 國中以下
+        edu = v("education")
+        if any(k in edu for k in ("大學","專科","研究")):
+            tick(153, 173)
+        elif "高中" in edu or "高職" in edu:
+            tick(105, 183)
+        else:
+            tick(153, 183)
+
+        # 居住狀況：自有/父母 / 租屋 / 親屬（y≈343/353）
+        live = v("live_status")
+        if any(k in live for k in ("自有","父母","配偶")):
+            tick(152, 343)
+        elif "租" in live or "宿舍" in live:
+            tick(105, 353)
+        elif "親" in live or "借" in live:
+            tick(134, 353)
+
+        # 同戶籍勾選
+        if live_same:
+            tick(141, 223)
 
         # 申請人正楷簽名（標籤位置 53, 791，簽名圖在標籤右側）
         draw_signature(c1, sig_app, 140, yp1(803), 130, 22)
