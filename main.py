@@ -872,11 +872,17 @@ def init_settings():
         env_pw = os.getenv(env_var, "")
         if env_pw:
             pw_to_set = env_pw
-            print(f"[init_settings] {key}: 已從環境變數 {env_var} 載入")
+            try:
+                print(f"[init_settings] {key}: loaded from env {env_var}")
+            except Exception:
+                pass
         else:
             pw_to_set = _secrets.token_urlsafe(16)
-            print(f"[init_settings] ⚠️ {key} 未設環境變數，已產生隨機密碼：{pw_to_set}")
-            print(f"[init_settings] ⚠️ 請立即記下並改設環境變數 {env_var}")
+            try:
+                print(f"[init_settings] WARNING {key} env not set, generated random password: {pw_to_set}")
+                print(f"[init_settings] WARNING please save it and set env var {env_var}")
+            except Exception:
+                pass
         cur.execute("INSERT INTO settings (key,value,updated_at) VALUES (?,?,?)",
             (key, hash_pw(pw_to_set), now_iso()))
     conn.commit(); conn.close()
@@ -3829,16 +3835,16 @@ def pending_customers_page(request: Request, q: str = "", grp: str = "", date_fr
         pct = calc_completeness(r)
         dot_cls = "dot-green" if pct >= 70 else ("dot-yellow" if pct >= 30 else "dot-red")
         rows_html += f'''<tr>
-            <td style="padding:10px 12px;width:36px;"><input type="checkbox" class="case-chk" value="{h(case_id)}"></td>
-            <td style="padding:10px 12px;color:#8a7a68;font-size:12px;white-space:nowrap;">{h(created)}</td>
-            <td style="padding:10px 12px;font-weight:600;white-space:nowrap;"><span class="dot {dot_cls}" title="完整度 {pct}%"></span>{h(name)}</td>
-            <td style="padding:10px 12px;color:#6a5e4e;font-family:monospace;">{h(id_no)}</td>
-            <td style="padding:10px 12px;">{h(gname)}</td>
-            <td style="padding:10px 12px;text-align:center;">
-                <a href="/edit-pending?case_id={h(case_id)}" style="background:#6a5e4e;color:#fff;padding:4px 12px;border-radius:6px;font-size:12px;text-decoration:none;">編輯</a>
+            <td style="padding:11px 12px;width:36px;"><input type="checkbox" class="case-chk" value="{h(case_id)}"></td>
+            <td style="padding:11px 12px;color:#3a2e1c;font-size:13px;font-weight:600;white-space:nowrap;">{h(created)}</td>
+            <td style="padding:11px 12px;font-weight:700;font-size:14px;white-space:nowrap;color:#0f0a04;"><span class="dot {dot_cls}" title="完整度 {pct}%"></span>{h(name)}</td>
+            <td style="padding:11px 12px;color:#1a1208;font-family:monospace;font-weight:600;">{h(id_no)}</td>
+            <td style="padding:11px 12px;color:#1a1208;font-weight:600;">{h(gname)}</td>
+            <td style="padding:11px 12px;text-align:center;">
+                <a href="/edit-pending?case_id={h(case_id)}" style="background:#3a2e1c;color:#fff;padding:5px 14px;border-radius:6px;font-size:12px;text-decoration:none;font-weight:700;">編輯</a>
             </td>
         </tr>'''
-    empty = "" if rows else '<tr><td colspan="6" style="text-align:center;padding:30px;color:#8a7a68;">目前沒有待確認客戶</td></tr>'
+    empty = "" if rows else '<tr><td colspan="6" style="text-align:center;padding:30px;color:#4a3e30;font-weight:600;">目前沒有待確認客戶</td></tr>'
 
     # 建分頁連結（保留篩選參數）
     from urllib.parse import urlencode
@@ -3874,38 +3880,44 @@ def pending_customers_page(request: Request, q: str = "", grp: str = "", date_fr
 <title>客戶資料庫</title>
 {PAGE_CSS}
 <style>
-.page{{max-width:1040px;margin:24px auto;padding:0 16px 40px;}}
-.card{{background:#faf7f4;border:1px solid #ddd5ca;border-radius:10px;overflow:hidden;}}
-table{{width:100%;border-collapse:collapse;}}thead tr{{background:#f0ebe4;}}
-thead th{{position:sticky;top:0;background:#f0ebe4;z-index:2;}}
-th{{padding:10px 12px;text-align:left;font-size:12px;font-weight:700;color:#5a4e40;}}
-tbody tr{{border-bottom:1px solid #ece8e2;}}tbody tr:hover{{background:#faf6f2;}}
-h2{{font-size:18px;font-weight:700;color:#2c2820;margin-bottom:14px;}}
-input,select{{padding:7px 10px;border:1px solid #c8bfb5;border-radius:6px;font-size:13px;font-family:inherit;}}
+body{{background:#d8d2c7;}}
+.page{{max-width:1040px;margin:24px auto;padding:0 16px 40px;color:#1a1208;}}
+.card{{background:#e8e1d3;border:1px solid #b8ad9c;border-radius:10px;overflow:hidden;box-shadow:0 1px 3px rgba(60,45,25,0.08);}}
+table{{width:100%;border-collapse:collapse;}}
+thead tr{{background:#c8bda8;}}
+thead th{{position:sticky;top:0;background:#c8bda8;z-index:2;border-bottom:2px solid #a89c82;}}
+th{{padding:11px 12px;text-align:left;font-size:13px;font-weight:800;color:#1a1208;}}
+tbody td{{color:#1a1208;}}
+tbody tr{{border-bottom:1px solid #c8bda8;}}
+tbody tr:hover{{background:#ddd5c4;}}
+h2{{font-size:19px;font-weight:800;color:#0f0a04;margin-bottom:14px;}}
+input,select{{padding:7px 10px;border:1px solid #8a7e68;border-radius:6px;font-size:13px;font-family:inherit;color:#1a1208;background:#f2ede0;}}
 input[type=checkbox]{{padding:0;width:16px;height:16px;cursor:pointer;}}
-.dot{{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:7px;vertical-align:middle;}}
-.dot-red{{background:#dc2626;}}
-.dot-yellow{{background:#eab308;}}
-.dot-green{{background:#16a34a;}}
+.dot{{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:7px;vertical-align:middle;}}
+.dot-red{{background:#b91c1c;}}
+.dot-yellow{{background:#b45309;}}
+.dot-green{{background:#15803d;}}
 .pager{{text-align:center;padding:16px;}}
-.pager a{{display:inline-block;padding:6px 12px;margin:0 2px;border:1px solid #c8bfb5;border-radius:6px;color:#4a3e30;text-decoration:none;font-size:13px;background:#fff;}}
-.pager a:hover{{background:#f0ebe4;}}
-.pager a.current{{background:#6a5e4e;color:#fff;border-color:#6a5e4e;font-weight:700;}}
-.btn-export{{background:#4e7055;color:#fff;border:none;padding:8px 16px;border-radius:6px;font-size:13px;cursor:pointer;font-weight:600;font-family:inherit;}}
-.btn-export:disabled{{background:#b8b0a5;cursor:not-allowed;}}
+.pager a{{display:inline-block;padding:6px 12px;margin:0 2px;border:1px solid #8a7e68;border-radius:6px;color:#1a1208;text-decoration:none;font-size:13px;background:#e8e1d3;font-weight:600;}}
+.pager a:hover{{background:#c8bda8;}}
+.pager a.current{{background:#3a2e1c;color:#fff;border-color:#3a2e1c;font-weight:800;}}
+.btn-export{{background:#2f5339;color:#fff;border:none;padding:8px 16px;border-radius:6px;font-size:13px;cursor:pointer;font-weight:700;font-family:inherit;}}
+.btn-export:disabled{{background:#8a8275;cursor:not-allowed;}}
+.filter-box{{background:#e8e1d3 !important;border:1px solid #b8ad9c !important;}}
+.filter-box label-text{{color:#1a1208 !important;}}
 </style></head><body>
 {make_topnav(role, "pending")}
 <div class="page">
   <h2>客戶資料庫 共 {total} 筆</h2>
   <form method="get" action="/pending-customers">
-    <div style="background:#faf7f4;border:1px solid #ddd5ca;border-radius:10px;padding:14px 16px;margin-bottom:14px;display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;">
-      <div><div style="font-size:12px;font-weight:600;color:#5a4e40;margin-bottom:3px">姓名／身分證</div><input name="q" value="{h(q)}" placeholder="搜尋..." style="width:150px"></div>
-      <div><div style="font-size:12px;font-weight:600;color:#5a4e40;margin-bottom:3px">群組</div><select name="grp" style="width:110px">{grp_opts}</select></div>
-      <div><div style="font-size:12px;font-weight:600;color:#5a4e40;margin-bottom:3px">日期從</div><input type="date" name="date_from" value="{h(date_from)}" style="width:140px"></div>
-      <div><div style="font-size:12px;font-weight:600;color:#5a4e40;margin-bottom:3px">日期至</div><input type="date" name="date_to" value="{h(date_to)}" style="width:140px"></div>
+    <div style="background:#e8e1d3;border:1px solid #b8ad9c;border-radius:10px;padding:14px 16px;margin-bottom:14px;display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;box-shadow:0 1px 3px rgba(60,45,25,0.08);">
+      <div><div style="font-size:13px;font-weight:700;color:#1a1208;margin-bottom:4px">姓名／身分證</div><input name="q" value="{h(q)}" placeholder="搜尋..." style="width:150px"></div>
+      <div><div style="font-size:13px;font-weight:700;color:#1a1208;margin-bottom:4px">群組</div><select name="grp" style="width:110px">{grp_opts}</select></div>
+      <div><div style="font-size:13px;font-weight:700;color:#1a1208;margin-bottom:4px">日期從</div><input type="date" name="date_from" value="{h(date_from)}" style="width:140px"></div>
+      <div><div style="font-size:13px;font-weight:700;color:#1a1208;margin-bottom:4px">日期至</div><input type="date" name="date_to" value="{h(date_to)}" style="width:140px"></div>
       <div style="display:flex;gap:6px;align-items:flex-end">
-        <button type="submit" style="background:#6a5e4e;color:#fff;border:none;padding:8px 18px;border-radius:6px;font-size:13px;cursor:pointer;font-weight:600;font-family:inherit">🔍 搜尋</button>
-        <a href="/pending-customers" style="background:#e8e2da;color:#4a3e30;border:1px solid #c8bfb5;padding:8px 14px;border-radius:6px;font-size:13px;text-decoration:none;">清除</a>
+        <button type="submit" style="background:#3a2e1c;color:#fff;border:none;padding:8px 18px;border-radius:6px;font-size:13px;cursor:pointer;font-weight:700;font-family:inherit">🔍 搜尋</button>
+        <a href="/pending-customers" style="background:#c8bda8;color:#1a1208;border:1px solid #8a7e68;padding:8px 14px;border-radius:6px;font-size:13px;text-decoration:none;font-weight:600;">清除</a>
       </div>
       <div style="margin-left:auto;display:flex;gap:8px;align-items:flex-end;">
         <button type="button" id="btnExport" class="btn-export" disabled onclick="exportPdf()">📄 匯出 PDF（<span id="selCount">0</span>）</button>
