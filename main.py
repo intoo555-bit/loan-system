@@ -5364,9 +5364,9 @@ def _do_download_excel(request: Request, case_id: str):
                 "G11": g11_val, "I11": i11_val,
                 "C18": c1_name, "E18": c1_rel, "H18": c1_phone,
                 "C19": c2_name, "E19": c2_rel, "H19": c2_phone,
-                # 商品名稱/型號（J7/J8）從 adminB 補充資料，無填寫清空
-                "J7": v("adminb_product"),
-                "J8": v("adminb_model"),
+                # 商品名稱/型號（J7/J8）從貸就補補充資料 lj_pname/lj_pmodel
+                "J7": v("adminb_product_name"),
+                "J8": v("adminb_product_model"),
             }
 
         elif plan_name in ("和裕機車", "和裕商品"):
