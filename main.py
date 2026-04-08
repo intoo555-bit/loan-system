@@ -898,6 +898,11 @@ def init_db():
         ("adminb_21car_ref_src", "TEXT"),
         ("adminb_21car_ref_price", "TEXT"),
         ("adminb_21car_rate", "TEXT"),
+        ("adminb_21car_amount", "TEXT"),
+        ("adminb_21car_period", "TEXT"),
+        ("adminb_21car_monthly", "TEXT"),
+        ("adminb_21car_fund", "TEXT"),
+        ("adminb_21car_hascc", "TEXT"),
         ("adminb_credit_bank", "TEXT"),
         ("adminb_credit_no", "TEXT"),
         ("adminb_credit_exp", "TEXT"),
@@ -3650,6 +3655,11 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
           <div><div class="ab-lbl">車價參考來源/天書</div><input name="car_src" class="ab-inp" value="{h(customer.get('adminb_21car_ref_src','') or '')}"></div>
           <div><div class="ab-lbl">參考車價金額</div><input name="car_refp" class="ab-inp" value="{h(customer.get('adminb_21car_ref_price','') or '')}"></div>
           <div><div class="ab-lbl">選擇利率</div><select name="car_rate" class="ab-sel"><option value="14%">14%</option><option value="15%">15%</option><option value="16%" selected>16%</option></select></div>
+          <div><div class="ab-lbl">貸款金額</div><input name="car_amt" class="ab-inp" placeholder="50萬" value="{h(customer.get('adminb_21car_amount','') or '')}"></div>
+          <div><div class="ab-lbl">期數</div><input name="car_period" class="ab-inp" placeholder="60" value="{h(customer.get('adminb_21car_period','') or '')}"></div>
+          <div><div class="ab-lbl">月付金</div><input name="car_monthly" class="ab-inp" placeholder="9500" value="{h(customer.get('adminb_21car_monthly','') or '')}"></div>
+          <div><div class="ab-lbl">資金用途</div><input name="car_fund" class="ab-inp" placeholder="購車" value="{h(customer.get('adminb_21car_fund','') or '')}"></div>
+          <div><div class="ab-lbl">是否有信用卡</div><select name="car_hascc" class="ab-sel"><option value="">請選</option><option value="有" {"selected" if (customer.get('adminb_21car_hascc','') or '')=='有' else ''}>有</option><option value="無" {"selected" if (customer.get('adminb_21car_hascc','') or '')=='無' else ''}>無</option></select></div>
         </div>
       </div>
       <div class="ab-block" style="background:#ede9fe;">
@@ -3793,6 +3803,11 @@ async def adminb_save(request: Request):
         "adminb_21car_ref_src": form.get("car_src",""),
         "adminb_21car_ref_price": form.get("car_refp",""),
         "adminb_21car_rate": form.get("car_rate","16%"),
+        "adminb_21car_amount": form.get("car_amt",""),
+        "adminb_21car_period": form.get("car_period",""),
+        "adminb_21car_monthly": form.get("car_monthly",""),
+        "adminb_21car_fund": form.get("car_fund",""),
+        "adminb_21car_hascc": form.get("car_hascc",""),
         "product_model": form.get("qm_model",""),
         "product_imei": form.get("qm_imei",""),
         "adminb_credit_bank": form.get("qm_cbank",""),
@@ -6483,13 +6498,14 @@ def _do_download_excel(request: Request, case_id: str):
         LABEL_MAP = [
             # 21汽車 專屬
             ("專案名稱", v("adminb_21car_project")),
-            ("貸款金額.期數.月付金", ""),
+            ("貸款金額.期數.月付金", f'{v("adminb_21car_amount")}.{v("adminb_21car_period")}.{v("adminb_21car_monthly")}'.strip(".")),
             ("貸款成數", "100%"),
             ("實際售價", v("adminb_21car_price")),
             ("車價參考來源", v("adminb_21car_ref_src")),
             ("天書", v("adminb_21car_ref_src")),
             ("參考車價金額", v("adminb_21car_ref_price")),
             ("選擇利率", v("adminb_21car_rate") or "16%"),
+            ("是否有信用卡", v("adminb_21car_hascc")),
             # 個人資料
             ("申請人姓名", v("customer_name")),
             ("姓名", v("customer_name")),
@@ -6550,7 +6566,7 @@ def _do_download_excel(request: Request, case_id: str):
             ("商品廠牌", product_brand_model),
             # 雜項
             ("可照會時間", v("adminb_contact_time")),
-            ("資金用途", v("adminb_fund_use")),
+            ("資金用途", v("adminb_21car_fund") or v("adminb_fund_use")),
         ]
 
         # 聯絡人狀態：當前是否在「親屬/1聯絡人」或「朋友/2聯絡人」段
