@@ -16,8 +16,14 @@ from typing import Optional, List, Dict, Any
 
 
 def h(val) -> str:
-    """HTML escape helper — 防止 XSS"""
-    return _html_escape(str(val)) if val else ""
+    """HTML escape helper — 防止 XSS（含引號）
+
+    修復 Bug 4：加 quote=True，escape 單引號和雙引號，防止 inline JS/HTML attribute 注入
+    修復 Bug 13：用 is None 判斷，避免 0/False 被當空值
+    """
+    if val is None:
+        return ""
+    return _html_escape(str(val), quote=True)
 
 app = FastAPI()
 
@@ -844,17 +850,35 @@ def seed_groups():
 
 
 def init_settings():
-    """初始化預設密碼（只有第一次才設定）"""
-    defaults = {
-        "admin_pw": hash_pw("admin_secret"),
-        "adminB_pw": hash_pw("adminB2026"),
-        "report_pw": hash_pw("admin123"),
-        "vba_secret": hash_pw("vba_secret_2026"),
+    """初始化密碼（Bug 3 修復）
+
+    優先順序：
+    1. 已存在密碼 → 不動
+    2. 環境變數有設 → 用環境變數的密碼
+    3. 都沒有 → 產生隨機密碼並印出 log（不再用硬編碼預設值）
+    """
+    import secrets as _secrets
+    env_var_map = {
+        "admin_pw": "ADMIN_PASSWORD",
+        "adminB_pw": "ADMINB_PASSWORD",
+        "report_pw": "REPORT_PASSWORD",
+        "vba_secret": "VBA_SECRET",
     }
     conn = get_conn(); cur = conn.cursor()
-    for key, val in defaults.items():
-        cur.execute("INSERT OR IGNORE INTO settings (key,value,updated_at) VALUES (?,?,?)",
-            (key, val, now_iso()))
+    for key, env_var in env_var_map.items():
+        cur.execute("SELECT value FROM settings WHERE key=?", (key,))
+        if cur.fetchone():
+            continue  # 已有密碼，跳過
+        env_pw = os.getenv(env_var, "")
+        if env_pw:
+            pw_to_set = env_pw
+            print(f"[init_settings] {key}: 已從環境變數 {env_var} 載入")
+        else:
+            pw_to_set = _secrets.token_urlsafe(16)
+            print(f"[init_settings] ⚠️ {key} 未設環境變數，已產生隨機密碼：{pw_to_set}")
+            print(f"[init_settings] ⚠️ 請立即記下並改設環境變數 {env_var}")
+        cur.execute("INSERT INTO settings (key,value,updated_at) VALUES (?,?,?)",
+            (key, hash_pw(pw_to_set), now_iso()))
     conn.commit(); conn.close()
 
 
@@ -2320,17 +2344,39 @@ async def add_group(request: Request):
 import hashlib as _hl
 
 def hash_pw(password: str) -> str:
+    """密碼雜湊 — 使用 PBKDF2-SHA256，20 萬次 iteration（Bug 1 修復）"""
     import os as _os
     salt = _os.urandom(16).hex()
-    hashed = _hl.sha256((salt + password).encode()).hexdigest()
-    return f"{salt}:{hashed}"
+    dk = _hl.pbkdf2_hmac("sha256", password.encode(), bytes.fromhex(salt), 200_000)
+    return f"pbkdf2$200000${salt}${dk.hex()}"
 
 def verify_pw(password: str, stored: str) -> bool:
-    try:
-        salt, hashed = stored.split(":", 1)
-        return _hl.sha256((salt + password).encode()).hexdigest() == hashed
-    except:
+    """驗證密碼 — 支援新格式 PBKDF2 + 舊格式 SHA-256（向後相容）
+
+    舊密碼能繼續登入，但 Web 端建議下次登入成功後重新 hash 升級。
+    使用 hmac.compare_digest 防時序攻擊。
+    """
+    if not stored:
         return False
+    try:
+        import hmac as _hmac
+        # 新格式：pbkdf2$iterations$salt$hash
+        if stored.startswith("pbkdf2$"):
+            _, iters, salt, hashed = stored.split("$", 3)
+            dk = _hl.pbkdf2_hmac("sha256", password.encode(), bytes.fromhex(salt), int(iters))
+            return _hmac.compare_digest(dk.hex(), hashed)
+        # 舊格式：salt:hash（向後相容）
+        if ":" in stored:
+            salt, hashed = stored.split(":", 1)
+            calc = _hl.sha256((salt + password).encode()).hexdigest()
+            return _hmac.compare_digest(calc, hashed)
+    except Exception:
+        return False
+    return False
+
+def needs_pw_upgrade(stored: str) -> bool:
+    """檢查密碼是否為舊格式，需要升級到 PBKDF2"""
+    return bool(stored) and not stored.startswith("pbkdf2$")
 
 def get_setting(key: str) -> str:
     conn = get_conn(); cur = conn.cursor()
@@ -2809,17 +2855,19 @@ async def login_post(request: Request):
     ok = False
     session_role = ""
     session_group = ""
+    stored = ""
     if role == "admin":
         stored = get_setting("admin_pw")
-        ok = verify_pw(pw, stored) if stored else (pw == ADMIN_PASSWORD)
+        # Bug 3: 移除明文 fallback，沒密碼就拒絕
+        ok = verify_pw(pw, stored)
         session_role = "admin"
     elif role == "adminB":
         stored = get_setting("adminB_pw")
-        ok = verify_pw(pw, stored) if stored else (pw == "adminB2026")
+        ok = verify_pw(pw, stored)
         session_role = "adminB"
     elif role == "normal":
         stored = get_setting("report_pw")
-        ok = verify_pw(pw, stored) if stored else (pw == REPORT_PASSWORD)
+        ok = verify_pw(pw, stored)
         session_role = "normal"
     elif role == "group" and group_id:
         stored = get_group_password(group_id)
@@ -2828,9 +2876,23 @@ async def login_post(request: Request):
         session_group = group_id
     if ok:
         clear_login_fail(identifier)
+        # Bug 1：密碼舊格式自動升級到 PBKDF2
+        if stored and needs_pw_upgrade(stored):
+            try:
+                if role == "admin":
+                    set_setting("admin_pw", hash_pw(pw))
+                elif role == "adminB":
+                    set_setting("adminB_pw", hash_pw(pw))
+                elif role == "normal":
+                    set_setting("report_pw", hash_pw(pw))
+            except Exception as e:
+                print(f"[pw_upgrade] failed: {e}")
         token = _create_session(session_role, session_group)
         resp = RedirectResponse("/report", status_code=303)
-        resp.set_cookie("auth_token", token, max_age=86400*7, httponly=True, samesite="Lax")
+        # Bug 2：加 secure 旗標（本地開發可用 ENV=local 關閉）
+        _secure = os.getenv("ENV", "production").lower() != "local"
+        resp.set_cookie("auth_token", token, max_age=86400*7,
+                        httponly=True, samesite="Lax", secure=_secure)
         return resp
     record_login_fail(identifier)
     return RedirectResponse("/login?error=1", status_code=303)
