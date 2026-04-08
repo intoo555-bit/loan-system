@@ -99,7 +99,13 @@ ACTION_KEYWORDS = [
     "派對保", "委對收", "對好", "對保完成",
 ]
 
-DELETE_KEYWORDS = ["結案", "刪掉", "不追了", "全部不送", "已撥款結案", "違約金結案", "已支付違約金", "以收到違約金", "收到違約金", "違約金已收", "以收到違約金", "違約金", "違約金已支付"]
+DELETE_KEYWORDS = [
+    "結案", "刪掉", "不追了", "全部不送", "已撥款結案",
+    "違約金結案", "已支付違約金", "違約金已支付",
+    "已收到違約金",  # Bug 14: 正確字
+    "以收到違約金",  # Bug 14: 錯字版本，向後相容
+    "收到違約金", "違約金已收", "違約金",
+]
 BLOCK_KEYWORDS = ["鼎信", "禾基"]
 
 # 專案別名對照
@@ -738,6 +744,19 @@ def reply_quick_reply(reply_token: str, text: str, items):
 # 資料庫
 # =========================
 def ensure_column(cur, table: str, column: str, definition: str):
+    """加欄位（DB migration 用）
+
+    Bug 7: 加 whitelist 防 SQL injection。
+    table/column 必須是合法識別字（字母+底線+數字，不能以數字開頭）
+    definition 必須是 SQLite 合法型別字串
+    """
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", table):
+        raise ValueError(f"非法的 table 名稱：{table!r}")
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", column):
+        raise ValueError(f"非法的 column 名稱：{column!r}")
+    # definition 允許型別 + 約束（如 "TEXT DEFAULT '' NOT NULL"）
+    if not re.fullmatch(r"[A-Za-z0-9_\s'\"\-\(\),\.]+", definition):
+        raise ValueError(f"非法的 definition：{definition!r}")
     cur.execute(f"PRAGMA table_info({table})")
     cols = [row[1] for row in cur.fetchall()]
     if column not in cols:
@@ -2649,21 +2668,41 @@ def _create_session(role: str, group_id: str = "") -> str:
     return token
 
 
+def _is_session_expired(expires_at_str) -> bool:
+    """Bug 10: 用 datetime 比較時間，不用字串比較
+
+    NULL/格式錯誤 → 視為過期（安全預設）
+    """
+    if not expires_at_str:
+        return True
+    try:
+        expires = datetime.strptime(expires_at_str, "%Y-%m-%d %H:%M:%S")
+        return expires < datetime.now()
+    except (ValueError, TypeError):
+        return True
+
+
 def _lookup_session(token: str) -> Optional[Dict]:
-    """查找 session，回傳 {role, group_id} 或 None"""
+    """查找 session，回傳 {role, group_id} 或 None
+
+    Bug 10/18 修復：用 datetime 比較 + db_conn context manager 防連線洩漏
+    """
     if not token:
         return None
     try:
         _ensure_sessions_table()
-        conn = get_conn(); cur = conn.cursor()
-        cur.execute("SELECT role, group_id, expires_at FROM sessions WHERE token=?", (token,))
-        row = cur.fetchone(); conn.close()
+        with db_conn() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT role, group_id, expires_at FROM sessions WHERE token=?", (token,))
+            row = cur.fetchone()
         if not row:
             return None
-        if row["expires_at"] < now_iso():
-            conn2 = get_conn(); cur2 = conn2.cursor()
-            cur2.execute("DELETE FROM sessions WHERE token=?", (token,))
-            conn2.commit(); conn2.close()
+        # Bug 10: 用 datetime 比較
+        if _is_session_expired(row["expires_at"]):
+            # Bug 18: 用 db_conn 確保例外時連線會關
+            with db_conn(commit=True) as conn:
+                cur = conn.cursor()
+                cur.execute("DELETE FROM sessions WHERE token=?", (token,))
             return None
         return {"role": row["role"], "group_id": row["group_id"]}
     except Exception as e:
@@ -2672,15 +2711,15 @@ def _lookup_session(token: str) -> Optional[Dict]:
 
 
 def _delete_session(token: str):
-    """登出時刪除 session"""
+    """登出時刪除 session（Bug 18: 用 db_conn 防連線洩漏）"""
     if not token:
         return
     try:
-        conn = get_conn(); cur = conn.cursor()
-        cur.execute("DELETE FROM sessions WHERE token=?", (token,))
-        conn.commit(); conn.close()
-    except Exception:
-        pass
+        with db_conn(commit=True) as conn:
+            cur = conn.cursor()
+            cur.execute("DELETE FROM sessions WHERE token=?", (token,))
+    except Exception as e:
+        print(f"Session delete error: {e}")
 
 PAGE_CSS = """
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -4501,11 +4540,14 @@ async def customer_lookup(
     for row in rows:
         created = (row["created_at"] or "")[:10]
         created_fmt = created.replace("-", "/")
-        try:
-            y = int(created[:4]) - 1911
-            created_roc = f"{y}/{created[5:7]}/{created[8:10]}"
-        except Exception:
-            created_roc = ""
+        # Bug 15: 先檢查長度，避免空字串/格式異常時 ValueError 被靜默吞掉
+        created_roc = ""
+        if len(created) >= 10:
+            try:
+                y = int(created[:4]) - 1911
+                created_roc = f"{y}/{created[5:7]}/{created[8:10]}"
+            except (ValueError, IndexError) as e:
+                print(f"[date_parse] failed for {created!r}: {e}")
         if date in [created_fmt, created_roc]:
             if row["status"] == "ACTIVE":
                 matched = row
@@ -5203,9 +5245,9 @@ def _fill_qiaomei_pdf(r: dict) -> bytes:
             # 申請人姓名
             (105, 78, v("customer_name")),
             # 出生日期 年/月/日 (避開範本字 年=249.4 月=265.2 日=284.2)
-            (235, 80, b_y),
-            (253, 80, b_m),
-            (270, 80, b_d),
+            (240, 80, b_y),
+            (258, 80, b_m),
+            (275, 80, b_d),
             # 發證日期 年/月/日 (避開 年=115.4 月=137 日=160.3)
             (98, 129, i_y),
             (122, 129, i_m),
