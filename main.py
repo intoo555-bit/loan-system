@@ -446,6 +446,9 @@ def get_admin_group_ids() -> List[str]:
 # =========================
 def parse_route_order_line(line: str) -> Dict:
     """解析「4/1-高郡惠-喬美/亞太/和裕」，回傳 dict 或 {}"""
+    # Bug 1: 攔截「轉XXX」格式
+    if re.match(r"^\s*\d{1,4}/\d{1,2}(?:/\d{1,2})?\s*[-－]\s*[\u4e00-\u9fff]{2,4}\s*[-－]\s*轉", line.strip()):
+        return {}
     m = ROUTE_ORDER_RE.match(line.strip())
     if not m:
         return {}
@@ -1346,8 +1349,20 @@ COMPANY_SECTION_MAP = {
     # 麻吉方案 → 全部歸到「麻吉」欄位
     "麻吉機車": "麻吉", "麻吉機": "麻吉",
     "麻吉手機": "麻吉", "麻吉手": "麻吉",
-    # 新鑫 → 房地
-    "新鑫": "房地",
+    # 帶金額版本 → 主公司
+    "亞太工15": "亞太", "亞太25": "亞太", "亞太15": "亞太",
+    "亞太汽車": "亞太",
+    "21商品": "21",
+    "合信機車": "合信", "合信手機": "合信", "合信二輪": "合信",
+    "第一商品": "第一", "第一機車": "第一",
+    "喬美40": "喬美", "喬美14": "喬美",
+    "興達機車": "興達", "興達機": "興達",
+    "維力": "和裕",
+    # 新鑫/土地 → 房地
+    "新鑫": "房地", "土地": "房地",
+    # 民間方案簡稱
+    "鄉": "鄉民", "研": "零卡", "當": "當舖專案", "商": "商品貸",
+    "銀角": "零卡", "慢點付": "零卡", "分期趣": "零卡",
 }
 
 def normalize_section(section: str) -> str:
@@ -5717,6 +5732,13 @@ def _do_download_excel(request: Request, case_id: str):
         "21機車12萬": os.path.join(_base, "申請書", "21機車申請書範本xlsx.xlsx"),
         "21機車25萬": os.path.join(_base, "申請書", "21機25萬範本.xlsx"),
         "21商品": os.path.join(_base, "申請書", "21商品範本.xlsx"),
+        # TXT 填寫表方案
+        "麻吉機車": os.path.join(_base, "申請書", "麻吉機車申請書.txt"),
+        "麻吉手機": os.path.join(_base, "申請書", "麻吉手機申請書.txt"),
+        "手機分期": os.path.join(_base, "申請書", "手機分期.txt"),
+        "分貝機車": os.path.join(_base, "申請書", "分貝機車.txt"),
+        "分貝汽車": os.path.join(_base, "申請書", "分貝汽車.txt"),
+        "21汽車":   os.path.join(_base, "申請書", "21汽車申請書.txt"),
     }
 
     files_to_zip = []
@@ -6429,21 +6451,193 @@ def _do_download_excel(request: Request, case_id: str):
 
         return {}  # Unknown plan - no data fill
 
+    def _build_txt_content(template_path: str, r: dict) -> str:
+        """讀範本逐行，依 label 關鍵字填入客戶資料；無對應的保留範本預設值"""
+        def v(k): return (r.get(k, "") or "").strip()
+
+        # ===== 組合常用欄位 =====
+        reg_addr = v("reg_city") + v("reg_district") + v("reg_address")
+        live_same = v("live_same_as_reg") == "1"
+        live_addr = reg_addr if live_same else (v("live_city") + v("live_district") + v("live_address"))
+        co_area = v("company_phone_area")
+        if co_area == "mobile":
+            co_area = ""
+        co_num = v("company_phone_num")
+        co_phone = (co_area + "-" + co_num) if co_area and co_num else co_num
+        co_addr = v("company_city") + v("company_district") + v("company_address")
+        # 麻吉商品廠牌/型號 用 adminb_product_name + adminb_product_model
+        product_brand_model = (v("adminb_product_name") + " " + v("adminb_product_model")).strip()
+        # 居住時間
+        live_time = ""
+        if v("live_years") or v("live_months"):
+            live_time = f'{v("live_years")}年{v("live_months")}月'
+        # 年資
+        co_years_full = v("company_years")
+        if v("company_months"):
+            co_years_full += f'年{v("company_months")}月'
+        elif co_years_full:
+            co_years_full += "年"
+
+        # ===== label 關鍵字 → 值 對應 =====
+        # 比對時用 startswith / in 容錯，越長 / 越精確的 key 排前面
+        LABEL_MAP = [
+            # 21汽車 專屬
+            ("專案名稱", v("adminb_21car_project")),
+            ("貸款金額.期數.月付金", ""),
+            ("貸款成數", "100%"),
+            ("實際售價", v("adminb_21car_price")),
+            ("車價參考來源", v("adminb_21car_ref_src")),
+            ("天書", v("adminb_21car_ref_src")),
+            ("參考車價金額", v("adminb_21car_ref_price")),
+            ("選擇利率", v("adminb_21car_rate") or "16%"),
+            # 個人資料
+            ("申請人姓名", v("customer_name")),
+            ("姓名", v("customer_name")),
+            ("名字", v("customer_name")),
+            ("身分證字號", v("id_no")),
+            ("身分證號", v("id_no")),
+            ("身分證", v("id_no")),
+            ("出生年月日", v("birth_date")),
+            ("出生日期", v("birth_date")),
+            ("發證日期", v("id_issue_date")),
+            ("發證地", v("id_issue_place")),
+            ("發證狀態", v("id_issue_kind")),
+            ("換補發類別", v("id_issue_kind")),
+            # 聯絡
+            ("E-mail", v("email")),
+            ("Email", v("email")),
+            ("電子信箱", v("email")),
+            ("電子帳單", v("email")),
+            ("本人手機電話", v("phone")),
+            ("行動電話【電信業者】", f'{v("phone")} {v("carrier")}'.strip()),
+            ("行動電話", v("phone")),
+            ("門號電信業者", v("carrier")),
+            ("電信業者", v("carrier")),
+            ("LINE ID", v("line_id")),
+            ("LINEID", v("line_id")),
+            # 地址 / 電話
+            ("戶籍地址", reg_addr),
+            ("現居地地址", live_addr),
+            ("現居地址", live_addr),
+            ("現住地址", live_addr),
+            ("住宅地址", live_addr),
+            ("戶籍電話", v("reg_phone")),
+            ("現住電話", v("live_phone")),
+            ("住家電話", v("live_phone")),
+            ("住宅電話", v("live_phone")),
+            # 居住
+            ("居住時間", live_time),
+            ("居住狀況", v("live_status")),
+            ("最高學歷", v("education")),
+            ("教育程度", v("education")),
+            ("婚姻狀態", v("marriage")),
+            ("婚姻", v("marriage")),
+            # 公司
+            ("公司名稱", v("company_name_detail") or v("company")),
+            ("公司地址", co_addr),
+            ("公司分機", v("company_phone_ext")),
+            ("公司電話", co_phone),
+            ("公司職稱", v("company_role")),
+            ("職稱", v("company_role")),
+            ("年資【做多久】", co_years_full),
+            ("工作幾年", co_years_full),
+            ("年資", co_years_full),
+            ("月薪多少", v("company_salary")),
+            ("月薪", v("company_salary")),
+            ("是否有信用卡", v("adminb_credit_bank")),
+            # 商品
+            ("商品廠牌/型號", product_brand_model),
+            ("商品廠牌", product_brand_model),
+            # 雜項
+            ("可照會時間", v("adminb_contact_time")),
+            ("資金用途", v("adminb_fund_use")),
+        ]
+
+        # 聯絡人狀態：當前是否在「親屬/1聯絡人」或「朋友/2聯絡人」段
+        contact_state = {"idx": 0}  # 0=未進入, 1=聯絡人1, 2=聯絡人2
+
+        def find_value(label_text):
+            """匹配 label，回傳 (是否找到, 值)。"""
+            t = label_text.strip()
+            # 聯絡人段標記
+            nonlocal contact_state
+            if "1聯絡人" in t or "1.聯絡人" in t or "1.姓名" in t \
+               or "親屬聯絡人" in t or t.startswith("1."):
+                contact_state["idx"] = 1
+            elif "2聯絡人" in t or "2.聯絡人" in t or "2.姓名" in t \
+                 or "朋友聯絡人" in t or t.startswith("2."):
+                contact_state["idx"] = 2
+
+            # 聯絡人欄位
+            if contact_state["idx"] == 1:
+                if "姓名" in t and "聯絡人" not in t.replace("聯絡人姓名",""):
+                    return True, v("contact1_name")
+                if "聯絡人姓名" in t: return True, v("contact1_name")
+                if "電話" in t: return True, v("contact1_phone")
+                if "關係" in t or "稱謂" in t: return True, v("contact1_relation")
+                if "知情" in t: return True, v("contact1_known")
+            if contact_state["idx"] == 2:
+                if "姓名" in t and "聯絡人" not in t.replace("聯絡人姓名",""):
+                    return True, v("contact2_name")
+                if "聯絡人姓名" in t: return True, v("contact2_name")
+                if "電話" in t: return True, v("contact2_phone")
+                if "關係" in t or "稱謂" in t: return True, v("contact2_relation")
+                if "知情" in t: return True, v("contact2_known")
+
+            # 一般欄位
+            for key, val in LABEL_MAP:
+                if key in t:
+                    return True, val
+            return False, ""
+
+        # 讀範本，逐行處理（支援同一行多個 label:value 區段）
+        import re as _re
+        with open(template_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        # 比對 pattern：label([:：])(後續空白). 用 re.sub 一次處理整行所有區段
+        pat = _re.compile(r'([^:：\n]+?)([:：])([ \t]*)')
+
+        def repl_match(m):
+            label = m.group(1)
+            sep = m.group(2)
+            spaces = m.group(3)
+            found, val = find_value(label)
+            if found:
+                if val:
+                    return f"{label}{sep}{val}{spaces}"
+                else:
+                    return f"{label}{sep}{spaces}"
+            return m.group(0)
+
+        out_lines = []
+        for line in content.splitlines():
+            if ":" not in line and "：" not in line:
+                out_lines.append(line)
+                continue
+            out_lines.append(pat.sub(repl_match, line))
+        return "\n".join(out_lines)
+
     for plan in plans:
         template_path = PLAN_TEMPLATE_MAP.get(plan)
         if not template_path or not os.path.exists(template_path):
             continue
 
         try:
-            cell_map = _build_cell_map(plan, r)
-            if cell_map:
-                filled_bytes = _fill_excel_template(template_path, cell_map)
+            if template_path.lower().endswith(".txt"):
+                # TXT 填寫表方案
+                txt_content = _build_txt_content(template_path, r)
+                files_to_zip.append((f"{name}_{plan}.txt", txt_content.encode("utf-8")))
             else:
-                with open(template_path, "rb") as f:
-                    filled_bytes = f.read()
-            files_to_zip.append((f"{name}_{plan}.xlsx", filled_bytes))
+                cell_map = _build_cell_map(plan, r)
+                if cell_map:
+                    filled_bytes = _fill_excel_template(template_path, cell_map)
+                else:
+                    with open(template_path, "rb") as f:
+                        filled_bytes = f.read()
+                files_to_zip.append((f"{name}_{plan}.xlsx", filled_bytes))
         except Exception as e:
-            print(f"Excel generate error for {plan}: {e}")
+            print(f"Generate error for {plan}: {e}")
             import traceback; traceback.print_exc()
             continue
 
@@ -6455,9 +6649,11 @@ def _do_download_excel(request: Request, case_id: str):
     if len(files_to_zip) == 1:
         fname, data = files_to_zip[0]
         encoded_fname = quote(fname)
+        mime = "text/plain; charset=utf-8" if fname.lower().endswith(".txt") \
+            else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         return StreamingResponse(
             io.BytesIO(data),
-            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            media_type=mime,
             headers={"Content-Disposition": f"attachment; filename*=UTF-8''{encoded_fname}"}
         )
     else:
