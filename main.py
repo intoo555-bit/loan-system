@@ -5048,53 +5048,76 @@ def _fill_qiaomei_pdf(r: dict) -> bytes:
                 c1.drawString(cx, yp1(106 + 8), ch)
             c1.setFont(font_name, DEFAULT_FONT_SIZE)
 
-        # === 勾選方塊（用線條畫 X，避免中文 CID 字型缺 ✓ 字元）===
-        def tick(x, top):
-            cy = yp1(top + 4)
-            c1.setLineWidth(1.2)
-            c1.line(x, cy - 4, x + 8, cy + 4)
-            c1.line(x, cy + 4, x + 8, cy - 4)
+        # === 勾選方塊（線條 X 畫在範本實際 rect 中心；rect 7x7pt）===
+        def tick_box(box_x, box_top):
+            # box 中心
+            cx = box_x + 3.5
+            ct = box_top + 3.5
+            cy = yp1(ct)
+            c1.setLineWidth(1.4)
+            c1.line(cx - 4, cy - 4, cx + 4, cy + 4)
+            c1.line(cx - 4, cy + 4, cx + 4, cy - 4)
 
-        # 換補發：初發 / 補發 / 換發（標籤約 y=129.7）
+        # 換補發：範本沒有 rect，直接在標籤前畫 X（y≈124）
+        def tick_inline(x, top):
+            cy = yp1(top + 3)
+            c1.setLineWidth(1.4)
+            c1.line(x, cy - 4, x + 7, cy + 4)
+            c1.line(x, cy + 4, x + 7, cy - 4)
+
         issue_kind = v("id_issue_kind")
         if "初" in issue_kind:
-            tick(265, 129)
+            tick_inline(243, 124)
         elif "補" in issue_kind:
-            tick(295, 129)
+            tick_inline(263, 124)
         elif "換" in issue_kind:
-            tick(325, 129)
+            tick_inline(287, 124)
 
-        # 婚姻：已婚 / 未婚（y≈153.7）
+        # 婚姻 (y=153.5): 已婚=105.9, 未婚=142.5, 離婚=177.2, 喪偶=212.6
         marriage = v("marriage")
         if "已婚" in marriage:
-            tick(105, 153)
+            tick_box(105.9, 153.5)
         elif "未婚" in marriage:
-            tick(143, 153)
+            tick_box(142.5, 153.5)
+        elif "離" in marriage:
+            tick_box(177.2, 153.5)
+        elif "喪" in marriage:
+            tick_box(212.6, 153.5)
 
-        # 教育：大學以上 / 高中職 / 國中以下
+        # 教育 (y=172.7 上排: 碩士=105.9, 大學=153.5; y=183.0 下排: 高中=105.9, 國中=153.5)
         edu = v("education")
-        if any(k in edu for k in ("大學","專科","研究")):
-            tick(153, 173)
+        if "研究" in edu or "碩" in edu:
+            tick_box(105.9, 172.7)
+        elif any(k in edu for k in ("大學","專科")):
+            tick_box(153.5, 172.7)
         elif "高中" in edu or "高職" in edu:
-            tick(105, 183)
+            tick_box(105.9, 183.0)
         else:
-            tick(153, 183)
+            tick_box(153.5, 183.0)
 
-        # 居住狀況：自有/父母 / 租屋 / 親屬（y≈343/353）
+        # 居住狀況 (y=342.6: 自有=105.9, 父母/配偶=152.4, 親屬=197.8;
+        #          y=353.3: 租屋=105.9, 宿舍=134.5, 借住=162.8)
         live = v("live_status")
-        if any(k in live for k in ("自有","父母","配偶")):
-            tick(152, 343)
-        elif "租" in live or "宿舍" in live:
-            tick(105, 353)
-        elif "親" in live or "借" in live:
-            tick(134, 353)
+        if "自有" in live:
+            tick_box(105.9, 342.6)
+        elif "父母" in live or "配偶" in live:
+            tick_box(152.4, 342.6)
+        elif "親屬" in live or "親" in live:
+            tick_box(197.8, 342.6)
+        elif "租" in live:
+            tick_box(105.9, 353.3)
+        elif "宿舍" in live:
+            tick_box(134.5, 353.3)
+        elif "借" in live:
+            tick_box(162.8, 353.3)
 
-        # 同戶籍勾選
+        # 同戶籍勾選 (y=226.0 x=105.9)
         if live_same:
-            tick(141, 223)
+            tick_box(105.9, 226.0)
 
-        # 申請人正楷簽名（標籤右側，往上調整避免覆蓋特別約定事項）
-        draw_signature(c1, sig_app, 130, yp1(795), 140, 18)
+        # 申請人正楷簽名（簽名框 rect: x=25.1 top=787.2 268.6x46.7，標籤在 y=791）
+        # 簽名圖放在標籤右側，框內
+        draw_signature(c1, sig_app, 130, yp1(830), 150, 38)
         # 法定代理人不簽
 
         c1.showPage()
