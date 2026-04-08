@@ -4914,27 +4914,88 @@ def _fill_qiaomei_pdf(r: dict) -> bytes:
         page_h = 859
         def yp(top): return page_h - top  # PDF y 反轉
 
+        # === 解析日期為年/月/日 ===
+        def parse_ymd(d):
+            """民國 086/12/15 或西元 1989/09/16 → (年, 月, 日)"""
+            if not d:
+                return ("", "", "")
+            parts = d.replace("-", "/").split("/")
+            if len(parts) != 3:
+                return ("", "", "")
+            try:
+                y = int(parts[0])
+                if y >= 1911:
+                    y -= 1911
+                return (str(y), str(int(parts[1])), str(int(parts[2])))
+            except:
+                return ("", "", "")
+        b_y, b_m, b_d = parse_ymd(v("birth_date"))
+        i_y, i_m, i_d = parse_ymd(v("id_issue_date"))
+
+        # 申請日期 = 今天（民國）
+        from datetime import datetime as _dt
+        now = _dt.now()
+        ap_y = str(now.year - 1911)
+        ap_m = str(now.month)
+        ap_d = str(now.day)
+
+        # 身分證 10 字元，每格 19 點寬，從 x=98 開始
+        id_no_str = v("id_no").upper()
+
         fields_p1 = [
-            # (x, top_from_top, value)
-            (130, 81, v("customer_name")),       # 申請人姓名
-            (240, 81, v("birth_date")),          # 出生日期（標籤右側）
-            (130, 106, v("id_no")),              # 身分證字號
-            (130, 129, v("id_issue_date")),      # 發證日期
-            (240, 129, v("id_issue_place")),     # 發證地點
-            (130, 204, reg_addr),                # 戶籍地址
-            (130, 228, live_addr),               # 住宅地址
-            (130, 275, v("reg_phone")),          # 戶籍電話
-            (240, 275, v("live_phone")),         # 住家電話
-            (130, 301, v("phone")),              # 行動電話
-            (130, 412, v("company_name_detail")), # 公司名稱
-            (240, 412, co_phone),                # 公司電話
-            (130, 431, v("company_city") + v("company_district") + v("company_address")),  # 公司地址
-            (380, 148, v("contact1_name")),      # 親屬姓名
-            (510, 148, v("contact1_phone")),     # 親屬電話
-            (480, 148, v("contact1_relation")),  # 親屬關係
-            (380, 196, v("contact2_name")),      # 親友姓名
-            (510, 196, v("contact2_phone")),     # 親友電話
-            (480, 196, v("contact2_relation")),  # 親友關係
+            # === 申請日期（基本資料區頂部）===
+            (200, 62, ap_y),     # 年
+            (224, 62, ap_m),     # 月
+            (250, 62, ap_d),     # 日
+            # === 申請人姓名 ===
+            (90, 81, v("customer_name")),
+            # === 出生日期（年/月/日分開）===
+            (210, 80, b_y),      # 年
+            (240, 80, b_m),      # 月
+            (267, 80, b_d),      # 日
+            # === 婚姻狀況（標籤在 153）===
+            # 暫不勾選（無法從網站對應）
+            # === 教育程度（標籤在 179）===
+            # 暫不勾選
+            # === 戶籍地址（標籤 44, 204）===
+            (90, 200, reg_addr),
+            # === 住宅地址（標籤 44, 228）===
+            (90, 224, live_addr if not live_same else ""),
+            # 同戶籍 checkbox (標籤 115, 226)
+            ("CHECK_SAME", 226, "1" if live_same else ""),
+            # === 電子帳單 E-mail (44, 256) ===
+            (95, 252, v("email")),
+            # === 戶籍電話 (44, 275) ===
+            (90, 271, v("reg_phone")),
+            # === 住家電話 (170, 276) ===
+            (215, 271, v("live_phone")),
+            # === 行動電話 (44, 301) ===
+            (90, 297, v("phone")),
+            # === 居住時間 (44, 325) ===
+            # 暫略
+            # === LINE ID (44, 367) ===
+            (90, 363, v("line_id")),
+            # === 公司名稱 (39, 412) ===
+            (95, 408, v("company_name_detail")),
+            # === 公司電話 (149, 412) - 標籤 + 分機 ===
+            (190, 408, co_phone),
+            # === 公司地址 (39, 431) ===
+            (95, 427, v("company_city") + v("company_district") + v("company_address")),
+            # === 職稱 (39, 451) ===
+            (90, 447, v("company_role")),
+            # === 年資 (148, 451 區域) ===
+            (175, 447, v("company_years")),  # 年數
+            (210, 447, v("company_months")),  # 月數
+            # === 月薪 (39, 472) ===
+            (90, 468, v("company_salary")),
+            # === 親屬姓名 (310, 148) ===
+            (370, 144, v("contact1_name")),
+            (430, 144, v("contact1_relation")),
+            (480, 144, v("contact1_phone")),
+            # === 親友姓名 (310, 196) ===
+            (370, 192, v("contact2_name")),
+            (430, 192, v("contact2_relation")),
+            (480, 192, v("contact2_phone")),
         ]
 
         sig_app = r.get("signature_applicant", "") or ""
@@ -4955,14 +5016,37 @@ def _fill_qiaomei_pdf(r: dict) -> bytes:
         # === Page 1 疊加層 (612 x 859) ===
         overlay1 = io.BytesIO()
         c1 = canvas.Canvas(overlay1, pagesize=(612, 859))
-        c1.setFont(font_name, 9)
-        for x, top, val in fields_p1:
-            if val:
-                c1.drawString(x, yp(top + 6), str(val))
-        # 申請人正楷簽名（標籤在 53,791）
-        draw_signature(c1, sig_app, 140, yp(805), 100, 22)
-        # 法定代理人正楷簽名（標籤在 303,791）
-        draw_signature(c1, sig_leg, 410, yp(805), 100, 22)
+        c1.setFont(font_name, 8)  # 縮小字型避免溢出
+
+        # 一般欄位
+        for item in fields_p1:
+            x, top, val = item
+            if not val:
+                continue
+            if x == "CHECK_SAME":
+                # 同戶籍 checkbox：在標籤左側畫個 ✓
+                c1.setFont(font_name, 11)
+                c1.drawString(108, yp(top + 6), "✓")
+                c1.setFont(font_name, 8)
+                continue
+            c1.drawString(x, yp(top + 6), str(val))
+
+        # === 身分證字號 10 格 ===
+        if id_no_str:
+            c1.setFont(font_name, 12)
+            id_x_start = 98
+            id_cell_w = 19
+            id_y = yp(96 + 16)  # 框內中央
+            for i, ch in enumerate(id_no_str[:10]):
+                # 每格中央偏移
+                cx = id_x_start + i * id_cell_w + (id_cell_w - 7) / 2
+                c1.drawString(cx, id_y, ch)
+            c1.setFont(font_name, 8)
+
+        # 申請人正楷簽名（避開合約區，往上移到簽名欄位上方）
+        draw_signature(c1, sig_app, 100, yp(800), 130, 25)
+        # 法定代理人不簽（依用戶要求）
+
         c1.showPage()
         c1.save()
         overlay1.seek(0)
