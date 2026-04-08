@@ -4056,15 +4056,15 @@ def pending_customers_page(request: Request, q: str = "", grp: str = "", date_fr
 <title>客戶資料庫</title>
 {PAGE_CSS}
 <style>
-body{{background:#d8d2c7;}}
+body{{background:#e4ddcd;}}
 .page{{max-width:1040px;margin:24px auto;padding:0 16px 40px;color:#1a1208;}}
-.card{{background:#e8e1d3;border:1px solid #b8ad9c;border-radius:10px;overflow:hidden;box-shadow:0 1px 3px rgba(60,45,25,0.08);}}
+.card{{background:#f2ecdd;border:1px solid #b8ad9c;border-radius:10px;overflow:hidden;box-shadow:0 1px 3px rgba(60,45,25,0.08);}}
 table{{width:100%;border-collapse:collapse;}}
-thead tr{{background:#c8bda8;}}
-thead th{{position:sticky;top:0;background:#c8bda8;z-index:2;border-bottom:2px solid #a89c82;}}
+thead tr{{background:#d8ccb0;}}
+thead th{{position:sticky;top:0;background:#d8ccb0;z-index:2;border-bottom:2px solid #a89c82;}}
 th{{padding:11px 12px;text-align:left;font-size:13px;font-weight:800;color:#1a1208;}}
 tbody td{{color:#1a1208;}}
-tbody tr{{border-bottom:1px solid #c8bda8;}}
+tbody tr{{border-bottom:1px solid #d8ccb0;}}
 tbody tr:hover{{background:#ddd5c4;}}
 h2{{font-size:19px;font-weight:800;color:#0f0a04;margin-bottom:14px;}}
 input,select{{padding:7px 10px;border:1px solid #8a7e68;border-radius:6px;font-size:13px;font-family:inherit;color:#1a1208;background:#f2ede0;}}
@@ -4074,26 +4074,26 @@ input[type=checkbox]{{padding:0;width:16px;height:16px;cursor:pointer;}}
 .dot-yellow{{background:#b45309;}}
 .dot-green{{background:#15803d;}}
 .pager{{text-align:center;padding:16px;}}
-.pager a{{display:inline-block;padding:6px 12px;margin:0 2px;border:1px solid #8a7e68;border-radius:6px;color:#1a1208;text-decoration:none;font-size:13px;background:#e8e1d3;font-weight:600;}}
-.pager a:hover{{background:#c8bda8;}}
+.pager a{{display:inline-block;padding:6px 12px;margin:0 2px;border:1px solid #8a7e68;border-radius:6px;color:#1a1208;text-decoration:none;font-size:13px;background:#f2ecdd;font-weight:600;}}
+.pager a:hover{{background:#d8ccb0;}}
 .pager a.current{{background:#3a2e1c;color:#fff;border-color:#3a2e1c;font-weight:800;}}
 .btn-export{{background:#2f5339;color:#fff;border:none;padding:8px 16px;border-radius:6px;font-size:13px;cursor:pointer;font-weight:700;font-family:inherit;}}
 .btn-export:disabled{{background:#8a8275;cursor:not-allowed;}}
-.filter-box{{background:#e8e1d3 !important;border:1px solid #b8ad9c !important;}}
+.filter-box{{background:#f2ecdd !important;border:1px solid #b8ad9c !important;}}
 .filter-box label-text{{color:#1a1208 !important;}}
 </style></head><body>
 {make_topnav(role, "pending")}
 <div class="page">
   <h2>客戶資料庫 共 {total} 筆</h2>
   <form method="get" action="/pending-customers">
-    <div style="background:#e8e1d3;border:1px solid #b8ad9c;border-radius:10px;padding:14px 16px;margin-bottom:14px;display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;box-shadow:0 1px 3px rgba(60,45,25,0.08);">
+    <div style="background:#f2ecdd;border:1px solid #b8ad9c;border-radius:10px;padding:14px 16px;margin-bottom:14px;display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;box-shadow:0 1px 3px rgba(60,45,25,0.08);">
       <div><div style="font-size:13px;font-weight:700;color:#1a1208;margin-bottom:4px">姓名／身分證</div><input name="q" value="{h(q)}" placeholder="搜尋..." style="width:150px"></div>
       <div><div style="font-size:13px;font-weight:700;color:#1a1208;margin-bottom:4px">群組</div><select name="grp" style="width:110px">{grp_opts}</select></div>
       <div><div style="font-size:13px;font-weight:700;color:#1a1208;margin-bottom:4px">日期從</div><input type="date" name="date_from" value="{h(date_from)}" style="width:140px"></div>
       <div><div style="font-size:13px;font-weight:700;color:#1a1208;margin-bottom:4px">日期至</div><input type="date" name="date_to" value="{h(date_to)}" style="width:140px"></div>
       <div style="display:flex;gap:6px;align-items:flex-end">
         <button type="submit" style="background:#3a2e1c;color:#fff;border:none;padding:8px 18px;border-radius:6px;font-size:13px;cursor:pointer;font-weight:700;font-family:inherit">🔍 搜尋</button>
-        <a href="/pending-customers" style="background:#c8bda8;color:#1a1208;border:1px solid #8a7e68;padding:8px 14px;border-radius:6px;font-size:13px;text-decoration:none;font-weight:600;">清除</a>
+        <a href="/pending-customers" style="background:#d8ccb0;color:#1a1208;border:1px solid #8a7e68;padding:8px 14px;border-radius:6px;font-size:13px;text-decoration:none;font-weight:600;">清除</a>
       </div>
       <div style="margin-left:auto;display:flex;gap:8px;align-items:flex-end;">
         <button type="button" id="btnExport" class="btn-export" disabled onclick="exportPdf()">📄 匯出 PDF（<span id="selCount">0</span>）</button>
