@@ -493,8 +493,13 @@ def get_next_company(route_plan: str) -> str:
 
 
 def advance_route(route_plan: str, status: str, amount: str = "", disbursed: str = "") -> str:
+    # Bug 7: current_index 邊界檢查，防越界後靜默失敗
     data = parse_route_json(route_plan)
-    order, idx, history = data.get("order", []), data.get("current_index", 0), data.get("history", [])
+    order = data.get("order", []) or []
+    idx = data.get("current_index", 0)
+    if not isinstance(idx, int) or idx < 0:
+        idx = 0
+    history = data.get("history", []) or []
     current = order[idx] if 0 <= idx < len(order) else ""
     if current:
         entry = {"company": current, "status": status, "date": now_iso()[:10]}
@@ -503,7 +508,8 @@ def advance_route(route_plan: str, status: str, amount: str = "", disbursed: str
         if disbursed:
             entry["disbursed"] = disbursed
         history.append(entry)
-    data["current_index"] = idx + 1
+    # 推進但不超過 order 長度
+    data["current_index"] = min(idx + 1, len(order))
     data["history"] = history
     return json.dumps(data, ensure_ascii=False)
 
@@ -1598,12 +1604,17 @@ def send_ambiguous_case_buttons(reply_token, block_text, matches):
 
 
 def send_transfer_case_buttons(reply_token, customer, source_group_id, block_text, allow_new=True):
+    # Bug 6: 驗證 source_group_id 合法性，避免按鈕回調寫入不存在的群組
+    new_g = get_group_name(source_group_id) if source_group_id else ""
+    if not source_group_id or not new_g or new_g == "未知群組":
+        reply_text(reply_token, "⚠️ 無法轉送：來源群組不存在或尚未註冊，請聯絡管理員")
+        return
     action_id = short_id()
     save_pending_action(action_id, "transfer_customer", {
         "case_id": customer["case_id"], "target_group_id": source_group_id,
         "block_text": block_text, "name": extract_name(block_text) or customer["customer_name"],
     })
-    old_g, new_g = get_group_name(customer["source_group_id"]), get_group_name(source_group_id)
+    old_g = get_group_name(customer["source_group_id"])
     items = [make_quick_reply_item(f"沿用{old_g}", f"KEEP_OLD_CASE|{action_id}"),
              make_quick_reply_item(f"改到{new_g}", f"CONFIRM_TRANSFER|{action_id}")]
     if allow_new:
@@ -2198,7 +2209,10 @@ def handle_disbursement_list(text: str, reply_token: str):
                     continue
 
                 target = rows[0]
+                # Bug 14: 若業務群不存在，顯示 "-" 而非 "未知群組" 以免日報統計出錯
                 sales_group_name = get_group_name(target["source_group_id"])
+                if sales_group_name == "未知群組":
+                    sales_group_name = "-"
                 # 優先從 route_plan history 找這家公司的金額，找不到再用 approved_amount
                 approved_amount = get_amount_from_history(target["route_plan"] or "", company)
                 if not approved_amount:
@@ -2392,15 +2406,24 @@ def _handle_bc_case_block_locked(block_text, source_group_id, reply_token, sourc
 # Webhook
 # =========================
 def process_event(event: dict):
+    # Bug 12: 防呆檢查 event 型別與必要欄位
+    if not isinstance(event, dict):
+        return
     if event.get("type") != "message":
         return
     message = event.get("message", {})
-    if message.get("type") != "text":
+    if not isinstance(message, dict) or message.get("type") != "text":
         return
-    text = message.get("text", "").strip()
-    reply_token = event.get("replyToken", "")
-    group_id = event.get("source", {}).get("groupId")
+    text = (message.get("text") or "").strip()
+    reply_token = event.get("replyToken") or ""
+    source = event.get("source") or {}
+    if not isinstance(source, dict):
+        return
+    group_id = source.get("groupId")
     if not text:
+        return
+    # Bug 2: reply_token 空值時 LINE API 會錯誤，直接忽略該事件
+    if not reply_token:
         return
     if handle_command_text(text, reply_token):
         return
@@ -2538,20 +2561,16 @@ async def reset_data(request: Request):
     body = await request.json()
     if body.get("confirm") != "yes":
         return {"status": "error", "message": '請帶 {"confirm": "yes"} 才會執行清除'}
-    conn = get_conn()
-    cur = conn.cursor()
     try:
-        cur.execute("DELETE FROM customers")
-        cur.execute("DELETE FROM case_logs")
-        cur.execute("DELETE FROM pending_actions")
-        # 重置自動遞增 ID
-        cur.execute("DELETE FROM sqlite_sequence WHERE name IN ('customers','case_logs','pending_actions')")
-        conn.commit()
+        with db_conn(commit=True) as conn:
+            cur = conn.cursor()
+            cur.execute("DELETE FROM customers")
+            cur.execute("DELETE FROM case_logs")
+            cur.execute("DELETE FROM pending_actions")
+            cur.execute("DELETE FROM sqlite_sequence WHERE name IN ('customers','case_logs','pending_actions')")
         return {"status": "ok", "message": "✅ 已清除所有案件資料，群組設定保留"}
     except Exception as e:
         return {"status": "error", "message": str(e)}
-    finally:
-        conn.close()
 
 
 @app.get("/admin/reset_data")
@@ -2699,20 +2718,28 @@ def get_group_password(group_id: str) -> str:
     return row["password_hash"] if row and row["password_hash"] else ""
 
 def is_login_locked(identifier: str) -> bool:
-    conn = get_conn(); cur = conn.cursor()
-    cur.execute("SELECT attempts, locked_until FROM login_attempts WHERE identifier=?", (identifier,))
-    row = cur.fetchone(); conn.close()
-    if not row: return False
-    if row["locked_until"] and row["locked_until"] > now_iso():
-        return True
-    return False
+    # locked_until 用 datetime 比較而非字串比較，避免 NULL/格式錯誤誤判
+    with db_conn() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT attempts, locked_until FROM login_attempts WHERE identifier=?", (identifier,))
+        row = cur.fetchone()
+    if not row:
+        return False
+    lu = row["locked_until"]
+    if not lu:
+        return False
+    try:
+        lu_dt = datetime.strptime(lu, "%Y-%m-%d %H:%M:%S")
+        return lu_dt > datetime.now()
+    except (ValueError, TypeError):
+        return False
 
 def record_login_fail(identifier: str):
     conn = get_conn(); cur = conn.cursor()
     cur.execute("SELECT attempts FROM login_attempts WHERE identifier=?", (identifier,))
     row = cur.fetchone()
     if row:
-        attempts = row["attempts"] + 1
+        attempts = (row["attempts"] or 0) + 1  # 防 NULL
         locked_until = ""
         if attempts >= 5:
             from datetime import timedelta
