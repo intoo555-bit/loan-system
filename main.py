@@ -732,11 +732,15 @@ def make_quick_reply_item(label: str, text: str):
 def reply_quick_reply(reply_token: str, text: str, items):
     if not CHANNEL_ACCESS_TOKEN or reply_token == "TEST":
         return
+    # LINE Quick Reply 上限 13 個按鈕，超過警告 + 截斷
+    if len(items) > 13:
+        print(f"[reply_quick_reply] 警告：按鈕數 {len(items)} 超過 13，已截斷")
+        items = items[:13]
     try:
         req_lib.post(
             "https://api.line.me/v2/bot/message/reply",
             headers={"Authorization": f"Bearer {CHANNEL_ACCESS_TOKEN}", "Content-Type": "application/json"},
-            json={"replyToken": reply_token, "messages": [{"type": "text", "text": text[:4900], "quickReply": {"items": items[:13]}}]},
+            json={"replyToken": reply_token, "messages": [{"type": "text", "text": text[:4900], "quickReply": {"items": items}}]},
             timeout=10,
         )
     except Exception:
@@ -1120,27 +1124,51 @@ def find_any_by_id_no(id_no):
 
 
 def save_pending_action(action_id, action_type, payload):
-    conn = get_conn(); cur = conn.cursor()
-    cur.execute("INSERT OR REPLACE INTO pending_actions (action_id,action_type,payload,created_at) VALUES (?,?,?,?)",
-        (action_id, action_type, json.dumps(payload, ensure_ascii=False), now_iso()))
-    conn.commit(); conn.close()
+    """Bug 3: 用 db_conn(commit=True) 進 BEGIN IMMEDIATE 防並發競態 + 連線洩漏"""
+    with db_conn(commit=True) as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT OR REPLACE INTO pending_actions (action_id,action_type,payload,created_at) VALUES (?,?,?,?)",
+            (action_id, action_type, json.dumps(payload, ensure_ascii=False), now_iso()))
+
+
+def get_pending_action_and_delete(action_id):
+    """Bug 3: 原子化讀取+刪除，防快速重複點擊造成重複處理"""
+    with db_conn(commit=True) as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM pending_actions WHERE action_id=?", (action_id,))
+        row = cur.fetchone()
+        if not row:
+            return None
+        cur.execute("DELETE FROM pending_actions WHERE action_id=?", (action_id,))
+        data = dict(row)
+        try:
+            data["payload"] = json.loads(data["payload"])
+        except Exception:
+            data["payload"] = {}
+        return data
 
 
 def get_pending_action(action_id):
-    conn = get_conn(); cur = conn.cursor()
-    cur.execute("SELECT * FROM pending_actions WHERE action_id=?", (action_id,))
-    row = cur.fetchone(); conn.close()
-    if not row: return None
-    data = dict(row)
-    try: data["payload"] = json.loads(data["payload"])
-    except Exception: data["payload"] = {}
-    return data
+    """保留供唯讀查詢用（不刪除）。注意：消費按鈕請改用 get_pending_action_and_delete()"""
+    with db_conn() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM pending_actions WHERE action_id=?", (action_id,))
+        row = cur.fetchone()
+        if not row:
+            return None
+        data = dict(row)
+        try:
+            data["payload"] = json.loads(data["payload"])
+        except Exception:
+            data["payload"] = {}
+        return data
 
 
 def delete_pending_action(action_id):
-    conn = get_conn(); cur = conn.cursor()
-    cur.execute("DELETE FROM pending_actions WHERE action_id=?", (action_id,))
-    conn.commit(); conn.close()
+    with db_conn(commit=True) as conn:
+        cur = conn.cursor()
+        cur.execute("DELETE FROM pending_actions WHERE action_id=?", (action_id,))
 
 
 # =========================
@@ -1927,11 +1955,21 @@ def _handle_a_case_block_locked(block_text, reply_token, id_no, name) -> Optiona
         cap_company = company
 
         def ai_parse_and_update():
-            import asyncio
+            import asyncio, traceback
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             try:
-                ai_amount = loop.run_until_complete(extract_approved_amount_with_ai(block_text))
+                try:
+                    ai_amount = loop.run_until_complete(extract_approved_amount_with_ai(block_text))
+                except Exception as ex:
+                    # Bug 4: Anthropic API 異常或網路錯誤，主動推訊息通知 A 群
+                    print(f"[ai_parse_and_update] Anthropic API error: {ex}")
+                    traceback.print_exc()
+                    push_text(A_GROUP_ID,
+                        f"⚠️ {cap_name} AI 金額辨識異常（{type(ex).__name__}），"
+                        f"請手動補：{cap_name} 核准金額XX萬@AI")
+                    return
+
                 if not ai_amount:
                     push_text(A_GROUP_ID, f"⚠️ {cap_name} 核准金額無法辨識\n請手動補：{cap_name} 核准金額XX萬@AI")
                     return
@@ -1939,23 +1977,39 @@ def _handle_a_case_block_locked(block_text, reply_token, id_no, name) -> Optiona
                 # Bug 16: 進姓名鎖，確保不與其他訊息打架
                 with get_name_lock(cap_name):
                     # Bug 16: 重新從 DB 讀最新狀態（不用快照）
-                    fresh = find_active_by_id_no(cap_id_no) if cap_id_no else None
+                    try:
+                        fresh = find_active_by_id_no(cap_id_no) if cap_id_no else None
+                    except Exception as ex:
+                        print(f"[ai_parse_and_update] DB read error: {ex}")
+                        push_text(A_GROUP_ID, f"⚠️ {cap_name} 寫入失敗，請手動處理")
+                        return
                     if not fresh:
-                        # 客戶已被結案，AI 結果無效
                         push_text(A_GROUP_ID,
                             f"⚠️ {cap_name} AI 辨識完成（金額：{ai_amount}），"
                             f"但客戶在背景處理期間已被結案，未更新。\n"
                             f"如需處理，請手動重啟案件。")
                         return
 
-                    # 客戶還活著 → 用最新的 route 計算（不是快照）
-                    cur_route = fresh["route_plan"] or ""
-                    new_r = update_company_amount_in_history(cur_route, cap_company, ai_amount)
-                    update_customer(fresh["case_id"], approved_amount=ai_amount,
-                                    route_plan=new_r, from_group_id=A_GROUP_ID)
-                    push_text(A_GROUP_ID, f"💰 {cap_name} {cap_company} 核准金額已辨識：{ai_amount}")
+                    try:
+                        cur_route = fresh["route_plan"] or ""
+                        new_r = update_company_amount_in_history(cur_route, cap_company, ai_amount)
+                        update_customer(fresh["case_id"], approved_amount=ai_amount,
+                                        route_plan=new_r, from_group_id=A_GROUP_ID)
+                        push_text(A_GROUP_ID, f"💰 {cap_name} {cap_company} 核准金額已辨識：{ai_amount}")
+                    except Exception as ex:
+                        print(f"[ai_parse_and_update] update error: {ex}")
+                        traceback.print_exc()
+                        push_text(A_GROUP_ID,
+                            f"⚠️ {cap_name} 金額已辨識為 {ai_amount} 但寫入失敗，請手動補")
+            except Exception as ex:
+                # 最後的防線：任何未預期的例外都不能讓執行緒靜默死掉
+                print(f"[ai_parse_and_update] unexpected: {ex}")
+                import traceback as _tb; _tb.print_exc()
             finally:
-                loop.close()
+                try:
+                    loop.close()
+                except Exception:
+                    pass
         threading.Thread(target=ai_parse_and_update, daemon=True).start()
 
     return msg
@@ -2452,8 +2506,18 @@ def process_event(event: dict):
 
 @app.post("/callback")
 async def callback(request: Request, background_tasks: BackgroundTasks):
-    body = await request.json()
-    for event in body.get("events", []):
+    try:
+        body = await request.json()
+    except Exception:
+        return {"status": "ok"}
+    if not isinstance(body, dict):
+        return {"status": "ok"}
+    events = body.get("events", [])
+    if not isinstance(events, list):
+        return {"status": "ok"}
+    for event in events:
+        if not isinstance(event, dict):
+            continue
         background_tasks.add_task(process_event, event)
     return {"status": "ok"}
 
@@ -3577,9 +3641,10 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
     {make_topnav(role,"adminb")}
     <div class="page">
     <div style="margin-bottom:12px;">
-      <select class="ab-inp" onchange="if(this.value)location.href='/adminb?case_id='+this.value">{cust_opts}</select>
+      <input id="custSearch" class="ab-inp" placeholder="🔍 輸入姓名/群組快速篩選客戶..." style="margin-bottom:6px;">
+      <select id="custSelect" class="ab-inp" onchange="if(this.value)location.href='/adminb?case_id='+this.value">{cust_opts}</select>
     </div>
-    <div class="ab-card">
+    <div class="ab-card" id="custCard" style="position:sticky;top:0;z-index:20;">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
         <div><div style="font-size:20px;font-weight:700;color:#1a1208;">{h(name)}</div>
           <div style="font-size:13px;color:#6a5e4e;">{h(id_no)}　{h(gname)}　{h(created)}</div></div>
@@ -3623,7 +3688,7 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
     </div>
     <div class="ab-card">
       <div class="ab-sec">補充資料</div>
-      <div class="ab-block" style="background:#e0f2fe;">
+      <div class="ab-block" data-plans="亞太商品,亞太機車15萬,亞太工會機車,亞太機車25萬" style="background:#e0f2fe;">
         <div style="font-size:12px;font-weight:700;color:#0369a1;margin-bottom:10px;">亞太（商品／機車／工會）</div>
         <div class="ab-g3" style="margin-bottom:10px;">
           <div><div class="ab-lbl">資金用途</div><select name="at_fund" class="ab-sel"><option value="">請選擇</option>{"".join(f'<option value="{o}" {"selected" if customer.get("adminb_fund_use","")==o else ""}>{o}</option>' for o in ["I-1教育費","I-2醫藥費","I-3出國旅遊","I-4創業","II-1購買交通工具","II-2購買手機","II-3購買3C產品","III-1交友","III-2健身&醫美","III-3美容課程","IV-1個人理財投資(含不動產、裝修、理財商品)","V-1生活周轉金","V-2整合負債(償還銀行/融資等)"])}</select></div>
@@ -3641,7 +3706,7 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
           <div><div class="ab-lbl">車身號碼</div><input name="at_body" class="ab-inp" placeholder="RFGBK..." value="{h(customer.get('adminb_body_no','') or '')}"></div>
         </div>
       </div>
-      <div class="ab-block" style="background:#f0fdf4;">
+      <div class="ab-block" data-plans="和裕機車,和裕商品" style="background:#f0fdf4;">
         <div style="font-size:12px;font-weight:700;color:#166534;margin-bottom:10px;">和裕（機車／商品）</div>
         <div class="ab-g2" style="margin-bottom:10px;">
           <div><div class="ab-lbl">行業類別</div><select name="hr_industry" class="ab-sel"><option value="">請選擇</option>{"".join(f'<option {"selected" if customer.get("adminb_hr_industry","")==o else ""}>{o}</option>' for o in ["服務業","餐飲業","科技業","軍人","運輸業","倉儲業","金融業","製造業","營造業","電商網拍業","農狩林牧業","礦業","漁業","證券期貨業","保險業","不動產業","公教人員","水電燃氣業","通信業","社團個人服務","其它"])}</select></div>
@@ -3658,21 +3723,21 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
           <div><div class="ab-lbl">型號或車號</div><input name="hr_model" class="ab-inp" placeholder="677-NSY/OPPO A77" value="{h(customer.get('adminb_model','') or '')}"></div>
         </div>
       </div>
-      <div class="ab-block" style="background:#fef9c3;">
+      <div class="ab-block" data-plans="貸就補" style="background:#fef9c3;">
         <div style="font-size:12px;font-weight:700;color:#854d0e;margin-bottom:10px;">貸就補</div>
         <div class="ab-g2">
           <div><div class="ab-lbl">商品名稱</div><input name="lj_pname" class="ab-inp" placeholder="vivo" value="{h(customer.get('adminb_product_name','') or '')}"></div>
           <div><div class="ab-lbl">型號</div><input name="lj_pmodel" class="ab-inp" placeholder="vivo V60" value="{h(customer.get('adminb_product_model','') or '')}"></div>
         </div>
       </div>
-      <div class="ab-block" style="background:#fdf2f8;">
+      <div class="ab-block" data-plans="麻吉機車,麻吉手機" style="background:#fdf2f8;">
         <div style="font-size:12px;font-weight:700;color:#9d174d;margin-bottom:10px;">麻吉（機車／手機）</div>
         <div class="ab-g2">
           <div><div class="ab-lbl">商品廠牌</div><input name="mj_brand" class="ab-inp" placeholder="山葉 / iPhone" value="{h(customer.get('adminb_mj_brand','') or '')}"></div>
           <div><div class="ab-lbl">型號</div><input name="mj_model" class="ab-inp" placeholder="JQ5-063 / 16 Pro" value="{h(customer.get('adminb_mj_model','') or '')}"></div>
         </div>
       </div>
-      <div class="ab-block" style="background:#fef2f2;">
+      <div class="ab-block" data-plans="21汽車" style="background:#fef2f2;">
         <div style="font-size:12px;font-weight:700;color:#991b1b;margin-bottom:10px;">21汽車（利率固定 16%）</div>
         <div class="ab-g2">
           <div><div class="ab-lbl">專案名稱</div><input name="car_proj" class="ab-inp" value="{h(customer.get('adminb_21car_project','') or '')}"></div>
@@ -3685,7 +3750,7 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
           <div><div class="ab-lbl">是否有信用卡</div><select name="car_hascc" class="ab-sel"><option value="">請選</option><option value="有" {"selected" if (customer.get('adminb_21car_hascc','') or '')=='有' else ''}>有</option><option value="無" {"selected" if (customer.get('adminb_21car_hascc','') or '')=='無' else ''}>無</option></select></div>
         </div>
       </div>
-      <div class="ab-block" style="background:#ede9fe;">
+      <div class="ab-block" data-plans="喬美" style="background:#ede9fe;">
         <div style="font-size:12px;font-weight:700;color:#5b21b6;margin-bottom:10px;">喬美（PDF電子簽名）</div>
         <div class="ab-g2" style="margin-bottom:10px;">
           <div><div class="ab-lbl">手機型號</div><input name="qm_model" class="ab-inp" placeholder="iPhone 16 Pro Max" value="{h(customer.get('product_model','') or '')}"></div>
@@ -3710,7 +3775,7 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
           <div><div class="ab-lbl">月付金</div><input name="qm_cpay" class="ab-inp" placeholder="3000" value="{h(customer.get('adminb_credit_pay','') or '')}"></div>
         </div>
       </div>
-      <div class="ab-block" style="background:#ece8e2;">
+      <div class="ab-block" data-plans="分貝汽車,分貝機車,21汽車" style="background:#ece8e2;">
         <div style="font-size:12px;font-weight:700;color:#4a3e30;margin-bottom:8px;">照會時間（分貝汽車／分貝機車／21汽車）</div>
         <input name="contact_time" class="ab-inp" placeholder="平日下午2-5點" value="{h(customer.get('adminb_contact_time','') or '')}">
       </div>
@@ -3791,6 +3856,38 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
     document.querySelectorAll('input[name="plans"]').forEach(function(cb){{
       if(saved.indexOf(cb.value)>=0) cb.checked = true;
     }});
+    // === 補充資料區塊依勾選方案顯示/隱藏 ===
+    function refreshBlocks() {{
+      var checked = [];
+      document.querySelectorAll('input[name="plans"]:checked').forEach(function(cb){{
+        checked.push(cb.value);
+      }});
+      document.querySelectorAll('.ab-block[data-plans]').forEach(function(blk){{
+        var mine = (blk.getAttribute('data-plans')||'').split(',').filter(Boolean);
+        var hit = mine.some(function(p){{ return checked.indexOf(p) >= 0; }});
+        blk.style.display = hit ? '' : 'none';
+      }});
+    }}
+    document.querySelectorAll('input[name="plans"]').forEach(function(cb){{
+      cb.addEventListener('change', refreshBlocks);
+    }});
+    refreshBlocks();
+    // === 客戶下拉搜尋過濾 ===
+    (function(){{
+      var si = document.getElementById('custSearch');
+      var se = document.getElementById('custSelect');
+      if (!si || !se) return;
+      var origOpts = Array.prototype.slice.call(se.options);
+      si.addEventListener('input', function(){{
+        var kw = si.value.trim().toLowerCase();
+        se.innerHTML = '';
+        origOpts.forEach(function(o){{
+          if (!kw || o.text.toLowerCase().indexOf(kw) >= 0 || o.value === '') {{
+            se.appendChild(o.cloneNode(true));
+          }}
+        }});
+      }});
+    }})();
     </script>
     </body></html>"""
 
