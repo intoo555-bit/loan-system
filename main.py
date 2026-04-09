@@ -5425,7 +5425,7 @@ def _fill_qiaomei_pdf(r: dict) -> bytes:
             c1.line(x + 2.5, cy - 3, x + 7, cy + 4)
 
         # 換補發 (3 vertical rect at x=268.8): 初=122.2, 換=129.3, 補=136.5
-        issue_kind = v("id_issue_kind")
+        issue_kind = v("id_issue_type") or v("id_issue_kind")
         if "初" in issue_kind:
             tick_box(268.8, 122.2)
         elif "換" in issue_kind:
@@ -6510,7 +6510,7 @@ def _do_download_excel(request: Request, case_id: str):
         LABEL_MAP = [
             # 21汽車 專屬
             ("專案名稱", v("adminb_21car_project")),
-            ("貸款金額.期數.月付金", f'{v("adminb_21car_amount")}.{v("adminb_21car_period")}.{v("adminb_21car_monthly")}'.strip(".")),
+            ("貸款金額.期數.月付金", f'{v("adminb_21car_amount")}/{v("adminb_21car_period")}/{v("adminb_21car_monthly")}'.strip("/")),
             ("貸款成數", "100%"),
             ("實際售價", v("adminb_21car_price")),
             ("車價參考來源", v("adminb_21car_ref_src")),
@@ -6529,8 +6529,8 @@ def _do_download_excel(request: Request, case_id: str):
             ("出生日期", v("birth_date")),
             ("發證日期", v("id_issue_date")),
             ("發證地", v("id_issue_place")),
-            ("發證狀態", v("id_issue_kind")),
-            ("換補發類別", v("id_issue_kind")),
+            ("發證狀態", v("id_issue_type")),
+            ("換補發類別", v("id_issue_type")),
             # 聯絡
             ("E-mail", v("email")),
             ("Email", v("email")),
@@ -6587,27 +6587,25 @@ def _do_download_excel(request: Request, case_id: str):
         def find_value(label_text):
             """匹配 label，回傳 (是否找到, 值)。"""
             t = label_text.strip()
-            # 聯絡人段標記
             nonlocal contact_state
-            if "1聯絡人" in t or "1.聯絡人" in t or "1.姓名" in t \
-               or "親屬聯絡人" in t or t.startswith("1."):
+            # 「1聯絡人」「2聯絡人」單獨當作姓名欄位
+            if t == "1聯絡人":
                 contact_state["idx"] = 1
-            elif "2聯絡人" in t or "2.聯絡人" in t or "2.姓名" in t \
-                 or "朋友聯絡人" in t or t.startswith("2."):
+                return True, v("contact1_name")
+            if t == "2聯絡人":
                 contact_state["idx"] = 2
+                return True, v("contact2_name")
 
-            # 聯絡人欄位
+            # 聯絡人段內欄位
             if contact_state["idx"] == 1:
-                if "姓名" in t and "聯絡人" not in t.replace("聯絡人姓名",""):
-                    return True, v("contact1_name")
                 if "聯絡人姓名" in t: return True, v("contact1_name")
+                if t == "姓名": return True, v("contact1_name")
                 if "電話" in t: return True, v("contact1_phone")
                 if "關係" in t or "稱謂" in t: return True, v("contact1_relation")
                 if "知情" in t: return True, v("contact1_known")
             if contact_state["idx"] == 2:
-                if "姓名" in t and "聯絡人" not in t.replace("聯絡人姓名",""):
-                    return True, v("contact2_name")
                 if "聯絡人姓名" in t: return True, v("contact2_name")
+                if t == "姓名": return True, v("contact2_name")
                 if "電話" in t: return True, v("contact2_phone")
                 if "關係" in t or "稱謂" in t: return True, v("contact2_relation")
                 if "知情" in t: return True, v("contact2_known")
@@ -6618,32 +6616,65 @@ def _do_download_excel(request: Request, case_id: str):
                     return True, val
             return False, ""
 
-        # 讀範本，逐行處理（支援同一行多個 label:value 區段）
+        def detect_state_marker(line):
+            """處理沒有 : 的標記行，更新 contact_state。"""
+            nonlocal contact_state
+            s = line.strip()
+            # 1.（...） / 1.姓名 / 親屬聯絡人 / 1聯絡人
+            if s.startswith("1.") or "親屬聯絡人" in s or s == "1聯絡人":
+                contact_state["idx"] = 1
+            elif s.startswith("2.") or "朋友聯絡人" in s or s == "2聯絡人":
+                contact_state["idx"] = 2
+
+        # 讀範本，逐行處理
         import re as _re
         with open(template_path, "r", encoding="utf-8") as f:
             content = f.read()
 
-        # 比對 pattern：label([:：])(後續空白). 用 re.sub 一次處理整行所有區段
-        pat = _re.compile(r'([^:：\n]+?)([:：])([ \t]*)')
+        def process_line(line):
+            # 拆分成 [text, sep, text, sep, ...] 保留分隔符
+            parts = _re.split(r'([:：])', line)
+            n_seps = sum(1 for p in parts if p in (":", "："))
+            if n_seps == 0:
+                return line
 
-        def repl_match(m):
-            label = m.group(1)
-            sep = m.group(2)
-            spaces = m.group(3)
-            found, val = find_value(label)
-            if found:
-                if val:
-                    return f"{label}{sep}{val}{spaces}"
+            if n_seps == 1:
+                # 單一 label:value — 整行覆寫
+                label = parts[0]
+                sep = parts[1]
+                found, val = find_value(label.strip())
+                if found:
+                    return f"{label}{sep}{val}"
+                return line  # 沒對應 → 保留範本預設
+
+            # 多個 label:value 在同一行（如聯絡人姓名/關係/電話）
+            # 值區域 = 下一段的「前置空白」，剩下的是下一個 label
+            out = ""
+            i = 0
+            while i < len(parts):
+                if i + 1 < len(parts) and parts[i + 1] in (":", "："):
+                    label = parts[i]
+                    sep = parts[i + 1]
+                    next_seg = parts[i + 2] if i + 2 < len(parts) else ""
+                    ws_m = _re.match(r'^[ \t]*', next_seg)
+                    ws = ws_m.group(0) if ws_m else ""
+                    found, val = find_value(label.strip())
+                    if found:
+                        out += f"{label}{sep}{val}{ws}"
+                    else:
+                        out += f"{label}{sep}{ws}"
+                    if i + 2 < len(parts):
+                        parts[i + 2] = next_seg[len(ws):]
+                    i += 2
                 else:
-                    return f"{label}{sep}{spaces}"
-            return m.group(0)
+                    out += parts[i]
+                    i += 1
+            return out
 
         out_lines = []
         for line in content.splitlines():
-            if ":" not in line and "：" not in line:
-                out_lines.append(line)
-                continue
-            out_lines.append(pat.sub(repl_match, line))
+            detect_state_marker(line)
+            out_lines.append(process_line(line))
         return "\n".join(out_lines)
 
     for plan in plans:
