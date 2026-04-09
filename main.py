@@ -3703,7 +3703,7 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
       <div class="ab-sec">儲存與下載</div>
       <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
         <button type="submit" class="btn-save">💾 儲存資料</button>
-        <a href="/adminb/download-excel?case_id={h(case_id)}" class="btn-dl" onclick="return confirm('將根據勾選的方案下載 Excel，確定嗎？')">📥 下載EXCEL</a>
+        <a href="/adminb/download-excel?case_id={h(case_id)}" class="btn-dl" onclick="return confirm('將根據勾選的方案下載 Excel/TXT，確定嗎？')">📥 下載EXCEL/TXT</a>
       </div>
       <div style="font-size:12px;color:#8a7a68;margin-top:8px;">請先儲存資料再下載；喬美 PDF 請使用「補充資料」區的「簽名並下載」按鈕</div>
     </div>
