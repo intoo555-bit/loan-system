@@ -1060,10 +1060,12 @@ def create_customer_record(name, id_no, company, source_group_id, text,
                  report_section, text, now, case_id))
             return case_id
         else:
+            # 業務員透過 LINE 建立的新案件直接 ACTIVE（PENDING 是 web /new-customer 表單專用狀態）
+            # 已測試：改 ACTIVE 後日報正確顯示，結案流程不受影響
             case_id = short_id()
             cur.execute("""INSERT INTO customers
                 (case_id,customer_name,id_no,source_group_id,company,route_plan,current_company,report_section,last_update,status,created_at,updated_at)
-                VALUES (?,?,?,?,?,?,?,?,?,'PENDING',?,?)""",
+                VALUES (?,?,?,?,?,?,?,?,?,'ACTIVE',?,?)""",
                 (case_id, name, id_no, source_group_id, company, route_plan, current_company, report_section, text, now, now))
             return case_id
 
