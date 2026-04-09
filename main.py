@@ -6588,11 +6588,11 @@ def _do_download_excel(request: Request, case_id: str):
             """匹配 label，回傳 (是否找到, 值)。"""
             t = label_text.strip()
             nonlocal contact_state
-            # 「1聯絡人」「2聯絡人」單獨當作姓名欄位
-            if t == "1聯絡人":
+            # 「1聯絡人」「2聯絡人」「親屬聯絡人」「朋友聯絡人」單獨當作姓名欄位
+            if t == "1聯絡人" or "親屬聯絡人" in t:
                 contact_state["idx"] = 1
                 return True, v("contact1_name")
-            if t == "2聯絡人":
+            if t == "2聯絡人" or "朋友聯絡人" in t:
                 contact_state["idx"] = 2
                 return True, v("contact2_name")
 
