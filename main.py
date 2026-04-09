@@ -645,7 +645,7 @@ def extract_name(text: str) -> str:
 
 def looks_like_new_case_block(block: str) -> bool:
     f = parse_header_fields(block)
-    return bool(f["date"] and f["name"] and f["id_no"])
+    return bool(f.get("date") and f.get("name") and f.get("id_no"))
 
 
 def is_format_trigger(block: str) -> bool:
@@ -757,9 +757,15 @@ def ensure_column(cur, table: str, column: str, definition: str):
         raise ValueError(f"非法的 table 名稱：{table!r}")
     if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", column):
         raise ValueError(f"非法的 column 名稱：{column!r}")
-    # definition 允許型別 + 約束（如 "TEXT DEFAULT '' NOT NULL"）
-    if not re.fullmatch(r"[A-Za-z0-9_\s'\"\-\(\),\.]+", definition):
-        raise ValueError(f"非法的 definition：{definition!r}")
+    # definition 用嚴格白名單：只允許實際在用的型別 + 約束
+    _ALLOWED_DEFS = {
+        "TEXT", "TEXT DEFAULT '' NOT NULL",
+        "INTEGER", "INTEGER DEFAULT 0", "INTEGER DEFAULT 0 NOT NULL",
+        "REAL", "REAL DEFAULT 0",
+        "BLOB",
+    }
+    if definition not in _ALLOWED_DEFS:
+        raise ValueError(f"非法的 definition：{definition!r}（必須是白名單之一）")
     cur.execute(f"PRAGMA table_info({table})")
     cols = [row[1] for row in cur.fetchall()]
     if column not in cols:
@@ -1798,7 +1804,7 @@ def is_single_approval_line(line: str) -> bool:
 
 def handle_new_case_block(block_text, source_group_id, reply_token) -> Optional[str]:
     f = parse_header_fields(block_text)
-    name, id_no, company = f["name"], f["id_no"], extract_company(block_text)
+    name, id_no, company = f.get("name", ""), f.get("id_no", ""), extract_company(block_text)
     if not name or not id_no:
         return None
     existing = find_active_by_id_no(id_no)
@@ -5162,14 +5168,17 @@ async def adminb_save_signature(request: Request):
         sig_data = data.get("data", "")
         if not case_id or not sig_type or not sig_data:
             return JSONResponse({"ok": False, "error": "缺少參數"})
+        # sig_type 白名單檢查（防靜默接受非法值）
+        if sig_type not in ("applicant", "legal_rep", "both"):
+            return JSONResponse({"ok": False, "error": "sig_type 必須是 applicant/legal_rep/both"}, status_code=400)
         conn = get_conn(); cur = conn.cursor()
         if sig_type == "both":
-            # 同一個簽名同時存到申請人和立約定書人
             cur.execute("UPDATE customers SET signature_applicant=?, signature_legal_rep=? WHERE case_id=?",
                         (sig_data, sig_data, case_id))
-        else:
-            col = "signature_applicant" if sig_type == "applicant" else "signature_legal_rep"
-            cur.execute(f"UPDATE customers SET {col}=? WHERE case_id=?", (sig_data, case_id))
+        elif sig_type == "applicant":
+            cur.execute("UPDATE customers SET signature_applicant=? WHERE case_id=?", (sig_data, case_id))
+        else:  # legal_rep
+            cur.execute("UPDATE customers SET signature_legal_rep=? WHERE case_id=?", (sig_data, case_id))
         conn.commit(); conn.close()
         return JSONResponse({"ok": True})
     except Exception as e:
