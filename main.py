@@ -757,15 +757,25 @@ def ensure_column(cur, table: str, column: str, definition: str):
         raise ValueError(f"非法的 table 名稱：{table!r}")
     if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", column):
         raise ValueError(f"非法的 column 名稱：{column!r}")
-    # definition 用嚴格白名單：只允許實際在用的型別 + 約束
+    # definition 嚴格白名單：擋 SQL injection。要新增型別請加到這個 set 裡
     _ALLOWED_DEFS = {
-        "TEXT", "TEXT DEFAULT '' NOT NULL",
-        "INTEGER", "INTEGER DEFAULT 0", "INTEGER DEFAULT 0 NOT NULL",
-        "REAL", "REAL DEFAULT 0",
-        "BLOB",
+        # TEXT
+        "TEXT", "TEXT NOT NULL", "TEXT DEFAULT ''", "TEXT DEFAULT '' NOT NULL",
+        # INTEGER
+        "INTEGER", "INTEGER NOT NULL", "INTEGER DEFAULT 0", "INTEGER DEFAULT 0 NOT NULL",
+        "INTEGER DEFAULT 1", "INTEGER DEFAULT 1 NOT NULL",
+        # REAL
+        "REAL", "REAL NOT NULL", "REAL DEFAULT 0", "REAL DEFAULT 0 NOT NULL",
+        # NUMERIC / BLOB / TIMESTAMP
+        "NUMERIC", "BLOB",
+        "TIMESTAMP", "DATETIME", "DATE",
     }
     if definition not in _ALLOWED_DEFS:
-        raise ValueError(f"非法的 definition：{definition!r}（必須是白名單之一）")
+        raise ValueError(
+            f"非法的 definition：{definition!r}\n"
+            f"請使用以下其中一種，或在 ensure_column 的 _ALLOWED_DEFS 新增：\n"
+            f"{sorted(_ALLOWED_DEFS)}"
+        )
     cur.execute(f"PRAGMA table_info({table})")
     cols = [row[1] for row in cur.fetchall()]
     if column not in cols:
