@@ -903,6 +903,8 @@ def init_db():
         ("adminb_21car_monthly", "TEXT"),
         ("adminb_21car_fund", "TEXT"),
         ("adminb_21car_hascc", "TEXT"),
+        ("adminb_mj_brand", "TEXT"),
+        ("adminb_mj_model", "TEXT"),
         ("adminb_credit_bank", "TEXT"),
         ("adminb_credit_no", "TEXT"),
         ("adminb_credit_exp", "TEXT"),
@@ -3647,6 +3649,13 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
           <div><div class="ab-lbl">型號</div><input name="lj_pmodel" class="ab-inp" placeholder="vivo V60" value="{h(customer.get('adminb_product_model','') or '')}"></div>
         </div>
       </div>
+      <div class="ab-block" style="background:#fdf2f8;">
+        <div style="font-size:12px;font-weight:700;color:#9d174d;margin-bottom:10px;">麻吉（機車／手機）</div>
+        <div class="ab-g2">
+          <div><div class="ab-lbl">商品廠牌</div><input name="mj_brand" class="ab-inp" placeholder="山葉 / iPhone" value="{h(customer.get('adminb_mj_brand','') or '')}"></div>
+          <div><div class="ab-lbl">型號</div><input name="mj_model" class="ab-inp" placeholder="JQ5-063 / 16 Pro" value="{h(customer.get('adminb_mj_model','') or '')}"></div>
+        </div>
+      </div>
       <div class="ab-block" style="background:#fef2f2;">
         <div style="font-size:12px;font-weight:700;color:#991b1b;margin-bottom:10px;">21汽車（利率固定 16%）</div>
         <div class="ab-g2">
@@ -3807,6 +3816,8 @@ async def adminb_save(request: Request):
         "adminb_21car_monthly": form.get("car_monthly",""),
         "adminb_21car_fund": form.get("car_fund",""),
         "adminb_21car_hascc": form.get("car_hascc",""),
+        "adminb_mj_brand": form.get("mj_brand",""),
+        "adminb_mj_model": form.get("mj_model",""),
         "product_model": form.get("qm_model",""),
         "product_imei": form.get("qm_imei",""),
         "adminb_credit_bank": form.get("qm_cbank",""),
@@ -6479,8 +6490,10 @@ def _do_download_excel(request: Request, case_id: str):
         co_num = v("company_phone_num")
         co_phone = (co_area + "-" + co_num) if co_area and co_num else co_num
         co_addr = v("company_city") + v("company_district") + v("company_address")
-        # 麻吉商品廠牌/型號 用 adminb_product_name + adminb_product_model
-        product_brand_model = (v("adminb_product_name") + " " + v("adminb_product_model")).strip()
+        # 麻吉商品廠牌/型號 優先用 adminb_mj_*，沒填則 fallback 到 adminb_product_*
+        mj_brand = v("adminb_mj_brand") or v("adminb_product_name")
+        mj_model = v("adminb_mj_model") or v("adminb_product_model")
+        product_brand_model = (mj_brand + " " + mj_model).strip()
         # 居住時間
         live_time = ""
         if v("live_years") or v("live_months"):
