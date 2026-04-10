@@ -37,7 +37,7 @@ DB_PATH = os.getenv("DB_PATH", "/var/data/loan_system.db")
 REPORT_SECTION_1 = [
     "麻吉", "和潤", "中租", "裕融", "21汽車", "亞太", "創鉅", "21",
     "第一", "合信", "興達", "和裕", "鄉民", "喬美",
-    "分貝汽車", "分貝機車", "貸救補", "預付手機分期", "融易", "手機分期",
+    "分貝汽車", "分貝機車", "貸救補", "預付手機分期", "融易", "手機分期", "鼎多",
     "送件", "待撥款",
 ]
 REPORT_SECTION_2 = [
@@ -74,7 +74,7 @@ COMPANY_LIST = [
     "鄉民", "喬美", "麻吉", "亞太",
     "和裕", "第一", "合信", "興達", "中租", "裕融", "裕榮", "創鉅", "和潤",
     "銀行", "零卡", "銀角", "商品貸", "代書", "當舖", "融易",
-    "慢點付", "分期趣", "21",
+    "慢點付", "分期趣", "鼎多", "預付手機", "21",
     "新鑫", "房地", "土地",
     "分貝", "鄉", "銀", "C", "商", "代", "研", "當",
 ]
@@ -84,8 +84,10 @@ STATUS_WORDS = [
     "補件", "補資料", "退件", "不承作", "無額度", "無法承作", "照會",
     "保密", "NA", "待撥款", "可送", "缺資料", "無可知情", "聯絡人皆可知情",
     "補行照", "補照會", "補照片", "補時段", "補案件資料", "補聯徵", "補保人",
-    "已補", "轉", "申覆",
-    "派對保", "委對收", "對好", "對保完成",
+    "已補", "待補", "轉", "申覆",
+    "派對保", "委對收", "對好", "對保完成", "不收不簽",
+    "已撥款", "今日撥款", "今日已撥款", "已加撥", "核准已撥",
+    "預計排撥", "排撥",
 ]
 
 ACTION_KEYWORDS = [
@@ -95,8 +97,10 @@ ACTION_KEYWORDS = [
     "不承作", "無額度", "無法承作", "待撥款",
     "補行照", "補照會", "補照片", "補時段", "補案件資料",
     "補聯徵", "補保人", "保密", "無可知情", "聯絡人皆可知情", "已補",
-    "補案件", "補", "重啟", "再辦",
-    "派對保", "委對收", "對好", "對保完成",
+    "補案件", "補", "待補", "重啟", "再辦",
+    "派對保", "委對收", "對好", "對保完成", "不收不簽",
+    "已撥款", "今日撥款", "今日已撥款", "已加撥", "核准已撥",
+    "預計排撥", "排撥",
 ]
 
 DELETE_KEYWORDS = [
@@ -132,7 +136,11 @@ COMPANY_ALIAS = {
     # 興達/貸救補/歐
     "興機": "興達機車",
     "貸10": "貸救補",
+    "貸救": "貸救補",
     "歐": "商品貸",
+    # 新新專/維力
+    "新新專": "和裕",
+    "新新": "和裕",
     # 一路發
     "一路發汽車貸款": "裕融",
     "一路發代償專案": "裕融",
@@ -186,6 +194,11 @@ SINGLE_APPROVAL_RE = re.compile(
 # ⭐ 照會注意事項偵測（等同已送件）
 NOTIFICATION_TRIGGER_RE = re.compile(r"照會注意事項")
 EXTRA_COMPANY_RE = re.compile(r"[+＋]\s*([\u4e00-\u9fff0-9]{1,8}?)\s*一起")
+# 轉送格式：8/5-戴君哲-轉21 或 8/11-林曉薇-轉麻吉 6/18
+TRANSFER_RE = re.compile(
+    r"^\s*(\d{1,4}/\d{1,2}(?:/\d{1,2})?)\s*[-－]\s*([\u4e00-\u9fff]{2,4})\s*[-－]\s*轉\s*([^\s@]+)(?:\s.*)?(?:\s*@AI)?\s*$",
+    re.IGNORECASE,
+)
 
 
 def is_notification_briefing(text: str) -> bool:
@@ -1280,11 +1293,18 @@ def parse_disbursement_list(text: str) -> Dict:
     current_date = ""
     current_company = ""
 
-    # 撥款名單標頭正則
+    # 撥款名單標頭正則（有日期）
     DISB_HEADER_RE = re.compile(
-        r"(\d{1,2}/\d{1,2})\s*([\w一-鿿]+?)\s*(撥款名單|排撥|商品撥款|機車撥款|汽車撥款|撥款)",
+        r"(\d{1,2}/\d{1,2})\s*([\w一-鿿]+?)\s*(撥款名單|預計排撥|排撥|今日撥款|商品撥款|機車撥款|汽車撥款|撥款)",
         re.IGNORECASE
     )
+    # 無日期標頭：「貸救補 今日撥款」
+    DISB_HEADER_NODATE_RE = re.compile(
+        r"^([\w一-鿿]+?)\s*(撥款名單|預計排撥|排撥|今日撥款|商品撥款|機車撥款|汽車撥款|撥款)\s*$",
+        re.IGNORECASE
+    )
+
+    today_date = datetime.now().strftime("%#m/%#d") if os.name == "nt" else datetime.now().strftime("%-m/%-d")
 
     lines = text.splitlines()
     for line in lines:
@@ -1302,6 +1322,17 @@ def parse_disbursement_list(text: str) -> Dict:
                 result[current_date][current_company] = []
             continue
 
+        # 無日期標頭（如「貸救補 今日撥款」），用今日日期
+        m2 = DISB_HEADER_NODATE_RE.match(line)
+        if m2:
+            current_date = current_date or today_date
+            current_company = m2.group(1).strip()
+            if current_date not in result:
+                result[current_date] = {}
+            if current_company not in result[current_date]:
+                result[current_date][current_company] = []
+            continue
+
         # 名字行（2-4個中文字，或含英文的姓名）
         if current_date and current_company:
             name_m = re.match(r"^([一-鿿]{2,4})\s*$", line)
@@ -1312,8 +1343,29 @@ def parse_disbursement_list(text: str) -> Dict:
 
 
 def is_disbursement_list(text: str) -> bool:
-    """判斷是否為撥款名單"""
-    return bool(re.search(r"撥款名單|排撥|商品撥款|機車撥款|汽車撥款|撥款", text))
+    """判斷是否為撥款名單（多行格式，標頭+人名行）"""
+    lines = [l.strip() for l in (text or "").splitlines() if l.strip()]
+    if len(lines) < 2:
+        return False
+    # 至少一行要是標頭（含撥款關鍵詞）
+    header_re = re.compile(
+        r"(撥款名單|排撥|預計排撥|今日撥款|商品撥款|機車撥款|汽車撥款)"
+    )
+    has_header = False
+    header_idx = -1
+    for i, line in enumerate(lines):
+        if header_re.search(line):
+            has_header = True
+            header_idx = i
+            break
+    if not has_header:
+        return False
+    # 標頭後面至少要有一行純人名（2-4個中文字）
+    name_re = re.compile(r"^[一-鿿]{2,4}$")
+    for line in lines[header_idx + 1:]:
+        if name_re.match(line):
+            return True
+    return False
 
 
 def get_admin_group_for_sales(sales_group_id: str) -> Optional[str]:
@@ -1417,6 +1469,7 @@ COMPANY_SECTION_MAP = {
     "喬美40": "喬美", "喬美14": "喬美",
     "興達機車": "興達", "興達機": "興達",
     "維力": "和裕",
+    "預付手機": "預付手機分期",
     # 新鑫/土地 → 房地
     "新鑫": "房地", "土地": "房地",
     # 民間方案簡稱
@@ -1892,6 +1945,41 @@ def handle_route_order_block(block_text, source_group_id, reply_token) -> Option
     return f"🆕 已建立客戶 {name}，送件順序：{'/'.join(companies)}"
 
 
+def parse_transfer_line(line: str) -> Dict:
+    """解析「8/5-戴君哲-轉21」或「8/11-林曉薇-轉麻吉 6/18」，回傳 dict 或 {}"""
+    m = TRANSFER_RE.match(line.strip())
+    if not m:
+        return {}
+    target_co = m.group(3).strip()
+    # 透過別名解析
+    target_co = COMPANY_ALIAS.get(target_co, target_co)
+    return {"date": m.group(1), "name": m.group(2), "target": target_co}
+
+
+def handle_transfer_block(block_text, source_group_id, reply_token) -> Optional[str]:
+    """處理「8/5-戴君哲-轉21」格式的轉送指令"""
+    parsed = parse_transfer_line(extract_first_line(block_text))
+    if not parsed:
+        return None
+    name, target_co = parsed["name"], parsed["target"]
+    rows = find_active_by_name(name)
+    same = [r for r in rows if r["source_group_id"] == source_group_id]
+    target = same[0] if same else (rows[0] if rows else None)
+    if not target:
+        return f"❌ 找不到客戶：{name}"
+    route = target["route_plan"] or ""
+    current = get_current_company(route)
+    new_route, ok, err = advance_route_to(route, target_co, "轉送")
+    if not ok:
+        # 如果 route_plan 沒有該公司，直接更新 current_company
+        update_customer(target["case_id"], current_company=target_co,
+                        text=f"{name} 轉{target_co}", from_group_id=source_group_id)
+        return f"✅ {name} 已轉送：{current or '無'} → {target_co}"
+    update_customer(target["case_id"], route_plan=new_route, current_company=target_co,
+                    text=f"{name} 轉{target_co}", from_group_id=source_group_id)
+    return f"✅ {name} 已轉送：{current or '無'} → {target_co}"
+
+
 def handle_a_case_block(block_text, reply_token) -> Optional[str]:
     if is_blocked(block_text):
         return "❌ 含禁止關鍵字，已略過"
@@ -2276,6 +2364,9 @@ def handle_bc_case_block(block_text, source_group_id, reply_token, source_text="
 def _handle_bc_case_block_locked(block_text, source_group_id, reply_token, source_text="") -> Optional[str]:
     if is_route_order_line(extract_first_line(block_text)):
         return handle_route_order_block(block_text, source_group_id, reply_token)
+    # 轉送格式：8/5-戴君哲-轉21
+    if parse_transfer_line(extract_first_line(block_text)):
+        return handle_transfer_block(block_text, source_group_id, reply_token)
     # 單公司核准/婉拒格式：03/04-黃娫柔-房地核准20萬
     if is_single_approval_line(extract_first_line(block_text)):
         parsed = parse_single_approval_line(extract_first_line(block_text))
