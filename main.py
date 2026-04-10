@@ -216,6 +216,115 @@ def extract_extra_company(text: str) -> str:
     return m.group(1).strip() if m else ""
 
 
+def parse_notification_fields(text: str) -> dict:
+    """從照會注意事項訊息提取客戶欄位資料"""
+    fields = {}
+    # 居住年數：居住5年
+    m = re.search(r"居住\s*(\d+)\s*年", text)
+    if m:
+        fields["live_years"] = m.group(1)
+    # 居住狀況：父母名下/自有/租屋/配偶
+    for status in ["父母", "自有", "租屋", "配偶", "親屬", "宿舍"]:
+        if status in text:
+            fields["live_status"] = status + ("名下" if "名下" in text else "")
+            break
+    # 年資：工作年資6年 / 年資6年
+    m = re.search(r"(?:工作)?年資\s*(\d+)\s*年", text)
+    if m:
+        fields["company_years"] = m.group(1)
+    # 月薪：月薪10萬 / 月薪50000
+    m = re.search(r"月薪\s*(\d+(?:\.\d+)?)\s*萬", text)
+    if m:
+        fields["company_salary"] = str(int(float(m.group(1)) * 10000))
+    else:
+        m = re.search(r"月薪\s*(\d{4,})", text)
+        if m:
+            fields["company_salary"] = m.group(1)
+    # 金額/期數：14萬/30期 或 10萬 30期
+    m = re.search(r"(\d+(?:\.\d+)?)\s*萬\s*/?\s*(\d+)\s*期", text)
+    if m:
+        fields["approved_amount"] = f"{m.group(1)}萬"
+    # 學歷：大學畢 / 高中 / 專科
+    for edu, val in [("大學", "專科/大學"), ("專科", "專科/大學"), ("高中", "高中/職"),
+                     ("高職", "高中/職"), ("研究所", "研究所以上"), ("碩士", "研究所以上")]:
+        if edu in text:
+            fields["education"] = val
+            break
+    # 資金用途：資金用途：家用
+    m = re.search(r"資金用途\s*[：:]\s*(\S+)", text)
+    if m:
+        fields["fund_use"] = m.group(1)
+    return fields
+
+
+def handle_notification_briefing(block_text: str, source_group_id: str, reply_token: str) -> Optional[str]:
+    """處理照會注意事項 — 等同已送件，提取欄位資料更新客戶"""
+    lines = block_text.strip().splitlines()
+    if not lines:
+        return None
+    # 第一行是客戶姓名
+    name = lines[0].strip()
+    if not name:
+        return None
+    rows = find_active_by_name(name)
+    same = [r for r in rows if r["source_group_id"] == source_group_id]
+    target = same[0] if same else (rows[0] if rows else None)
+    if not target:
+        return f"⚠️ 照會注意事項：找不到客戶「{name}」"
+
+    # 提取欄位
+    fields = parse_notification_fields(block_text)
+
+    # 更新客戶：標記已送件 + 寫入欄位
+    update_fields = {
+        "text": block_text,
+        "from_group_id": source_group_id,
+        "report_section": target.get("current_company") or target.get("company") or "送件",
+    }
+    if fields.get("approved_amount"):
+        update_fields["approved_amount"] = fields["approved_amount"]
+
+    update_customer(target["case_id"], **update_fields)
+
+    # 把照會中解析出的欄位寫入 DB（直接 SQL 更新非核心欄位）
+    db_updates = {}
+    if fields.get("live_years"):
+        db_updates["live_years"] = fields["live_years"]
+    if fields.get("live_status"):
+        db_updates["live_status"] = fields["live_status"]
+    if fields.get("company_years"):
+        db_updates["company_years"] = fields["company_years"]
+    if fields.get("company_salary"):
+        db_updates["company_salary"] = fields["company_salary"]
+    if fields.get("education"):
+        db_updates["education"] = fields["education"]
+    if db_updates:
+        with db_conn(commit=True) as conn:
+            cur = conn.cursor()
+            set_clause = ", ".join(f"{k}=?" for k in db_updates)
+            vals = list(db_updates.values()) + [target["case_id"]]
+            cur.execute(f"UPDATE customers SET {set_clause} WHERE case_id=?", vals)
+
+    # 回覆
+    parsed_info = []
+    if fields.get("live_years"):
+        parsed_info.append(f"居住{fields['live_years']}年")
+    if fields.get("company_years"):
+        parsed_info.append(f"年資{fields['company_years']}年")
+    if fields.get("company_salary"):
+        parsed_info.append(f"月薪{fields['company_salary']}")
+    if fields.get("approved_amount"):
+        parsed_info.append(f"金額{fields['approved_amount']}")
+    if fields.get("education"):
+        parsed_info.append(f"學歷{fields['education']}")
+
+    info_str = "、".join(parsed_info) if parsed_info else ""
+    msg = f"📋 已收到照會：{name}"
+    if info_str:
+        msg += f"\n📝 已記錄：{info_str}"
+    return msg
+
+
 # ⭐ 對保 4 子步驟偵測
 def detect_pairing_substep(text: str) -> str:
     """偵測對保子步驟，回傳子狀態名稱（空字串=不是對保訊息）
@@ -2362,6 +2471,11 @@ def handle_bc_case_block(block_text, source_group_id, reply_token, source_text="
 
 
 def _handle_bc_case_block_locked(block_text, source_group_id, reply_token, source_text="") -> Optional[str]:
+    # 照會注意事項（等同已送件，提取欄位資料）
+    if is_notification_briefing(block_text):
+        result = handle_notification_briefing(block_text, source_group_id, reply_token)
+        if result:
+            return result
     if is_route_order_line(extract_first_line(block_text)):
         return handle_route_order_block(block_text, source_group_id, reply_token)
     # 轉送格式：8/5-戴君哲-轉21
