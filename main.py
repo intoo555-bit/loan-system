@@ -2778,6 +2778,32 @@ def process_event(event: dict):
             reply_text(reply_token, f"📋 此群組資訊\n名稱：{gname}\nID：{group_id}")
             return
 
+    # A 群優先（避免 A 群同時被註冊為 SALES_GROUP 時走錯邏輯）
+    if group_id == A_GROUP_ID:
+        # 撥款名單（不需要@AI觸發）
+        if is_disbursement_list(text):
+            handle_disbursement_list(text, reply_token)
+            return
+
+        if not has_ai_trigger(text):
+            return
+        cmd = parse_special_command(text, group_id)
+        if cmd:
+            handle_special_command(cmd, reply_token, group_id)
+            return
+        clean = strip_ai_trigger(text)
+        if clean in {"", "助理", "AI助理"}:
+            return
+        blocks = split_multi_cases(clean) or [clean]
+        results = []
+        for idx, block in enumerate(blocks, 1):
+            result = handle_a_case_block(block, reply_token)
+            if result and result != "QUICK_REPLY_SENT":
+                results.append(f"第{idx}筆：{result}" if len(blocks) > 1 else result)
+        if results:
+            reply_text(reply_token, "\n".join(results))
+        return
+
     sales_ids = get_sales_group_ids()
     admin_ids = get_admin_group_ids()
 
@@ -2819,32 +2845,6 @@ def process_event(event: dict):
         all_msgs = results + conflicts
         if not qr_sent and all_msgs:
             reply_text(reply_token, "\n".join(all_msgs))
-        return
-
-    # A 群
-    if group_id == A_GROUP_ID:
-        # 撥款名單（不需要@AI觸發）
-        if is_disbursement_list(text):
-            handle_disbursement_list(text, reply_token)
-            return
-
-        if not has_ai_trigger(text):
-            return
-        cmd = parse_special_command(text, group_id)
-        if cmd:
-            handle_special_command(cmd, reply_token, group_id)
-            return
-        clean = strip_ai_trigger(text)
-        if clean in {"", "助理", "AI助理"}:
-            return
-        blocks = split_multi_cases(clean) or [clean]
-        results = []
-        for idx, block in enumerate(blocks, 1):
-            result = handle_a_case_block(block, reply_token)
-            if result and result != "QUICK_REPLY_SENT":
-                results.append(f"第{idx}筆：{result}" if len(blocks) > 1 else result)
-        if results:
-            reply_text(reply_token, "\n".join(results))
         return
 
     # Bug 2: 未知群組 — 自動註冊為 UNASSIGNED 待審 + 主動回覆
