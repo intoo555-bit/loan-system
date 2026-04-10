@@ -2005,6 +2005,7 @@ def handle_special_command(cmd: Dict, reply_token: str, group_id: str):
         update_customer(target["case_id"], status="CLOSED",
                         close_reason=close_reason,
                         text=f"{name} {close_reason}", from_group_id=group_id)
+        push_text(target["source_group_id"], f"{name} {close_reason}")
         reply_text(reply_token, reply_msg)
         return
 
@@ -2021,6 +2022,11 @@ def handle_special_command(cmd: Dict, reply_token: str, group_id: str):
         update_customer(target["case_id"], route_plan=new_route,
                         current_company=next_co or current,
                         text=f"{name} {current} 婉拒", from_group_id=group_id)
+        # 回貼業務群
+        push_msg = f"{name} {current} 婉拒"
+        if next_co:
+            push_msg += f"\n➡️ 下一家：{next_co}"
+        push_text(target["source_group_id"], push_msg)
         if next_co:
             reply_text(reply_token, f"✅ {name} {current} 婉拒\n➡️ 下一家：{next_co}")
         else:
@@ -2043,6 +2049,8 @@ def handle_special_command(cmd: Dict, reply_token: str, group_id: str):
         update_customer(target["case_id"], route_plan=new_route,
                         current_company=target_co,
                         text=f"{name} {current} 婉拒，轉送 {target_co}", from_group_id=group_id)
+        # 回貼業務群
+        push_text(target["source_group_id"], f"{name} {current} 婉拒\n➡️ 跳轉到：{target_co}")
         reply_text(reply_token, f"✅ {name} {current} 婉拒\n➡️ 跳轉到：{target_co}")
         return
 
@@ -2059,6 +2067,7 @@ def handle_special_command(cmd: Dict, reply_token: str, group_id: str):
         update_customer(target["case_id"], status="PENALTY",
                         close_reason=reason, penalty_amount=amt,
                         text=f"{name} 違約金已支付 ${amt}（{reason}）", from_group_id=group_id)
+        push_text(target["source_group_id"], f"{name} 違約金已支付 ${amt}（{reason}）")
         reply_text(reply_token, "✅ " + name + " 已結案\n原因：" + reason + "\n違約金：$" + amt)
         return
 
@@ -2104,6 +2113,7 @@ def handle_special_command(cmd: Dict, reply_token: str, group_id: str):
                 reply_text(reply_token, f"❌ {err}"); return
             update_customer(target["case_id"], route_plan=new_route, current_company=target_co,
                             text=f"{name} 轉{target_co}", from_group_id=group_id)
+            push_text(target["source_group_id"], f"{name} 已轉送：{current} → {target_co}")
             reply_text(reply_token, f"✅ {name} 已轉送：{current} → {target_co}")
         else:
             next_co = get_next_company(route)
@@ -2112,6 +2122,7 @@ def handle_special_command(cmd: Dict, reply_token: str, group_id: str):
             new_route = advance_route(route, "轉送")
             update_customer(target["case_id"], route_plan=new_route, current_company=next_co,
                             text=f"{name} 轉下一家→{next_co}", from_group_id=group_id)
+            push_text(target["source_group_id"], f"{name} 已轉送：{current} → {next_co}")
             reply_text(reply_token, f"✅ {name} 已轉送：{current} → {next_co}")
 
 
