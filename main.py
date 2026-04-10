@@ -1865,7 +1865,104 @@ def parse_special_command(text: str, group_id: str) -> Optional[Dict]:
         amt = m.group(2).replace(",","").replace("，","")
         return {"type": "penalty", "name": m.group(1), "penalty": amt}
 
+    # 照會：@AI 照會 王小明 21 / @AI 照會 王小明 亞太 / @AI 照會 王小明
+    m = re.match(r"^照會\s+([\u4e00-\u9fff]{2,4})(?:\s+(.+))?$", clean)
+    if m:
+        return {"type": "notification", "name": m.group(1), "company": (m.group(2) or "").strip()}
+
     return None
+
+
+def generate_notification_text(r: dict, company: str = "") -> str:
+    """根據客戶 DB 資料自動產生照會注意事項文字"""
+    def v(k): return (r.get(k, "") or "").strip()
+
+    name = v("customer_name")
+    # 公司：優先用參數，其次 current_company，最後 company
+    co = company or v("current_company") or v("company") or ""
+
+    # 居住地：同戶籍→戶籍，否則→現居地
+    live_type = "戶籍" if v("live_same_as_reg") == "1" else "現居地"
+    live_years = v("live_years") or "0"
+    live_status = v("live_status") or "自有"
+
+    # 年資
+    co_years = v("company_years") or "0"
+
+    # 月薪：轉成「N萬」或「N萬N」格式
+    salary_str = ""
+    try:
+        sal = float(v("company_salary") or "0")
+        if sal >= 10000:
+            wan = int(sal // 10000)
+            remainder = int((sal % 10000) // 1000)
+            salary_str = f"{wan}萬{remainder}" if remainder else f"{wan}萬"
+        elif sal > 0:
+            salary_str = f"{sal}"
+        else:
+            salary_str = "0"
+    except Exception:
+        salary_str = v("company_salary") or "0"
+
+    # 金額
+    amount = v("approved_amount") or ""
+    # 期數：公司預設
+    DEFAULT_PERIODS = {
+        "亞太": "30", "亞太商品": "30", "亞太機車15萬": "36", "亞太機車25萬": "48",
+        "亞太工會機車": "36", "和裕": "24", "和裕機車": "24", "和裕商品": "24",
+        "21": "18", "21機車12萬": "24", "21機車25萬": "48", "21商品": "24",
+        "創鉅": "24", "麻吉": "24", "喬美": "30", "第一": "24",
+        "貸就補": "24", "貸救補": "24", "手機分期": "18",
+    }
+    period = DEFAULT_PERIODS.get(co, "24")
+    amount_line = f"{amount}/{period}期" if amount else ""
+
+    # 學歷：轉成口語
+    edu = v("education")
+    EDU_MAP = {"專科/大學": "大學", "專科、大學": "大學", "高中/職": "高中",
+               "高中職": "高中", "研究所以上": "研究所", "其他": "高中"}
+    edu_spoken = EDU_MAP.get(edu, edu) if edu else "高中"
+
+    # 資金用途
+    fund = v("adminb_fund_use") or "家用"
+
+    # 名下車貸狀況：檢查 debt_list
+    car_loan_status = "名下無貸款"
+    try:
+        debt_list = json.loads(v("debt_list")) if v("debt_list") else []
+        for d in debt_list:
+            co_name = (d.get("co", "") or "").lower()
+            dy = d.get("dy", "") or ""
+            if any(w in co_name for w in ["車", "機車", "汽車"]):
+                if "公路" in dy or "動保" in dy:
+                    car_loan_status = "名下車貸正常繳"
+                break
+    except Exception:
+        pass
+
+    # 組合照會文字
+    lines = [
+        name,
+        "照會注意事項",
+        f"✅現居住{live_type}地址 居住{live_years}年 {live_status} 工作年資{co_years}年 月薪{salary_str}",
+    ]
+    if amount_line:
+        lines.append(f"✅{amount_line}")
+    lines += [
+        "✅帳單簡訊條碼繳款",
+        "✅ 姓名親簽",
+        f"✅學歷詢問到麻煩說{edu_spoken}畢",
+        f"✅資金用途 ：{fund}",
+        "✅ 詢問任何法學，刑事，一律都說不是自己的",
+        "✅假如問到在外面有沒有欠款公司要說沒有！",
+        f"✅{car_loan_status}",
+        "",
+        "⚠️不好的一概否認喔，比如卡循卡債就算清償了，沒拉聯徵，會問的比較多！任何法學 如果詢問麻煩也都否認💯",
+        "",
+        "💌確認進件照會時間",
+        "     🎀白天通知進件 中午或是下午以前注意來電",
+    ]
+    return "\n".join(lines)
 
 
 def handle_special_command(cmd: Dict, reply_token: str, group_id: str):
@@ -1959,6 +2056,19 @@ def handle_special_command(cmd: Dict, reply_token: str, group_id: str):
                         close_reason=reason, penalty_amount=amt,
                         text=f"{name} 違約金已支付 ${amt}（{reason}）", from_group_id=group_id)
         reply_text(reply_token, "✅ " + name + " 已結案\n原因：" + reason + "\n違約金：$" + amt)
+        return
+
+    if t == "notification":
+        name = cmd["name"]
+        company = cmd.get("company", "")
+        rows = find_active_by_name(name)
+        same = [r for r in rows if r["source_group_id"] == group_id]
+        target = same[0] if same else (rows[0] if rows else None)
+        if not target:
+            reply_text(reply_token, f"❌ 找不到客戶：{name}"); return
+        r = dict(target)
+        txt = generate_notification_text(r, company)
+        reply_text(reply_token, txt)
         return
 
     if t == "set_amount":
