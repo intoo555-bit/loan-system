@@ -2003,7 +2003,6 @@ def handle_special_command(cmd: Dict, reply_token: str, group_id: str):
             close_reason = "一般結案"
             reply_msg = f"✅ {name} 已結案，從日報移除"
         update_customer(target["case_id"], status="CLOSED",
-                        close_reason=close_reason,
                         text=f"{name} {close_reason}", from_group_id=group_id)
         push_text(target["source_group_id"], f"{name} {close_reason}")
         reply_text(reply_token, reply_msg)
@@ -2065,7 +2064,6 @@ def handle_special_command(cmd: Dict, reply_token: str, group_id: str):
         has_approved = bool(target["approved_amount"])
         reason = "核准後放棄" if has_approved else "辦理中放棄"
         update_customer(target["case_id"], status="PENALTY",
-                        close_reason=reason, penalty_amount=amt,
                         text=f"{name} 違約金已支付 ${amt}（{reason}）", from_group_id=group_id)
         push_text(target["source_group_id"], f"{name} 違約金已支付 ${amt}（{reason}）")
         reply_text(reply_token, "✅ " + name + " 已結案\n原因：" + reason + "\n違約金：$" + amt)
