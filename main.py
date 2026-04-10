@@ -1995,17 +1995,10 @@ def handle_special_command(cmd: Dict, reply_token: str, group_id: str):
         target = same[0] if same else (rows[0] if rows else None)
         if not target:
             reply_text(reply_token, f"❌ 找不到客戶：{name}"); return
-        has_approved = bool(target["approved_amount"])
-        if has_approved:
-            close_reason = "已撥款結案"
-            reply_msg = f"✅ {name} 已撥款結案，從日報移除"
-        else:
-            close_reason = "一般結案"
-            reply_msg = f"✅ {name} 已結案，從日報移除"
         update_customer(target["case_id"], status="CLOSED",
-                        text=f"{name} {close_reason}", from_group_id=group_id)
-        push_text(target["source_group_id"], f"{name} {close_reason}")
-        reply_text(reply_token, reply_msg)
+                        text=f"{name} 結案", from_group_id=group_id)
+        push_text(target["source_group_id"], f"{name} 結案")
+        reply_text(reply_token, f"✅ {name} 已結案，從日報移除")
         return
 
     if t == "reject":
