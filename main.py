@@ -202,10 +202,20 @@ TRANSFER_RE = re.compile(
 
 
 def is_notification_briefing(text: str) -> bool:
-    """是否為照會注意事項格式（等同已送件）"""
-    if not text or not NOTIFICATION_TRIGGER_RE.search(text):
+    """是否為照會注意事項格式：第一行姓名（2-4中文字）+ 第二行「照會注意事項」"""
+    if not text:
         return False
-    return text.count("✅") >= 3
+    lines = [l.strip() for l in text.strip().splitlines() if l.strip()]
+    if len(lines) < 2:
+        return False
+    # 第一行：純中文姓名 2-4 字
+    name = lines[0]
+    if not re.fullmatch(r"[\u4e00-\u9fff]{2,4}", name):
+        return False
+    # 第二行：照會注意事項
+    if "照會注意事項" not in lines[1]:
+        return False
+    return True
 
 
 def extract_extra_company(text: str) -> str:
