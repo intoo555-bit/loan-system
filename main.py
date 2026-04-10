@@ -1865,8 +1865,12 @@ def parse_special_command(text: str, group_id: str) -> Optional[Dict]:
         amt = m.group(2).replace(",","").replace("，","")
         return {"type": "penalty", "name": m.group(1), "penalty": amt}
 
-    # 照會：@AI 照會 王小明 21 / @AI 照會 王小明 亞太 / @AI 照會 王小明
+    # 照會：前後都可以
+    # @AI 照會 王小明 / @AI 王小明 照會 / @AI 照會 王小明 21
     m = re.match(r"^照會\s+([\u4e00-\u9fff]{2,4})(?:\s+(.+))?$", clean)
+    if m:
+        return {"type": "notification", "name": m.group(1), "company": (m.group(2) or "").strip()}
+    m = re.match(r"^([\u4e00-\u9fff]{2,4})\s+照會(?:\s+(.+))?$", clean)
     if m:
         return {"type": "notification", "name": m.group(1), "company": (m.group(2) or "").strip()}
 
