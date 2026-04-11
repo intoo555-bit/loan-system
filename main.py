@@ -2263,12 +2263,22 @@ def _handle_a_case_block_locked(block_text, reply_token, id_no, name) -> Optiona
             ai_amount_needed = True
         new_report_section = "待撥款"
 
-    update_customer(customer["case_id"], company=company, text=block_text,
-                    from_group_id=A_GROUP_ID, status=new_status,
-                    route_plan=new_route if new_route != route else new_route,
-                    current_company=next_co if next_co else None,
-                    approved_amount=approved_amount,
-                    report_section=new_report_section)
+    if is_approved:
+        # 核准時：不動 company / current_company（保持送件順序不變）
+        # 只更新 route_plan 歷史（記錄哪家核准多少）+ 金額 + 移到待撥款
+        update_customer(customer["case_id"], text=block_text,
+                        from_group_id=A_GROUP_ID, status=new_status,
+                        route_plan=new_route,
+                        approved_amount=approved_amount,
+                        report_section=new_report_section)
+    else:
+        # 婉拒/其他：正常更新 company + current_company（推進送件順序）
+        update_customer(customer["case_id"], company=company, text=block_text,
+                        from_group_id=A_GROUP_ID, status=new_status,
+                        route_plan=new_route,
+                        current_company=next_co if next_co else None,
+                        approved_amount=approved_amount,
+                        report_section=new_report_section)
 
     ok, err = push_text(customer["source_group_id"], block_text)
     if not ok:
