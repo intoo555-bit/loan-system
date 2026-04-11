@@ -1619,8 +1619,17 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
             created_date = created[5:10].replace("-", "/") if created else date_str
             amount = row["approved_amount"] or ""
             disb_date = row["disbursement_date"] or ""
-            amount_str = f"-核准{amount}" if amount else ""
             disb_str = f"(撥款{disb_date})" if disb_date else "(待撥款)"
+            # 從 route_plan 歷史找核准公司（不用 current_company，因為核准不一定是目前在送的那家）
+            approved_list = get_all_approved(row["route_plan"] or "")
+            if approved_list:
+                # 顯示所有核准：亞太核准12萬/21核准5萬
+                parts = [f"{h.get('company','')}{h.get('amount','')}" for h in approved_list]
+                amount_str = "-核准" + "/".join(parts)
+            elif amount:
+                amount_str = f"-核准{amount}"
+            else:
+                amount_str = ""
             line = f"{created_date}-{row['customer_name']}-{company_str}{amount_str}{disb_str}"
         else:
             line = f"{date_str}-{row['customer_name']}-{company_str}"
