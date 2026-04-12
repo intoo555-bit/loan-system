@@ -4223,7 +4223,7 @@ def adminb_page(request: Request, case_id: str = "", saved: str = ""):
         sel = "selected" if case_id == cu["case_id"] else ""
         gname = get_group_name(cu["source_group_id"])
         tag = "📋表單" if cu["status"]=="PENDING" else "📊日報"
-        cust_opts += f'<option value="{h(cu["case_id"])}" {sel}>[{tag}] {h(cu["customer_name"])}（{h(gname)}）</option>'
+        cust_opts += f'<option value="{h(cu["case_id"])}" data-gid="{h(cu["source_group_id"])}" {sel}>[{tag}] {h(cu["customer_name"])} {h(cu["id_no"] or "")}（{h(gname)}）</option>'
 
     ADMINB_CSS = """<style>
 body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-serif;font-size:14px;color:#2c2820;}
@@ -4250,15 +4250,41 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
 .ab-card{overflow-x:auto}
 </style>"""
 
+    # 群組選項
+    conn2 = get_conn(); cur2 = conn2.cursor()
+    cur2.execute("SELECT group_id, group_name FROM groups WHERE group_type='SALES_GROUP' AND is_active=1 ORDER BY group_name")
+    ab_groups = cur2.fetchall(); conn2.close()
+    grp_filter_opts = '<option value="">全部群組</option>' + "".join(
+        f'<option value="{h(g["group_id"])}">{h(g["group_name"])}</option>' for g in ab_groups)
+
     if not customer:
         return f"""<!DOCTYPE html><html><head>{PAGE_CSS}{ADMINB_CSS}<title>行政B作業</title></head><body>
     {make_topnav(role,"adminb")}
     <div class="page">
       <div class="ab-card">
         <div class="ab-sec">選擇客戶</div>
-        <select class="ab-inp" onchange="if(this.value)location.href='/adminb?case_id='+this.value">{cust_opts}</select>
+        <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap">
+          <input type="text" id="ab-search" class="ab-inp" placeholder="搜尋姓名或身分證..." oninput="filterCust()" style="flex:1;min-width:150px">
+          <select id="ab-grp" class="ab-sel" onchange="filterCust()" style="width:130px">{grp_filter_opts}</select>
+        </div>
+        <select id="ab-cust" class="ab-inp" onchange="if(this.value)location.href='/adminb?case_id='+this.value" size="10" style="height:auto">{cust_opts}</select>
       </div>
-    </div></body></html>"""
+    </div>
+    <script>
+    function filterCust(){{
+      const q=document.getElementById('ab-search').value.toLowerCase();
+      const g=document.getElementById('ab-grp').value;
+      const sel=document.getElementById('ab-cust');
+      for(const o of sel.options){{
+        if(!o.value){{o.style.display='';continue;}}
+        const txt=o.textContent.toLowerCase();
+        const matchQ=!q||txt.includes(q);
+        const matchG=!g||o.dataset.gid===g;
+        o.style.display=(matchQ&&matchG)?'':'none';
+      }}
+    }}
+    </script>
+    </body></html>"""
 
     rules = apply_adminb_rules(customer)
     name = customer.get("customer_name","")
@@ -7669,7 +7695,7 @@ async def update_password(request: Request):
 
 
 @app.get("/admin/logs", response_class=HTMLResponse)
-def admin_logs_page(request: Request, page: int = 1):
+def admin_logs_page(request: Request, page: int = 1, q: str = ""):
     from fastapi.responses import RedirectResponse
     role = check_auth(request)
     if role != "admin":
@@ -7677,9 +7703,14 @@ def admin_logs_page(request: Request, page: int = 1):
     per_page = 50
     offset = (page - 1) * per_page
     conn = get_conn(); cur = conn.cursor()
-    cur.execute("SELECT COUNT(*) as c FROM case_logs")
-    total = cur.fetchone()["c"]
-    cur.execute("SELECT * FROM case_logs ORDER BY created_at DESC LIMIT ? OFFSET ?", (per_page, offset))
+    if q:
+        cur.execute("SELECT COUNT(*) as c FROM case_logs WHERE customer_name LIKE ? OR message_text LIKE ?", (f"%{q}%", f"%{q}%"))
+        total = cur.fetchone()["c"]
+        cur.execute("SELECT * FROM case_logs WHERE customer_name LIKE ? OR message_text LIKE ? ORDER BY created_at DESC LIMIT ? OFFSET ?", (f"%{q}%", f"%{q}%", per_page, offset))
+    else:
+        cur.execute("SELECT COUNT(*) as c FROM case_logs")
+        total = cur.fetchone()["c"]
+        cur.execute("SELECT * FROM case_logs ORDER BY created_at DESC LIMIT ? OFFSET ?", (per_page, offset))
     logs = cur.fetchall(); conn.close()
     total_pages = (total + per_page - 1) // per_page
     rows_html = ""
@@ -7691,14 +7722,15 @@ def admin_logs_page(request: Request, page: int = 1):
     if not rows_html:
         rows_html = '<tr><td colspan="4" style="text-align:center;color:#999;padding:20px">沒有操作紀錄</td></tr>'
     # 分頁
+    q_param = f"&q={h(q)}" if q else ""
     pag = ""
     if total_pages > 1:
         pag = '<div style="display:flex;gap:6px;justify-content:center;margin-top:14px;flex-wrap:wrap">'
         if page > 1:
-            pag += f'<a href="/admin/logs?page={page-1}" class="btn" style="background:#e8e2da;color:#4a3e30;font-size:12px">上一頁</a>'
+            pag += f'<a href="/admin/logs?page={page-1}{q_param}" class="btn" style="background:#e8e2da;color:#4a3e30;font-size:12px">上一頁</a>'
         pag += f'<span style="padding:6px 12px;font-size:12px;color:#6a5e4e">{page}/{total_pages}（共{total}筆）</span>'
         if page < total_pages:
-            pag += f'<a href="/admin/logs?page={page+1}" class="btn" style="background:#e8e2da;color:#4a3e30;font-size:12px">下一頁</a>'
+            pag += f'<a href="/admin/logs?page={page+1}{q_param}" class="btn" style="background:#e8e2da;color:#4a3e30;font-size:12px">下一頁</a>'
         pag += '</div>'
     return f"""<!DOCTYPE html><html><head>{PAGE_CSS}<title>操作紀錄</title>
     <style>
@@ -7710,6 +7742,11 @@ def admin_logs_page(request: Request, page: int = 1):
     {make_topnav(role, "logs")}
     <div class="page">
       <h2 style="font-size:18px;font-weight:600;margin-bottom:14px">📝 操作紀錄</h2>
+      <form method="get" action="/admin/logs" style="margin-bottom:12px;display:flex;gap:8px">
+        <input name="q" value="{h(q)}" placeholder="搜尋客戶名或操作內容..." class="input" style="flex:1" autofocus>
+        <button type="submit" class="btn btn-primary" style="font-size:12px">🔍 搜尋</button>
+        {"<a href='/admin/logs' class='btn' style='background:#e8e2da;color:#4a3e30;font-size:12px'>清除</a>" if q else ""}
+      </form>
       <div style="overflow-x:auto;background:#fff;border:1px solid #ddd5ca;border-radius:10px">
         <table><thead><tr><th>時間</th><th>客戶</th><th>來源群組</th><th>操作內容</th></tr></thead>
         <tbody>{rows_html}</tbody></table>
