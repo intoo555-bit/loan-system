@@ -1624,7 +1624,7 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
             approved_list = get_all_approved(row["route_plan"] or "")
             if approved_list:
                 # 顯示所有核准：亞太核准12萬/21核准5萬
-                parts = [f"{h.get('company','')}{h.get('amount','')}" for h in approved_list]
+                parts = [f"{h.get('company') or ''}{h.get('amount') or ''}" for h in approved_list]
                 amount_str = "-核准" + "/".join(parts)
             elif amount:
                 amount_str = f"-核准{amount}"
@@ -2422,7 +2422,7 @@ def handle_command_text(text: str, reply_token: str) -> bool:
         _, action_id = text.split("|", 1)
         a = get_action(action_id, "confirm_new_case_with_existing_id")
         if not a: return True
-        p = a["payload"]; block_text = p.get("block_text", ""); sg = p.get("source_group_id") or group_id
+        p = a["payload"]; block_text = p.get("block_text", ""); sg = p.get("source_group_id", "")
         name = extract_name(block_text)
         create_customer_record(name, extract_id_no(block_text), extract_company(block_text), sg, block_text)
         reply_text(reply_token, f"🆕 已在{get_group_name(sg)}建立新案件：{name}")
@@ -2530,7 +2530,7 @@ def handle_command_text(text: str, reply_token: str) -> bool:
         _, action_id = text.split("|", 1)
         a = get_action(action_id, "reopen_or_new_case")
         if not a: return True
-        p = a["payload"]; block_text = p.get("block_text", ""); sg = p.get("source_group_id", B_GROUP_ID)
+        p = a["payload"]; block_text = p.get("block_text", ""); sg = p.get("source_group_id", "")
         push_to_a = p.get("push_to_a_after_reopen", False); name = extract_name(block_text)
         create_customer_record(name, extract_id_no(block_text), extract_company(block_text), sg, block_text)
         pushed = False
@@ -3433,7 +3433,7 @@ def render_customer_row(row) -> str:
     approved_list = [rh for rh in route_history if rh.get("status") in ("核准","待撥款","撥款") and rh.get("amount")]
     if (row["report_section"] or "") == "待撥款":
         if len(approved_list) > 1:
-            parts = [rh.get("company","") + rh.get("amount","") for rh in approved_list if rh.get("amount")]
+            parts = [(rh.get("company") or "") + (rh.get("amount") or "") for rh in approved_list if rh.get("amount")]
             sub = "多家核准：" + " + ".join(parts) + ("（撥款" + disb + "）" if disb else "（待撥款）")
         else:
             sub = co + (f" 核准{amt}" if amt else "") + (f"（撥款{disb}）" if disb else "（待撥款）")
@@ -3831,7 +3831,7 @@ def search_page(request: Request, q: str = "", grp: str = "", date_from: str = "
                 if next_co: route_html += f'<div class="route-line">下一家：{h(next_co)}</div>'
                 if history:
                     route_html += '<div class="route-line" style="flex-wrap:wrap;gap:4px">歷程：'
-                    route_html += " → ".join(f'{h(hi["company"])}({h(hi["status"])})' for hi in history[-5:])
+                    route_html += " → ".join(f'{h(hi.get("company",""))}({h(hi.get("status",""))})' for hi in history[-5:])
                     route_html += '</div>'
 
             last = (row["last_update"] or "").splitlines()
@@ -4832,7 +4832,7 @@ def history_page(request: Request, group: str = "", month: str = "", q: str = ""
         route_data2 = parse_route_json(row.get("route_plan","") or "")
         all_approved = [rh for rh in route_data2.get("history",[]) if rh.get("status") in ("核准","待撥款","撥款") and rh.get("amount")]
         if len(all_approved) > 1:
-            detail = "多家核准：" + " + ".join(rh.get("company","") + rh.get("amount","") for rh in all_approved)
+            detail = "多家核准：" + " + ".join((rh.get("company") or "") + (rh.get("amount") or "") for rh in all_approved)
         elif all_approved:
             detail = all_approved[0].get("company","") + " 核准" + all_approved[0].get("amount","")
         else:
@@ -6507,6 +6507,27 @@ def _do_download_excel(request: Request, case_id: str):
             else:
                 carrier_val = ""
 
+            # === 聯絡人關係（C24/F24）：常用詞轉換 ===
+            valid_hr_rels = ["父母","配偶","子女","兄弟姊妹","朋友","同事","其他"]
+            def map_hr_relation(raw):
+                if not raw: return ""
+                if raw in valid_hr_rels: return raw
+                for k in ["夫妻","妻","夫","老婆","老公","太太","先生","配偶"]:
+                    if k in raw: return "配偶"
+                for k in ["媽媽","爸爸","母親","父親","媽","爸","母","父"]:
+                    if k in raw: return "父母"
+                for k in ["兒子","女兒","兒","女","子女"]:
+                    if k in raw: return "子女"
+                for k in ["哥哥","姊姊","姐姐","弟弟","妹妹","哥","姊","姐","弟","妹","兄","兄弟姊妹"]:
+                    if k in raw: return "兄弟姊妹"
+                for k in ["朋友","友","同學"]:
+                    if k in raw: return "朋友"
+                for k in ["同事"]:
+                    if k in raw: return "同事"
+                return raw  # 無法轉換則原值帶入
+            c1_rel_hr = map_hr_relation(c1_rel)
+            c2_rel_hr = map_hr_relation(c2_rel)
+
             # === 聯絡人知情（D22/G22）智能判別 ===
             valid_known = ["知情", "保密"]
             def map_known(raw):
@@ -6544,7 +6565,7 @@ def _do_download_excel(request: Request, case_id: str):
                 "C18": company, "G18": co_role, "I18": years_fmt,
                 "C19": co_addr, "I19": sal_fmt,
                 "C23": c1_name, "F23": c2_name,
-                "C24": c1_rel, "F24": c2_rel,
+                "C24": c1_rel_hr, "F24": c2_rel_hr,
                 "C25": c1_ph_fmt, "F25": c2_ph_fmt,
                 "D22": c1_known_val, "G22": c2_known_val,
                 # 撥款資訊（無填寫則清空，戶名 C39 不動有公式）
