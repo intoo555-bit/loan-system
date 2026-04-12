@@ -5061,7 +5061,7 @@ def pending_customers_page(request: Request, q: str = "", grp: str = "", date_fr
             <td style="padding:11px 12px;color:#1a1208;font-family:monospace;font-weight:600;">{h(id_no)}</td>
             <td style="padding:11px 12px;color:#1a1208;font-weight:600;">{h(gname)}</td>
             <td style="padding:11px 12px;text-align:center;">
-                <a href="/edit-pending?case_id={h(case_id)}" style="background:#3a2e1c;color:#fff;padding:5px 14px;border-radius:6px;font-size:12px;text-decoration:none;font-weight:700;">編輯</a>
+                <a href="/edit-pending?case_id={h(case_id)}" style="background:#3a2e1c;color:#fff;padding:5px 14px;border-radius:6px;font-size:12px;text-decoration:none;font-weight:700;white-space:nowrap;">編輯</a>
             </td>
         </tr>'''
     empty = "" if rows else '<tr><td colspan="6" style="text-align:center;padding:30px;color:#4a3e30;font-weight:600;">目前沒有待確認客戶</td></tr>'
