@@ -1620,6 +1620,7 @@ def normalize_section(section: str) -> str:
 def build_section_map(all_rows) -> Dict[str, List[str]]:
     """把客戶列表轉成 section_map"""
     section_map: Dict[str, List[str]] = {}
+    today_str = datetime.now().strftime("%Y-%m-%d")
     for row in all_rows:
         section = row["report_section"] or row["current_company"] or row["company"] or "送件"
         section = normalize_section(section)  # Bug 20: 移除多餘的第二次呼叫
@@ -1660,7 +1661,6 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
             if status_short:
                 line += f"-{status_short}"
         # 今日新進件標記
-        today_str = datetime.now().strftime("%Y-%m-%d")
         if created[:10] == today_str:
             line = "🆕" + line
         section_map.setdefault(section, []).append(line)
@@ -1918,8 +1918,8 @@ def parse_special_command(text: str, group_id: str) -> Optional[Dict]:
     if m and m.group(2).strip() != "下一家":
         return {"type": "advance", "name": m.group(1), "target": m.group(2).strip()}
 
-    # 修改核准金額：@AI 姓名 公司 核准 金額
-    m = re.match(r"^([\u4e00-\u9fff]{2,4})\s*(.+?)\s*核准\s*(.+)$", clean)
+    # 修改核准金額：@AI 姓名 公司 核准 金額（姓名和公司之間必須有空格）
+    m = re.match(r"^([\u4e00-\u9fff]{2,4})\s+(.+?)\s*核准\s*(.+)$", clean)
     if m:
         return {"type": "update_amount", "name": m.group(1), "company": m.group(2).strip(), "amount": m.group(3).strip()}
 
@@ -2222,6 +2222,12 @@ def handle_special_command(cmd: Dict, reply_token: str, group_id: str):
         old_name = cmd["old_name"]
         new_name = cmd["new_name"]
         rows = find_active_by_name(old_name)
+        if not rows:
+            # 也找結案客戶
+            conn2 = get_conn(); cur2 = conn2.cursor()
+            cur2.execute("SELECT * FROM customers WHERE customer_name=? ORDER BY updated_at DESC LIMIT 1", (old_name,))
+            r = cur2.fetchone(); conn2.close()
+            if r: rows = [r]
         same = [r for r in rows if r["source_group_id"] == group_id]
         target = same[0] if same else (rows[0] if rows else None)
         if not target:
