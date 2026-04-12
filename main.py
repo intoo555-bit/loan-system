@@ -1,5 +1,5 @@
 from fastapi import FastAPI, Request, BackgroundTasks
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 import uvicorn
 import requests as req_lib
 import os
@@ -1700,6 +1700,26 @@ def generate_report_lines(group_id: str) -> List[str]:
         else:
             segments.append(f"📊 {group_name} 日報 {today}\n" + "\n".join(extra))
 
+    # 待撥款超過7天提醒
+    overdue_lines = []
+    for row in all_rows:
+        if (row["report_section"] or "") == "待撥款" and not row.get("disbursement_date"):
+            created = row["created_at"] or ""
+            if created:
+                try:
+                    from datetime import datetime as _dt
+                    days = (datetime.now() - _dt.fromisoformat(created.replace("Z",""))).days
+                    if days >= 7:
+                        overdue_lines.append(f"  {row['customer_name']}（{days}天）")
+                except Exception:
+                    pass
+    if overdue_lines:
+        overdue_seg = f"\n⏰ 待撥款超過7天（{len(overdue_lines)}筆）\n" + "\n".join(overdue_lines)
+        if segments:
+            segments[-1] += overdue_seg
+        else:
+            segments.append(f"📊 {group_name} 日報 {today}" + overdue_seg)
+
     if not segments:
         return [f"📊 {group_name} 日報 {today}\n（目前無有效案件）"]
 
@@ -1832,6 +1852,21 @@ def parse_special_command(text: str, group_id: str) -> Optional[Dict]:
         names = [n.strip() for n in rest.splitlines() if n.strip()]
         if names:
             return {"type": "batch_close", "names": names}
+
+    # 批次婉拒：@AI 批次婉拒\n姓名1\n姓名2\n...
+    if clean.startswith("批次婉拒"):
+        rest = clean[len("批次婉拒"):].strip()
+        names = [n.strip() for n in rest.splitlines() if n.strip()]
+        if names:
+            return {"type": "batch_reject", "names": names}
+
+    # 待撥款名單：@AI 待撥款
+    if re.match(r"^待撥款$", clean):
+        return {"type": "pending_disbursement"}
+
+    # 統計：@AI 統計
+    if re.match(r"^統計$", clean):
+        return {"type": "stats"}
 
     # 群組ID查詢
     if re.match(r"^群組ID$", clean):
@@ -2025,6 +2060,96 @@ def handle_special_command(cmd: Dict, reply_token: str, group_id: str):
             header += f"，失敗 {fail}"
         header += "）"
         reply_text(reply_token, header + "\n" + "\n".join(results))
+        return
+
+    if t == "batch_reject":
+        names = cmd["names"]
+        results = []
+        for name in names:
+            rows = find_active_by_name(name)
+            same = [r for r in rows if r["source_group_id"] == group_id]
+            target = same[0] if same else (rows[0] if rows else None)
+            if not target:
+                results.append(f"  {name} ❌ 找不到客戶")
+            else:
+                route = target["route_plan"] or ""
+                current = get_current_company(route)
+                next_co = get_next_company(route)
+                new_route = advance_route(route, "婉拒")
+                update_customer(target["case_id"], route_plan=new_route,
+                                current_company=next_co or current,
+                                text=f"{name} {current} 婉拒", from_group_id=group_id)
+                push_text(target["source_group_id"], f"{name} {current} 婉拒")
+                if next_co:
+                    results.append(f"  {name} ✅ {current}婉拒 → {next_co}")
+                else:
+                    results.append(f"  {name} ✅ {current}婉拒（無下一家）")
+        ok = sum(1 for r in results if "✅" in r)
+        fail = len(results) - ok
+        header = f"📋 批次婉拒 {len(names)} 筆（成功 {ok}"
+        if fail:
+            header += f"，失敗 {fail}"
+        header += "）"
+        reply_text(reply_token, header + "\n" + "\n".join(results))
+        return
+
+    if t == "pending_disbursement":
+        conn = get_conn(); cur = conn.cursor()
+        cur.execute("SELECT customer_name, current_company, company, approved_amount, route_plan, created_at FROM customers WHERE status='ACTIVE' AND report_section='待撥款' ORDER BY created_at")
+        rows = cur.fetchall(); conn.close()
+        if not rows:
+            reply_text(reply_token, "📋 目前沒有待撥款客戶")
+            return
+        lines = [f"📋 待撥款名單（{len(rows)} 筆）\n"]
+        for r in rows:
+            name = r["customer_name"]
+            co = r["current_company"] or r["company"] or ""
+            amt = r["approved_amount"] or ""
+            created = (r["created_at"] or "")[:10]
+            approved_list = get_all_approved(r["route_plan"] or "")
+            if approved_list:
+                parts = [(h.get("company") or "") + (h.get("amount") or "") for h in approved_list]
+                amt_str = "/".join(parts)
+            elif amt:
+                amt_str = amt
+            else:
+                amt_str = "未知金額"
+            lines.append(f"{created}-{name}-核准{amt_str}")
+        reply_text(reply_token, "\n".join(lines))
+        return
+
+    if t == "stats":
+        conn = get_conn(); cur = conn.cursor()
+        today = now_iso()[:10]
+        month_start = today[:7] + "-01"
+        # 今日
+        cur.execute("SELECT COUNT(*) as c FROM customers WHERE date(created_at)=?", (today,))
+        today_new = cur.fetchone()["c"]
+        cur.execute("SELECT COUNT(*) as c FROM customers WHERE status='ACTIVE' AND report_section='待撥款' AND date(updated_at)=?", (today,))
+        today_approved = cur.fetchone()["c"]
+        cur.execute("SELECT COUNT(*) as c FROM customers WHERE status IN ('CLOSED','PENALTY','ABANDONED','REJECTED') AND date(updated_at)=?", (today,))
+        today_closed = cur.fetchone()["c"]
+        # 本月
+        cur.execute("SELECT COUNT(*) as c FROM customers WHERE created_at>=?", (month_start,))
+        month_new = cur.fetchone()["c"]
+        cur.execute("SELECT COUNT(*) as c FROM customers WHERE status='ACTIVE' AND report_section='待撥款' AND updated_at>=?", (month_start,))
+        month_approved = cur.fetchone()["c"]
+        cur.execute("SELECT COUNT(*) as c FROM customers WHERE status IN ('CLOSED','PENALTY','ABANDONED','REJECTED') AND updated_at>=?", (month_start,))
+        month_closed = cur.fetchone()["c"]
+        cur.execute("SELECT COUNT(*) as c FROM customers WHERE status='ACTIVE'")
+        total_active = cur.fetchone()["c"]
+        conn.close()
+        msg = (f"📊 統計資訊\n\n"
+               f"【今日 {today}】\n"
+               f"  新進件：{today_new}\n"
+               f"  核准：{today_approved}\n"
+               f"  結案：{today_closed}\n\n"
+               f"【本月】\n"
+               f"  新進件：{month_new}\n"
+               f"  核准：{month_approved}\n"
+               f"  結案：{month_closed}\n\n"
+               f"目前活躍客戶：{total_active}")
+        reply_text(reply_token, msg)
         return
 
     if t == "close":
@@ -3361,6 +3486,7 @@ def make_topnav(role: str, active: str) -> str:
     if role == "admin":
         links += [("⚙️ 群組管理","/admin/groups","admin"),
                   ("🔑 密碼管理","/admin/passwords","passwords"),
+                  ("💾 下載備份","/admin/download-db","download"),
                   ("🗑️ 清除資料","/admin/reset_data","reset")]
     nav = "".join(f'<a class="nl {"active" if a==active else ""}" href="{u}">{n}</a>'
                   for n,u,a in links)
@@ -7433,6 +7559,19 @@ async def update_password(request: Request):
         conn.commit(); conn.close()
         return JSONResponse({"ok": True, "message": "群組密碼已更新"})
     return JSONResponse({"ok": False, "message": "未知角色"})
+
+
+@app.get("/admin/download-db")
+async def download_db(request: Request):
+    role = check_auth(request)
+    if role != "admin":
+        return RedirectResponse("/login")
+    import shutil
+    backup_path = DB_PATH + ".backup"
+    shutil.copy2(DB_PATH, backup_path)
+    today = datetime.now().strftime("%Y%m%d_%H%M")
+    return FileResponse(backup_path, filename=f"loan_system_{today}.db",
+                        media_type="application/octet-stream")
 
 
 # ── PDF export JS（必須在 init_db 之前定義，因為 /new-customer 頁面需要引用）──
