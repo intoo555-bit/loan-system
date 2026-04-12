@@ -2069,6 +2069,15 @@ def generate_notification_text(r: dict, company: str = "") -> str:
 
 
 def handle_special_command(cmd: Dict, reply_token: str, group_id: str):
+    try:
+        _handle_special_command_inner(cmd, reply_token, group_id)
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        reply_text(reply_token, f"❌ 指令執行失敗：{type(e).__name__}: {e}")
+
+
+def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
     t = cmd["type"]
 
     if t == "group_id":
@@ -3047,11 +3056,7 @@ def _handle_bc_case_block_locked(block_text, source_group_id, reply_token, sourc
         send_transfer_case_buttons(reply_token, other_closed[0], source_group_id, block_text, allow_new=True)
         return "QUICK_REPLY_SENT"
     create_customer_record(name, "", company, source_group_id, block_text)
-    pushed = False
-    if want_push_a:
-        ok, _ = push_text(A_GROUP_ID, block_text); pushed = ok
     msg = f"🆕 已建立客戶：{name}"
-    if pushed: msg += f"\n✅ 已回貼A群：{name}"
     return msg
 
 
@@ -3065,6 +3070,17 @@ def _handle_bc_case_block_locked(block_text, source_group_id, reply_token, sourc
 # Webhook
 # =========================
 def process_event(event: dict):
+    try:
+        _process_event_inner(event)
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        reply_token = (event or {}).get("replyToken", "")
+        if reply_token:
+            reply_text(reply_token, f"❌ 系統處理失敗：{type(e).__name__}: {e}")
+
+
+def _process_event_inner(event: dict):
     # Bug 12: 防呆檢查 event 型別與必要欄位
     if not isinstance(event, dict):
         return
