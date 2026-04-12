@@ -3531,10 +3531,14 @@ a{color:#3b82f6;text-decoration:none}
 .b-close{background:#f1f5f9;color:#64748b}
 .topnav{background:#1a1a2e;color:#fff;padding:0 20px;display:flex;align-items:center;justify-content:space-between;height:52px;position:sticky;top:0;z-index:100}
 .topnav-title{font-size:15px;font-weight:600}
-.topnav-links{display:flex;gap:4px}
-.nl{padding:6px 12px;border-radius:6px;color:rgba(255,255,255,.65);font-size:13px;transition:all .15s}
+.topnav-links{display:flex;gap:4px;align-items:center}
+.nl{padding:6px 12px;border-radius:6px;color:rgba(255,255,255,.65);font-size:13px;transition:all .15s;white-space:nowrap}
 .nl:hover{background:rgba(255,255,255,.1);color:#fff}
 .nl.active{background:rgba(255,255,255,.15);color:#fff;font-weight:500}
+.menu-btn{display:none;background:none;border:none;color:#fff;font-size:22px;cursor:pointer;padding:4px 8px}
+.mobile-menu{display:none;position:fixed;top:52px;left:0;right:0;background:#1a1a2e;z-index:99;padding:8px 16px 16px;border-bottom:2px solid #6366f1}
+.mobile-menu.show{display:flex;flex-direction:column;gap:4px}
+.mobile-menu .nl{padding:10px 14px;font-size:14px;border-radius:8px}
 .page{max-width:1100px;margin:0 auto;padding:20px 16px}
 .stats-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:20px}
 .stat-card{background:#fff;border:1px solid #e5e7eb;border-radius:9px;padding:14px 16px}
@@ -3580,25 +3584,28 @@ a{color:#3b82f6;text-decoration:none}
 .search-result{background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:16px;margin-bottom:12px}
 .route-line{padding:4px 0;font-size:12px;color:#6b7280;display:flex;align-items:center;gap:6px}
 @media(max-width:768px){
-  .stats-grid{grid-template-columns:repeat(2,1fr)}
-  .topnav{flex-wrap:wrap;height:auto;padding:8px 12px;gap:4px}
-  .topnav-title{font-size:13px;width:100%;margin-bottom:2px}
-  .topnav-links{flex-wrap:wrap;gap:2px}
-  .nl{padding:5px 8px;font-size:11px}
-  .page{padding:12px 8px}
+  .topnav{height:52px;padding:0 12px}
+  .topnav-links{display:none}
+  .menu-btn{display:block}
+  .stats-grid{grid-template-columns:repeat(2,1fr);gap:8px}
+  .stat-card{padding:12px}
+  .page{padding:14px 10px}
   .search-result{padding:12px}
   .modal{width:95%;padding:16px}
+  .input{padding:10px 12px;font-size:14px}
+  .btn{padding:9px 16px;font-size:14px}
+  .btn-primary{padding:10px 18px}
   table{font-size:11px}
-  th,td{padding:4px 6px}
+  th,td{padding:5px 6px}
+  .group-hd{padding:12px 14px}
 }
 @media(max-width:480px){
-  .stats-grid{grid-template-columns:1fr 1fr}
-  .search-bar{flex-direction:column}
-  .nl{padding:3px 5px;font-size:10px}
+  .stats-grid{grid-template-columns:1fr 1fr;gap:6px}
   .stat-num{font-size:20px}
   .stat-lbl{font-size:10px}
+  .stat-card{padding:10px}
+  .search-bar{flex-direction:column}
   .group-title{font-size:13px}
-  .topnav-links{gap:1px}
 }
 </style>
 """
@@ -3643,7 +3650,13 @@ def make_topnav(role: str, active: str) -> str:
     nav = "".join(f'<a class="nl {"active" if a==active else ""}" href="{u}">{n}</a>'
                   for n,u,a in links)
     nav += '<a class="nl" href="/logout">登出</a>'
-    return f'<nav class="topnav"><div class="topnav-title">貸款案件管理</div><div class="topnav-links">{nav}</div></nav>'
+    mobile_nav = "".join(f'<a class="nl {"active" if a==active else ""}" href="{u}" onclick="document.getElementById(\'mobileMenu\').classList.remove(\'show\')">{n}</a>'
+                  for n,u,a in links)
+    mobile_nav += '<a class="nl" href="/logout">登出</a>'
+    return (f'<nav class="topnav"><div class="topnav-title">貸款案件管理</div>'
+            f'<div class="topnav-links">{nav}</div>'
+            f'<button class="menu-btn" onclick="document.getElementById(\'mobileMenu\').classList.toggle(\'show\')">☰</button></nav>'
+            f'<div id="mobileMenu" class="mobile-menu">{mobile_nav}</div>')
 
 def get_badge(row) -> str:
     sec = row["report_section"] or ""
