@@ -3831,7 +3831,12 @@ def search_page(request: Request, q: str = "", grp: str = "", date_from: str = "
                 if next_co: route_html += f'<div class="route-line">下一家：{h(next_co)}</div>'
                 if history:
                     route_html += '<div class="route-line" style="flex-wrap:wrap;gap:4px">歷程：'
-                    route_html += " → ".join(f'{h(hi.get("company",""))}({h(hi.get("status",""))})' for hi in history[-5:])
+                    def _fmt_history(hi):
+                        co = h(hi.get("company",""))
+                        st = h(hi.get("status",""))
+                        amt = hi.get("amount") or ""
+                        return f'{co}({st}{amt})' if amt else f'{co}({st})'
+                    route_html += " → ".join(_fmt_history(hi) for hi in history[-5:])
                     route_html += '</div>'
 
             last = (row["last_update"] or "").splitlines()
