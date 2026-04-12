@@ -3630,7 +3630,6 @@ def render_customer_row(row) -> str:
         + '<div style="font-size:15px;font-weight:600;color:#1a1208">' + h(cname) + '</div>'
         + '<div style="font-size:13px;color:#4a3e30;margin-top:2px">' + h(sub) + '</div>'
         + '</div>'
-        + '</div>'
         + '<div style="font-size:12px;color:#6a5e4e;white-space:nowrap">' + h(date_str) + '</div>'
         + '</div>'
         + '<div id="dd-' + h(cid) + '" style="display:none">' + detail_html + '</div>'
