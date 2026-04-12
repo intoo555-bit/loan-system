@@ -1703,7 +1703,7 @@ def generate_report_lines(group_id: str) -> List[str]:
     # 待撥款超過7天提醒
     overdue_lines = []
     for row in all_rows:
-        if (row["report_section"] or "") == "待撥款" and not row.get("disbursement_date"):
+        if (row["report_section"] or "") == "待撥款" and not (row["disbursement_date"] or ""):
             created = row["created_at"] or ""
             if created:
                 try:
