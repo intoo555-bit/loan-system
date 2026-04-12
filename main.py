@@ -4199,6 +4199,11 @@ def search_page(request: Request, q: str = "", grp: str = "", date_from: str = "
             last_short = last[-1].strip()[:80] if last else ""
             amount_line = f'核准金額：{amt}' if amt else ""
             disb_line = f'撥款日期：{disb}' if disb else ""
+            if role == "admin":
+                tl = _build_timeline(row["case_id"])
+                timeline_html = '<div onclick="var el=this.nextElementSibling;el.style.display=el.style.display===\'none\'?\'block\':\'none\'" style="cursor:pointer;font-size:12px;color:#8b7355;font-weight:600">▶ 操作歷程</div><div style="display:none;margin-top:6px;max-height:200px;overflow-y:auto">' + tl + '</div>'
+            else:
+                timeline_html = ""
 
             results_html += f'''<div class="search-result">
               <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
@@ -4222,8 +4227,7 @@ def search_page(request: Request, q: str = "", grp: str = "", date_from: str = "
               {route_html}
               {"<div style=\'margin-top:8px;padding:8px;background:#f9fafb;border-radius:6px;font-size:12px;color:#374151\'>" + h(last_short) + "</div>" if last_short else ""}
               <div style="margin-top:8px">
-                <div onclick="var el=this.nextElementSibling;el.style.display=el.style.display==='none'?'block':'none'" style="cursor:pointer;font-size:12px;color:#8b7355;font-weight:600">▶ 操作歷程</div>
-                <div style="display:none;margin-top:6px;max-height:200px;overflow-y:auto">{_build_timeline(row["case_id"])}</div>
+                {timeline_html}
               </div>
             </div>'''
 
