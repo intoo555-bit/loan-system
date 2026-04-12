@@ -5341,7 +5341,7 @@ def list_groups(request: Request):
           <td style="padding:8px 12px;color:#6b7280">{h(type_labels.get(r["group_type"],r["group_type"]))}</td>
           <td style="padding:8px 12px;color:#6b7280">{h(linked_name) or "-"}</td>
           <td style="padding:8px 12px">{"✅" if r["is_active"] else "❌"}</td>
-          <td style="padding:8px 12px;font-size:11px;color:#9ca3af;font-family:monospace">{h(r["group_id"])}</td>
+          <td style="padding:8px 12px;font-size:11px;color:#9ca3af;font-family:monospace;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="{h(r["group_id"])}" onclick="navigator.clipboard.writeText('{h(r["group_id"])}')">{h(r["group_id"])}</td>
           <td style="padding:8px 12px">{edit_btn}</td>
         </tr>'''
 
@@ -5352,8 +5352,8 @@ def list_groups(request: Request):
         <h2 style="font-size:18px;font-weight:600">群組管理</h2>
         <button class="btn btn-primary" onclick="document.getElementById('add-modal').classList.add('show')">+ 新增群組</button>
       </div>
-      <div style="background:#fff;border:1px solid #e5e7eb;border-radius:10px;overflow:hidden;margin-bottom:20px">
-        <table style="width:100%;border-collapse:collapse">
+      <div style="background:#fff;border:1px solid #e5e7eb;border-radius:10px;overflow-x:auto;margin-bottom:20px">
+        <table style="width:100%;border-collapse:collapse;min-width:600px">
           <thead style="background:#fafafa;border-bottom:1px solid #f3f4f6">
             <tr>
               <th style="padding:8px 12px;text-align:left;font-size:12px;color:#6b7280">名稱</th>
