@@ -1606,8 +1606,8 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
     for row in all_rows:
         section = row["report_section"] or row["current_company"] or row["company"] or "送件"
         section = normalize_section(section)  # Bug 20: 移除多餘的第二次呼叫
-        updated = row["updated_at"] or ""
-        date_str = updated[5:10].replace("-", "/") if updated else ""
+        created = row["created_at"] or ""
+        date_str = created[5:10].replace("-", "/") if created else ""
         company_str = row["current_company"] or row["company"] or ""
 
         last_update = row["last_update"] or ""
@@ -6085,6 +6085,14 @@ def _fill_excel_template(template_path: str, cell_map: dict) -> bytes:
         original_bytes = f.read()
 
     orig_zip = zipfile.ZipFile(io.BytesIO(original_bytes), 'r')
+    try:
+        return _fill_excel_inner(orig_zip, original_bytes, cell_map, _re)
+    finally:
+        orig_zip.close()
+
+
+def _fill_excel_inner(orig_zip, original_bytes, cell_map, _re):
+    import zipfile
 
     # Step 1: Find the FIRST visible sheet's XML file via workbook.xml + rels
     sheet_xml_name = None
@@ -6115,7 +6123,6 @@ def _fill_excel_template(template_path: str, cell_map: dict) -> bytes:
                     break
 
     if not sheet_xml_name:
-        orig_zip.close()
         return original_bytes
 
     sheet_xml = orig_zip.read(sheet_xml_name).decode('utf-8')
@@ -6131,7 +6138,6 @@ def _fill_excel_template(template_path: str, cell_map: dict) -> bytes:
     # Step 2: Parse sharedStrings.xml
     ss_xml_name = 'xl/sharedStrings.xml'
     if ss_xml_name not in orig_zip.namelist():
-        orig_zip.close()
         return original_bytes
 
     ss_xml = orig_zip.read(ss_xml_name).decode('utf-8')
@@ -6160,13 +6166,11 @@ def _fill_excel_template(template_path: str, cell_map: dict) -> bytes:
             direct_changes[cell_ref] = new_value if new_value else ""
 
     if not ss_cell_changes and not direct_changes and not formula_recalc:
-        orig_zip.close()
         return original_bytes
 
     # Step 4: 新增 shared strings + 修改 sheet XML 引用
     if not si_blocks:
         # sharedStrings.xml 沒有 <si> 區塊，跳過 shared string 修改
-        orig_zip.close()
         return original_bytes
     si_list = [m.group(0) for m in si_blocks]
     new_sheet_xml = sheet_xml
@@ -6257,7 +6261,6 @@ def _fill_excel_template(template_path: str, cell_map: dict) -> bytes:
         else:
             output_zip.writestr(item, orig_zip.read(item.filename))
 
-    orig_zip.close()
     output_zip.close()
     output_buf.seek(0)
     return output_buf.getvalue()
