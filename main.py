@@ -1665,7 +1665,7 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
                 amount_str = f"-核准{amount}{disb_str}"
             else:
                 amount_str = ""
-            line = f"{created_date}-{row['customer_name']}-{company_str}{amount_str}"
+            line = f"{created_date}-{row['customer_name']}{amount_str}"
         else:
             line = f"{date_str}-{row['customer_name']}-{company_str}"
             if status_short:
