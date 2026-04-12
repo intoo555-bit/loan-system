@@ -3524,6 +3524,84 @@ def _delete_session(token: str):
     except Exception as e:
         print(f"Session delete error: {e}")
 
+SMART_FILL_JS = """<script>
+function smartFill(){
+  var raw=document.getElementById('smarttext').value;
+  if(!raw.trim()){alert('請先貼上文字');return}
+  // 移除所有空格干擾（「資 金 需 求」→「資金需求」），但保留換行和冒號後的值
+  var t=raw.replace(/([\\u4e00-\\u9fff])\\s+([\\u4e00-\\u9fff])/g,'$1$2');
+  t=t.replace(/([\\u4e00-\\u9fff])\\s+([\\u4e00-\\u9fff])/g,'$1$2');
+  var count=0;
+  function s(name,val){if(val&&val.trim()){var el=document.querySelector('[name="'+name+'"]');if(el){el.value=val.trim();count++}}}
+  function ss(name,val){if(val&&val.trim()){var el=document.querySelector('[name="'+name+'"]');if(el){for(var i=0;i<el.options.length;i++){if(el.options[i].value===val.trim()||el.options[i].text===val.trim()){el.selectedIndex=i;count++;break}}}}}
+  var m;
+  // 姓名
+  m=t.match(/姓名[：:]\\s*(.+)/);if(m)s('cname',m[1].split(/[\\s\\n]/)[0]);
+  // 身分證（支援各種寫法）
+  m=t.match(/([A-Z][12]\\d{8})/i);if(m)s('idno',m[1].toUpperCase());
+  // 手機
+  m=t.match(/手機[號碼]*[：:]\\s*(09[\\d-]{8,14})/);if(m)s('phone',m[1].replace(/[-\\s]/g,''));
+  // Email
+  m=t.match(/信箱[：:]\\s*(\\S+@\\S+)/i);if(!m)m=t.match(/email[：:]\\s*(\\S+)/i);if(m)s('email',m[1]);
+  // FB
+  m=t.match(/FB[大名稱]*[：:]\\s*(.+)/i);if(!m)m=t.match(/臉書[名稱]*[：:]\\s*(.+)/i);if(m)s('fb',m[1].split(/[\\n]/)[0].trim());
+  // 學歷
+  m=t.match(/學歷[：:]\\s*(.+)/);if(m){var e=m[1].trim();if(e.indexOf('大學')>=0||e.indexOf('專科')>=0)ss('edu','專科/大學');else if(e.indexOf('研究')>=0)ss('edu','研究所以上');else if(e.indexOf('高')>=0||e.indexOf('職')>=0)ss('edu','高中/職');else if(e.indexOf('國中')>=0||e.indexOf('國小')>=0)ss('edu','其他');else ss('edu','其他')}
+  // 居住地址（支援「現居住地址」「居住地址」「現居地址」）
+  m=t.match(/(?:現)?居住?地?址[：:]\\s*(.+)/);if(m){var addr=m[1].trim();var cm2=addr.match(/^(.{2,3}[市縣])/);if(cm2){ss('lcity',cm2[1]);ss('rcity',cm2[1])}var dm2=addr.match(/[市縣](.{1,3}[區鄉鎮市])/);if(dm2){s('ldist',dm2[1]);s('rdist',dm2[1])}var rest=addr.replace(/^.{2,3}[市縣].{1,3}[區鄉鎮市]/,'');if(rest){s('laddr',rest);s('raddr',rest)}}
+  // 居住電話 / 現居住電話
+  m=t.match(/(?:現)?居住?電話[：:]\\s*(.+)/);if(m){var lp=m[1].trim();if(lp.indexOf('無')<0&&lp.match(/\\d/))s('lphone',lp)}
+  // 居住時間（支援「居住時間(年)：4」「居住地幾年：4」「居住多久：4年」）
+  m=t.match(/居住[地時間幾多久年()（）]*[：:]\\s*(\\d+)/);if(m)s('lyear',m[1]);
+  // 居住狀況
+  var houseM=t.match(/(?:現住)?房屋[^：:]*[：:]\\s*(.+)/);
+  if(houseM){var hv=houseM[1].trim();if(hv.indexOf('自有')>=0||hv==='1')ss('lstatus','自有');else if(hv.indexOf('承租')>=0||hv==='2')ss('lstatus','租屋');else if(hv.indexOf('家人')>=0||hv==='3')ss('lstatus','親屬')}
+  else{if(t.indexOf('自有')>=0)ss('lstatus','自有');else if(t.indexOf('承租')>=0)ss('lstatus','租屋');else if(t.indexOf('家人名下')>=0)ss('lstatus','親屬')}
+  // 公司名稱
+  m=t.match(/(?:任職)?公司(?:名稱)?[：:]\\s*(.+)/);if(m){var cv=m[1].trim();if(cv.indexOf('地址')<0&&cv.indexOf('電話')<0)s('cmpname',cv.split(/[\\n]/)[0])}
+  // 公司地址
+  m=t.match(/公司地址[：:]\\s*(.+)/);if(m){var ca=m[1].trim();var ccm=ca.match(/^(.{2,3}[市縣])/);if(ccm)ss('ccity',ccm[1]);var cdm=ca.match(/[市縣](.{1,3}[區鄉鎮市])/);if(cdm)s('cdist',cdm[1]);var crest=ca.replace(/^.{2,3}[市縣].{1,3}[區鄉鎮市]/,'');if(crest)s('caddr',crest)}
+  // 公司電話（支援沒區碼的情況）
+  m=t.match(/公司電話[：:]\\s*([\\d-]+)/);if(m){var cp=m[1].replace(/[-\\s]/g,'');if(cp.indexOf('09')===0){ss('carea','mobile');s('cnum',cp)}else{var matched=false;var pfs=[['037',3],['049',3],['089',3],['02',2],['03',2],['04',2],['05',2],['06',2],['07',2],['08',2]];for(var pi=0;pi<pfs.length;pi++){if(cp.indexOf(pfs[pi][0])===0){ss('carea',pfs[pi][0]);s('cnum',cp.substring(pfs[pi][1]));matched=true;break}}if(!matched&&cp.length>=7)s('cnum',cp)}}
+  // 年資 / 工作多久
+  m=t.match(/(?:年資|工作多久)[：:]\\s*(.+)/);if(m){var yt=m[1].trim();var ym=yt.match(/(\\d+)\\s*年/);if(ym)s('cyear',ym[1]);var mm2=yt.match(/(\\d+)\\s*[個月]/);if(mm2)s('cmon',mm2[1]);if(!ym&&!mm2){var nn=yt.match(/(\\d+)/);if(nn)s('cyear',nn[1])}}
+  // 職稱 / 工作職稱
+  m=t.match(/(?:工作)?職稱[：:]\\s*(.+)/);if(m)s('crole',m[1].split(/[\\n]/)[0].trim());
+  // 月薪（支援「3萬8」「3.8萬」「38000」「3.6萬」）
+  m=t.match(/(?:月[收入]*|工作薪資|每月薪資|薪資)[：:]\\s*(.+)/);if(m){var sv=m[1].trim();var sm1=sv.match(/(\\d+)萬(\\d)/);if(sm1){s('csal',sm1[1]+'.'+sm1[2])}else{var sm2=sv.match(/([\\d.]+)\\s*萬/);if(sm2)s('csal',sm2[1]);else{var sm3=sv.match(/(\\d{4,})/);if(sm3){var sal=parseFloat(sm3[1]);if(sal>=10000)s('csal',String(Math.round(sal/10000*10)/10));else s('csal',sm3[1])}}}}
+  // 資金需求
+  m=t.match(/(?:資金)?需求(?:金額)?[：:]\\s*(.+)/);if(m)s('efund',m[1].split(/[\\n]/)[0].trim());
+  // 勞保
+  if(t.match(/公司保/))ss('elabor','公司保');else if(t.match(/工會保/)||t.match(/公會/))ss('elabor','工會保');else if(t.match(/無勞保/))ss('elabor','無勞保');
+  // 薪轉（支援「薪轉(是/否):目前還沒有」「無薪轉」「領現」）
+  if(t.match(/無薪轉/)||t.match(/薪轉[^\\n]*(?:無|沒|否|X|x|目前還沒)/)||t.match(/領現/))ss('esal','無薪轉');
+  else if(t.match(/有薪轉/)||t.match(/薪轉[^\\n]*(?:有|是)/))ss('esal','有薪轉');
+  // 近三
+  if(t.match(/近[三3][^\\n]*[xX✕無否]/)&&!t.match(/近[三3][^\\n]*有/))ss('esent','否');
+  else if(t.match(/近[三3][^\\n]*有/))ss('esent','是');
+  // 警示戶
+  var wm=t.match(/警示戶[^\\n]*[：:]\\s*(.+)/);if(wm){var wv=wm[1].trim();if(wv.indexOf('否')>=0||wv==='X'||wv==='x'){}else if(wv.indexOf('是')>=0){}}
+  // 聯絡人（支援「名字」「名稱」「姓名」+ 「聯絡電話」「電話」）
+  var clines=t.split('\\n');var cIdx=0;
+  for(var i=0;i<clines.length;i++){
+    var ln=clines[i].trim();
+    var nm=ln.match(/名[字稱][：:]\\s*(.+)/);
+    if(nm&&cIdx<2){
+      var cn=nm[1].trim();
+      var nl=clines.slice(i+1,i+5).join('\\n');
+      var rm=nl.match(/關係[：:]\\s*(.+)/);
+      var pm=nl.match(/(?:聯絡)?電話[：:]?\\s*(09[\\d-]{8,14})/);
+      if(cIdx===0){s('c1name',cn);if(rm)s('c1rel',rm[1].trim());if(pm)s('c1tel',pm[1].replace(/[-\\s]/g,''))}
+      else{s('c2name',cn);if(rm)s('c2rel',rm[1].trim());if(pm)s('c2tel',pm[1].replace(/[-\\s]/g,''))}
+      cIdx++;
+    }
+  }
+  // 保密
+  if(t.match(/保密[^\\n]*[：:]?\\s*是/)||t.match(/是否[^\\n]*保密[^\\n]*是/)||t.match(/需要做?保密/)){if(cIdx>=1)ss('c1know','保密');if(cIdx>=2)ss('c2know','保密')}
+  document.getElementById('smartresult').textContent='已填入 '+count+' 個欄位，請檢查確認';
+}
+</script>"""
+
 PAGE_CSS = """
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
@@ -4963,51 +5041,7 @@ label{{display:block;font-size:12px;font-weight:600;color:#5a4e40;margin-bottom:
   <a href="/pending-customers" class="btn-b">取消</a>
 </div>
 </form>
-""" + """<script>
-function smartFill(){
-  const t=document.getElementById('smarttext').value;
-  if(!t.trim()){alert('請先貼上文字');return}
-  let count=0;
-  function s(name,val){if(val&&val.trim()){const el=document.querySelector('[name="'+name+'"]');if(el){el.value=val.trim();count++}}}
-  function ss(name,val){if(val&&val.trim()){const el=document.querySelector('[name="'+name+'"]');if(el){for(let o of el.options){if(o.value===val.trim()||o.text===val.trim()){el.selectedIndex=o.index;count++;break}}}}}
-  let m=t.match(/姓名[：:]\s*(.+)/);if(m)s('cname',m[1].split(/[\\s\\n]/)[0]);
-  m=t.match(/身分證[字號：:]*[：:]\s*([A-Z]\\d{9})/i);if(!m)m=t.match(/身份證[號：:]*[：:]\s*([A-Z]\\d{9})/i);if(m)s('idno',m[1].toUpperCase());
-  m=t.match(/手機[號碼：:]*[：:]\s*(09[\\d-]{8,12})/);if(m)s('phone',m[1].replace(/-/g,''));
-  m=t.match(/信箱[：:]\s*(\\S+@\\S+)/i);if(!m)m=t.match(/email[：:]\s*(\\S+)/i);if(m)s('email',m[1]);
-  m=t.match(/FB[名稱：:]*[：:]\s*(.+)/i);if(!m)m=t.match(/臉書[名稱：:]*[：:]\s*(.+)/i);if(m)s('fb',m[1].split(/[\\n]/)[0].trim());
-  m=t.match(/學歷[：:]\s*(.+)/);if(m){let e=m[1].trim();if(e.includes('大學')||e.includes('專科'))ss('edu','專科/大學');else if(e.includes('研究'))ss('edu','研究所以上');else if(e.includes('高')||e.includes('職'))ss('edu','高中/職');else ss('edu','其他')}
-  m=t.match(/居住地址[：:]\s*(.+)/);if(!m)m=t.match(/現居[住地]*地址[：:]\s*(.+)/);if(m){const addr=m[1].trim();const cm=addr.match(/^(.{2,3}[市縣])/);if(cm)ss('lcity',cm[1]);const dm=addr.match(/[市縣](.{1,3}[區鄉鎮市])/);if(dm)s('ldist',dm[1]);const rest=addr.replace(/^.{2,3}[市縣].{1,3}[區鄉鎮市]/,'');if(rest)s('laddr',rest)}
-  m=t.match(/居住電話[：:]\s*(.+)/);if(!m)m=t.match(/現住電話[：:]\s*(.+)/);if(m&&!m[1].includes('無'))s('lphone',m[1].trim());
-  m=t.match(/居住[地幾]*[多久年]*[：:]\s*(\\d+)/);if(m)s('lyear',m[1]);
-  if(t.includes('自有'))ss('lstatus','自有');else if(t.includes('承租'))ss('lstatus','租屋');else if(t.includes('家人名下'))ss('lstatus','親屬');
-  m=t.match(/任職公司[：:]\s*(.+)/);if(!m)m=t.match(/公司名稱[：:]\s*(.+)/);if(m)s('cmpname',m[1].split(/[\\n]/)[0].trim());
-  m=t.match(/公司地址[：:]\s*(.+)/);if(m){const ca=m[1].trim();const ccm=ca.match(/^(.{2,3}[市縣])/);if(ccm)ss('ccity',ccm[1]);const cdm=ca.match(/[市縣](.{1,3}[區鄉鎮市])/);if(cdm)s('cdist',cdm[1]);const crest=ca.replace(/^.{2,3}[市縣].{1,3}[區鄉鎮市]/,'');if(crest)s('caddr',crest)}
-  m=t.match(/公司電話[：:]\s*([\\d-]+)/);if(m){const cp=m[1].replace(/-/g,'');if(cp.startsWith('09')){ss('carea','mobile');s('cnum',cp)}else if(cp.length>2){const prefixes=[['037',3],['049',3],['089',3],['02',2],['03',2],['04',2],['05',2],['06',2],['07',2],['08',2]];for(const[p,l]of prefixes){if(cp.startsWith(p)){ss('carea',p);s('cnum',cp.substring(l));break}}}}
-  m=t.match(/年資[：:]\s*(.+)/);if(!m)m=t.match(/工作多久[：:]\s*(.+)/);if(m){const yt=m[1].trim();const ym=yt.match(/(\\d+)\\s*年/);if(ym)s('cyear',ym[1]);const mm2=yt.match(/(\\d+)\\s*[個月]/);if(mm2)s('cmon',mm2[1]);if(!ym&&!mm2){const n=yt.match(/(\\d+)/);if(n)s('cyear',n[1])}}
-  m=t.match(/職稱[：:]\s*(.+)/);if(m)s('crole',m[1].split(/[\\n]/)[0].trim());
-  m=t.match(/月[收入薪資]*[：:]\s*([\\d.]+)/);if(!m)m=t.match(/薪資[：:]\s*([\\d.]+)/);if(m)s('csal',m[1]);
-  m=t.match(/資金需求[：:]\s*(.+)/);if(!m)m=t.match(/需求金額[：:]\s*(.+)/);if(m)s('efund',m[1].split(/[\\n]/)[0].trim());
-  if(t.match(/公司保/))ss('elabor','公司保');else if(t.match(/工會保/)||t.match(/公會/))ss('elabor','工會保');else if(t.match(/無勞保/))ss('elabor','無勞保');
-  if(t.match(/無薪轉/)||t.match(/薪轉.*無/)||t.match(/領現/))ss('esal','無薪轉');else if(t.match(/有薪轉/)||t.match(/薪轉.*有/))ss('esal','有薪轉');
-  if(t.match(/近三?.*[xX無]/)||t.match(/近3.*[xX無]/))ss('esent','否');else if(t.match(/近三?.*有/)||t.match(/近3.*有/))ss('esent','是');
-  const clines=t.split(/\\n/);let cIdx=0;
-  for(let i=0;i<clines.length;i++){
-    const ln=clines[i].trim();
-    const nm=ln.match(/名[字稱][：:]\s*(.+)/);
-    if(nm&&cIdx<2){
-      const cn=nm[1].trim();
-      const nl=clines.slice(i+1,i+4).join(' ');
-      const rm=nl.match(/關係[：:]\s*(.+?)[\\s]/)||nl.match(/關係[：:]\s*(.+)/);
-      const pm=nl.match(/(09[\\d-]{8,12})/);
-      if(cIdx===0){s('c1name',cn);if(rm)s('c1rel',rm[1].trim());if(pm)s('c1tel',pm[1].replace(/-/g,''))}
-      else{s('c2name',cn);if(rm)s('c2rel',rm[1].trim());if(pm)s('c2tel',pm[1].replace(/-/g,''))}
-      cIdx++;
-    }
-  }
-  if(t.match(/保密/)){if(cIdx>=1)ss('c1know','保密');if(cIdx>=2)ss('c2know','保密')}
-  document.getElementById('smartresult').textContent='已填入 '+count+' 個欄位，請檢查確認';
-}
-</script>
+""" + SMART_FILL_JS + """
 </div></body></html>"""
 
 
@@ -5810,52 +5844,9 @@ function restoreForm(){var raw=localStorage.getItem('nc_draft');if(!raw)return;v
 window.addEventListener('DOMContentLoaded',function(){restoreForm();document.getElementById('cf').addEventListener('input',saveForm);document.getElementById('cf').addEventListener('change',saveForm);});
 // page-init
 """
-    smart_js = """
-function smartFill(){
-  var t=document.getElementById('smarttext').value;
-  if(!t.trim()){alert('請先貼上文字');return}
-  var count=0;
-  function s(name,val){if(val&&val.trim()){var el=document.querySelector('[name="'+name+'"]');if(el){el.value=val.trim();count++}}}
-  function ss(name,val){if(val&&val.trim()){var el=document.querySelector('[name="'+name+'"]');if(el){for(var i=0;i<el.options.length;i++){if(el.options[i].value===val.trim()||el.options[i].text===val.trim()){el.selectedIndex=i;count++;break}}}}}
-  var m=t.match(/姓名[：:]\\s*(.+)/);if(m)s('cname',m[1].split(/[\\s\\n]/)[0]);
-  m=t.match(/身分證[字號：:]*[：:]\\s*([A-Z]\\d{9})/i);if(!m)m=t.match(/身份證[號：:]*[：:]\\s*([A-Z]\\d{9})/i);if(m)s('idno',m[1].toUpperCase());
-  m=t.match(/手機[號碼：:]*[：:]\\s*(09[\\d-]{8,12})/);if(m)s('phone',m[1].replace(/-/g,''));
-  m=t.match(/信箱[：:]\\s*(\\S+@\\S+)/i);if(m)s('email',m[1]);
-  m=t.match(/FB[名稱：:]*[：:]\\s*(.+)/i);if(!m)m=t.match(/臉書[名稱：:]*[：:]\\s*(.+)/i);if(m)s('fb',m[1].split(/[\\n]/)[0].trim());
-  m=t.match(/學歷[：:]\\s*(.+)/);if(m){var e=m[1].trim();if(e.indexOf('大學')>=0||e.indexOf('專科')>=0)ss('edu','專科/大學');else if(e.indexOf('研究')>=0)ss('edu','研究所以上');else if(e.indexOf('高')>=0||e.indexOf('職')>=0)ss('edu','高中/職');else ss('edu','其他')}
-  m=t.match(/居住地址[：:]\\s*(.+)/);if(!m)m=t.match(/現居[住地]*地址[：:]\\s*(.+)/);if(m){var addr=m[1].trim();var cm2=addr.match(/^(.{2,3}[市縣])/);if(cm2)ss('lcity',cm2[1]);var dm2=addr.match(/[市縣](.{1,3}[區鄉鎮市])/);if(dm2)s('ldist',dm2[1]);var rest=addr.replace(/^.{2,3}[市縣].{1,3}[區鄉鎮市]/,'');if(rest)s('laddr',rest)}
-  m=t.match(/居住電話[：:]\\s*(.+)/);if(m&&m[1].indexOf('無')<0)s('lphone',m[1].trim());
-  m=t.match(/居住[地幾]*[多久年]*[：:]\\s*(\\d+)/);if(m)s('lyear',m[1]);
-  if(t.indexOf('自有')>=0)ss('lstatus','自有');else if(t.indexOf('承租')>=0)ss('lstatus','租屋');else if(t.indexOf('家人名下')>=0)ss('lstatus','親屬');
-  m=t.match(/任職公司[：:]\\s*(.+)/);if(!m)m=t.match(/公司名稱[：:]\\s*(.+)/);if(m)s('cmpname',m[1].split(/[\\n]/)[0].trim());
-  m=t.match(/公司地址[：:]\\s*(.+)/);if(m){var ca=m[1].trim();var ccm=ca.match(/^(.{2,3}[市縣])/);if(ccm)ss('ccity',ccm[1]);var cdm=ca.match(/[市縣](.{1,3}[區鄉鎮市])/);if(cdm)s('cdist',cdm[1]);var crest=ca.replace(/^.{2,3}[市縣].{1,3}[區鄉鎮市]/,'');if(crest)s('caddr',crest)}
-  m=t.match(/公司電話[：:]\\s*([\\d-]+)/);if(m){var cp=m[1].replace(/-/g,'');if(cp.indexOf('09')===0){ss('carea','mobile');s('cnum',cp)}else{var pfs=[['037',3],['049',3],['089',3],['02',2],['03',2],['04',2],['05',2],['06',2],['07',2],['08',2]];for(var pi=0;pi<pfs.length;pi++){if(cp.indexOf(pfs[pi][0])===0){ss('carea',pfs[pi][0]);s('cnum',cp.substring(pfs[pi][1]));break}}}}
-  m=t.match(/年資[：:]\\s*(.+)/);if(!m)m=t.match(/工作多久[：:]\\s*(.+)/);if(m){var yt=m[1].trim();var ym=yt.match(/(\\d+)\\s*年/);if(ym)s('cyear',ym[1]);var mm2=yt.match(/(\\d+)\\s*[個月]/);if(mm2)s('cmon',mm2[1]);if(!ym&&!mm2){var nn=yt.match(/(\\d+)/);if(nn)s('cyear',nn[1])}}
-  m=t.match(/職稱[：:]\\s*(.+)/);if(m)s('crole',m[1].split(/[\\n]/)[0].trim());
-  m=t.match(/月[收入薪資]*[：:]\\s*([\\d.]+)/);if(!m)m=t.match(/薪資[：:]\\s*([\\d.]+)/);if(m)s('csal',m[1]);
-  m=t.match(/資金需求[：:]\\s*(.+)/);if(!m)m=t.match(/需求金額[：:]\\s*(.+)/);if(m)s('efund',m[1].split(/[\\n]/)[0].trim());
-  if(t.match(/公司保/))ss('elabor','公司保');else if(t.match(/工會保/)||t.match(/公會/))ss('elabor','工會保');else if(t.match(/無勞保/))ss('elabor','無勞保');
-  if(t.match(/無薪轉/)||t.match(/領現/))ss('esal','無薪轉');else if(t.match(/有薪轉/))ss('esal','有薪轉');
-  if(t.match(/近三?.*[xX無]/)||t.match(/近3.*[xX無]/))ss('esent','否');else if(t.match(/近三?.*有/))ss('esent','是');
-  var clines=t.split('\\n');var cIdx=0;
-  for(var i=0;i<clines.length;i++){
-    var ln=clines[i].trim();
-    var nm=ln.match(/名[字稱][：:]\\s*(.+)/);
-    if(nm&&cIdx<2){
-      var cn=nm[1].trim();
-      var nl=clines.slice(i+1,i+4).join(' ');
-      var rm=nl.match(/關係[：:]\\s*(.+?)[\\s]/)||nl.match(/關係[：:]\\s*(.+)/);
-      var pm=nl.match(/(09[\\d-]{8,12})/);
-      if(cIdx===0){s('c1name',cn);if(rm)s('c1rel',rm[1].trim());if(pm)s('c1tel',pm[1].replace(/-/g,''))}
-      else{s('c2name',cn);if(rm)s('c2rel',rm[1].trim());if(pm)s('c2tel',pm[1].replace(/-/g,''))}
-      cIdx++;
-    }
-  }
-  if(t.match(/保密/)){if(cIdx>=1)ss('c1know','保密');if(cIdx>=2)ss('c2know','保密')}
-  document.getElementById('smartresult').textContent='已填入 '+count+' 個欄位，請檢查確認';
-}
-"""
-    HTML_PAGE = HTML_PAGE.replace('// page-init', inject_js + '\n' + smart_js + '\n' + (pdf_js or ''))
+    # 用共用的 SMART_FILL_JS（去掉 <script> 標籤只取函式內容）
+    smart_fn = SMART_FILL_JS.replace('<script>','').replace('</script>','')
+    HTML_PAGE = HTML_PAGE.replace('// page-init', inject_js + '\n' + smart_fn + '\n' + (pdf_js or ''))
     return HTML_PAGE
 
 
