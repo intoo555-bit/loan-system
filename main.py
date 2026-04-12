@@ -2288,7 +2288,7 @@ def _handle_a_case_block_locked(block_text, reply_token, id_no, name) -> Optiona
         next_co = get_next_company(route)
         new_route = advance_route(route, "婉拒")
 
-    # 核准時抓金額，移到待撥款區
+    # 核准時抓金額，判斷是否移到待撥款區
     approved_amount = None
     new_report_section = None
     ai_amount_needed = False
@@ -2300,7 +2300,13 @@ def _handle_a_case_block_locked(block_text, reply_token, id_no, name) -> Optiona
             new_route = update_company_amount_in_history(new_route, company, quick_amount)
         else:
             ai_amount_needed = True
-        new_report_section = "待撥款"
+        # 只有在客戶目前沒有其他公司在送時才移到待撥款
+        current_co = customer.get("current_company") or customer.get("company") or ""
+        if not current_co or current_co == company:
+            # 目前就在核准的公司（或沒有 current_company），再看有沒有下一家
+            if not get_next_company(new_route):
+                new_report_section = "待撥款"
+        # else: 客戶目前在送其他公司，report_section 不動，留在 current_company 區塊
 
     if is_approved:
         # 核准時：不動 company / current_company（保持送件順序不變）
@@ -2416,7 +2422,7 @@ def handle_command_text(text: str, reply_token: str) -> bool:
         _, action_id = text.split("|", 1)
         a = get_action(action_id, "confirm_new_case_with_existing_id")
         if not a: return True
-        p = a["payload"]; block_text = p.get("block_text", ""); sg = p.get("source_group_id", "")
+        p = a["payload"]; block_text = p.get("block_text", ""); sg = p.get("source_group_id") or group_id
         name = extract_name(block_text)
         create_customer_record(name, extract_id_no(block_text), extract_company(block_text), sg, block_text)
         reply_text(reply_token, f"🆕 已在{get_group_name(sg)}建立新案件：{name}")
@@ -6153,6 +6159,10 @@ def _fill_excel_template(template_path: str, cell_map: dict) -> bytes:
         return original_bytes
 
     # Step 4: 新增 shared strings + 修改 sheet XML 引用
+    if not si_blocks:
+        # sharedStrings.xml 沒有 <si> 區塊，跳過 shared string 修改
+        orig_zip.close()
+        return original_bytes
     si_list = [m.group(0) for m in si_blocks]
     new_sheet_xml = sheet_xml
     for cell_ref, new_value in ss_cell_changes.items():
