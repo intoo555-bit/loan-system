@@ -1955,6 +1955,11 @@ def parse_special_command(text: str, group_id: str) -> Optional[Dict]:
     if m:
         return {"type": "change_id", "name": m.group(1), "new_id": m.group(2).upper()}
 
+    # 撥款：@AI 姓名 撥款（自動用今天日期）
+    m = re.match(r"^([\u4e00-\u9fff]{2,6})\s*撥款\s*(\d{1,2}/\d{1,2})?$", clean)
+    if m:
+        return {"type": "disbursed", "name": m.group(1), "date": m.group(2) or ""}
+
     # 重啟：@AI 姓名 重啟
     m = re.match(r"^([\u4e00-\u9fff]{2,6})\s*重啟$", clean)
     if m:
@@ -2291,6 +2296,24 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
                         text=f"{name} 身分證 {old_id} → {new_id}",
                         from_group_id=group_id)
         reply_text(reply_token, f"✅ {name} 身分證已更新為 {new_id}")
+        return
+
+    if t == "disbursed":
+        name = cmd["name"]
+        disb_date = cmd["date"] or datetime.now().strftime("%-m/%-d") if os.name != "nt" else cmd["date"] or datetime.now().strftime("%#m/%#d")
+        rows = find_active_by_name(name)
+        same = [r for r in rows if r["source_group_id"] == group_id]
+        target = same[0] if same else (rows[0] if rows else None)
+        if not target:
+            reply_text(reply_token, f"❌ 找不到客戶：{name}"); return
+        # 更新撥款日期到 route_plan history 和 disbursement_date
+        company = target["current_company"] or target["company"] or ""
+        new_route = set_disbursed_in_history(target["route_plan"] or "", company, disb_date)
+        update_customer(target["case_id"], disbursement_date=disb_date,
+                        route_plan=new_route, report_section="待撥款",
+                        text=f"{name} {company} 撥款{disb_date}",
+                        from_group_id=group_id)
+        reply_text(reply_token, f"✅ {name} 已更新撥款日期：{disb_date}")
         return
 
     if t == "reopen":
