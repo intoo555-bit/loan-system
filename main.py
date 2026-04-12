@@ -1624,17 +1624,19 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
     for row in all_rows:
         report_sec = row["report_section"] or ""
         current_co = row["current_company"] or row["company"] or ""
-        # 如果標記待撥款但客戶還在送其他公司 → 顯示在該公司區塊
-        if report_sec == "待撥款" and current_co:
-            approved_companies = [h.get("company","") for h in get_all_approved(row["route_plan"] or "")]
-            still_sending = current_co not in approved_companies and not any(current_co in ac or ac in current_co for ac in approved_companies)
-            section = current_co if still_sending else "待撥款"
-        else:
-            section = report_sec or current_co or "送件"
+        section = report_sec or current_co or "送件"
         section = normalize_section(section)
         created = row["created_at"] or ""
         date_str = created[5:10].replace("-", "/") if created else ""
         company_str = current_co
+
+        # 如果待撥款但還在送其他公司 → 兩個區塊都顯示
+        extra_section = None
+        if report_sec == "待撥款" and current_co:
+            approved_companies = [h.get("company","") for h in get_all_approved(row["route_plan"] or "")]
+            still_sending = current_co not in approved_companies and not any(current_co in ac or ac in current_co for ac in approved_companies)
+            if still_sending:
+                extra_section = normalize_section(current_co)
 
         last_update = row["last_update"] or ""
         first_line = last_update.splitlines()[0].strip() if last_update.strip() else ""
@@ -1672,6 +1674,14 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
         if created[:10] == today_str:
             line = "🆕" + line
         section_map.setdefault(section, []).append(line)
+        # 還在送其他公司 → 也加到該公司區塊
+        if extra_section and extra_section != section:
+            extra_line = f"{date_str}-{row['customer_name']}-{company_str}"
+            if status_short:
+                extra_line += f"-{status_short}"
+            if created[:10] == today_str:
+                extra_line = "🆕" + extra_line
+            section_map.setdefault(extra_section, []).append(extra_line)
     return section_map
 
 
