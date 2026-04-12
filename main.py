@@ -38,8 +38,9 @@ REPORT_SECTION_1 = [
     "麻吉", "和潤", "中租", "裕融", "21汽車", "亞太", "創鉅", "21",
     "第一", "合信", "興達", "和裕", "鄉民", "喬美",
     "分貝汽車", "分貝機車", "貸救補", "預付手機分期", "融易", "手機分期", "鼎多",
-    "送件", "待撥款",
+    "送件",
 ]
+REPORT_SECTION_4 = ["待撥款"]
 REPORT_SECTION_2 = [
     "銀行", "零卡", "商品貸", "代書", "當舖專案", "核准",
 ]
@@ -47,7 +48,7 @@ REPORT_SECTION_3 = [
     "房地", "新鑫", "核准(房地)",
 ]
 # 合併（用於其他地方參考）
-REPORT_SECTIONS = REPORT_SECTION_1 + REPORT_SECTION_2 + REPORT_SECTION_3
+REPORT_SECTIONS = REPORT_SECTION_1 + REPORT_SECTION_2 + REPORT_SECTION_3 + REPORT_SECTION_4
 
 # 公司辨識（解析訊息用）
 COMPANY_LIST = [
@@ -1716,7 +1717,7 @@ def generate_report_lines(group_id: str) -> List[str]:
     shown = set()
     segments = []
 
-    # 第1段：貸款方案 + 送件 + 待撥款
+    # 第1段：貸款方案 + 送件
     seg1 = build_segment(REPORT_SECTION_1, section_map, shown)
     if seg1:
         segments.append(f"📊 {group_name} 日報 {today}\n{seg1}")
@@ -1731,10 +1732,10 @@ def generate_report_lines(group_id: str) -> List[str]:
     if seg3:
         segments.append(seg3)
 
-    # 未歸類的（不在任何section的）補到第1段後面
+    # 未歸類的（不在任何section的，排除待撥款）補到第1段後面
     extra = []
     for sec, lines in section_map.items():
-        if sec not in shown:
+        if sec not in shown and sec != "待撥款":
             extra.append(sec)
             extra.extend(lines)
             extra.append("——————————————")
@@ -1743,6 +1744,11 @@ def generate_report_lines(group_id: str) -> List[str]:
             segments[0] += "\n" + "\n".join(extra)
         else:
             segments.append(f"📊 {group_name} 日報 {today}\n" + "\n".join(extra))
+
+    # 第4段：待撥款（排在最後）
+    seg4 = build_segment(REPORT_SECTION_4, section_map, shown)
+    if seg4:
+        segments.append(seg4)
 
     # 待撥款超過7天提醒（獨立一段）
     overdue_lines = []
