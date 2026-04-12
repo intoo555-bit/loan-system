@@ -1891,8 +1891,8 @@ def parse_special_command(text: str, group_id: str) -> Optional[Dict]:
     if re.match(r"^統計$", clean):
         return {"type": "stats"}
 
-    # 群組ID查詢
-    if re.match(r"^群組ID$", clean):
+    # 群組ID查詢（不分大小寫）
+    if re.match(r"^群組[Ii][Dd]$", clean):
         return {"type": "group_id"}
 
     # 日報
@@ -3106,7 +3106,7 @@ def _process_event_inner(event: dict):
     # 任何群組都可以查群組ID（方便設定用）
     if has_ai_trigger(text):
         clean = strip_ai_trigger(text).strip()
-        if clean == "群組ID":
+        if clean.upper() == "群組ID":
             gname = get_group_name(group_id)
             reply_text(reply_token, f"📋 此群組資訊\n名稱：{gname}\nID：{group_id}")
             return
