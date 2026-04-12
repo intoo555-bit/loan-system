@@ -1659,6 +1659,10 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
             line = f"{date_str}-{row['customer_name']}-{company_str}"
             if status_short:
                 line += f"-{status_short}"
+        # 今日新進件標記
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        if created[:10] == today_str:
+            line = "🆕" + line
         section_map.setdefault(section, []).append(line)
     return section_map
 
@@ -1923,6 +1927,21 @@ def parse_special_command(text: str, group_id: str) -> Optional[Dict]:
     m = re.match(r"^([\u4e00-\u9fff]{2,4})\s*改名\s*([\u4e00-\u9fff]{2,4})$", clean)
     if m:
         return {"type": "rename", "old_name": m.group(1), "new_name": m.group(2)}
+
+    # 改身分證：@AI 姓名 改身分證 新ID
+    m = re.match(r"^([\u4e00-\u9fff]{2,4})\s*改身分證\s*([A-Z]\d{9})$", clean, re.IGNORECASE)
+    if m:
+        return {"type": "change_id", "name": m.group(1), "new_id": m.group(2).upper()}
+
+    # 重啟：@AI 姓名 重啟
+    m = re.match(r"^([\u4e00-\u9fff]{2,4})\s*重啟$", clean)
+    if m:
+        return {"type": "reopen", "name": m.group(1)}
+
+    # 結案帶原因：@AI 姓名 結案 原因
+    m = re.match(r"^([一-鿿]{2,4})\s*結案\s+(.+)$", clean)
+    if m:
+        return {"type": "close", "name": m.group(1), "reason": m.group(2).strip()}
 
     # 結案
     m = re.match(r"^([一-鿿]{2,4})\s*(已結案|結案)$", clean)
@@ -2218,6 +2237,39 @@ def handle_special_command(cmd: Dict, reply_token: str, group_id: str):
         reply_text(reply_token, f"✅ 已將「{old_name}」改名為「{new_name}」")
         return
 
+    if t == "change_id":
+        name = cmd["name"]
+        new_id = cmd["new_id"]
+        rows = find_active_by_name(name)
+        same = [r for r in rows if r["source_group_id"] == group_id]
+        target = same[0] if same else (rows[0] if rows else None)
+        if not target:
+            reply_text(reply_token, f"❌ 找不到客戶：{name}"); return
+        old_id = target["id_no"] or "無"
+        conn = get_conn(); cur = conn.cursor()
+        cur.execute("UPDATE customers SET id_no=?, updated_at=? WHERE case_id=?",
+                    (new_id, now_iso(), target["case_id"]))
+        conn.commit(); conn.close()
+        update_customer(target["case_id"],
+                        text=f"{name} 身分證 {old_id} → {new_id}",
+                        from_group_id=group_id)
+        reply_text(reply_token, f"✅ {name} 身分證已更新為 {new_id}")
+        return
+
+    if t == "reopen":
+        name = cmd["name"]
+        conn = get_conn(); cur = conn.cursor()
+        cur.execute("SELECT * FROM customers WHERE customer_name=? AND status IN ('CLOSED','PENALTY','ABANDONED','REJECTED') ORDER BY updated_at DESC LIMIT 1", (name,))
+        target = cur.fetchone(); conn.close()
+        if not target:
+            reply_text(reply_token, f"❌ 找不到已結案客戶：{name}"); return
+        update_customer(target["case_id"], status="ACTIVE",
+                        report_section="",
+                        text=f"{name} 重啟案件",
+                        from_group_id=group_id)
+        reply_text(reply_token, f"✅ {name} 已重啟，恢復到日報")
+        return
+
     if t == "update_amount":
         name = cmd["name"]
         company = cmd["company"]
@@ -2238,15 +2290,17 @@ def handle_special_command(cmd: Dict, reply_token: str, group_id: str):
 
     if t == "close":
         name = cmd["name"]
+        reason = cmd.get("reason", "")
         rows = find_active_by_name(name)
         same = [r for r in rows if r["source_group_id"] == group_id]
         target = same[0] if same else (rows[0] if rows else None)
         if not target:
             reply_text(reply_token, f"❌ 找不到客戶：{name}"); return
+        close_text = f"{name} 結案（{reason}）" if reason else f"{name} 結案"
         update_customer(target["case_id"], status="CLOSED",
-                        text=f"{name} 結案", from_group_id=group_id)
-        push_text(target["source_group_id"], f"{name} 結案")
-        reply_text(reply_token, f"✅ {name} 已結案，從日報移除")
+                        text=close_text, from_group_id=group_id)
+        push_text(target["source_group_id"], close_text)
+        reply_text(reply_token, f"✅ {name} 已結案，從日報移除" + (f"\n原因：{reason}" if reason else ""))
         return
 
     if t == "reject":
@@ -4152,7 +4206,10 @@ def search_page(request: Request, q: str = "", grp: str = "", date_from: str = "
                   <div style="font-size:16px;font-weight:600">{h(row["customer_name"])}</div>
                   {badge}
                 </div>
-                <div style="font-size:11px;color:#9ca3af">{h(get_group_name(row["source_group_id"]))}</div>
+                <div style="display:flex;align-items:center;gap:8px">
+                  <div style="font-size:11px;color:#9ca3af">{h(get_group_name(row["source_group_id"]))}</div>
+                  <a href="/edit-pending?case_id={h(row['case_id'])}" style="font-size:11px;color:#0369a1;text-decoration:none">✏️ 編輯</a>
+                </div>
               </div>
               <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:12px;color:#6b7280;margin-bottom:10px">
                 {"<div>身分證：" + h(row["id_no"]) + "</div>" if row["id_no"] else ""}
