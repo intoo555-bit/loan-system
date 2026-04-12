@@ -1485,7 +1485,7 @@ def is_disbursement_list(text: str) -> bool:
         return False
     # 至少一行要是標頭（含撥款關鍵詞）
     header_re = re.compile(
-        r"(撥款名單|排撥|預計排撥|今日撥款|商品撥款|機車撥款|汽車撥款)"
+        r"(撥款名單|排撥|預計排撥|今日撥款|商品撥款|機車撥款|汽車撥款|撥款)"
     )
     has_header = False
     header_idx = -1
@@ -3113,9 +3113,10 @@ def _process_event_inner(event: dict):
 
     # A 群優先（避免 A 群同時被註冊為 SALES_GROUP 時走錯邏輯）
     if group_id == A_GROUP_ID:
-        # 撥款名單（不需要@AI觸發）
-        if is_disbursement_list(text):
-            handle_disbursement_list(text, reply_token)
+        # 撥款名單（不需要@AI觸發，去掉@AI再判斷）
+        disb_text = strip_ai_trigger(text).strip() if has_ai_trigger(text) else text
+        if is_disbursement_list(disb_text):
+            handle_disbursement_list(disb_text, reply_token)
             return
 
         if not has_ai_trigger(text):
