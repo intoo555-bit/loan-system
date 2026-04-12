@@ -1919,6 +1919,11 @@ def parse_special_command(text: str, group_id: str) -> Optional[Dict]:
     if m:
         return {"type": "update_amount", "name": m.group(1), "company": m.group(2).strip(), "amount": m.group(3).strip()}
 
+    # 改名：@AI 舊名 改名 新名
+    m = re.match(r"^([\u4e00-\u9fff]{2,4})\s*改名\s*([\u4e00-\u9fff]{2,4})$", clean)
+    if m:
+        return {"type": "rename", "old_name": m.group(1), "new_name": m.group(2)}
+
     # 結案
     m = re.match(r"^([一-鿿]{2,4})\s*(已結案|結案)$", clean)
     if m:
@@ -2192,6 +2197,25 @@ def handle_special_command(cmd: Dict, reply_token: str, group_id: str):
                f"  結案：{month_closed}\n\n"
                f"目前活躍：{total_active}　待撥款：{total_pending}")
         reply_text(reply_token, msg)
+        return
+
+    if t == "rename":
+        old_name = cmd["old_name"]
+        new_name = cmd["new_name"]
+        rows = find_active_by_name(old_name)
+        same = [r for r in rows if r["source_group_id"] == group_id]
+        target = same[0] if same else (rows[0] if rows else None)
+        if not target:
+            reply_text(reply_token, f"❌ 找不到客戶：{old_name}"); return
+        conn = get_conn(); cur = conn.cursor()
+        cur.execute("UPDATE customers SET customer_name=?, updated_at=? WHERE case_id=?",
+                    (new_name, now_iso(), target["case_id"]))
+        conn.commit(); conn.close()
+        # 寫 case_log
+        update_customer(target["case_id"],
+                        text=f"{old_name} 改名為 {new_name}",
+                        from_group_id=group_id)
+        reply_text(reply_token, f"✅ 已將「{old_name}」改名為「{new_name}」")
         return
 
     if t == "update_amount":
