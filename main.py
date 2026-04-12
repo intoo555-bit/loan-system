@@ -2216,18 +2216,21 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
         conn = get_conn(); cur = conn.cursor()
         today = now_iso()[:10]
         month_start = today[:7] + "-01"
+        is_a = group_id == A_GROUP_ID
+        grp_filter = "" if is_a else " AND source_group_id=?"
+        grp_param = [] if is_a else [group_id]
         # 今日
-        cur.execute("SELECT COUNT(*) as c FROM customers WHERE date(created_at)=?", (today,))
+        cur.execute(f"SELECT COUNT(*) as c FROM customers WHERE date(created_at)=?{grp_filter}", [today] + grp_param)
         today_new = cur.fetchone()["c"]
-        cur.execute("SELECT COUNT(*) as c FROM customers WHERE status IN ('CLOSED','PENALTY','ABANDONED','REJECTED') AND date(updated_at)=?", (today,))
+        cur.execute(f"SELECT COUNT(*) as c FROM customers WHERE status IN ('CLOSED','PENALTY','ABANDONED','REJECTED') AND date(updated_at)=?{grp_filter}", [today] + grp_param)
         today_closed = cur.fetchone()["c"]
         # 本月
-        cur.execute("SELECT COUNT(*) as c FROM customers WHERE created_at>=?", (month_start,))
+        cur.execute(f"SELECT COUNT(*) as c FROM customers WHERE created_at>=?{grp_filter}", [month_start] + grp_param)
         month_new = cur.fetchone()["c"]
-        cur.execute("SELECT COUNT(*) as c FROM customers WHERE status IN ('CLOSED','PENALTY','ABANDONED','REJECTED') AND updated_at>=?", (month_start,))
+        cur.execute(f"SELECT COUNT(*) as c FROM customers WHERE status IN ('CLOSED','PENALTY','ABANDONED','REJECTED') AND updated_at>=?{grp_filter}", [month_start] + grp_param)
         month_closed = cur.fetchone()["c"]
-        # 核准：從 route_plan 歷史找有核准紀錄的客戶
-        cur.execute("SELECT route_plan FROM customers WHERE status='ACTIVE' AND route_plan IS NOT NULL AND route_plan!=''")
+        # 核准
+        cur.execute(f"SELECT route_plan FROM customers WHERE status='ACTIVE' AND route_plan IS NOT NULL AND route_plan!=''{grp_filter}", grp_param)
         all_routes = cur.fetchall()
         today_approved = 0
         month_approved = 0
@@ -2241,9 +2244,9 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
                     if d >= month_start:
                         month_approved += 1
         # 待撥款
-        cur.execute("SELECT COUNT(*) as c FROM customers WHERE status='ACTIVE' AND report_section='待撥款'")
+        cur.execute(f"SELECT COUNT(*) as c FROM customers WHERE status='ACTIVE' AND report_section='待撥款'{grp_filter}", grp_param)
         total_pending = cur.fetchone()["c"]
-        cur.execute("SELECT COUNT(*) as c FROM customers WHERE status='ACTIVE'")
+        cur.execute(f"SELECT COUNT(*) as c FROM customers WHERE status='ACTIVE'{grp_filter}", grp_param)
         total_active = cur.fetchone()["c"]
         conn.close()
         msg = (f"📊 統計資訊\n\n"
