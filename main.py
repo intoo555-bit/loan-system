@@ -1826,6 +1826,13 @@ def send_confirm_new_case_buttons(reply_token, block_text, existing_customer, so
 def parse_special_command(text: str, group_id: str) -> Optional[Dict]:
     clean = strip_ai_trigger(text).strip()
 
+    # 批次結案：@AI 批次結案\n姓名1\n姓名2\n...
+    if clean.startswith("批次結案"):
+        rest = clean[len("批次結案"):].strip()
+        names = [n.strip() for n in rest.splitlines() if n.strip()]
+        if names:
+            return {"type": "batch_close", "names": names}
+
     # 群組ID查詢
     if re.match(r"^群組ID$", clean):
         return {"type": "group_id"}
@@ -1995,6 +2002,29 @@ def handle_special_command(cmd: Dict, reply_token: str, group_id: str):
 
     if t == "search":
         reply_text(reply_token, search_customer_info(cmd["name"], group_id))
+        return
+
+    if t == "batch_close":
+        names = cmd["names"]
+        results = []
+        for name in names:
+            rows = find_active_by_name(name)
+            same = [r for r in rows if r["source_group_id"] == group_id]
+            target = same[0] if same else (rows[0] if rows else None)
+            if not target:
+                results.append(f"  {name} ❌ 找不到客戶")
+            else:
+                update_customer(target["case_id"], status="CLOSED",
+                                text=f"{name} 結案", from_group_id=group_id)
+                push_text(target["source_group_id"], f"{name} 結案")
+                results.append(f"  {name} ✅ 已結案")
+        ok = sum(1 for r in results if "✅" in r)
+        fail = len(results) - ok
+        header = f"📋 批次結案 {len(names)} 筆（成功 {ok}"
+        if fail:
+            header += f"，失敗 {fail}"
+        header += "）"
+        reply_text(reply_token, header + "\n" + "\n".join(results))
         return
 
     if t == "close":
