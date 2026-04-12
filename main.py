@@ -1636,6 +1636,23 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
             if status_short:
                 line += f"-{status_short}"
         section_map.setdefault(section, []).append(line)
+
+    # 待撥款超過7天提醒，加在待撥款區塊後面
+    if "待撥款" in section_map:
+        overdue_lines = []
+        for row in all_rows:
+            if (row["report_section"] or "") == "待撥款" and not (row["disbursement_date"] or ""):
+                created = row["created_at"] or ""
+                if created:
+                    try:
+                        days = (datetime.now() - datetime.fromisoformat(created.replace("Z",""))).days
+                        if days >= 7:
+                            overdue_lines.append(f"  {row['customer_name']}（{days}天）")
+                    except Exception:
+                        pass
+        if overdue_lines:
+            section_map["待撥款"].append(f"⏰超過7天：" + "、".join(l.strip() for l in overdue_lines))
+
     return section_map
 
 
@@ -1699,26 +1716,6 @@ def generate_report_lines(group_id: str) -> List[str]:
             segments[0] += "\n" + "\n".join(extra)
         else:
             segments.append(f"📊 {group_name} 日報 {today}\n" + "\n".join(extra))
-
-    # 待撥款超過7天提醒
-    overdue_lines = []
-    for row in all_rows:
-        if (row["report_section"] or "") == "待撥款" and not (row["disbursement_date"] or ""):
-            created = row["created_at"] or ""
-            if created:
-                try:
-                    from datetime import datetime as _dt
-                    days = (datetime.now() - _dt.fromisoformat(created.replace("Z",""))).days
-                    if days >= 7:
-                        overdue_lines.append(f"  {row['customer_name']}（{days}天）")
-                except Exception:
-                    pass
-    if overdue_lines:
-        overdue_seg = f"\n⏰ 待撥款超過7天（{len(overdue_lines)}筆）\n" + "\n".join(overdue_lines)
-        if segments:
-            segments[-1] += overdue_seg
-        else:
-            segments.append(f"📊 {group_name} 日報 {today}" + overdue_seg)
 
     if not segments:
         return [f"📊 {group_name} 日報 {today}\n（目前無有效案件）"]
