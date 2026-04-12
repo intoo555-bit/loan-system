@@ -3573,21 +3573,26 @@ a{color:#3b82f6;text-decoration:none}
 .history-row:last-child{border-bottom:none}
 .search-result{background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:16px;margin-bottom:12px}
 .route-line{padding:4px 0;font-size:12px;color:#6b7280;display:flex;align-items:center;gap:6px}
-@media(max-width:640px){
-  .stats-grid{grid-template-columns:repeat(2,1fr)}
-  .topnav-links .nl{padding:5px 8px;font-size:12px}
-  .page{padding:12px 10px}
-}
 @media(max-width:768px){
   .stats-grid{grid-template-columns:repeat(2,1fr)}
-  .topnav{flex-wrap:wrap;height:auto;padding:8px 12px}
-  .topnav-links{flex-wrap:wrap}
+  .topnav{flex-wrap:wrap;height:auto;padding:8px 12px;gap:4px}
+  .topnav-title{font-size:13px;width:100%;margin-bottom:2px}
+  .topnav-links{flex-wrap:wrap;gap:2px}
+  .nl{padding:5px 8px;font-size:11px}
   .page{padding:12px 8px}
+  .search-result{padding:12px}
+  .modal{width:95%;padding:16px}
+  table{font-size:11px}
+  th,td{padding:4px 6px}
 }
 @media(max-width:480px){
-  .stats-grid{grid-template-columns:1fr}
+  .stats-grid{grid-template-columns:1fr 1fr}
   .search-bar{flex-direction:column}
-  .nl{padding:4px 6px;font-size:11px}
+  .nl{padding:3px 5px;font-size:10px}
+  .stat-num{font-size:20px}
+  .stat-lbl{font-size:10px}
+  .group-title{font-size:13px}
+  .topnav-links{gap:1px}
 }
 </style>
 """
@@ -4467,7 +4472,10 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
         <div><div style="font-size:20px;font-weight:700;color:#1a1208;">{h(name)}</div>
           <div style="font-size:13px;color:#6a5e4e;">{h(id_no)}　{h(gname)}　{h(created)}</div></div>
-        <span style="background:#e0f2fe;color:#0369a1;font-size:12px;padding:4px 12px;border-radius:20px;font-weight:600;">ACTIVE</span>
+        <div style="display:flex;gap:8px;align-items:center">
+          <a href="/edit-pending?case_id={h(case_id)}" style="font-size:12px;color:#0369a1;text-decoration:none;padding:4px 12px;border:1px solid #93c5fd;border-radius:20px">✏️ 編輯</a>
+          <span style="background:#e0f2fe;color:#0369a1;font-size:12px;padding:4px 12px;border-radius:20px;font-weight:600;">ACTIVE</span>
+        </div>
       </div>
       <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;">
         <div><div style="font-size:11px;font-weight:600;color:#6a5e4e;">電話</div><div style="font-size:13px;color:#1a1208;font-weight:500;">{h(phone)}</div></div>
