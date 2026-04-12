@@ -713,6 +713,23 @@ def update_company_amount_in_history(route_plan: str, company: str, amount: str)
     return json.dumps(data, ensure_ascii=False)
 
 
+def set_disbursed_in_history(route_plan: str, company: str, disb_date: str) -> str:
+    """在 history 裡設定指定公司的撥款日期"""
+    data = parse_route_json(route_plan)
+    history = data.get("history", [])
+    found = False
+    for h in reversed(history):
+        hc = h.get("company", "")
+        if hc == company or company in hc or hc in company:
+            h["disbursed"] = disb_date
+            found = True
+            break
+    if not found:
+        history.append({"company": company, "status": "撥款", "date": disb_date, "disbursed": disb_date})
+    data["history"] = history
+    return json.dumps(data, ensure_ascii=False)
+
+
 def advance_route_to(route_plan: str, target: str, status: str):
     """轉到指定公司，回傳 (新json, ok, err)"""
     data = parse_route_json(route_plan)
@@ -1618,19 +1635,26 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
             created = row["created_at"] or ""
             created_date = created[5:10].replace("-", "/") if created else date_str
             amount = row["approved_amount"] or ""
-            disb_date = row["disbursement_date"] or ""
-            disb_str = f"(撥款{disb_date})" if disb_date else "(待撥款)"
-            # 從 route_plan 歷史找核准公司（不用 current_company，因為核准不一定是目前在送的那家）
+            # 從 route_plan 歷史找核准公司（每家各自顯示撥款狀態）
             approved_list = get_all_approved(row["route_plan"] or "")
             if approved_list:
-                # 顯示所有核准：亞太核准12萬/21核准5萬
-                parts = [f"{h.get('company') or ''}{h.get('amount') or ''}" for h in approved_list]
+                parts = []
+                for ap in approved_list:
+                    co = ap.get('company') or ''
+                    amt = ap.get('amount') or ''
+                    disb = ap.get('disbursed') or ''
+                    if disb:
+                        parts.append(f"{co}{amt}(撥款{disb})")
+                    else:
+                        parts.append(f"{co}{amt}(待撥款)")
                 amount_str = "-核准" + "/".join(parts)
             elif amount:
-                amount_str = f"-核准{amount}"
+                disb_date = row["disbursement_date"] or ""
+                disb_str = f"(撥款{disb_date})" if disb_date else "(待撥款)"
+                amount_str = f"-核准{amount}{disb_str}"
             else:
                 amount_str = ""
-            line = f"{created_date}-{row['customer_name']}-{company_str}{amount_str}{disb_str}"
+            line = f"{created_date}-{row['customer_name']}-{company_str}{amount_str}"
         else:
             line = f"{date_str}-{row['customer_name']}-{company_str}"
             if status_short:
@@ -2736,10 +2760,12 @@ def handle_disbursement_list(text: str, reply_token: str):
                 if not approved_amount:
                     approved_amount = target["approved_amount"] or ""
 
-                # 更新撥款日期
+                # 更新撥款日期（寫到 route_plan history + disbursement_date）
+                new_route = set_disbursed_in_history(target["route_plan"] or "", company, disb_date)
                 update_customer(
                     target["case_id"],
                     disbursement_date=disb_date,
+                    route_plan=new_route,
                     report_section="待撥款",
                     text=name + " " + company + " 撥款" + disb_date,
                     from_group_id=A_GROUP_ID,
