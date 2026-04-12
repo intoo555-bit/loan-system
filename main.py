@@ -3486,6 +3486,7 @@ def make_topnav(role: str, active: str) -> str:
     if role == "admin":
         links += [("⚙️ 群組管理","/admin/groups","admin"),
                   ("🔑 密碼管理","/admin/passwords","passwords"),
+                  ("📝 操作紀錄","/admin/logs","logs"),
                   ("💾 下載備份","/admin/download-db","download"),
                   ("🗑️ 清除資料","/admin/reset_data","reset")]
     nav = "".join(f'<a class="nl {"active" if a==active else ""}" href="{u}">{n}</a>'
@@ -3610,10 +3611,12 @@ def render_customer_row(row) -> str:
     row_onclick = 'onclick="togD(' + q + h(cid) + q + ')"'
     return (
         '<div style="border-bottom:1px solid #ddd5ca">'
-        + '<div ' + row_onclick + ' style="display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;padding:10px 16px;cursor:pointer">'
-        + '<div>'
+        + '<div style="display:grid;grid-template-columns:24px 1fr auto;gap:6px;align-items:center;padding:10px 16px">'
+        + '<input type="checkbox" class="batch-cb" value="' + h(cid) + '" onclick="event.stopPropagation()" style="width:16px;height:16px;cursor:pointer">'
+        + '<div ' + row_onclick + ' style="cursor:pointer">'
         + '<div style="font-size:15px;font-weight:600;color:#1a1208">' + h(cname) + '</div>'
         + '<div style="font-size:13px;color:#4a3e30;margin-top:2px">' + h(sub) + '</div>'
+        + '</div>'
         + '</div>'
         + '<div style="font-size:12px;color:#6a5e4e;white-space:nowrap">' + h(date_str) + '</div>'
         + '</div>'
@@ -3777,6 +3780,58 @@ def home_redirect(request: Request):
     return RedirectResponse("/login" if not check_auth(request) else "/report")
 
 
+@app.post("/report/batch-close")
+async def report_batch_close(request: Request):
+    role = check_auth(request)
+    if not role:
+        return JSONResponse({"ok": False, "message": "未登入"}, status_code=401)
+    data = await request.json()
+    case_ids = data.get("case_ids", [])
+    if not case_ids:
+        return JSONResponse({"ok": False, "message": "未選擇客戶"})
+    conn = get_conn(); cur = conn.cursor()
+    closed = 0
+    for cid in case_ids:
+        cur.execute("SELECT * FROM customers WHERE case_id=? AND status='ACTIVE'", (cid,))
+        c = cur.fetchone()
+        if c:
+            update_customer(cid, status="CLOSED", text=f"{c['customer_name']} 網頁批次結案", from_group_id="WEB")
+            closed += 1
+    conn.close()
+    return JSONResponse({"ok": True, "message": f"已結案 {closed} 筆"})
+
+
+@app.get("/report/export")
+def report_export(request: Request):
+    from fastapi.responses import StreamingResponse
+    role = check_auth(request)
+    if not role: return RedirectResponse("/login")
+    auth_group = get_auth_group_id(request)
+    conn = get_conn(); cur = conn.cursor()
+    if auth_group:
+        cur.execute("SELECT * FROM customers WHERE source_group_id=? AND status='ACTIVE' ORDER BY created_at DESC", (auth_group,))
+    else:
+        cur.execute("SELECT * FROM customers WHERE status='ACTIVE' ORDER BY source_group_id, created_at DESC")
+    rows = cur.fetchall(); conn.close()
+    # CSV 格式
+    lines = ["群組,建立日期,姓名,身分證,目前公司,核准金額,撥款日期,狀態"]
+    for r in rows:
+        gname = get_group_name(r["source_group_id"])
+        created = (r["created_at"] or "")[:10]
+        co = r["current_company"] or r["company"] or ""
+        amt = r["approved_amount"] or ""
+        disb = r["disbursement_date"] or ""
+        sec = r["report_section"] or ""
+        lines.append(f'{gname},{created},{r["customer_name"]},{r["id_no"] or ""},{co},{amt},{disb},{sec}')
+    content = "\ufeff" + "\n".join(lines)  # BOM for Excel
+    today = datetime.now().strftime("%Y%m%d")
+    return StreamingResponse(
+        iter([content.encode("utf-8-sig")]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="report_{today}.csv"'}
+    )
+
+
 @app.get("/report", response_class=HTMLResponse)
 def report_web(request: Request):
     from fastapi.responses import RedirectResponse
@@ -3797,8 +3852,13 @@ def report_web(request: Request):
     # 統計
     total_new = 0; total_supp = 0; total_active = 0; total_unverified = 0; total_closed = 0
     month_start = datetime.now().strftime("%Y-%m-01")
+    today_date = datetime.now().strftime("%Y-%m-%d")
     cur.execute("SELECT COUNT(*) as c FROM customers WHERE status IN ('CLOSED','PENALTY','ABANDONED','REJECTED') AND updated_at>=?", (month_start,))
     total_closed = cur.fetchone()["c"]
+    cur.execute("SELECT COUNT(*) as c FROM customers WHERE date(created_at)=?", (today_date,))
+    today_new = cur.fetchone()["c"]
+    cur.execute("SELECT COUNT(*) as c FROM customers WHERE status='ACTIVE' AND report_section='待撥款'")
+    total_pending_disb = cur.fetchone()["c"]
 
     groups_html = ""
     for i, grp in enumerate(groups):
@@ -3885,6 +3945,11 @@ def report_web(request: Request):
         <div class="stat-card"><div class="stat-num" style="color:#166534">{total_active}</div><div class="stat-lbl">📤 送件中</div></div>
         <div class="stat-card"><div class="stat-num" style="color:#991b1b">{total_unverified}</div><div class="stat-lbl">💰 未對保</div></div>
         <div class="stat-card"><div class="stat-num" style="color:#64748b">{total_closed}</div><div class="stat-lbl">📁 本月結案</div></div>
+        <div class="stat-card"><div class="stat-num" style="color:#7c3aed">{today_new}</div><div class="stat-lbl">📅 今日進件</div></div>
+        <div class="stat-card"><div class="stat-num" style="color:#ea580c">{total_pending_disb}</div><div class="stat-lbl">⏳ 待撥款</div></div>
+      </div>
+      <div style="margin-bottom:14px;text-align:right">
+        <a href="/report/export" class="btn" style="background:#e8e2da;color:#4a3e30;font-size:12px;text-decoration:none">📥 匯出 CSV</a>
       </div>
       {groups_html}
     </div>
@@ -3907,8 +3972,34 @@ def report_web(request: Request):
       const el=document.getElementById("dd-"+cid);
       el.style.display=el.style.display==="block"?"none":"block";
     }}
+    function batchClose(){{
+      const cbs=document.querySelectorAll('.batch-cb:checked');
+      if(!cbs.length){{alert('請先勾選客戶');return;}}
+      if(!confirm('確定要批次結案 '+cbs.length+' 位客戶嗎？'))return;
+      const ids=[...cbs].map(c=>c.value);
+      fetch('/report/batch-close',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{case_ids:ids}})}})
+      .then(r=>r.json()).then(d=>{{alert(d.message);location.reload();}});
+    }}
     </script>
+    <div style="position:fixed;bottom:20px;right:20px;z-index:999">
+      <button onclick="batchClose()" class="btn btn-primary" style="box-shadow:0 4px 12px rgba(0,0,0,.15);font-size:13px;padding:10px 18px">批次結案</button>
+    </div>
     </body></html>"""
+
+
+def _build_timeline(case_id: str) -> str:
+    conn = get_conn(); cur = conn.cursor()
+    cur.execute("SELECT message_text, from_group_id, created_at FROM case_logs WHERE case_id=? ORDER BY created_at DESC LIMIT 20", (case_id,))
+    logs = cur.fetchall(); conn.close()
+    if not logs:
+        return '<div style="font-size:12px;color:#999">無操作紀錄</div>'
+    lines = []
+    for log in logs:
+        dt = (log["created_at"] or "")[:16].replace("T", " ")
+        gname = get_group_name(log["from_group_id"])
+        txt = (log["message_text"] or "")[:60]
+        lines.append(f'<div style="padding:4px 0;border-bottom:1px solid #f0ebe4;font-size:11px"><span style="color:#999">{h(dt)}</span> <span style="color:#8b7355">{h(gname)}</span> {h(txt)}</div>')
+    return "".join(lines)
 
 
 @app.get("/search", response_class=HTMLResponse)
@@ -3988,6 +4079,10 @@ def search_page(request: Request, q: str = "", grp: str = "", date_from: str = "
               </div>
               {route_html}
               {"<div style=\'margin-top:8px;padding:8px;background:#f9fafb;border-radius:6px;font-size:12px;color:#374151\'>" + h(last_short) + "</div>" if last_short else ""}
+              <div style="margin-top:8px">
+                <div onclick="var el=this.nextElementSibling;el.style.display=el.style.display==='none'?'block':'none'" style="cursor:pointer;font-size:12px;color:#8b7355;font-weight:600">▶ 操作歷程</div>
+                <div style="display:none;margin-top:6px;max-height:200px;overflow-y:auto">{_build_timeline(row["case_id"])}</div>
+              </div>
             </div>'''
 
     return f"""<!DOCTYPE html><html><head>{PAGE_CSS}<title>查詢客戶</title></head><body>
@@ -7559,6 +7654,56 @@ async def update_password(request: Request):
         conn.commit(); conn.close()
         return JSONResponse({"ok": True, "message": "群組密碼已更新"})
     return JSONResponse({"ok": False, "message": "未知角色"})
+
+
+@app.get("/admin/logs", response_class=HTMLResponse)
+def admin_logs_page(request: Request, page: int = 1):
+    from fastapi.responses import RedirectResponse
+    role = check_auth(request)
+    if role != "admin":
+        return RedirectResponse("/login")
+    per_page = 50
+    offset = (page - 1) * per_page
+    conn = get_conn(); cur = conn.cursor()
+    cur.execute("SELECT COUNT(*) as c FROM case_logs")
+    total = cur.fetchone()["c"]
+    cur.execute("SELECT * FROM case_logs ORDER BY created_at DESC LIMIT ? OFFSET ?", (per_page, offset))
+    logs = cur.fetchall(); conn.close()
+    total_pages = (total + per_page - 1) // per_page
+    rows_html = ""
+    for log in logs:
+        dt = (log["created_at"] or "")[:19].replace("T", " ")
+        gname = get_group_name(log["from_group_id"])
+        txt = (log["message_text"] or "")[:80]
+        rows_html += f'<tr><td style="white-space:nowrap">{h(dt)}</td><td>{h(log["customer_name"])}</td><td>{h(gname)}</td><td style="word-break:break-all">{h(txt)}</td></tr>'
+    if not rows_html:
+        rows_html = '<tr><td colspan="4" style="text-align:center;color:#999;padding:20px">沒有操作紀錄</td></tr>'
+    # 分頁
+    pag = ""
+    if total_pages > 1:
+        pag = '<div style="display:flex;gap:6px;justify-content:center;margin-top:14px;flex-wrap:wrap">'
+        if page > 1:
+            pag += f'<a href="/admin/logs?page={page-1}" class="btn" style="background:#e8e2da;color:#4a3e30;font-size:12px">上一頁</a>'
+        pag += f'<span style="padding:6px 12px;font-size:12px;color:#6a5e4e">{page}/{total_pages}（共{total}筆）</span>'
+        if page < total_pages:
+            pag += f'<a href="/admin/logs?page={page+1}" class="btn" style="background:#e8e2da;color:#4a3e30;font-size:12px">下一頁</a>'
+        pag += '</div>'
+    return f"""<!DOCTYPE html><html><head>{PAGE_CSS}<title>操作紀錄</title>
+    <style>
+    table{{width:100%;border-collapse:collapse;font-size:12px}}
+    th{{background:#f0ebe4;color:#4a3e30;padding:8px;text-align:left;font-weight:600;position:sticky;top:0}}
+    td{{padding:6px 8px;border-bottom:1px solid #ece8e2}}
+    tr:hover{{background:#faf7f4}}
+    </style></head><body>
+    {make_topnav(role, "logs")}
+    <div class="page">
+      <h2 style="font-size:18px;font-weight:600;margin-bottom:14px">📝 操作紀錄</h2>
+      <div style="overflow-x:auto;background:#fff;border:1px solid #ddd5ca;border-radius:10px">
+        <table><thead><tr><th>時間</th><th>客戶</th><th>來源群組</th><th>操作內容</th></tr></thead>
+        <tbody>{rows_html}</tbody></table>
+      </div>
+      {pag}
+    </div></body></html>"""
 
 
 @app.get("/admin/download-db")
