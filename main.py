@@ -4873,6 +4873,14 @@ label{{display:block;font-size:12px;font-weight:600;color:#5a4e40;margin-bottom:
 {make_topnav(role, "edit")}
 <div class="page">
 <div style="font-size:20px;font-weight:700;margin-bottom:18px;">{h(v("customer_name"))} 資料編輯</div>
+<div class="card" style="background:#fffbeb;border-color:#fde68a">
+  <div class="sec" style="color:#92400e;cursor:pointer" onclick="document.getElementById('smartbox').style.display=document.getElementById('smartbox').style.display==='none'?'block':'none'">📋 智能填入（點擊展開）</div>
+  <div id="smartbox" style="display:none">
+    <textarea id="smarttext" class="ep" style="min-height:120px;margin-bottom:8px" placeholder="把業務給的客戶資料文字貼在這裡..."></textarea>
+    <button type="button" onclick="smartFill()" style="background:#92400e;color:#fff;border:none;padding:8px 20px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer">智能填入</button>
+    <span id="smartresult" style="margin-left:10px;font-size:13px;color:#166534"></span>
+  </div>
+</div>
 <form method="post" action="/edit-pending">
 <input type="hidden" name="case_id" value="{h(case_id)}">
 <div class="card"><div class="sec">所屬群組</div>
@@ -4954,7 +4962,53 @@ label{{display:block;font-size:12px;font-weight:600;color:#5a4e40;margin-bottom:
   <button type="submit" class="btn-s">💾 儲存變更</button>
   <a href="/pending-customers" class="btn-b">取消</a>
 </div>
-</form></div></body></html>"""
+</form>
+""" + """<script>
+function smartFill(){
+  const t=document.getElementById('smarttext').value;
+  if(!t.trim()){alert('請先貼上文字');return}
+  let count=0;
+  function s(name,val){if(val&&val.trim()){const el=document.querySelector('[name="'+name+'"]');if(el){el.value=val.trim();count++}}}
+  function ss(name,val){if(val&&val.trim()){const el=document.querySelector('[name="'+name+'"]');if(el){for(let o of el.options){if(o.value===val.trim()||o.text===val.trim()){el.selectedIndex=o.index;count++;break}}}}}
+  let m=t.match(/姓名[：:]\s*(.+)/);if(m)s('cname',m[1].split(/[\\s\\n]/)[0]);
+  m=t.match(/身分證[字號：:]*[：:]\s*([A-Z]\\d{9})/i);if(!m)m=t.match(/身份證[號：:]*[：:]\s*([A-Z]\\d{9})/i);if(m)s('idno',m[1].toUpperCase());
+  m=t.match(/手機[號碼：:]*[：:]\s*(09[\\d-]{8,12})/);if(m)s('phone',m[1].replace(/-/g,''));
+  m=t.match(/信箱[：:]\s*(\\S+@\\S+)/i);if(!m)m=t.match(/email[：:]\s*(\\S+)/i);if(m)s('email',m[1]);
+  m=t.match(/FB[名稱：:]*[：:]\s*(.+)/i);if(!m)m=t.match(/臉書[名稱：:]*[：:]\s*(.+)/i);if(m)s('fb',m[1].split(/[\\n]/)[0].trim());
+  m=t.match(/學歷[：:]\s*(.+)/);if(m){let e=m[1].trim();if(e.includes('大學')||e.includes('專科'))ss('edu','專科/大學');else if(e.includes('研究'))ss('edu','研究所以上');else if(e.includes('高')||e.includes('職'))ss('edu','高中/職');else ss('edu','其他')}
+  m=t.match(/居住地址[：:]\s*(.+)/);if(!m)m=t.match(/現居[住地]*地址[：:]\s*(.+)/);if(m){const addr=m[1].trim();const cm=addr.match(/^(.{2,3}[市縣])/);if(cm)ss('lcity',cm[1]);const dm=addr.match(/[市縣](.{1,3}[區鄉鎮市])/);if(dm)s('ldist',dm[1]);const rest=addr.replace(/^.{2,3}[市縣].{1,3}[區鄉鎮市]/,'');if(rest)s('laddr',rest)}
+  m=t.match(/居住電話[：:]\s*(.+)/);if(!m)m=t.match(/現住電話[：:]\s*(.+)/);if(m&&!m[1].includes('無'))s('lphone',m[1].trim());
+  m=t.match(/居住[地幾]*[多久年]*[：:]\s*(\\d+)/);if(m)s('lyear',m[1]);
+  if(t.includes('自有'))ss('lstatus','自有');else if(t.includes('承租'))ss('lstatus','租屋');else if(t.includes('家人名下'))ss('lstatus','親屬');
+  m=t.match(/任職公司[：:]\s*(.+)/);if(!m)m=t.match(/公司名稱[：:]\s*(.+)/);if(m)s('cmpname',m[1].split(/[\\n]/)[0].trim());
+  m=t.match(/公司地址[：:]\s*(.+)/);if(m){const ca=m[1].trim();const ccm=ca.match(/^(.{2,3}[市縣])/);if(ccm)ss('ccity',ccm[1]);const cdm=ca.match(/[市縣](.{1,3}[區鄉鎮市])/);if(cdm)s('cdist',cdm[1]);const crest=ca.replace(/^.{2,3}[市縣].{1,3}[區鄉鎮市]/,'');if(crest)s('caddr',crest)}
+  m=t.match(/公司電話[：:]\s*([\\d-]+)/);if(m){const cp=m[1].replace(/-/g,'');if(cp.startsWith('09')){ss('carea','mobile');s('cnum',cp)}else if(cp.length>2){const prefixes=[['037',3],['049',3],['089',3],['02',2],['03',2],['04',2],['05',2],['06',2],['07',2],['08',2]];for(const[p,l]of prefixes){if(cp.startsWith(p)){ss('carea',p);s('cnum',cp.substring(l));break}}}}
+  m=t.match(/年資[：:]\s*(.+)/);if(!m)m=t.match(/工作多久[：:]\s*(.+)/);if(m){const yt=m[1].trim();const ym=yt.match(/(\\d+)\\s*年/);if(ym)s('cyear',ym[1]);const mm2=yt.match(/(\\d+)\\s*[個月]/);if(mm2)s('cmon',mm2[1]);if(!ym&&!mm2){const n=yt.match(/(\\d+)/);if(n)s('cyear',n[1])}}
+  m=t.match(/職稱[：:]\s*(.+)/);if(m)s('crole',m[1].split(/[\\n]/)[0].trim());
+  m=t.match(/月[收入薪資]*[：:]\s*([\\d.]+)/);if(!m)m=t.match(/薪資[：:]\s*([\\d.]+)/);if(m)s('csal',m[1]);
+  m=t.match(/資金需求[：:]\s*(.+)/);if(!m)m=t.match(/需求金額[：:]\s*(.+)/);if(m)s('efund',m[1].split(/[\\n]/)[0].trim());
+  if(t.match(/公司保/))ss('elabor','公司保');else if(t.match(/工會保/)||t.match(/公會/))ss('elabor','工會保');else if(t.match(/無勞保/))ss('elabor','無勞保');
+  if(t.match(/無薪轉/)||t.match(/薪轉.*無/)||t.match(/領現/))ss('esal','無薪轉');else if(t.match(/有薪轉/)||t.match(/薪轉.*有/))ss('esal','有薪轉');
+  if(t.match(/近三?.*[xX無]/)||t.match(/近3.*[xX無]/))ss('esent','否');else if(t.match(/近三?.*有/)||t.match(/近3.*有/))ss('esent','是');
+  const clines=t.split(/\\n/);let cIdx=0;
+  for(let i=0;i<clines.length;i++){
+    const ln=clines[i].trim();
+    const nm=ln.match(/名[字稱][：:]\s*(.+)/);
+    if(nm&&cIdx<2){
+      const cn=nm[1].trim();
+      const nl=clines.slice(i+1,i+4).join(' ');
+      const rm=nl.match(/關係[：:]\s*(.+?)[\\s]/)||nl.match(/關係[：:]\s*(.+)/);
+      const pm=nl.match(/(09[\\d-]{8,12})/);
+      if(cIdx===0){s('c1name',cn);if(rm)s('c1rel',rm[1].trim());if(pm)s('c1tel',pm[1].replace(/-/g,''))}
+      else{s('c2name',cn);if(rm)s('c2rel',rm[1].trim());if(pm)s('c2tel',pm[1].replace(/-/g,''))}
+      cIdx++;
+    }
+  }
+  if(t.match(/保密/)){if(cIdx>=1)ss('c1know','保密');if(cIdx>=2)ss('c2know','保密')}
+  document.getElementById('smartresult').textContent='已填入 '+count+' 個欄位，請檢查確認';
+}
+</script>
+</div></body></html>"""
 
 
 @app.post("/edit-pending")
