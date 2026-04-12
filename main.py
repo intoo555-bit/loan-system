@@ -1622,11 +1622,19 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
     section_map: Dict[str, List[str]] = {}
     today_str = datetime.now().strftime("%Y-%m-%d")
     for row in all_rows:
-        section = row["report_section"] or row["current_company"] or row["company"] or "送件"
-        section = normalize_section(section)  # Bug 20: 移除多餘的第二次呼叫
+        report_sec = row["report_section"] or ""
+        current_co = row["current_company"] or row["company"] or ""
+        # 如果標記待撥款但客戶還在送其他公司 → 顯示在該公司區塊
+        if report_sec == "待撥款" and current_co:
+            approved_companies = [h.get("company","") for h in get_all_approved(row["route_plan"] or "")]
+            still_sending = current_co not in approved_companies and not any(current_co in ac or ac in current_co for ac in approved_companies)
+            section = current_co if still_sending else "待撥款"
+        else:
+            section = report_sec or current_co or "送件"
+        section = normalize_section(section)
         created = row["created_at"] or ""
         date_str = created[5:10].replace("-", "/") if created else ""
-        company_str = row["current_company"] or row["company"] or ""
+        company_str = current_co
 
         last_update = row["last_update"] or ""
         first_line = last_update.splitlines()[0].strip() if last_update.strip() else ""
