@@ -164,30 +164,30 @@ IGNORE_NAME_SET = {
     "NA", "RE", "JCIC", "ID", "CCIS", "TAC", "EGO",
 }
 
-CHINESE_NAME_RE = re.compile(r"[\u4e00-\u9fff]{2,4}")
+CHINESE_NAME_RE = re.compile(r"[\u4e00-\u9fff]{2,6}")
 ID_RE = re.compile(r"[A-Z][12]\d{8}")
 
 # 支援有無 - 的日期格式，如 115/3/2廖俊宏 或 115/3/2-廖俊宏
 DATE_NAME_ID_INLINE_RE = re.compile(
-    r"^\s*(\d{2,4}/\d{1,2}/\d{1,2})\s*[-－]?\s*([\u4e00-\u9fff]{2,4})\s*([A-Z][12]\d{8})",
+    r"^\s*(\d{2,6}/\d{1,2}/\d{1,2})\s*[-－]?\s*([\u4e00-\u9fff]{2,6})\s*([A-Z][12]\d{8})",
     re.IGNORECASE,
 )
 DATE_NAME_ONLY_RE = re.compile(
-    r"^\s*(\d{2,4}/\d{1,2}/\d{1,2})\s*[-－]?\s*([\u4e00-\u9fff]{2,4})(?:\s*$|\s*[-－/\u4e00-\u9fff])",
+    r"^\s*(\d{2,6}/\d{1,2}/\d{1,2})\s*[-－]?\s*([\u4e00-\u9fff]{2,6})(?:\s*$|\s*[-－/\u4e00-\u9fff])",
     re.IGNORECASE,
 )
 # 短日期：3/2廖俊宏 或 3/2-廖俊宏（有無-都支援）
 SHORT_DATE_NAME_RE = re.compile(
-    r"^\s*(\d{1,2}/\d{1,2})\s*[-－]?\s*([\u4e00-\u9fff]{2,4})"
+    r"^\s*(\d{1,2}/\d{1,2})\s*[-－]?\s*([\u4e00-\u9fff]{2,6})"
 )
 # 送件順序格式：4/1-高郡惠-喬美/亞太/和裕
 ROUTE_ORDER_RE = re.compile(
-    r"^\s*(\d{1,4}/\d{1,2}(?:/\d{1,2})?)\s*[-－]\s*([\u4e00-\u9fff]{2,4})\s*[-－]\s*((?:[^\s/\n]+/)+[^\s/\n@]+)(?:\s*@AI)?\s*$",
+    r"^\s*(\d{1,4}/\d{1,2}(?:/\d{1,2})?)\s*[-－]\s*([\u4e00-\u9fff]{2,6})\s*[-－]\s*((?:[^\s/\n]+/)+[^\s/\n@]+)(?:\s*@AI)?\s*$",
     re.IGNORECASE,
 )
 # 單公司核准/婉拒格式：03/04-黃娫柔-房地核准20萬 / 03/04-黃娫柔-新鑫核准20萬
 SINGLE_APPROVAL_RE = re.compile(
-    r"^\s*(\d{1,4}/\d{1,2}(?:/\d{1,2})?)\s*[-－]\s*([\u4e00-\u9fff]{2,4})\s*[-－]\s*([^\s/\n@-]+?)(核准|婉拒)(\d+(?:\.\d+)?萬)?(?:\s*@AI)?\s*$",
+    r"^\s*(\d{1,4}/\d{1,2}(?:/\d{1,2})?)\s*[-－]\s*([\u4e00-\u9fff]{2,6})\s*[-－]\s*([^\s/\n@-]+?)(核准|婉拒)(\d+(?:\.\d+)?萬)?(?:\s*@AI)?\s*$",
     re.IGNORECASE,
 )
 
@@ -196,7 +196,7 @@ NOTIFICATION_TRIGGER_RE = re.compile(r"照會注意事項")
 EXTRA_COMPANY_RE = re.compile(r"[+＋]\s*([\u4e00-\u9fff0-9]{1,8}?)\s*一起")
 # 轉送格式：8/5-戴君哲-轉21 或 8/11-林曉薇-轉麻吉 6/18
 TRANSFER_RE = re.compile(
-    r"^\s*(\d{1,4}/\d{1,2}(?:/\d{1,2})?)\s*[-－]\s*([\u4e00-\u9fff]{2,4})\s*[-－]\s*轉\s*([^\s@]+)(?:\s.*)?(?:\s*@AI)?\s*$",
+    r"^\s*(\d{1,4}/\d{1,2}(?:/\d{1,2})?)\s*[-－]\s*([\u4e00-\u9fff]{2,6})\s*[-－]\s*轉\s*([^\s@]+)(?:\s.*)?(?:\s*@AI)?\s*$",
     re.IGNORECASE,
 )
 
@@ -210,7 +210,7 @@ def is_notification_briefing(text: str) -> bool:
         return False
     # 第一行：純中文姓名 2-4 字
     name = lines[0]
-    if not re.fullmatch(r"[\u4e00-\u9fff]{2,4}", name):
+    if not re.fullmatch(r"[\u4e00-\u9fff]{2,6}", name):
         return False
     # 第二行：照會注意事項
     if "照會注意事項" not in lines[1]:
@@ -579,7 +579,7 @@ def get_admin_group_ids() -> List[str]:
 def parse_route_order_line(line: str) -> Dict:
     """解析「4/1-高郡惠-喬美/亞太/和裕」，回傳 dict 或 {}"""
     # Bug 1: 攔截「轉XXX」格式
-    if re.match(r"^\s*\d{1,4}/\d{1,2}(?:/\d{1,2})?\s*[-－]\s*[\u4e00-\u9fff]{2,4}\s*[-－]\s*轉", line.strip()):
+    if re.match(r"^\s*\d{1,4}/\d{1,2}(?:/\d{1,2})?\s*[-－]\s*[\u4e00-\u9fff]{2,6}\s*[-－]\s*轉", line.strip()):
         return {}
     m = ROUTE_ORDER_RE.match(line.strip())
     if not m:
@@ -1471,7 +1471,7 @@ def parse_disbursement_list(text: str) -> Dict:
 
         # 名字行（2-4個中文字，或含英文的姓名）
         if current_date and current_company:
-            name_m = re.match(r"^([一-鿿]{2,4})\s*$", line)
+            name_m = re.match(r"^([一-鿿]{2,6})\s*$", line)
             if name_m:
                 result[current_date][current_company].append(name_m.group(1))
 
@@ -1497,7 +1497,7 @@ def is_disbursement_list(text: str) -> bool:
     if not has_header:
         return False
     # 標頭後面至少要有一行純人名（2-4個中文字）
-    name_re = re.compile(r"^[一-鿿]{2,4}$")
+    name_re = re.compile(r"^[一-鿿]{2,6}$")
     for line in lines[header_idx + 1:]:
         if name_re.match(line):
             return True
@@ -1901,75 +1901,75 @@ def parse_special_command(text: str, group_id: str) -> Optional[Dict]:
 
     # 查詢：支援所有格式
     # @AI 查 彭駿為 / 彭駿為 查@AI / 彭駿為@AI 查
-    m = re.match(r"^查\s*([\u4e00-\u9fff]{2,4})$", clean)
+    m = re.match(r"^查\s*([\u4e00-\u9fff]{2,6})$", clean)
     if m:
         return {"type": "search", "name": m.group(1)}
-    m = re.match(r"^([\u4e00-\u9fff]{2,4})\s*查$", clean)
+    m = re.match(r"^([\u4e00-\u9fff]{2,6})\s*查$", clean)
     if m:
         return {"type": "search", "name": m.group(1)}
 
     # 轉下一家
-    m = re.match(r"^([\u4e00-\u9fff]{2,4})\s*轉下一家$", clean)
+    m = re.match(r"^([\u4e00-\u9fff]{2,6})\s*轉下一家$", clean)
     if m:
         return {"type": "advance", "name": m.group(1), "target": None}
 
     # 轉指定公司
-    m = re.match(r"^([\u4e00-\u9fff]{2,4})\s*轉(.+)$", clean)
+    m = re.match(r"^([\u4e00-\u9fff]{2,6})\s*轉(.+)$", clean)
     if m and m.group(2).strip() != "下一家":
         return {"type": "advance", "name": m.group(1), "target": m.group(2).strip()}
 
     # 修改核准金額：@AI 姓名 公司 核准 金額（姓名和公司之間必須有空格）
-    m = re.match(r"^([\u4e00-\u9fff]{2,4})\s+(.+?)\s*核准\s*(.+)$", clean)
+    m = re.match(r"^([\u4e00-\u9fff]{2,6})\s+(.+?)\s*核准\s*(.+)$", clean)
     if m:
         return {"type": "update_amount", "name": m.group(1), "company": m.group(2).strip(), "amount": m.group(3).strip()}
 
     # 改名：@AI 舊名 改名 新名
-    m = re.match(r"^([\u4e00-\u9fff]{2,4})\s*改名\s*([\u4e00-\u9fff]{2,4})$", clean)
+    m = re.match(r"^([\u4e00-\u9fff]{2,6})\s*改名\s*([\u4e00-\u9fff]{2,6})$", clean)
     if m:
         return {"type": "rename", "old_name": m.group(1), "new_name": m.group(2)}
 
     # 改身分證：@AI 姓名 改身分證 新ID
-    m = re.match(r"^([\u4e00-\u9fff]{2,4})\s*改身分證\s*([A-Z]\d{9})$", clean, re.IGNORECASE)
+    m = re.match(r"^([\u4e00-\u9fff]{2,6})\s*改身分證\s*([A-Z]\d{9})$", clean, re.IGNORECASE)
     if m:
         return {"type": "change_id", "name": m.group(1), "new_id": m.group(2).upper()}
 
     # 重啟：@AI 姓名 重啟
-    m = re.match(r"^([\u4e00-\u9fff]{2,4})\s*重啟$", clean)
+    m = re.match(r"^([\u4e00-\u9fff]{2,6})\s*重啟$", clean)
     if m:
         return {"type": "reopen", "name": m.group(1)}
 
     # 結案帶原因：@AI 姓名 結案 原因
-    m = re.match(r"^([一-鿿]{2,4})\s*結案\s+(.+)$", clean)
+    m = re.match(r"^([一-鿿]{2,6})\s*結案\s+(.+)$", clean)
     if m:
         return {"type": "close", "name": m.group(1), "reason": m.group(2).strip()}
 
     # 結案
-    m = re.match(r"^([一-鿿]{2,4})\s*(已結案|結案)$", clean)
+    m = re.match(r"^([一-鿿]{2,6})\s*(已結案|結案)$", clean)
     if m:
         return {"type": "close", "name": m.group(1)}
 
     # 婉拒 轉XXX（跳到指定公司）
-    m = re.match(r"^([一-鿿]{2,4})\s*婉拒\s*轉\s*(.+)$", clean)
+    m = re.match(r"^([一-鿿]{2,6})\s*婉拒\s*轉\s*(.+)$", clean)
     if m:
         return {"type": "reject_to", "name": m.group(1), "target": m.group(2).strip()}
 
     # 婉拒（推到下一家）
-    m = re.match(r"^([一-鿿]{2,4})\s*婉拒$", clean)
+    m = re.match(r"^([一-鿿]{2,6})\s*婉拒$", clean)
     if m:
         return {"type": "reject", "name": m.group(1)}
 
     # 違約金已支付 xxxx（有收到違約金）
-    m = re.match(r"^([一-鿿]{2,4})\s*違約金已支付\s*([\d,，]+)", clean)
+    m = re.match(r"^([一-鿿]{2,6})\s*違約金已支付\s*([\d,，]+)", clean)
     if m:
         amt = m.group(2).replace(",","").replace("，","")
         return {"type": "penalty", "name": m.group(1), "penalty": amt}
 
     # 照會：前後都可以
     # @AI 照會 王小明 / @AI 王小明 照會 / @AI 照會 王小明 21
-    m = re.match(r"^照會\s+([\u4e00-\u9fff]{2,4})(?:\s+(.+))?$", clean)
+    m = re.match(r"^照會\s+([\u4e00-\u9fff]{2,6})(?:\s+(.+))?$", clean)
     if m:
         return {"type": "notification", "name": m.group(1), "company": (m.group(2) or "").strip()}
-    m = re.match(r"^([\u4e00-\u9fff]{2,4})\s+照會(?:\s+(.+))?$", clean)
+    m = re.match(r"^([\u4e00-\u9fff]{2,6})\s+照會(?:\s+(.+))?$", clean)
     if m:
         return {"type": "notification", "name": m.group(1), "company": (m.group(2) or "").strip()}
 
