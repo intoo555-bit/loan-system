@@ -4284,35 +4284,37 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
         f'<option value="{h(g["group_id"])}">{h(g["group_name"])}</option>' for g in ab_groups)
 
     if not customer:
-        return f"""<!DOCTYPE html><html><head>{PAGE_CSS}{ADMINB_CSS}<title>行政B作業</title></head><body>
-    {make_topnav(role,"adminb")}
+        # 預先產生 JSON，避免 f-string 大括號衝突
+        cust_json = json.dumps([{"id":cu["case_id"],"name":cu["customer_name"],"idno":cu["id_no"] or "","gid":cu["source_group_id"],"gname":get_group_name(cu["source_group_id"])} for cu in all_customers], ensure_ascii=False)
+        return """<!DOCTYPE html><html><head>""" + PAGE_CSS + ADMINB_CSS + """<title>行政B作業</title></head><body>
+    """ + make_topnav(role,"adminb") + """
     <div class="page">
       <div class="ab-card">
         <div class="ab-sec">選擇客戶</div>
         <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap">
           <input type="text" id="ab-search" class="ab-inp" placeholder="輸入姓名或身分證搜尋..." autofocus style="flex:1;min-width:150px">
-          <select id="ab-grp" class="ab-sel" style="width:130px">{grp_filter_opts}</select>
+          <select id="ab-grp" class="ab-sel" style="width:130px">""" + grp_filter_opts + """</select>
           <button onclick="doSearch()" class="btn-save" style="padding:7px 16px">🔍 搜尋</button>
         </div>
         <div id="ab-results" style="max-height:400px;overflow-y:auto"></div>
       </div>
     </div>
     <script>
-    const allCusts={json.dumps([{{"id":cu["case_id"],"name":cu["customer_name"],"idno":cu["id_no"] or "","gid":cu["source_group_id"],"gname":get_group_name(cu["source_group_id"]),"status":cu["status"]}} for cu in all_customers], ensure_ascii=False)};
-    document.getElementById('ab-search').addEventListener('keydown',function(e){{if(e.key==='Enter')doSearch()}});
-    function doSearch(){{
+    const allCusts=""" + cust_json + """;
+    document.getElementById('ab-search').addEventListener('keydown',function(e){if(e.key==='Enter')doSearch()});
+    function doSearch(){
       const q=document.getElementById('ab-search').value.trim().toLowerCase();
       const g=document.getElementById('ab-grp').value;
       const box=document.getElementById('ab-results');
-      if(!q&&!g){{box.innerHTML='<div style="color:#999;font-size:13px;padding:12px">請輸入姓名或身分證搜尋</div>';return;}}
-      const matches=allCusts.filter(c=>{{
+      if(!q&&!g){box.innerHTML='<div style="color:#999;font-size:13px;padding:12px">請輸入姓名或身分證搜尋</div>';return;}
+      const matches=allCusts.filter(c=>{
         const matchQ=!q||c.name.toLowerCase().includes(q)||(c.idno&&c.idno.toLowerCase().includes(q));
         const matchG=!g||c.gid===g;
         return matchQ&&matchG;
-      }}).slice(0,30);
-      if(!matches.length){{box.innerHTML='<div style="color:#999;font-size:13px;padding:12px">找不到符合的客戶</div>';return;}}
+      }).slice(0,30);
+      if(!matches.length){box.innerHTML='<div style="color:#999;font-size:13px;padding:12px">找不到符合的客戶</div>';return;}
       box.innerHTML=matches.map(c=>'<div onclick="location.href=\\'/adminb?case_id='+c.id+'\\'" style="padding:10px 14px;border-bottom:1px solid #ece8e2;cursor:pointer;display:flex;justify-content:space-between;align-items:center" onmouseover="this.style.background=\\'#f5f0eb\\'" onmouseout="this.style.background=\\'\\'"><div><div style="font-size:14px;font-weight:600">'+c.name+'</div><div style="font-size:12px;color:#6a5e4e">'+(c.idno||'-')+'</div></div><div style="font-size:11px;color:#999">'+c.gname+'</div></div>').join('');
-    }}
+    }
     </script>
     </body></html>"""
 
