@@ -2184,7 +2184,10 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
 
     if t == "pending_disbursement":
         conn = get_conn(); cur = conn.cursor()
-        cur.execute("SELECT customer_name, current_company, company, approved_amount, route_plan, created_at FROM customers WHERE status='ACTIVE' AND report_section='待撥款' ORDER BY created_at")
+        if group_id == A_GROUP_ID:
+            cur.execute("SELECT customer_name, current_company, company, approved_amount, route_plan, created_at, source_group_id FROM customers WHERE status='ACTIVE' AND report_section='待撥款' ORDER BY created_at")
+        else:
+            cur.execute("SELECT customer_name, current_company, company, approved_amount, route_plan, created_at, source_group_id FROM customers WHERE status='ACTIVE' AND report_section='待撥款' AND source_group_id=? ORDER BY created_at", (group_id,))
         rows = cur.fetchall(); conn.close()
         if not rows:
             reply_text(reply_token, "📋 目前沒有待撥款客戶")
@@ -2203,7 +2206,9 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
                 amt_str = amt
             else:
                 amt_str = "未知金額"
-            lines.append(f"{created}-{name}-核准{amt_str}")
+            gname = get_group_name(r["source_group_id"]) if group_id == A_GROUP_ID else ""
+            grp_tag = f"({gname})" if gname else ""
+            lines.append(f"{created}-{name}{grp_tag}-核准{amt_str}")
         reply_text(reply_token, "\n".join(lines))
         return
 
