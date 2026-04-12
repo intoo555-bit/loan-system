@@ -1674,11 +1674,9 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
         if created[:10] == today_str:
             line = "🆕" + line
         section_map.setdefault(section, []).append(line)
-        # 還在送其他公司 → 也加到該公司區塊
+        # 還在送其他公司 → 也加到該公司區塊（不帶撥款資訊）
         if extra_section and extra_section != section:
             extra_line = f"{date_str}-{row['customer_name']}-{company_str}"
-            if status_short:
-                extra_line += f"-{status_short}"
             if created[:10] == today_str:
                 extra_line = "🆕" + extra_line
             section_map.setdefault(extra_section, []).append(extra_line)
