@@ -2029,10 +2029,15 @@ def handle_special_command(cmd: Dict, reply_token: str, group_id: str):
         return
 
     if t == "report":
-        segs = generate_report_lines(group_id)
-        reply_text(reply_token, segs[0])
-        for seg in segs[1:]:
-            push_text(group_id, seg)
+        try:
+            segs = generate_report_lines(group_id)
+            reply_text(reply_token, segs[0])
+            for seg in segs[1:]:
+                push_text(group_id, seg)
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            reply_text(reply_token, f"❌ 日報產生失敗：{type(e).__name__}: {e}")
         return
 
     if t == "search":
@@ -2125,17 +2130,30 @@ def handle_special_command(cmd: Dict, reply_token: str, group_id: str):
         # 今日
         cur.execute("SELECT COUNT(*) as c FROM customers WHERE date(created_at)=?", (today,))
         today_new = cur.fetchone()["c"]
-        cur.execute("SELECT COUNT(*) as c FROM customers WHERE status='ACTIVE' AND report_section='待撥款' AND date(updated_at)=?", (today,))
-        today_approved = cur.fetchone()["c"]
         cur.execute("SELECT COUNT(*) as c FROM customers WHERE status IN ('CLOSED','PENALTY','ABANDONED','REJECTED') AND date(updated_at)=?", (today,))
         today_closed = cur.fetchone()["c"]
         # 本月
         cur.execute("SELECT COUNT(*) as c FROM customers WHERE created_at>=?", (month_start,))
         month_new = cur.fetchone()["c"]
-        cur.execute("SELECT COUNT(*) as c FROM customers WHERE status='ACTIVE' AND report_section='待撥款' AND updated_at>=?", (month_start,))
-        month_approved = cur.fetchone()["c"]
         cur.execute("SELECT COUNT(*) as c FROM customers WHERE status IN ('CLOSED','PENALTY','ABANDONED','REJECTED') AND updated_at>=?", (month_start,))
         month_closed = cur.fetchone()["c"]
+        # 核准：從 route_plan 歷史找有核准紀錄的客戶
+        cur.execute("SELECT route_plan FROM customers WHERE status='ACTIVE' AND route_plan IS NOT NULL AND route_plan!=''")
+        all_routes = cur.fetchall()
+        today_approved = 0
+        month_approved = 0
+        for r in all_routes:
+            approved = get_all_approved(r["route_plan"])
+            if approved:
+                for a in approved:
+                    d = a.get("date", "")
+                    if d == today:
+                        today_approved += 1
+                    if d >= month_start:
+                        month_approved += 1
+        # 待撥款
+        cur.execute("SELECT COUNT(*) as c FROM customers WHERE status='ACTIVE' AND report_section='待撥款'")
+        total_pending = cur.fetchone()["c"]
         cur.execute("SELECT COUNT(*) as c FROM customers WHERE status='ACTIVE'")
         total_active = cur.fetchone()["c"]
         conn.close()
@@ -2148,7 +2166,7 @@ def handle_special_command(cmd: Dict, reply_token: str, group_id: str):
                f"  新進件：{month_new}\n"
                f"  核准：{month_approved}\n"
                f"  結案：{month_closed}\n\n"
-               f"目前活躍客戶：{total_active}")
+               f"目前活躍：{total_active}　待撥款：{total_pending}")
         reply_text(reply_token, msg)
         return
 
