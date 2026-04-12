@@ -749,6 +749,7 @@ def advance_route_to(route_plan: str, target: str, status: str):
 # 名稱解析
 # =========================
 def parse_header_fields(text: str) -> Dict[str, str]:
+    text = normalize_ai_text(text)  # 全形轉半形（支援全形數字和斜線）
     lines = [x.strip() for x in (text or "").splitlines() if x.strip()]
     first = lines[0] if lines else ""
     compact = re.sub(r"\s+", "", text or "")
