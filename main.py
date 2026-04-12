@@ -1914,6 +1914,11 @@ def parse_special_command(text: str, group_id: str) -> Optional[Dict]:
     if m and m.group(2).strip() != "下一家":
         return {"type": "advance", "name": m.group(1), "target": m.group(2).strip()}
 
+    # 修改核准金額：@AI 姓名 公司 核准 金額
+    m = re.match(r"^([\u4e00-\u9fff]{2,4})\s*(.+?)\s*核准\s*(.+)$", clean)
+    if m:
+        return {"type": "update_amount", "name": m.group(1), "company": m.group(2).strip(), "amount": m.group(3).strip()}
+
     # 結案
     m = re.match(r"^([一-鿿]{2,4})\s*(已結案|結案)$", clean)
     if m:
@@ -2187,6 +2192,24 @@ def handle_special_command(cmd: Dict, reply_token: str, group_id: str):
                f"  結案：{month_closed}\n\n"
                f"目前活躍：{total_active}　待撥款：{total_pending}")
         reply_text(reply_token, msg)
+        return
+
+    if t == "update_amount":
+        name = cmd["name"]
+        company = cmd["company"]
+        amount = cmd["amount"]
+        rows = find_active_by_name(name)
+        same = [r for r in rows if r["source_group_id"] == group_id]
+        target = same[0] if same else (rows[0] if rows else None)
+        if not target:
+            reply_text(reply_token, f"❌ 找不到客戶：{name}"); return
+        route = target["route_plan"] or ""
+        new_route = update_company_amount_in_history(route, company, amount)
+        update_customer(target["case_id"], route_plan=new_route,
+                        approved_amount=amount,
+                        text=f"{name} {company} 核准金額修改為 {amount}",
+                        from_group_id=group_id)
+        reply_text(reply_token, f"✅ {name} {company} 核准金額已更新為 {amount}")
         return
 
     if t == "close":
