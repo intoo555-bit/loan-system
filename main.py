@@ -2445,6 +2445,10 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
         target = same[0] if same else (rows[0] if rows else None)
         if not target:
             reply_text(reply_token, f"❌ 找不到客戶：{name}"); return
+        # 照會時如果在送件區塊，移到公司區塊
+        if (target["report_section"] or "") == "送件":
+            update_customer(target["case_id"], report_section="",
+                            text=f"{name} 照會", from_group_id=group_id)
         r = dict(target)
         txt = generate_notification_text(r, company)
         reply_text(reply_token, txt)
