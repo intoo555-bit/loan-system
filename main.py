@@ -2087,18 +2087,14 @@ def generate_notification_text(r: dict, company: str = "") -> str:
     except Exception:
         salary_str = v("company_salary") or "0"
 
-    # 金額：優先用資金需求，其次核准金額
-    amount = v("eval_fund_need") or v("approved_amount") or ""
-    # 期數：公司預設
-    DEFAULT_PERIODS = {
-        "亞太": "30", "亞太商品": "30", "亞太機車15萬": "36", "亞太機車25萬": "48",
-        "亞太工會機車": "36", "和裕": "24", "和裕機車": "24", "和裕商品": "24",
-        "21": "18", "21機車12萬": "24", "21機車25萬": "48", "21商品": "24",
-        "創鉅": "24", "麻吉": "24", "喬美": "30", "第一": "24",
-        "貸就補": "24", "貸救補": "24", "手機分期": "18",
-    }
-    period = DEFAULT_PERIODS.get(co, "24")
-    amount_line = f"{amount}/{period}期" if amount else ""
+    # 金額期數：從 PLAN_INFO 抓方案金額（行政B邏輯）
+    plan_info = PLAN_INFO.get(co)
+    if plan_info and plan_info[1]:
+        amount_line = plan_info[1]
+    else:
+        # fallback: 用資金需求或核准金額
+        amount = v("eval_fund_need") or v("approved_amount") or ""
+        amount_line = amount if amount else ""
 
     # 學歷：轉成口語
     edu = v("education")
