@@ -4903,10 +4903,9 @@ def edit_pending_get(request: Request, case_id: str = ""):
         debt_data = _json.loads(v("debt_list")) if v("debt_list") else []
     except Exception:
         debt_data = []
-    if debt_data:
-        debt_rows_html = "".join(f'<div style="padding:6px 0;border-bottom:1px solid #ece8e2;display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:4px"><span><b>商家:</b>{h(d.get("co",""))}</span><span><b>金額:</b>{h(d.get("lo",""))}</span><span><b>期數:</b>{h(d.get("pe",""))}期</span><span><b>月繳:</b>{h(d.get("mo",""))}</span><span><b>已繳:</b>{h(d.get("pa",""))}期</span><span><b>剩餘:</b>{h(d.get("re",""))}</span><span><b>日期:</b>{h(d.get("da",""))}</span><span><b>動保:</b>{h(d.get("dy",""))}</span></div>' for d in debt_data)
-    else:
-        debt_rows_html = '<div style="color:#8a7a68">無負債資料</div>'
+    # 負債明細轉成可編輯的 JSON 給前端
+    import json as _json2
+    debt_json = _json2.dumps(debt_data, ensure_ascii=False)
     return f"""<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>編輯 {h(v("customer_name"))}</title>
 {PAGE_CSS}
@@ -4997,8 +4996,10 @@ label{{display:block;font-size:12px;font-weight:600;color:#5a4e40;margin-bottom:
   <div style="grid-column:1/-1"><label>備註</label><textarea name="enote" class="ep" style="min-height:60px">{h(v("eval_note"))}</textarea></div>
 </div></div>
 <div class="card"><div class="sec">負債明細</div>
-  <div id="ep-debt-list" style="font-size:13px;color:#4a3e30;line-height:2">
-    {debt_rows_html}
+  <div id="ep-debt-list"></div>
+  <input type="hidden" name="debt_json" id="debt_json_input">
+  <div style="display:flex;gap:8px;margin-top:8px">
+    <button type="button" onclick="addDebt()" style="background:#e8e2da;color:#4a3e30;border:1px dashed #a09080;border-radius:6px;padding:6px 14px;font-size:12px;cursor:pointer;font-weight:600">+ 新增負債</button>
   </div>
 </div>
 <div style="display:flex;gap:10px;margin-top:8px">
@@ -5006,7 +5007,41 @@ label{{display:block;font-size:12px;font-weight:600;color:#5a4e40;margin-bottom:
   <a href="/pending-customers" class="btn-b">取消</a>
 </div>
 </form>
-"""+ """
+""" + """<script>
+var debts=""" + debt_json + """;
+var dIdx=0;
+function renderDebts(){
+  var box=document.getElementById('ep-debt-list');
+  if(!debts.length){box.innerHTML='<div style="color:#8a7a68;font-size:13px">無負債資料</div>';return}
+  var h='';
+  for(var i=0;i<debts.length;i++){
+    var d=debts[i];
+    h+='<div style="padding:8px 0;border-bottom:1px solid #ece8e2;display:grid;grid-template-columns:1fr 1fr 1fr 1fr auto;gap:6px;align-items:center;font-size:12px">';
+    h+='<div><div style="font-size:11px;color:#6a5e4e;font-weight:600">商家</div><input value="'+(d.co||'')+'" onchange="debts['+i+'].co=this.value" class="ep" style="font-size:12px;padding:4px 6px"></div>';
+    h+='<div><div style="font-size:11px;color:#6a5e4e;font-weight:600">金額</div><input value="'+(d.lo||'')+'" onchange="debts['+i+'].lo=this.value" class="ep" style="font-size:12px;padding:4px 6px"></div>';
+    h+='<div><div style="font-size:11px;color:#6a5e4e;font-weight:600">期數</div><input value="'+(d.pe||'')+'" onchange="debts['+i+'].pe=this.value" class="ep" style="font-size:12px;padding:4px 6px"></div>';
+    h+='<div><div style="font-size:11px;color:#6a5e4e;font-weight:600">月繳</div><input value="'+(d.mo||'')+'" onchange="debts['+i+'].mo=this.value" class="ep" style="font-size:12px;padding:4px 6px"></div>';
+    h+='<button type="button" onclick="debts.splice('+i+',1);renderDebts()" style="background:#f5ddd8;color:#b84a35;border:none;border-radius:4px;width:28px;height:28px;cursor:pointer;font-size:13px;margin-top:14px">X</button>';
+    h+='</div>';
+    h+='<div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr auto;gap:6px;font-size:12px;padding-bottom:8px">';
+    h+='<div><div style="font-size:11px;color:#6a5e4e;font-weight:600">已繳</div><input value="'+(d.pa||'')+'" onchange="debts['+i+'].pa=this.value" class="ep" style="font-size:12px;padding:4px 6px"></div>';
+    h+='<div><div style="font-size:11px;color:#6a5e4e;font-weight:600">剩餘</div><input value="'+(d.re||'')+'" onchange="debts['+i+'].re=this.value" class="ep" style="font-size:12px;padding:4px 6px"></div>';
+    h+='<div><div style="font-size:11px;color:#6a5e4e;font-weight:600">日期</div><input value="'+(d.da||'')+'" onchange="debts['+i+'].da=this.value" class="ep" style="font-size:12px;padding:4px 6px"></div>';
+    h+='<div><div style="font-size:11px;color:#6a5e4e;font-weight:600">動保</div><input value="'+(d.dy||'')+'" onchange="debts['+i+'].dy=this.value" class="ep" style="font-size:12px;padding:4px 6px"></div>';
+    h+='<div style="width:28px"></div>';
+    h+='</div>';
+  }
+  box.innerHTML=h;
+}
+function addDebt(){
+  debts.push({co:'',lo:'',pe:'',mo:'',pa:'',re:'',da:'',dy:''});
+  renderDebts();
+}
+renderDebts();
+document.querySelector('form').addEventListener('submit',function(){
+  document.getElementById('debt_json_input').value=JSON.stringify(debts);
+});
+</script>
 </div></body></html>"""
 
 
@@ -5058,8 +5093,12 @@ async def edit_pending_post(request: Request):
         (f.get("efund",""),f.get("esent",""),f.get("eprivate",""),f.get("elabor",""),f.get("esal",""),
          f.get("elicense",""),f.get("elate",""),f.get("elateday",""),f.get("efine",""),f.get("efuel",""),f.get("ecard",""),f.get("eprop",""),f.get("elaw",""),f.get("enote",""),
          now, case_id))
+    # 更新負債明細
+    debt_json_str = f.get("debt_json", "")
+    if debt_json_str:
+        cur.execute("UPDATE customers SET debt_list=?, updated_at=? WHERE case_id=?", (debt_json_str, now, case_id))
     conn.commit(); conn.close()
-    return RedirectResponse("/pending-customers", status_code=303)
+    return RedirectResponse("/edit-pending?case_id=" + case_id + "&saved=1", status_code=303)
 
 # 計算客戶資料完整度（填寫欄位比例 0-100）
 _COMPLETENESS_EXCLUDE = {
