@@ -3707,7 +3707,7 @@ def get_auth_group_id(request: Request) -> str:
 def make_topnav(role: str, active: str) -> str:
     links = [("📊 日報","/report","report"),("🔍 查詢","/search","search"),
              ("📁 歷史","/history","history")]
-    if role in ("admin","adminB","normal"):
+    if role in ("admin","adminB","normal") or role.startswith("group_"):
         links.append(("📋 客戶資料庫","/pending-customers","pending"))
         links.append(("➕ 新增客戶","/new-customer","new"))
     if role in ("admin","adminB"):
