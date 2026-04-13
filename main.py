@@ -3826,6 +3826,14 @@ def render_customer_row(row) -> str:
     fund = row.get("eval_fund_need","") or ""
 
     progress_html = ('<div style="margin-top:8px;font-size:12px;color:#4a3e30">最新進度：<b style="color:#2c2820">' + h(first_line[:80]) + '</b></div>') if first_line else ""
+    edit_progress_html = (
+        '<div style="margin-top:8px;border-top:1px solid #ddd5ca;padding-top:8px">'
+        '<div style="font-size:11px;color:#6a5e4e;font-weight:600;margin-bottom:4px">修改進度</div>'
+        '<div style="display:flex;gap:6px">'
+        '<input id="prog-' + h(cid) + '" value="' + h(first_line) + '" style="flex:1;padding:5px 8px;border:1px solid #c8bfb5;border-radius:5px;font-size:12px">'
+        '<button onclick="saveProgress(\'' + h(cid) + '\')" style="background:#6a5e4e;color:#fff;border:none;padding:5px 12px;border-radius:5px;font-size:11px;cursor:pointer;white-space:nowrap">儲存</button>'
+        '</div></div>'
+    )
     detail_html = (
         '<div style="background:#f0ebe4;padding:12px 16px;border-top:1px solid #ddd5ca;">'
         '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:6px">'
@@ -3837,6 +3845,7 @@ def render_customer_row(row) -> str:
         '<div><div style="font-size:11px;color:#6a5e4e;font-weight:600">資金需求</div><div style="font-size:13px;color:#2c2820;font-weight:500">' + h(fund or "-") + '</div></div>'
         '</div>'
         + progress_html
+        + edit_progress_html
         + '</div>'
     )
 
@@ -4012,6 +4021,22 @@ def logout(request: Request):
 def home_redirect(request: Request):
     from fastapi.responses import RedirectResponse
     return RedirectResponse("/login" if not check_auth(request) else "/report")
+
+
+@app.post("/report/update-progress")
+async def report_update_progress(request: Request):
+    role = check_auth(request)
+    if not role:
+        return JSONResponse({"ok": False, "message": "未登入"}, status_code=401)
+    data = await request.json()
+    case_id = data.get("case_id", "")
+    progress = data.get("progress", "").strip()
+    if not case_id or not progress:
+        return JSONResponse({"ok": False, "message": "資料不完整"})
+    conn = get_conn(); cur = conn.cursor()
+    cur.execute("UPDATE customers SET last_update=?, updated_at=? WHERE case_id=?", (progress, now_iso(), case_id))
+    conn.commit(); conn.close()
+    return JSONResponse({"ok": True, "message": "進度已更新"})
 
 
 @app.post("/report/batch-close")
@@ -4205,6 +4230,12 @@ def report_web(request: Request):
     function togD(cid){{
       const el=document.getElementById("dd-"+cid);
       el.style.display=el.style.display==="block"?"none":"block";
+    }}
+    function saveProgress(cid){{
+      const el=document.getElementById('prog-'+cid);
+      if(!el||!el.value.trim()){{alert('請輸入進度');return;}}
+      fetch('/report/update-progress',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{case_id:cid,progress:el.value.trim()}})}})
+      .then(r=>r.json()).then(d=>{{alert(d.message);if(d.ok)location.reload();}});
     }}
     function batchClose(){{
       const cbs=document.querySelectorAll('.batch-cb:checked');
@@ -4999,9 +5030,6 @@ label{{display:block;font-size:12px;font-weight:600;color:#5a4e40;margin-bottom:
   <div><label>法學</label><input name="elaw" class="ep" value="{h(v("eval_law"))}"></div>
   <div style="grid-column:1/-1"><label>備註</label><textarea name="enote" class="ep" style="min-height:60px">{h(v("eval_note"))}</textarea></div>
 </div></div>
-<div class="card"><div class="sec">最新進度</div>
-  <div><label>進度內容（修改後會更新到日報顯示）</label><textarea name="last_update" class="ep" style="min-height:80px">{h(v("last_update"))}</textarea></div>
-</div>
 <div class="card"><div class="sec">負債明細</div>
   <div id="ep-debt-list"></div>
   <input type="hidden" name="debt_json" id="debt_json_input">
@@ -5100,10 +5128,6 @@ async def edit_pending_post(request: Request):
         (f.get("efund",""),f.get("esent",""),f.get("eprivate",""),f.get("elabor",""),f.get("esal",""),
          f.get("elicense",""),f.get("elate",""),f.get("elateday",""),f.get("efine",""),f.get("efuel",""),f.get("ecard",""),f.get("eprop",""),f.get("elaw",""),f.get("enote",""),
          now, case_id))
-    # 更新進度
-    last_update = f.get("last_update", "").strip()
-    if last_update:
-        cur.execute("UPDATE customers SET last_update=?, updated_at=? WHERE case_id=?", (last_update, now, case_id))
     # 更新負債明細
     debt_json_str = f.get("debt_json", "")
     if debt_json_str:
