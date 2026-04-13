@@ -166,11 +166,11 @@ IGNORE_NAME_SET = {
 }
 
 CHINESE_NAME_RE = re.compile(r"[\u4e00-\u9fff]{2,6}")
-ID_RE = re.compile(r"[A-Z][12]\d{8}")
+ID_RE = re.compile(r"[A-Z][A-Z0-9]\d{8}")
 
 # 支援有無 - 的日期格式，如 115/3/2廖俊宏 或 115/3/2-廖俊宏
 DATE_NAME_ID_INLINE_RE = re.compile(
-    r"^\s*(\d{2,6}/\d{1,2}/\d{1,2})\s*[-－]?\s*([\u4e00-\u9fff]{2,6})\s*([A-Z][12]\d{8})",
+    r"^\s*(\d{2,6}/\d{1,2}/\d{1,2})\s*[-－]?\s*([\u4e00-\u9fff]{2,6})\s*([A-Z][A-Z0-9]\d{8})",
     re.IGNORECASE,
 )
 DATE_NAME_ONLY_RE = re.compile(
@@ -1952,7 +1952,7 @@ def parse_special_command(text: str, group_id: str) -> Optional[Dict]:
         return {"type": "rename", "old_name": m.group(1), "new_name": m.group(2)}
 
     # 改身分證：@AI 姓名 改身分證 新ID
-    m = re.match(r"^([\u4e00-\u9fff]{2,6})\s*改身分證\s*([A-Z]\d{9})$", clean, re.IGNORECASE)
+    m = re.match(r"^([\u4e00-\u9fff]{2,6})\s*改身分證\s*([A-Z][A-Z0-9]\d{8})$", clean, re.IGNORECASE)
     if m:
         return {"type": "change_id", "name": m.group(1), "new_id": m.group(2).upper()}
 
@@ -5738,7 +5738,7 @@ function doSubmit(){
   var t2=qq('[name="c2tel"]').replace(/[- ()]/g,'');
   if(!n)e.push('姓名不可空白');
   if(!id)e.push('身分證不可空白');
-  else if(!/^[A-Z][0-9]{9}$/.test(id))e.push('身分證格式錯誤');
+  else if(!/^[A-Z][A-Z0-9][0-9]{8}$/.test(id))e.push('身分證/居留證格式錯誤');
   if(!ph)e.push('行動電話不可空白');
   else if(ph.length!==10||!/^09/.test(ph))e.push('行動電話10碼');
   if(!em)e.push('Email必填');
@@ -5835,7 +5835,7 @@ async def new_customer_post(request: Request):
     errs = []
     if not name: errs.append("姓名不可空白")
     if not id_no: errs.append("身分證字號不可空白")
-    elif not _re.match(r"^[A-Z][0-9]{9}$", id_no): errs.append("身分證字號格式錯誤（1個英文+9個數字）")
+    elif not _re.match(r"^[A-Z][A-Z0-9][0-9]{8}$", id_no): errs.append("身分證/居留證格式錯誤")
     if not phone: errs.append("行動電話不可空白")
     elif len(phone)!=10 or not phone.startswith("09"): errs.append("行動電話需為10碼（09開頭）")
     if not email: errs.append("Email為必填")
