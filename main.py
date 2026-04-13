@@ -4999,6 +4999,9 @@ label{{display:block;font-size:12px;font-weight:600;color:#5a4e40;margin-bottom:
   <div><label>法學</label><input name="elaw" class="ep" value="{h(v("eval_law"))}"></div>
   <div style="grid-column:1/-1"><label>備註</label><textarea name="enote" class="ep" style="min-height:60px">{h(v("eval_note"))}</textarea></div>
 </div></div>
+<div class="card"><div class="sec">最新進度</div>
+  <div><label>進度內容（修改後會更新到日報顯示）</label><textarea name="last_update" class="ep" style="min-height:80px">{h(v("last_update"))}</textarea></div>
+</div>
 <div class="card"><div class="sec">負債明細</div>
   <div id="ep-debt-list"></div>
   <input type="hidden" name="debt_json" id="debt_json_input">
@@ -5097,6 +5100,10 @@ async def edit_pending_post(request: Request):
         (f.get("efund",""),f.get("esent",""),f.get("eprivate",""),f.get("elabor",""),f.get("esal",""),
          f.get("elicense",""),f.get("elate",""),f.get("elateday",""),f.get("efine",""),f.get("efuel",""),f.get("ecard",""),f.get("eprop",""),f.get("elaw",""),f.get("enote",""),
          now, case_id))
+    # 更新進度
+    last_update = f.get("last_update", "").strip()
+    if last_update:
+        cur.execute("UPDATE customers SET last_update=?, updated_at=? WHERE case_id=?", (last_update, now, case_id))
     # 更新負債明細
     debt_json_str = f.get("debt_json", "")
     if debt_json_str:
