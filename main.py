@@ -7011,26 +7011,9 @@ def _do_download_excel(request: Request, case_id: str):
             else:
                 carrier_val = ""
 
-            # === 聯絡人關係（C24/F24）：常用詞轉換 ===
-            valid_hr_rels = ["父母","配偶","子女","兄弟姊妹","朋友","同事","其他"]
-            def map_hr_relation(raw):
-                if not raw: return ""
-                if raw in valid_hr_rels: return raw
-                for k in ["夫妻","妻","夫","老婆","老公","太太","先生","配偶"]:
-                    if k in raw: return "配偶"
-                for k in ["媽媽","爸爸","母親","父親","媽","爸","母","父"]:
-                    if k in raw: return "父母"
-                for k in ["兒子","女兒","兒","女","子女"]:
-                    if k in raw: return "子女"
-                for k in ["哥哥","姊姊","姐姐","弟弟","妹妹","哥","姊","姐","弟","妹","兄","兄弟姊妹"]:
-                    if k in raw: return "兄弟姊妹"
-                for k in ["朋友","友","同學"]:
-                    if k in raw: return "朋友"
-                for k in ["同事"]:
-                    if k in raw: return "同事"
-                return raw  # 無法轉換則原值帶入
-            c1_rel_hr = map_hr_relation(c1_rel)
-            c2_rel_hr = map_hr_relation(c2_rel)
+            # === 聯絡人關係（C24/F24）：和裕沒有下拉選單，直接填原始值 ===
+            c1_rel_hr = c1_rel or ""
+            c2_rel_hr = c2_rel or ""
 
             # === 聯絡人知情（D22/G22）智能判別 ===
             valid_known = ["知情", "保密"]
