@@ -2586,7 +2586,8 @@ def is_single_approval_line(line: str) -> bool:
 
 def handle_new_case_block(block_text, source_group_id, reply_token) -> Optional[str]:
     f = parse_header_fields(block_text)
-    name, id_no, company = f.get("name", ""), f.get("id_no", ""), extract_company(block_text)
+    first_line = extract_first_line(block_text)
+    name, id_no, company = f.get("name", ""), f.get("id_no", ""), extract_company(first_line)
     if not name or not id_no:
         return None
     existing = find_active_by_id_no(id_no)
