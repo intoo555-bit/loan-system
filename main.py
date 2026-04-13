@@ -5745,6 +5745,10 @@ function doSubmit(){
   if(!li)e.push('LINE ID必填');
   if(!ra)e.push('戸籍地址不可空白');
   if(!sa&&!la)e.push('居住地址不可空白');
+  var ly=qq('[name="lyear"]').trim();
+  var ls2=qq('[name="lstatus"]');
+  if(!ly)e.push('居住年數不可空白');
+  if(!ls2)e.push('居住狀況不可空白');
   if(!cn)e.push('公司名稱不可空白');
   if(!cp)e.push('公司電話不可空白');
   if(!cc&&!ca)e.push('公司地址不可空白');
@@ -5838,6 +5842,8 @@ async def new_customer_post(request: Request):
     if not line_id: errs.append("LINE ID為必填")
     if not raddr: errs.append("戶籍地址不可空白")
     if not live_same and not laddr: errs.append("居住地址不可空白（或勾選同戶籍）")
+    if not f.get("lyear","").strip(): errs.append("居住年數不可空白")
+    if not f.get("lstatus","").strip(): errs.append("居住狀況不可空白")
     if not cmpname: errs.append("公司名稱不可空白")
     elif cmpname in ["自營","自己","自行"]: errs.append("公司名稱請填明確行業名稱")
     if not cnum: errs.append("公司電話不可空白")
