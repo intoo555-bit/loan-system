@@ -5788,7 +5788,12 @@ function doSubmit(){
   var ls2=qq('[name="lstatus"]');
   if(!ly)e.push('居住年數不可空白');
   if(!ls2)e.push('居住狀況不可空白');
-  // 公司欄位非必填
+  if(!cn)e.push('公司名稱不可空白');
+  var isPackWork=cn&&(cn.indexOf('包工作')>=0||cn==='包工');
+  if(!isPackWork){
+    if(!cp)e.push('公司電話不可空白');
+    if(!cc&&!ca)e.push('公司地址不可空白');
+  }
   var selfkw=['自營','自己','自行','自營商','營業中','個人工作室'];
   if(cn&&selfkw.some(function(k){return cn===k||cn.indexOf(k)===0&&cn.length<=4;}))e.push('公司名稱請填明確行業（不可只寫「'+cn+'」）');
   if(!n1)e.push('聯絡人1姓名必填');
@@ -5881,7 +5886,11 @@ async def new_customer_post(request: Request):
     if not live_same and not laddr: errs.append("居住地址不可空白（或勾選同戶籍）")
     if not f.get("lyear","").strip(): errs.append("居住年數不可空白")
     if not f.get("lstatus","").strip(): errs.append("居住狀況不可空白")
-    # 公司欄位非必填
+    if not cmpname: errs.append("公司名稱不可空白")
+    is_pack_work = cmpname and ("包工作" in cmpname or cmpname == "包工")
+    if not is_pack_work:
+        if not cnum: errs.append("公司電話不可空白")
+        if not caddr: errs.append("公司地址不可空白")
     if not c1name: errs.append("聯絡人1姓名必填")
     if not c1tel: errs.append("聯絡人1電話必填")
     elif len(c1tel)!=10: errs.append("聯絡人1電話需為10碼")
