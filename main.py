@@ -2087,8 +2087,8 @@ def generate_notification_text(r: dict, company: str = "") -> str:
     except Exception:
         salary_str = v("company_salary") or "0"
 
-    # 金額
-    amount = v("approved_amount") or ""
+    # 金額：優先用資金需求，其次核准金額
+    amount = v("eval_fund_need") or v("approved_amount") or ""
     # 期數：公司預設
     DEFAULT_PERIODS = {
         "亞太": "30", "亞太商品": "30", "亞太機車15萬": "36", "亞太機車25萬": "48",
