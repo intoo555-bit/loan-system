@@ -500,9 +500,13 @@ def has_ai_trigger(text: str) -> bool:
 
 
 def strip_ai_trigger(text: str) -> str:
-    """去掉所有 @AI 觸發詞"""
+    """去掉所有 @AI 觸發詞 + LINE @標記其他人"""
     text = normalize_ai_text(text)
-    return re.sub(r"(@ai助理|#ai助理|@ai|#ai)", "", text, flags=re.IGNORECASE).strip()
+    # 先去掉 @AI
+    text = re.sub(r"(@ai助理|#ai助理|@ai|#ai)", "", text, flags=re.IGNORECASE)
+    # 再去掉其他 LINE @標記（@人名，但不是 @ai）
+    text = re.sub(r"@[^\s@]{1,20}", "", text)
+    return text.strip()
 
 
 def is_blocked(text: str) -> bool:
