@@ -3775,7 +3775,10 @@ def classify_rows(rows):
         cats[t].append(r)
     return cats
 
-def render_customer_row(row) -> str:
+_report_role = ""  # 暫存日報頁面的角色
+
+def render_customer_row(row, role="") -> str:
+    role = role or _report_role
     """產生單一客戶列"""
     row = dict(row)
     created = row["created_at"] or ""
@@ -3826,14 +3829,18 @@ def render_customer_row(row) -> str:
     fund = row.get("eval_fund_need","") or ""
 
     progress_html = ('<div style="margin-top:8px;font-size:12px;color:#4a3e30">最新進度：<b style="color:#2c2820">' + h(first_line[:80]) + '</b></div>') if first_line else ""
-    edit_progress_html = (
-        '<div style="margin-top:8px;border-top:1px solid #ddd5ca;padding-top:8px">'
-        '<div style="font-size:11px;color:#6a5e4e;font-weight:600;margin-bottom:4px">修改進度</div>'
-        '<div style="display:flex;gap:6px">'
-        '<input id="prog-' + h(cid) + '" value="' + h(first_line) + '" style="flex:1;padding:5px 8px;border:1px solid #c8bfb5;border-radius:5px;font-size:12px">'
-        '<button onclick="saveProgress(\'' + h(cid) + '\')" style="background:#6a5e4e;color:#fff;border:none;padding:5px 12px;border-radius:5px;font-size:11px;cursor:pointer;white-space:nowrap">儲存</button>'
-        '</div></div>'
-    )
+    cid = row["case_id"]
+    if role == "admin":
+        edit_progress_html = (
+            '<div style="margin-top:8px;border-top:1px solid #ddd5ca;padding-top:8px">'
+            '<div style="font-size:11px;color:#6a5e4e;font-weight:600;margin-bottom:4px">修改進度</div>'
+            '<div style="display:flex;gap:6px">'
+            '<input id="prog-' + h(cid) + '" value="' + h(first_line) + '" style="flex:1;padding:5px 8px;border:1px solid #c8bfb5;border-radius:5px;font-size:12px">'
+            '<button onclick="saveProgress(\'' + h(cid) + '\')" style="background:#6a5e4e;color:#fff;border:none;padding:5px 12px;border-radius:5px;font-size:11px;cursor:pointer;white-space:nowrap">儲存</button>'
+            '</div></div>'
+        )
+    else:
+        edit_progress_html = ""
     detail_html = (
         '<div style="background:#f0ebe4;padding:12px 16px;border-top:1px solid #ddd5ca;">'
         '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:6px">'
@@ -4097,6 +4104,8 @@ def report_web(request: Request):
     role = check_auth(request)
     if not role: return RedirectResponse("/login")
     auth_group = get_auth_group_id(request)
+    global _report_role
+    _report_role = role
 
     today = datetime.now().strftime("%m/%d")
     conn = get_conn(); cur = conn.cursor()
