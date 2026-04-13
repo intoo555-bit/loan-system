@@ -152,6 +152,33 @@ COMPANY_ALIAS = {
     "新鑫": "房地",
 }
 
+# 方案簡稱→(正式名稱, 金額期數描述) 照會同時送件用
+PLAN_INFO = {
+    "亞太商品": ("亞太商品", "12萬/30期"), "亞太12": ("亞太商品", "12萬/30期"),
+    "亞太機車15萬": ("亞太機車15萬", "15萬/36期"), "亞太15": ("亞太機車15萬", "15萬/36期"),
+    "亞太機車25萬": ("亞太機車25萬", "25萬/48期"), "亞太25": ("亞太機車25萬", "25萬/48期"),
+    "亞太工會機車": ("亞太工會機車", "15萬"), "亞太工會": ("亞太工會機車", "15萬"), "亞太工": ("亞太工會機車", "15萬"),
+    "和裕機車": ("和裕機車", "15萬/24期"), "和裕機": ("和裕機車", "15萬/24期"),
+    "和裕商品": ("和裕商品", "12萬/24期"), "和裕": ("和裕商品", "12萬/24期"),
+    "21機車12萬": ("21機車12萬", "12萬/24期"), "21機": ("21機車12萬", "12萬/24期"),
+    "21機車25萬": ("21機車25萬", "25萬/48期"), "21機25": ("21機車25萬", "25萬/48期"),
+    "21商品": ("21商品", "12萬/24期"),
+    "第一": ("第一", "30萬/24期"),
+    "貸就補": ("貸就補", "10萬/24期"), "貸10": ("貸就補", "10萬/24期"), "貸救補": ("貸就補", "10萬/24期"),
+    "麻吉機車": ("麻吉機車", "10萬/24期"), "麻吉機": ("麻吉機車", "10萬/24期"),
+    "麻吉手機": ("麻吉手機", "10萬/24期"), "麻吉手": ("麻吉手機", "10萬/24期"),
+    "喬美": ("喬美", ""), "分貝機車": ("分貝機車", ""), "分貝機": ("分貝機車", ""),
+    "分貝汽車": ("分貝汽車", ""), "分貝汽": ("分貝汽車", ""),
+    "21汽車": ("21汽車", ""), "21汽": ("21汽車", ""),
+    "鄉民": ("鄉民貸", ""), "鄉": ("鄉民貸", ""),
+    "銀行": ("銀行", ""), "銀": ("銀行", ""),
+    "零卡": ("零卡", ""), "C": ("零卡", ""),
+    "商品貸": ("商品貸", ""), "商": ("商品貸", ""),
+    "代書": ("代書", ""), "代": ("代書", ""),
+    "當舖": ("當舖", ""), "當": ("當舖", ""),
+    "房地": ("房地", ""), "新鑫": ("房地", ""),
+}
+
 APPROVAL_EXCLUDE_KEYWORDS = ["初估", "待補", "照會", "金主初估", "需補", "補資料才"]
 
 IGNORE_NAME_SET = {
@@ -1097,6 +1124,7 @@ def init_db():
         ("carrier", "TEXT"),
         ("fb", "TEXT"),
         ("company_months", "TEXT"),
+        ("concurrent_companies", "TEXT"),
     ]:
         ensure_column(cur, "customers", col, defn)
     # groups 表新增業務群對應欄位
@@ -1686,6 +1714,21 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
             if created[:10] == today_str:
                 extra_line = "🆕" + extra_line
             section_map.setdefault(extra_section, []).append(extra_line)
+        # 同時送件的公司也要顯示
+        concurrent_str = row["concurrent_companies"] or ""
+        if concurrent_str:
+            for co in concurrent_str.split(","):
+                co = co.strip()
+                if not co:
+                    continue
+                co_section = normalize_section(co)
+                if co_section != section:
+                    co_line = f"{date_str}-{row['customer_name']}-{co}"
+                    if status_short:
+                        co_line += f"-{status_short}"
+                    if created[:10] == today_str:
+                        co_line = "🆕" + co_line
+                    section_map.setdefault(co_section, []).append(co_line)
     return section_map
 
 
@@ -2445,13 +2488,34 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
         target = same[0] if same else (rows[0] if rows else None)
         if not target:
             reply_text(reply_token, f"❌ 找不到客戶：{name}"); return
+        # 處理同時送件（+ 分隔）
+        concurrent = []
+        if "+" in company:
+            concurrent = [c.strip() for c in company.split("+") if c.strip()]
+            company = concurrent[0] if concurrent else company
         # 照會時如果在送件區塊，移到公司區塊
         if (target["report_section"] or "") == "送件":
             update_customer(target["case_id"], report_section="",
                             text=f"{name} 照會", from_group_id=group_id)
+        # 存同時送件公司
+        if concurrent:
+            conn2 = get_conn(); cur2 = conn2.cursor()
+            cur2.execute("UPDATE customers SET concurrent_companies=?, updated_at=? WHERE case_id=?",
+                        (",".join(concurrent), now_iso(), target["case_id"]))
+            conn2.commit(); conn2.close()
         r = dict(target)
         txt = generate_notification_text(r, company)
         reply_text(reply_token, txt)
+        # 第二則：同時送件資訊
+        if concurrent:
+            lines = []
+            for co in concurrent:
+                info = PLAN_INFO.get(co)
+                if info:
+                    lines.append(f"{info[0]} {info[1]}" if info[1] else info[0])
+                else:
+                    lines.append(co)
+            push_text(group_id, "📌 同時送件：\n" + "\n".join(lines))
         return
 
     if t == "set_amount":
@@ -2643,21 +2707,22 @@ def _handle_a_case_block_locked(block_text, reply_token, id_no, name) -> Optiona
         quick_amount = extract_approved_amount(block_text)
         if quick_amount:
             approved_amount = quick_amount
-            # 存到 route_plan history 裡對應公司
             new_route = update_company_amount_in_history(new_route, company, quick_amount)
         else:
             ai_amount_needed = True
-        # 只有在客戶目前沒有其他公司在送時才移到待撥款
-        current_co = customer["current_company"] or customer["company"] or ""
-        if not current_co or current_co == company:
-            # 目前就在核准的公司（或沒有 current_company），再看有沒有下一家
-            if not get_next_company(new_route):
-                new_report_section = "待撥款"
-        # else: 客戶目前在送其他公司，report_section 不動，留在 current_company 區塊
+        new_report_section = "待撥款"
+
+    # 核准或婉拒時，從同時送件移除該公司
+    concurrent = customer["concurrent_companies"] or ""
+    if concurrent and (is_approved or is_reject):
+        parts = [c.strip() for c in concurrent.split(",") if c.strip()]
+        parts = [c for c in parts if company not in c and c not in company]
+        concurrent = ",".join(parts)
+        conn3 = get_conn(); cur3 = conn3.cursor()
+        cur3.execute("UPDATE customers SET concurrent_companies=? WHERE case_id=?", (concurrent, customer["case_id"]))
+        conn3.commit(); conn3.close()
 
     if is_approved:
-        # 核准時：不動 company / current_company（保持送件順序不變）
-        # 只更新 route_plan 歷史（記錄哪家核准多少）+ 金額 + 移到待撥款
         update_customer(customer["case_id"], text=block_text,
                         from_group_id=A_GROUP_ID, status=new_status,
                         route_plan=new_route,
