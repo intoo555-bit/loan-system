@@ -3179,8 +3179,9 @@ def _process_event_inner(event: dict):
 
         if not has_ai_trigger(text):
             return
+        # A群特殊指令（排除 update_amount，讓核准訊息走正常 A 群流程回貼業務群）
         cmd = parse_special_command(text, group_id)
-        if cmd:
+        if cmd and cmd["type"] != "update_amount":
             handle_special_command(cmd, reply_token, group_id)
             return
         clean = strip_ai_trigger(text)
