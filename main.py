@@ -2544,6 +2544,7 @@ def handle_route_order_block(block_text, source_group_id, reply_token) -> Option
     same = [r for r in rows if r["source_group_id"] == source_group_id]
     if same:
         update_customer(same[0]["case_id"], route_plan=route_json, current_company=current_co,
+                        report_section="送件",
                         text=block_text, from_group_id=source_group_id)
         return f"📋 已更新 {name} 送件順序：{'/'.join(companies)}"
     other = [r for r in rows if r["source_group_id"] != source_group_id]
@@ -2552,6 +2553,10 @@ def handle_route_order_block(block_text, source_group_id, reply_token) -> Option
         return "QUICK_REPLY_SENT"
     create_customer_record(name, "", current_co, source_group_id, block_text,
                            route_plan=route_json, current_company=current_co)
+    # 新建客戶先放送件區塊
+    conn = get_conn(); cur = conn.cursor()
+    cur.execute("UPDATE customers SET report_section='送件' WHERE customer_name=? AND source_group_id=? AND status='ACTIVE' ORDER BY created_at DESC LIMIT 1", (name, source_group_id))
+    conn.commit(); conn.close()
     return f"🆕 已建立客戶 {name}，送件順序：{'/'.join(companies)}"
 
 
@@ -2624,9 +2629,11 @@ def _handle_a_case_block_locked(block_text, reply_token, id_no, name) -> Optiona
         next_co = get_next_company(route)
         new_route = advance_route(route, "婉拒")
 
+    # A群回貼時，如果客戶在「送件」區塊，清掉讓它移到公司區塊
+    cur_report_sec = customer.get("report_section") or ""
     # 核准時抓金額，判斷是否移到待撥款區
     approved_amount = None
-    new_report_section = None
+    new_report_section = "" if cur_report_sec == "送件" else None
     ai_amount_needed = False
     if is_approved:
         quick_amount = extract_approved_amount(block_text)
