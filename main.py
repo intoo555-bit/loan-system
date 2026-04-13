@@ -2634,7 +2634,7 @@ def _handle_a_case_block_locked(block_text, reply_token, id_no, name) -> Optiona
         new_route = advance_route(route, "婉拒")
 
     # A群回貼時，如果客戶在「送件」區塊，清掉讓它移到公司區塊
-    cur_report_sec = customer.get("report_section") or ""
+    cur_report_sec = customer["report_section"] or ""
     # 核准時抓金額，判斷是否移到待撥款區
     approved_amount = None
     new_report_section = "" if cur_report_sec == "送件" else None
@@ -2648,7 +2648,7 @@ def _handle_a_case_block_locked(block_text, reply_token, id_no, name) -> Optiona
         else:
             ai_amount_needed = True
         # 只有在客戶目前沒有其他公司在送時才移到待撥款
-        current_co = customer.get("current_company") or customer.get("company") or ""
+        current_co = customer["current_company"] or customer["company"] or ""
         if not current_co or current_co == company:
             # 目前就在核准的公司（或沒有 current_company），再看有沒有下一家
             if not get_next_company(new_route):
