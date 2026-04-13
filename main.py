@@ -2625,7 +2625,7 @@ def _handle_a_case_block_locked(block_text, reply_token, id_no, name) -> Optiona
 
     company = extract_company(block_text) or customer["company"] or ""
     new_status = "CLOSED" if is_closed_text(block_text) else None
-    is_reject = "婉拒" in block_text
+    is_reject = any(w in block_text for w in ["婉拒", "申覆失敗", "建議維持原審", "不予承作", "無法再進件", "無法承作"])
     is_approved = "核准" in block_text and new_status != "CLOSED"
     route = customer["route_plan"] or ""
     new_route, next_co = route, ""
