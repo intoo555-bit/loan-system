@@ -3247,12 +3247,8 @@ def _process_event_inner(event: dict):
                         (group_id, group_name, group_type, is_active, created_at)
                         VALUES (?, ?, 'UNASSIGNED', 0, ?)""",
                         (group_id, f"待審群組 {group_id[:8]}", now_iso()))
-                    # 主動回覆
-                    reply_text(reply_token,
-                        f"⚠️ 此群組尚未註冊\n"
-                        f"群組 ID：{group_id}\n"
-                        f"請管理員到後台「群組管理」設定類型並啟用，"
-                        f"設定完成後即可正常處理訊息。")
+                    # 不主動回覆，等管理員打 @AI 群組ID 才會顯示
+                    pass
         except Exception as e:
             print(f"[unknown_group] failed: {e}")
 
