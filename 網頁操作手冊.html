@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>網頁操作手冊</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Microsoft JhengHei','PingFang TC',sans-serif;color:#000;line-height:1.9;padding:40px 50px;max-width:850px;margin:0 auto;font-size:18px}
+h1{font-size:30px;text-align:center;margin-bottom:8px;font-weight:700}
+.subtitle{text-align:center;color:#111;font-size:16px;margin-bottom:35px}
+h2{font-size:21px;color:#fff;background:#1a1a2e;padding:10px 18px;border-radius:8px;margin:30px 0 16px;page-break-after:avoid}
+h3{font-size:18px;color:#000;margin:18px 0 10px;page-break-after:avoid;padding-bottom:5px;border-bottom:2px solid #e5e7eb}
+table{width:100%;border-collapse:collapse;margin:10px 0 20px;font-size:16px}
+th{background:#f8fafc;color:#111;padding:10px 14px;text-align:left;font-weight:600;border:1px solid #e5e7eb}
+td{padding:10px 14px;border:1px solid #e5e7eb;vertical-align:top}
+code{background:#f3f4f6;padding:3px 8px;border-radius:4px;font-size:15px;color:#b91c1c;font-family:'Courier New',monospace}
+.note{background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:14px 18px;margin:12px 0;font-size:16px;color:#1e40af;line-height:1.8}
+.warn{background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;padding:14px 18px;margin:12px 0;font-size:16px;color:#991b1b;line-height:1.8}
+.step{background:#f8fafc;border:1px solid #e5e7eb;border-radius:8px;padding:14px 18px;margin:10px 0;font-size:16px;line-height:2}
+ul{margin:8px 0}
+.section{page-break-inside:avoid}
+table{page-break-inside:avoid}
+.cmd,.note,.warn,.step{page-break-inside:avoid}li{margin-bottom:4px}
+@media print{body{padding:25px 30px;font-size:15px}h1{font-size:22px}h2{font-size:18px}table{font-size:14px}th,td{padding:8px 10px}.step,.note,.warn{font-size:14px;padding:10px 14px}code{font-size:12px}}
+</style>
+</head>
+<body>
+
+<h1>網頁操作手冊</h1>
+<div class="subtitle">貸款案件管理系統 — 一般使用者適用</div>
+
+<h2>一、登入</h2>
+<div class="step">
+<b>1.</b> 打開網址（由管理員提供）<br>
+<b>2.</b> 選擇身份（一般查詢 / 群組名稱）<br>
+<b>3.</b> 輸入密碼 → 登入
+</div>
+<div class="note">多台電腦、手機都可以同時登入，密碼共用。<br>同一個瀏覽器只能登一個帳號，要切換請先登出。</div>
+
+<h2>二、日報 /report</h2>
+<h3>功能說明</h3>
+<ul style="padding-left:18px">
+<li>查看各群組客戶目前狀態</li>
+<li>點群組名稱可<b>展開/收合</b>客戶列表</li>
+<li>業務群登入只看自己群組，管理員/一般查詢看全部</li>
+</ul>
+
+<h3>統計卡片</h3>
+<table>
+<tr><th>卡片</th><th>說明</th></tr>
+<tr><td>新客戶</td><td>本月新建立的客戶數</td></tr>
+<tr><td>補件中</td><td>目前需要補件的客戶</td></tr>
+<tr><td>送件中</td><td>正在送各公司的客戶</td></tr>
+<tr><td>未對保</td><td>核准但尚未對保的客戶</td></tr>
+<tr><td>本月結案</td><td>本月結案的客戶數</td></tr>
+<tr><td>今日進件</td><td>今天新建立的客戶</td></tr>
+<tr><td>待撥款</td><td>核准等待撥款的客戶</td></tr>
+</table>
+
+<h3>操作</h3>
+<ul style="padding-left:18px">
+<li><b>匯出 CSV</b> — 右上角按鈕，下載客戶清單到 Excel</li>
+<li><b>批次結案</b> — 勾選客戶（左邊 checkbox）→ 右下角「批次結案」</li>
+<li><b>展開詳情</b> — 點客戶名字可以看詳細資料（身分證、電話、公司、月薪、勞保等）</li>
+</ul>
+
+<h2>三、查詢 /search</h2>
+<h3>搜尋方式</h3>
+<ul style="padding-left:18px">
+<li>輸入<b>姓名</b>或<b>身分證</b>搜尋</li>
+<li>可篩選<b>群組</b>和<b>日期範圍</b></li>
+<li>按「清除」回到無篩選狀態</li>
+</ul>
+
+<h3>搜尋結果</h3>
+<ul style="padding-left:18px">
+<li>顯示客戶基本資料、公司、核准金額、撥款日期</li>
+<li>顯示<b>送件歷程</b>（哪些公司核准/婉拒及金額）</li>
+<li>點 <b>✏️ 編輯</b> 可跳到修改客戶資料頁面</li>
+</ul>
+
+<h2>四、歷史 /history</h2>
+<ul style="padding-left:18px">
+<li>查看所有<b>已結案</b>的客戶記錄</li>
+<li>包含：結案、違約金、放棄、拒絕等狀態</li>
+<li>可搜尋姓名或篩選狀態</li>
+</ul>
+
+<h2>五、客戶資料庫 /pending-customers</h2>
+<h3>功能</h3>
+<ul style="padding-left:18px">
+<li>查看所有待確認客戶（PENDING 狀態）</li>
+<li>搜尋姓名/身分證、篩選群組、篩選日期</li>
+<li>分頁顯示（每頁 50 筆）</li>
+</ul>
+
+<h3>操作</h3>
+<ul style="padding-left:18px">
+<li>點 <b>編輯</b> → 修改客戶所有欄位</li>
+<li>顏色圓點代表資料<b>完整度</b>：<span style="color:#16a34a">綠色</span>=70%以上、<span style="color:#ca8a04">黃色</span>=30-70%、<span style="color:#dc2626">紅色</span>=30%以下</li>
+</ul>
+
+<h2>六、新增客戶 /new-customer</h2>
+<h3>必填欄位</h3>
+<table>
+<tr><th>區塊</th><th>必填</th></tr>
+<tr><td>基本資料</td><td>姓名、身分證、出生日期、行動電話、Email、LINE ID</td></tr>
+<tr><td>身分證發證</td><td>發證日期、發證地、換補發類別</td></tr>
+<tr><td>地址</td><td>戶籍地址（或勾選住家同戶籍）、居住年數、居住狀況</td></tr>
+<tr><td>職業</td><td>公司名稱（填「包工作」時電話和地址可不填）</td></tr>
+<tr><td>聯絡人</td><td>聯絡人1、2 姓名和電話</td></tr>
+</table>
+
+<h3>身分證格式</h3>
+<table>
+<tr><th>類型</th><th>格式</th><th>範例</th></tr>
+<tr><td>身分證</td><td>1英文 + 9數字</td><td>A123456789</td></tr>
+<tr><td>新式居留證</td><td>1英文 + 9數字</td><td>A812345678</td></tr>
+<tr><td>舊式居留證</td><td>2英文 + 8數字</td><td>AC12345678</td></tr>
+</table>
+
+<h3>負債明細</h3>
+<ul style="padding-left:18px">
+<li>點「+ 新增車貸」或「+ 新增信貸/其他」新增項目</li>
+<li>每筆填：商家、金額、期數、月繳，系統自動算剩餘金額</li>
+<li>點 ✕ 可刪除</li>
+</ul>
+
+<h2>七、編輯客戶 /edit-pending</h2>
+<ul style="padding-left:18px">
+<li>從客戶資料庫或查詢頁面的 ✏️ 編輯 進入</li>
+<li>可修改所有欄位</li>
+<li><b>負債明細</b>也可以修改、新增、刪除</li>
+<li>修改完按「💾 儲存變更」</li>
+</ul>
+
+<h2>八、注意事項</h2>
+<div class="warn">
+<ul style="padding-left:18px;margin-top:6px">
+<li>同一瀏覽器<b>只能登一個帳號</b>，要切換請先登出</li>
+<li>多人同時登入沒問題，但<b>不要同時改同一個客戶</b>，後存的會覆蓋先存的</li>
+<li>儲存前請<b>確認資料正確</b>，儲存後會立即生效</li>
+<li>手機也可以操作，導覽列會變成 ☰ 選單</li>
+</ul>
+</div>
+
+<div style="text-align:center;color:#9ca3af;font-size:11px;margin-top:30px;border-top:1px solid #e5e7eb;padding-top:15px">
+網頁操作手冊 — 最後更新 2026/04/13
+</div>
+</body>
+</html>

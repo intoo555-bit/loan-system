@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>行政B操作手冊</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Microsoft JhengHei','PingFang TC',sans-serif;color:#000;line-height:1.9;padding:40px 50px;max-width:850px;margin:0 auto;font-size:18px}
+h1{font-size:30px;text-align:center;margin-bottom:8px;font-weight:700}
+.subtitle{text-align:center;color:#111;font-size:16px;margin-bottom:35px}
+h2{font-size:21px;color:#fff;background:#1a1a2e;padding:10px 18px;border-radius:8px;margin:30px 0 16px;page-break-after:avoid}
+h3{font-size:18px;color:#000;margin:18px 0 10px;page-break-after:avoid;padding-bottom:5px;border-bottom:2px solid #e5e7eb}
+table{width:100%;border-collapse:collapse;margin:10px 0 20px;font-size:16px}
+th{background:#f8fafc;color:#111;padding:10px 14px;text-align:left;font-weight:600;border:1px solid #e5e7eb}
+td{padding:10px 14px;border:1px solid #e5e7eb;vertical-align:top}
+code{background:#f3f4f6;padding:3px 8px;border-radius:4px;font-size:15px;color:#b91c1c;font-family:'Courier New',monospace}
+.note{background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:14px 18px;margin:12px 0;font-size:16px;color:#1e40af;line-height:1.8}
+.warn{background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;padding:14px 18px;margin:12px 0;font-size:16px;color:#991b1b;line-height:1.8}
+.step{background:#f8fafc;border:1px solid #e5e7eb;border-radius:8px;padding:14px 18px;margin:10px 0;font-size:16px;line-height:2}
+.step b{color:#000}
+ul{margin:8px 0}
+.section{page-break-inside:avoid}
+table{page-break-inside:avoid}
+.cmd,.note,.warn,.step{page-break-inside:avoid}li{margin-bottom:4px}
+@media print{body{padding:25px 30px;font-size:15px}h1{font-size:22px}h2{font-size:18px}table{font-size:14px}th,td{padding:8px 10px}.step,.note,.warn{font-size:14px;padding:10px 14px}code{font-size:12px}}
+</style>
+</head>
+<body>
+
+<h1>行政B操作手冊</h1>
+<div class="subtitle">貸款案件管理系統 — 行政B作業專用</div>
+
+<h2>一、登入</h2>
+<div class="step">
+<b>1.</b> 打開網址 → 選擇「行政B」<br>
+<b>2.</b> 輸入行政B密碼 → 登入<br>
+<b>3.</b> 導覽列點「📋 行政B作業」
+</div>
+
+<h2>二、選擇客戶</h2>
+<div class="step">
+<b>1.</b> 在搜尋框輸入<b>客戶姓名</b>或<b>身分證</b><br>
+<b>2.</b> 可用群組下拉篩選特定群組<br>
+<b>3.</b> 按「🔍 搜尋」或 Enter<br>
+<b>4.</b> 從結果列表點選客戶
+</div>
+<div class="note">搜尋最多顯示 30 筆。如果找不到，確認名字是否正確。</div>
+
+<h2>三、客戶資訊卡片</h2>
+<p>選完客戶後會看到：</p>
+<ul style="padding-left:18px">
+<li><b>客戶基本資訊</b> — 姓名、身分證、群組、建立日期、電話、公司、月薪、勞保</li>
+<li><b>✏️ 編輯</b> 按鈕 — 跳到客戶資料編輯頁面修改詳細資料</li>
+<li><b>ACTIVE</b> 標籤 — 客戶目前狀態</li>
+</ul>
+
+<h2>四、自動調整規則</h2>
+<p>系統會自動檢查以下欄位，不符合條件會自動調整：</p>
+<table>
+<tr><th>欄位</th><th>條件</th><th>自動調整為</th></tr>
+<tr><td>年資</td><td>不到 1 年</td><td>1 年</td></tr>
+<tr><td>月薪</td><td>不到 3.5 萬</td><td>3.5 萬</td></tr>
+<tr><td>居住時間</td><td>不到 5 年</td><td>5 年</td></tr>
+<tr><td>居住狀況</td><td>租屋或宿舍</td><td>親屬</td></tr>
+<tr><td>學歷</td><td>國中或國小</td><td>高中/職</td></tr>
+</table>
+<div class="note">
+規則區塊會顯示：<br>
+<span style="background:#fef9c3;padding:2px 8px;border-radius:4px;font-size:12px">→ 已調整</span> 有自動調整的欄位<br>
+<span style="background:#f0fdf4;padding:2px 8px;border-radius:4px;font-size:12px">✓ 正常</span> 不需調整的欄位
+</div>
+
+<h2>五、方案勾選</h2>
+<div class="step">
+<b>1.</b> 根據客戶條件勾選適合的方案（可多選）<br>
+<b>2.</b> 方案列表：亞太商品、亞太機車15萬/25萬、亞太工會、和裕機車/商品、21機車12萬/25萬/商品、第一、貸就補 等<br>
+<b>3.</b> 勾選後按「儲存」
+</div>
+
+<h2>六、補充資料填寫</h2>
+<p>根據勾選的方案，填寫補充欄位：</p>
+<table>
+<tr><th>欄位</th><th>說明</th></tr>
+<tr><td>行業類別</td><td>從下拉選單選（亞太/和裕共用）</td></tr>
+<tr><td>職務</td><td>亞太用 adminb_role，和裕用 adminb_hr_role</td></tr>
+<tr><td>資金用途</td><td>亞太用，13個選項</td></tr>
+<tr><td>廠牌</td><td>機車方案需要填</td></tr>
+<tr><td>撥款銀行/分行</td><td>和裕需要</td></tr>
+<tr><td>商品資訊</td><td>商品方案需要填</td></tr>
+</table>
+
+<h2>七、下載申請書 Excel</h2>
+<div class="step">
+<b>1.</b> 確認方案已勾選、補充資料已填寫<br>
+<b>2.</b> 按「儲存」先存資料<br>
+<b>3.</b> 點對應方案的「下載」按鈕<br>
+<b>4.</b> 系統自動產生 Excel 申請書，客戶資料已填入
+</div>
+
+<h3>各方案對應範本</h3>
+<table>
+<tr><th>方案</th><th>範本</th></tr>
+<tr><td>亞太商品</td><td>亞太商品範本.xlsx</td></tr>
+<tr><td>亞太機車15萬/25萬</td><td>亞太15萬機車範本.xlsx</td></tr>
+<tr><td>亞太工會機車</td><td>亞太工會範本.xlsx</td></tr>
+<tr><td>和裕機車</td><td>和裕維力貸機車範本.xlsx</td></tr>
+<tr><td>和裕商品</td><td>和裕維力貸商品範本.xlsx</td></tr>
+<tr><td>21機車12萬</td><td>21機車申請書範本.xlsx</td></tr>
+<tr><td>21機車25萬</td><td>21機25萬範本.xlsx</td></tr>
+<tr><td>21商品</td><td>21商品範本.xlsx</td></tr>
+<tr><td>第一</td><td>第一申請書範本.xlsx</td></tr>
+<tr><td>貸就補</td><td>貸就補範本.xlsx</td></tr>
+</table>
+
+<h2>八、注意事項</h2>
+<div class="warn">
+<ul style="padding-left:18px;margin-top:6px">
+<li>下載 Excel 前<b>一定要先按儲存</b>，不然資料不會更新到申請書</li>
+<li>Excel 下載後請<b>用 Excel 開啟確認</b>，不要用 Google Sheets（格式可能跑掉）</li>
+<li>如果欄位資料不對，到<b>客戶資料編輯</b>頁面修改後重新下載</li>
+<li>下拉選單的值<b>必須完全匹配</b>，不匹配會留空</li>
+<li>申請書的<b>金額、期數不會自動填</b>，需要手動填</li>
+</ul>
+</div>
+
+<div class="note">
+<b>和裕聯絡人關係：</b>直接填原始值（弟弟就填弟弟），不會自動轉換。<br>
+<b>亞太聯絡人關係：</b>會自動轉換（媽媽→父母、老公→配偶等）。
+</div>
+
+<div style="text-align:center;color:#9ca3af;font-size:11px;margin-top:30px;border-top:1px solid #e5e7eb;padding-top:15px">
+行政B操作手冊 — 最後更新 2026/04/13
+</div>
+</body>
+</html>

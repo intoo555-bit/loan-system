@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>LINE Bot 貸款案件管理系統 - 使用手冊</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Microsoft JhengHei','PingFang TC',sans-serif;color:#000;line-height:1.7;padding:40px;max-width:800px;margin:0 auto;font-size:15px}
+h1{font-size:22px;text-align:center;margin-bottom:8px;color:#000}
+.subtitle{text-align:center;color:#111;font-size:14px;margin-bottom:30px}
+h2{font-size:17px;color:#fff;background:#1a1a2e;padding:8px 16px;border-radius:8px;margin:28px 0 14px}
+h3{font-size:15px;color:#000;margin:18px 0 8px;padding-bottom:4px;border-bottom:2px solid #e5e7eb}
+table{width:100%;border-collapse:collapse;margin:10px 0 18px;font-size:14px}
+th{background:#f8fafc;color:#111;padding:8px 12px;text-align:left;font-weight:600;border:1px solid #e5e7eb}
+td{padding:8px 12px;border:1px solid #e5e7eb;vertical-align:top}
+code{background:#f3f4f6;padding:2px 6px;border-radius:4px;font-size:12px;color:#dc2626;font-family:'Courier New',monospace}
+.cmd{background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:10px 14px;margin:8px 0;font-size:14px}
+.cmd b{color:#92400e}
+.note{background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:10px 14px;margin:10px 0;font-size:14px;color:#1e40af}
+.warn{background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;padding:10px 14px;margin:10px 0;font-size:14px;color:#991b1b}
+.section{page-break-inside:avoid}
+@media print{
+  body{padding:20px;font-size:12px}
+  h2{font-size:16px;padding:6px 12px}
+  table{font-size:11px}
+}
+</style>
+</head>
+<body>
+
+<h1>LINE Bot 貸款案件管理系統</h1>
+<div class="subtitle">使用手冊 — 業務 / 行政人員適用</div>
+
+<!-- ========== 一、基本規則 ========== -->
+<h2>一、基本規則</h2>
+
+<div class="section">
+<h3>觸發方式</h3>
+<p>所有指令都需要加上 <code>@AI</code>（或 <code>@ai</code>），系統才會處理。一般聊天不會觸發。</p>
+<p><b>例外：</b>建立新客戶和設定送件順序<b>不需要</b> @AI，系統會自動辨識格式。</p>
+<div class="cmd"><b>需要 @AI：</b>王小明 結案 @AI</div>
+<div class="cmd"><b>需要 @AI：</b>@AI 查 王小明</div>
+<div class="cmd"><b>需要 @AI：</b>王小明 補件 @AI（補件回貼A群）</div>
+<div class="cmd"><b>不需要 @AI：</b>04/13-王小明-A123456789（建立客戶，自動辨識）</div>
+<div class="cmd"><b>不會觸發：</b>王小明結案了喔（一般聊天，沒有 @AI）</div>
+</div>
+
+<div class="section">
+<h3>姓名規則</h3>
+<ul style="padding-left:20px;margin:6px 0">
+<li>姓名支援 <b>2~6 個中文字</b>（含原住民姓名）</li>
+<li>超過 6 個字：先用短名建立，再用 <code>@AI 改名</code> 修正</li>
+<li>姓名和其他內容之間<b>建議有空格</b>，避免系統誤判</li>
+<li>打錯名字系統會找不到客戶，可用 <code>@AI 舊名 改名 新名</code> 修正</li>
+</ul>
+</div>
+
+<div class="section">
+<h3>錯誤回報</h3>
+<p>所有指令如果執行失敗，系統會自動回覆錯誤訊息：</p>
+<div class="cmd"><b>❌ 指令執行失敗：OperationalError: database is locked</b></div>
+<p>看到這種訊息代表系統有問題，請截圖回報給管理員處理。<b>正常使用不會出現。</b></p>
+</div>
+
+<!-- ========== 二、業務群操作 ========== -->
+<h2>二、業務群操作</h2>
+
+<div class="section">
+<h3>建立新客戶（不需要 @AI）</h3>
+<p>直接在群組貼客戶資料，格式：</p>
+<div class="cmd">
+<b>04/13-王小明-A123456789</b><br>
+電話：0912345678<br>
+公司：XX有限公司<br>
+月薪：45000
+</div>
+<div class="note">第一行必須包含：日期-姓名-身分證。系統會自動建立客戶到日報。<br><b>建立客戶不會回貼到 A 群。</b></div>
+</div>
+
+<div class="section">
+<h3>設定送件順序（不需要 @AI）</h3>
+<div class="cmd"><b>04/13-王小明-亞太/和裕/21</b></div>
+<p>用斜線 <code>/</code> 分隔公司名稱，系統會按順序送件。</p>
+</div>
+
+<div class="section">
+<h3>補件 / 進度更新（需要 @AI）</h3>
+<p>補件或進度更新<b>必須加 @AI</b>，系統才會處理並回貼到 A 群：</p>
+<div class="cmd">
+王小明 補照會時段14:00-15:00 @AI<br>
+王小明 補薪轉 @AI
+</div>
+<div class="warn">如果不加 @AI，系統不會處理，也不會回貼到 A 群。<br>
+這是為了避免把一般聊天誤當成補件。</div>
+</div>
+
+<!-- ========== 三、@AI 指令大全 ========== -->
+<h2>三、@AI 指令大全</h2>
+
+<div class="section">
+<h3>查詢類</h3>
+<table>
+<tr><th style="width:40%">指令</th><th>說明</th></tr>
+<tr><td><code>@AI 日報</code></td><td>產生本群組的日報</td></tr>
+<tr><td><code>@AI 查 王小明</code></td><td>查詢客戶詳細資訊</td></tr>
+<tr><td><code>@AI 群組ID</code></td><td>顯示此群組的 ID（設定用）</td></tr>
+<tr><td><code>@AI 統計</code></td><td>今日/本月 進件、核准、結案數量</td></tr>
+<tr><td><code>@AI 待撥款</code></td><td>列出所有核准待撥款客戶</td></tr>
+</table>
+</div>
+
+<div class="section">
+<h3>送件操作</h3>
+<table>
+<tr><th style="width:40%">指令</th><th>說明</th></tr>
+<tr><td><code>@AI 王小明 轉下一家</code></td><td>推進到送件順序的下一家</td></tr>
+<tr><td><code>@AI 王小明 轉和裕</code></td><td>直接跳到指定公司</td></tr>
+<tr><td><code>@AI 王小明 婉拒</code></td><td>目前公司婉拒，自動推下一家</td></tr>
+<tr><td><code>@AI 王小明 婉拒轉21</code></td><td>婉拒後跳到指定公司</td></tr>
+</table>
+</div>
+
+<div class="section">
+<h3>結案操作</h3>
+<table>
+<tr><th style="width:40%">指令</th><th>說明</th></tr>
+<tr><td><code>@AI 王小明 結案</code></td><td>結案，從日報移除</td></tr>
+<tr><td><code>@AI 王小明 結案 客戶取消</code></td><td>結案並記錄原因</td></tr>
+<tr><td><code>@AI 王小明 違約金已支付5000</code></td><td>違約金結案</td></tr>
+<tr><td><code>@AI 王小明 重啟</code></td><td>已結案客戶恢復到日報</td></tr>
+</table>
+</div>
+
+<div class="section">
+<h3>修改資料</h3>
+<table>
+<tr><th style="width:45%">指令</th><th>說明</th></tr>
+<tr><td><code>@AI 王小明 改名 王曉明</code></td><td>修正客戶姓名（也能改已結案的）</td></tr>
+<tr><td><code>@AI 王小明 改身分證 A123456789</code></td><td>修正身分證號碼</td></tr>
+<tr><td><code>@AI 王小明 亞太商品 核准 12萬</code></td><td>修正核准金額</td></tr>
+</table>
+<div class="warn"><b>修改金額時，姓名和公司之間一定要有空格：</b><br>
+正確：<code>@AI 王小明 亞太商品 核准 12萬</code><br>
+錯誤：<code>@AI 王小明亞太商品核准12萬</code>（名字會抓錯）</div>
+</div>
+
+<div class="section">
+<h3>批次操作</h3>
+<table>
+<tr><th style="width:40%">指令</th><th>說明</th></tr>
+<tr><td><code>@AI 批次結案</code><br>王小明<br>李大華<br>張美玲</td><td>一次結案多位客戶</td></tr>
+<tr><td><code>@AI 批次婉拒</code><br>王小明<br>李大華</td><td>一次婉拒多位客戶並推下一家</td></tr>
+</table>
+<div class="note">第一行打指令，下面每行一個姓名。系統會逐一處理並回報結果。</div>
+</div>
+
+<div class="section">
+<h3>照會</h3>
+<table>
+<tr><th style="width:40%">指令</th><th>說明</th></tr>
+<tr><td><code>@AI 照會 王小明</code></td><td>自動產生照會注意事項</td></tr>
+<tr><td><code>@AI 王小明 照會</code></td><td>同上（前後都可以）</td></tr>
+<tr><td><code>@AI 照會 王小明 21</code></td><td>指定公司的照會</td></tr>
+</table>
+</div>
+
+<!-- ========== 四、A 群操作 ========== -->
+<h2>四、A 群（行政群）操作</h2>
+
+<div class="section">
+<h3>回貼進度</h3>
+<p>A 群貼客戶進度（核准、婉拒、補件等），系統會自動回貼到對應的業務群：</p>
+<div class="cmd">
+王小明<br>
+亞太核准12萬
+</div>
+<div class="note">同名客戶如果有多位，系統會跳出按鈕讓你選擇。</div>
+</div>
+
+<div class="section">
+<h3>撥款名單</h3>
+<p>貼撥款名單格式，系統自動批次更新撥款日期：</p>
+<div class="cmd">
+04/13 21 撥款名單<br>
+王小明<br>
+李大華
+</div>
+</div>
+
+<!-- ========== 五、日報說明 ========== -->
+<h2>五、日報說明</h2>
+
+<div class="section">
+<ul style="padding-left:20px;margin:6px 0">
+<li>日報顯示的日期是<b>客戶建立日期</b>，不是當天日期</li>
+<li>今日新建的客戶前面會有 <b>🆕</b> 標記</li>
+<li>多家核准會各自顯示撥款狀態：<br>
+<code>核准和裕5萬(撥款04/10)/亞太12萬(待撥款)</code></li>
+<li>待撥款超過 7 天的客戶，日報最後會獨立提醒</li>
+<li>日報分三段：貸款方案 → 民間方案 → 房地<br>
+每段只在有客戶時才顯示</li>
+</ul>
+</div>
+
+<!-- ========== 六、Web 管理介面 ========== -->
+<h2>六、Web 管理介面</h2>
+
+<div class="section">
+<table>
+<tr><th style="width:30%">頁面</th><th>功能</th></tr>
+<tr><td><b>日報</b></td><td>查看各群組客戶狀態、匯出 CSV、批次結案（勾選客戶）</td></tr>
+<tr><td><b>查詢</b></td><td>搜尋客戶、查看操作歷程（管理員）、編輯客戶資料</td></tr>
+<tr><td><b>歷史</b></td><td>查看已結案客戶記錄</td></tr>
+<tr><td><b>客戶資料庫</b></td><td>編輯客戶詳細資料、搜尋篩選</td></tr>
+<tr><td><b>行政B作業</b></td><td>方案判別、規則校驗、下載申請書 Excel</td></tr>
+<tr><td><b>操作紀錄</b></td><td>查看所有操作歷程（管理員專用）</td></tr>
+<tr><td><b>下載備份</b></td><td>下載資料庫備份檔（管理員專用）</td></tr>
+</table>
+</div>
+
+<!-- ========== 七、注意事項 ========== -->
+<h2>七、注意事項</h2>
+
+<div class="section">
+<div class="warn">
+<b>常見錯誤與解法：</b>
+<ul style="padding-left:18px;margin-top:6px">
+<li><b>系統沒反應</b> → 檢查有沒有加 <code>@AI</code></li>
+<li><b>找不到客戶</b> → 檢查姓名有沒有打錯，可用 <code>@AI 查 姓名</code> 確認</li>
+<li><b>金額修改出錯</b> → 姓名和公司之間一定要有空格</li>
+<li><b>同名客戶</b> → 系統會跳按鈕讓你選哪一個</li>
+<li><b>客戶被誤結案</b> → 用 <code>@AI 姓名 重啟</code> 恢復</li>
+<li><b>名字打錯</b> → 用 <code>@AI 舊名 改名 新名</code> 修正</li>
+<li><b>出現 ❌ 錯誤訊息</b> → 截圖回報管理員</li>
+</ul>
+</div>
+
+<div class="note">
+<b>重要提醒：</b>
+<ul style="padding-left:18px;margin-top:6px">
+<li>建立客戶<b>不會</b>回貼到 A 群，只記錄到日報</li>
+<li>補件更新<b>必須加 @AI</b> 才會回貼到 A 群</li>
+<li>一般聊天不會被系統處理，放心聊天</li>
+<li>密碼請找管理員修改（網站 → 密碼管理）</li>
+</ul>
+</div>
+</div>
+
+<div style="text-align:center;color:#9ca3af;font-size:11px;margin-top:40px;padding-top:20px;border-top:1px solid #e5e7eb">
+貸款案件管理系統 使用手冊 — 最後更新 2026/04/13
+</div>
+
+</body>
+</html>

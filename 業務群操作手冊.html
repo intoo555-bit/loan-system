@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>業務群操作手冊</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Microsoft JhengHei','PingFang TC',sans-serif;color:#000;line-height:1.9;padding:40px 50px;max-width:850px;margin:0 auto;font-size:18px}
+h1{font-size:30px;text-align:center;margin-bottom:8px;font-weight:700}
+.subtitle{text-align:center;color:#111;font-size:16px;margin-bottom:35px}
+h2{font-size:21px;color:#fff;background:#1a1a2e;padding:10px 18px;border-radius:8px;margin:30px 0 16px;page-break-after:avoid}
+h3{font-size:18px;color:#000;margin:18px 0 10px;page-break-after:avoid;padding-bottom:5px;border-bottom:2px solid #e5e7eb}
+table{width:100%;border-collapse:collapse;margin:10px 0 20px;font-size:16px;page-break-inside:avoid}
+th{background:#f8fafc;color:#111;padding:10px 14px;text-align:left;font-weight:600;border:1px solid #e5e7eb}
+td{padding:10px 14px;border:1px solid #e5e7eb;vertical-align:top}
+code{background:#f3f4f6;padding:3px 8px;border-radius:4px;font-size:15px;color:#b91c1c;font-family:'Courier New',monospace}
+.cmd{background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:14px 18px;margin:10px 0;font-size:16px;line-height:2;page-break-inside:avoid}
+.cmd b{color:#92400e}
+.note{background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:14px 18px;margin:12px 0;font-size:16px;color:#1e40af;line-height:1.8;page-break-inside:avoid}
+.warn{background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;padding:14px 18px;margin:12px 0;font-size:16px;color:#991b1b;line-height:1.8;page-break-inside:avoid}
+ul{margin:8px 0}
+li{margin-bottom:4px}
+@media print{
+  body{padding:25px 30px;font-size:15px}
+  h1{font-size:22px}
+  h2{font-size:16px;padding:8px 14px}
+  table{font-size:13px}
+  th,td{padding:8px 10px}
+  .cmd,.note,.warn{font-size:13px;padding:10px 14px}
+  code{font-size:12px}
+}
+</style>
+</head>
+<body>
+
+<h1>業務群操作手冊</h1>
+<div class="subtitle">LINE Bot 貸款案件管理系統</div>
+
+<h2>一、建立新客戶（不需要 @AI）</h2>
+<p>第一行：<b>日期 - 姓名 - 身分證</b>，後面可以加備註：</p>
+<div class="cmd">
+<b>04/14-王小明-A123456789</b><br>
+電話：0912345678<br>
+公司：XX有限公司<br>
+月薪：45000
+</div>
+<div class="note">
+備註放第二行以後，系統只抓第一行的姓名和身分證，備註不會影響判斷。<br>
+建立客戶<b>不會回貼 A 群</b>，只記錄到日報。<br>
+身分證格式：A123456789、A812345678、AC12345678（外籍居留證）都可以。<br>
+日期可用 04/14、4/14、115/04/14、115/4/14。
+</div>
+
+<h2>二、設定送件順序（不需要 @AI）</h2>
+<div class="cmd">
+04/14-王小明-亞太/和裕/21/貸10<br>
+4/14-黃天天-房地（單一公司也可以）
+</div>
+<div class="note">
+用 <code>/</code> 分隔公司，系統按順序送件。<br>
+民間方案（房地/銀行/零卡等）直接放到對應區塊，不經過送件區塊。
+</div>
+
+<h2>三、補件/進度更新（需要 @AI）</h2>
+<p>格式：<b>姓名 + 公司 + 狀態 + 備註</b>（備註多長都沒關係）</p>
+<div class="cmd">
+王小明 亞太補照會時段14:00-15:00 <b>@AI</b><br>
+王小明 和裕補薪轉 <b>@AI</b><br>
+王小明 21照會 <b>@AI</b>
+</div>
+<div class="warn">
+一定要加 <code>@AI</code>，系統才會處理並回貼到 A 群。<br>
+不加 @AI 的一般聊天不會被處理。
+</div>
+
+<h2>四、空格規則</h2>
+<div class="warn">
+<b>唯一規則：姓名和公司之間一定要有空格</b><br>
+✅ <code>王小明 亞太補件</code><br>
+❌ <code>王小明亞太補件</code>（會抓錯名字）<br>
+其他地方可以不空格，全形半形都可以。
+</div>
+
+<h2>五、常用 @AI 指令</h2>
+
+<h3>查詢類</h3>
+<table>
+<tr><th>指令</th><th>說明</th></tr>
+<tr><td><code>@AI 日報</code></td><td>查自己群組日報</td></tr>
+<tr><td><code>@AI 查 王小明</code></td><td>查客戶詳細資訊</td></tr>
+<tr><td><code>@AI 統計</code></td><td>今日/本月進件、核准、結案數量</td></tr>
+<tr><td><code>@AI 待撥款</code></td><td>本群組待撥款名單</td></tr>
+<tr><td><code>@AI 群組ID</code></td><td>顯示群組 ID</td></tr>
+</table>
+
+<h3>送件操作</h3>
+<table>
+<tr><th>指令</th><th>說明</th></tr>
+<tr><td><code>@AI 王小明 轉和裕</code></td><td>換到和裕（原本不送了）</td></tr>
+<tr><td><code>@AI 王小明 送銀行</code></td><td>加送銀行（原本繼續送）</td></tr>
+<tr><td><code>@AI 王小明 轉下一家</code></td><td>跳到送件順序下一家</td></tr>
+<tr><td><code>@AI 王小明 婉拒</code></td><td>目前公司婉拒，自動推下一家</td></tr>
+<tr><td><code>@AI 王小明 婉拒轉21</code></td><td>婉拒後跳到指定公司</td></tr>
+</table>
+
+<h3>結案/撥款</h3>
+<table>
+<tr><th>指令</th><th>說明</th></tr>
+<tr><td><code>@AI 王小明 結案</code></td><td>結案</td></tr>
+<tr><td><code>@AI 王小明 結案 客戶取消</code></td><td>結案帶原因</td></tr>
+<tr><td><code>@AI 王小明 重啟</code></td><td>已結案恢復到日報</td></tr>
+<tr><td><code>@AI 王小明 撥款</code></td><td>更新撥款日期（今天）</td></tr>
+<tr><td><code>@AI 王小明 撥款 4/14</code></td><td>更新撥款日期（指定）</td></tr>
+<tr><td><code>@AI 王小明 違約金已支付5000</code></td><td>違約金結案</td></tr>
+</table>
+
+<h3>修改資料</h3>
+<table>
+<tr><th>指令</th><th>說明</th></tr>
+<tr><td><code>@AI 舊名 改名 新名</code></td><td>修正姓名</td></tr>
+<tr><td><code>@AI 王小明 改身分證 A123456789</code></td><td>修正身分證</td></tr>
+<tr><td><code>@AI 王小明 亞太 取消核准</code></td><td>撤銷已核准的案件</td></tr>
+<tr style="background:#fef2f2"><td><code>@AI 王小明 亞太商品 核准 12萬</code></td><td>修改核准金額<br><b>姓名和公司之間必須空格</b></td></tr>
+</table>
+
+<h3>批次操作</h3>
+<table>
+<tr><th>指令</th><th>說明</th></tr>
+<tr><td><code>@AI 批次結案</code><br>王小明<br>李大華</td><td>一次結案多位</td></tr>
+<tr><td><code>@AI 批次婉拒</code><br>王小明<br>李大華</td><td>一次婉拒多位並推下一家</td></tr>
+</table>
+
+<h3>照會</h3>
+<table>
+<tr><th>指令</th><th>說明</th></tr>
+<tr><td><code>@AI 照會 王小明</code></td><td>自動產生照會注意事項</td></tr>
+<tr><td><code>@AI 照會 王小明 亞太+和裕</code></td><td>照會+同時送件（日報多區塊顯示）</td></tr>
+</table>
+
+<h2>六、關鍵字對應（系統自動判斷）</h2>
+<table>
+<tr><th>訊息含關鍵字</th><th>日報顯示</th></tr>
+<tr><td>核准 / 核準</td><td><b>核准</b>（移到待撥款）</td></tr>
+<tr><td>婉拒 / 申覆失敗 / 建議維持原審 / 不予承作 / 無法再進件 / 無法承作 / 30日內有進件 / 已建檔 / 不提供申覆</td><td>從日報移除（推下一家）</td></tr>
+<tr><td>補照會 / 照會</td><td><b>已補照會</b></td></tr>
+<tr><td>補申覆 / 申覆</td><td><b>已補申覆</b></td></tr>
+<tr><td>補件 / 補資料 / 補行照 / 補聯徵 / 補保人 / 補薪轉 / 補照片 / 補時段</td><td><b>已補資料</b></td></tr>
+<tr><td>NA / 未接照會</td><td><b>NA</b></td></tr>
+</table>
+<div class="note">同時有「核准」和婉拒關鍵字 → <b>以核准為準</b></div>
+
+<h2>七、資料打錯修正</h2>
+<table>
+<tr><th>打錯什麼</th><th>修正方式</th></tr>
+<tr><td>名字打錯</td><td><code>@AI 舊名 改名 新名</code></td></tr>
+<tr><td>身分證打錯</td><td><code>@AI 姓名 改身分證 新ID</code></td></tr>
+<tr><td>完全建錯人</td><td><code>@AI 姓名 結案</code></td></tr>
+<tr><td>建錯群組</td><td>在正確群組重貼，跳按鈕選轉群</td></tr>
+<tr><td>送件順序設錯</td><td>重貼一次覆蓋舊的</td></tr>
+<tr><td>核准金額打錯</td><td><code>@AI 姓名 公司 核准 正確金額</code></td></tr>
+<tr><td>誤核准要撤銷</td><td><code>@AI 姓名 公司 取消核准</code></td></tr>
+<tr><td>其他欄位（電話/地址等）</td><td>網頁 /search → ✏️ 編輯</td></tr>
+</table>
+
+<h2>八、民間方案不推 A 群</h2>
+<div class="note">
+貼民間方案（銀行/零卡/房地/代書/當舖/鄉民/新鑫等）時，系統<b>不會回貼 A 群</b>，只記錄到日報。<br>
+例：<code>王小明 銀行核准30萬 @AI</code> → 日報更新，但 A 群不會收到。<br>
+因為民間方案通常業務自己處理，不用通知 A 群。
+</div>
+
+<h2>九、標記其他人</h2>
+<div class="note">
+<b>@AI 和標記其他人可以同一則訊息：</b><br>
+<code>王小明 補件 @AI @大幫手 @店長</code> ✅<br>
+<code>@AI @大幫手 王小明 補件</code> ✅（@AI 放哪都可以）<br>
+<code>王小明 補件 @AI@大幫手@小明</code> ✅（不用空格）<br>
+不管標幾個人、在哪個位置，只要有 @AI 就會觸發。
+</div>
+
+<h2>十、多筆一次貼（空一行）</h2>
+<p>每筆中間<b>按兩次 Enter</b> 留空一行：</p>
+<div class="cmd">
+王小明 亞太補件<br>
+<br>
+李大華 和裕補照會<br>
+<br>
+張美玲 21補薪轉<br>
+@AI
+</div>
+
+<h2>十一、系統按鈕（會跳出來讓你選）</h2>
+<table>
+<tr><th>情境</th><th>按鈕選項</th></tr>
+<tr><td>同名客戶</td><td>顯示每位讓你選</td></tr>
+<tr><td>身分證重複</td><td>沿用舊案件 / 建立新案件 / 取消</td></tr>
+<tr><td>已結案客戶又出現</td><td>重啟原案件 / 建立新案件 / 取消</td></tr>
+<tr><td>跨群組同名客戶</td><td>沿用原群組 / 改到本群組 / 建立新案件</td></tr>
+<tr><td>公司不在客戶路線</td><td>再送XX / 同送XX / 取消（會有二次確認）</td></tr>
+</table>
+<div class="note">
+<b>結案很久的客戶又回來 → 選「重啟原案件」</b><br>
+資料全部保留，如果工作或聯絡人有變，重啟後到網頁改就好。
+</div>
+
+<h2>十二、日報說明</h2>
+<ul style="padding-left:20px">
+<li>日期顯示<b>建立日期</b>，不是當天</li>
+<li>今日新進件前面有 🆕</li>
+<li>結案客戶從日報移除（歷史頁可查）</li>
+<li>待撥款超過 7 天會獨立提醒</li>
+<li>多家核准各自顯示撥款狀態</li>
+</ul>
+
+<h2>十三、注意事項</h2>
+<div class="warn">
+<ul style="padding-left:18px;margin-top:6px">
+<li>姓名後面一定要空格，不然名字會抓錯</li>
+<li>看到 ❌ 錯誤訊息 → 截圖回報管理員</li>
+<li>密碼共用，多台電腦可同時登入</li>
+<li>同時改同一個客戶要小心，後存的會覆蓋前面</li>
+</ul>
+</div>
+
+<div style="text-align:center;color:#9ca3af;font-size:11px;margin-top:30px;border-top:1px solid #e5e7eb;padding-top:15px">
+業務群操作手冊 — 最後更新 2026/04/14
+</div>
+</body>
+</html>
