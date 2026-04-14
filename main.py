@@ -3145,7 +3145,12 @@ def _handle_bc_case_block_locked(block_text, source_group_id, reply_token, sourc
         "補", "照會", "缺資料", "補件", "補資料", "補照片",
         "補時段", "補聯徵", "補保人", "補行照", "補照會",
     ])
-    want_push_a = has_ai_trigger(raw_for_trigger) and has_bu_keyword
+    # 民間方案（銀行/零卡/商品貸/代書/當舖/鄉民/房地）不推 A 群，只記錄
+    is_private_loan = any(w in block_text for w in [
+        "銀行", "零卡", "商品貸", "代書", "當舖", "鄉民", "房地", "新鑫",
+        "慢點付", "分期趣", "銀角", "刷卡換現"
+    ])
+    want_push_a = has_ai_trigger(raw_for_trigger) and has_bu_keyword and not is_private_loan
     has_action = has_business_action_word(block_text)
 
     if id_no:
