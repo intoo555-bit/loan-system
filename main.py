@@ -618,7 +618,7 @@ def parse_route_order_line(line: str) -> Dict:
         return {}
     companies_str = m.group(3).strip()
     companies = [c.strip() for c in companies_str.split("/") if c.strip()]
-    if len(companies) < 2:
+    if len(companies) < 1:
         return {}
     return {"date": m.group(1), "name": m.group(2), "companies": companies}
 
