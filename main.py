@@ -3953,6 +3953,14 @@ a{color:#3b82f6;text-decoration:none}
 .nl{padding:6px 12px;border-radius:6px;color:rgba(255,255,255,.65);font-size:13px;transition:all .15s;white-space:nowrap}
 .nl:hover{background:rgba(255,255,255,.1);color:#fff}
 .nl.active{background:rgba(255,255,255,.15);color:#fff;font-weight:500}
+.nl-drop{position:relative;display:inline-block}
+.nl-drop-btn{padding:6px 12px;border-radius:6px;color:rgba(255,255,255,.65);font-size:13px;cursor:pointer;background:none;border:none;font-family:inherit;transition:all .15s;white-space:nowrap}
+.nl-drop-btn:hover{background:rgba(255,255,255,.1);color:#fff}
+.nl-drop.open .nl-drop-btn,.nl-drop.active-parent .nl-drop-btn{background:rgba(255,255,255,.15);color:#fff;font-weight:500}
+.nl-drop-menu{display:none;position:absolute;top:calc(100% + 4px);right:0;background:#1a1a2e;border:1px solid rgba(255,255,255,.1);border-radius:8px;padding:4px;min-width:170px;box-shadow:0 4px 12px rgba(0,0,0,.3);z-index:110}
+.nl-drop.open .nl-drop-menu{display:block}
+.nl-drop-menu .nl{display:block;padding:8px 12px;border-radius:5px;white-space:nowrap}
+.nl-drop-caret{font-size:10px;margin-left:4px;opacity:.7}
 .menu-btn{display:none;background:none;border:none;color:#fff;font-size:22px;cursor:pointer;padding:4px 8px}
 .mobile-menu{display:none;position:fixed;top:52px;left:0;right:0;background:#1a1a2e;z-index:99;padding:8px 16px 16px;border-bottom:2px solid #6366f1}
 .mobile-menu.show{display:flex;flex-direction:column;gap:4px}
@@ -4059,22 +4067,35 @@ def make_topnav(role: str, active: str) -> str:
         links.append(("➕ 新增客戶","/new-customer","new"))
     if role in ("admin","adminB"):
         links.append(("📋 行政B作業","/adminb","adminb"))
+    admin_items = []
     if role == "admin":
-        links += [("⚙️ 群組管理","/admin/groups","admin"),
-                  ("🔑 密碼管理","/admin/passwords","passwords"),
-                  ("📝 操作紀錄","/admin/logs","logs"),
-                  ("💾 下載備份","/admin/download-db","download"),
-                  ("🗑️ 清除資料","/admin/reset_data","reset")]
+        admin_items = [("⚙️ 群組管理","/admin/groups","admin"),
+                       ("🔑 密碼管理","/admin/passwords","passwords"),
+                       ("📝 操作紀錄","/admin/logs","logs"),
+                       ("💾 下載備份","/admin/download-db","download"),
+                       ("🗑️ 清除資料","/admin/reset_data","reset")]
     nav = "".join(f'<a class="nl {"active" if a==active else ""}" href="{u}">{n}</a>'
                   for n,u,a in links)
+    if admin_items:
+        is_active_parent = active in {a for _,_,a in admin_items}
+        drop_items = "".join(f'<a class="nl {"active" if a==active else ""}" href="{u}">{n}</a>'
+                             for n,u,a in admin_items)
+        nav += (
+            f'<div class="nl-drop{" active-parent" if is_active_parent else ""}" id="adminDrop">'
+            f'<button class="nl-drop-btn" onclick="event.stopPropagation();document.getElementById(\'adminDrop\').classList.toggle(\'open\')">⚙️ 管理<span class="nl-drop-caret">▾</span></button>'
+            f'<div class="nl-drop-menu">{drop_items}</div>'
+            f'</div>'
+        )
     nav += '<a class="nl" href="/logout">登出</a>'
+    mobile_links = links + admin_items
     mobile_nav = "".join(f'<a class="nl {"active" if a==active else ""}" href="{u}" onclick="document.getElementById(\'mobileMenu\').classList.remove(\'show\')">{n}</a>'
-                  for n,u,a in links)
+                  for n,u,a in mobile_links)
     mobile_nav += '<a class="nl" href="/logout">登出</a>'
+    script = '<script>document.addEventListener("click",function(e){var d=document.getElementById("adminDrop");if(d&&!d.contains(e.target))d.classList.remove("open");});</script>'
     return (f'<nav class="topnav"><div class="topnav-title">貸款案件管理</div>'
             f'<div class="topnav-links">{nav}</div>'
             f'<button class="menu-btn" onclick="document.getElementById(\'mobileMenu\').classList.toggle(\'show\')">☰</button></nav>'
-            f'<div id="mobileMenu" class="mobile-menu">{mobile_nav}</div>')
+            f'<div id="mobileMenu" class="mobile-menu">{mobile_nav}</div>{script}')
 
 def get_badge(row) -> str:
     sec = row["report_section"] or ""
