@@ -2812,9 +2812,27 @@ def _handle_a_case_block_locked(block_text, reply_token, id_no, name) -> Optiona
     is_reject = not is_approved and any(w in block_text for w in ["婉拒", "申覆失敗", "建議維持原審", "不予承作", "無法再進件", "無法承作", "30日內有進件", "已建檔", "不提供申覆"])
     route = customer["route_plan"] or ""
     new_route, next_co = route, ""
-    # 檢查婉拒的公司是否在同時送件清單裡
+    # 檢查公司是否在同時送件清單或 route 裡
     concurrent_list = [c.strip() for c in (customer["concurrent_companies"] or "").split(",") if c.strip()]
     is_in_concurrent = any(company in c or c in company for c in concurrent_list if company)
+    route_companies = parse_route_json(route).get("order", []) if route else []
+    current_co = customer["current_company"] or customer["company"] or ""
+    is_in_route = any(company and (company in rc or rc in company) for rc in route_companies)
+    is_current = company and (company in current_co or current_co in company)
+    # 如果公司不在路線、不是 current、不在同送清單 → 跳按鈕詢問
+    if company and not is_in_concurrent and not is_in_route and not is_current and (is_approved or is_reject):
+        action_id = short_id()
+        save_pending_action(action_id, "unknown_company", {
+            "case_id": customer["case_id"], "block_text": block_text,
+            "company": company, "name": customer["customer_name"]
+        })
+        items = [
+            make_quick_reply_item(f"再送{company}", f"UNKNOWN_CO_REROUTE|{action_id}"),
+            make_quick_reply_item(f"同送{company}", f"UNKNOWN_CO_CONCURRENT|{action_id}"),
+            make_quick_reply_item("取消", f"UNKNOWN_CO_CANCEL|{action_id}"),
+        ]
+        reply_quick_reply(reply_token, f"⚠️ {company} 不在 {customer['customer_name']} 的路線裡，請選擇：", items)
+        return "QUICK_REPLY_SENT"
     if is_reject and route and not is_in_concurrent:
         # 不在同時送件清單 → 正常推進 route
         next_co = get_next_company(route)
@@ -3063,6 +3081,52 @@ def handle_command_text(text: str, reply_token: str) -> bool:
         gname = get_group_name(c["source_group_id"])
         msg = f"✅ 已結案並回貼到{gname}：{c['customer_name']}" if new_status == "CLOSED" else f"✅ 已回貼到{gname}：{c['customer_name']}"
         reply_text(reply_token, msg); delete_pending_action(action_id); return True
+
+    if text.startswith("UNKNOWN_CO_REROUTE|") or text.startswith("UNKNOWN_CO_CONCURRENT|") or text.startswith("UNKNOWN_CO_CANCEL|"):
+        parts = text.split("|", 1)
+        action_id = parts[1]
+        a = get_action(action_id, "unknown_company")
+        if not a: return True
+        p = a["payload"]
+        case_id = p.get("case_id", "")
+        company = p.get("company", "")
+        block_text = p.get("block_text", "")
+        name = p.get("name", "")
+        if text.startswith("UNKNOWN_CO_CANCEL|"):
+            reply_text(reply_token, f"已取消：{name} 的 {company} 訊息不處理")
+            delete_pending_action(action_id)
+            return True
+        conn = get_conn(); cur = conn.cursor()
+        cur.execute("SELECT * FROM customers WHERE case_id=?", (case_id,))
+        cust = cur.fetchone(); conn.close()
+        if not cust:
+            reply_text(reply_token, "⚠️ 客戶已不存在"); delete_pending_action(action_id); return True
+        if text.startswith("UNKNOWN_CO_REROUTE|"):
+            # 再送：加到 route 並設為當前公司
+            route = cust["route_plan"] or ""
+            data = parse_route_json(route) if route else {"order":[], "current_index":0, "history":[]}
+            order = data.get("order", [])
+            if company not in order:
+                order.append(company)
+            data["order"] = order
+            data["current_index"] = order.index(company)
+            new_route = json.dumps(data, ensure_ascii=False)
+            update_customer(case_id, route_plan=new_route, current_company=company,
+                            text=f"{name} 再送 {company}\n{block_text}", from_group_id=A_GROUP_ID)
+            reply_text(reply_token, f"✅ 已將 {company} 加入 {name} 的送件順序並設為當前公司")
+        else:  # CONCURRENT
+            concurrent = cust["concurrent_companies"] or ""
+            parts2 = [c.strip() for c in concurrent.split(",") if c.strip()]
+            if company not in parts2:
+                parts2.append(company)
+            new_concurrent = ",".join(parts2)
+            conn2 = get_conn(); cur2 = conn2.cursor()
+            cur2.execute("UPDATE customers SET concurrent_companies=? WHERE case_id=?", (new_concurrent, case_id))
+            conn2.commit(); conn2.close()
+            update_customer(case_id, text=f"{name} 同送 {company}\n{block_text}", from_group_id=A_GROUP_ID)
+            reply_text(reply_token, f"✅ 已將 {company} 加入 {name} 的同時送件清單")
+        delete_pending_action(action_id)
+        return True
 
     if text.startswith("REOPEN_CASE|"):
         parts = text.split("|", 2)
