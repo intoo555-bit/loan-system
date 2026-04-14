@@ -1725,8 +1725,15 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
             """取得該區塊對應公司的狀態（各家獨立，沒有就不顯示）"""
             if sec_name in company_status:
                 cs_text = company_status[sec_name]
-                cs_first = cs_text.splitlines()[0].strip() if cs_text.strip() else ""
-                return extract_status_summary(cs_first, row["customer_name"])
+                # 從所有行找有意義的狀態（第一行通常是姓名+公司，狀態常在第二行）
+                for ln in cs_text.splitlines():
+                    ln = ln.strip()
+                    if not ln:
+                        continue
+                    s = extract_status_summary(ln, row["customer_name"])
+                    if s:
+                        return s
+                return ""
             # 如果是同時送件的公司但還沒收到A群回貼 → 不顯示狀態
             concurrent_list = [c.strip() for c in (row["concurrent_companies"] or "").split(",") if c.strip()]
             is_concurrent = any(normalize_section(c) == sec_name for c in concurrent_list)
