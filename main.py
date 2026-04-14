@@ -2755,7 +2755,11 @@ def _handle_a_case_block_locked(block_text, reply_token, id_no, name) -> Optiona
     is_reject = not is_approved and any(w in block_text for w in ["婉拒", "申覆失敗", "建議維持原審", "不予承作", "無法再進件", "無法承作", "30日內有進件", "已建檔", "不提供申覆"])
     route = customer["route_plan"] or ""
     new_route, next_co = route, ""
-    if is_reject and route:
+    # 檢查婉拒的公司是否在同時送件清單裡
+    concurrent_list = [c.strip() for c in (customer["concurrent_companies"] or "").split(",") if c.strip()]
+    is_in_concurrent = any(company in c or c in company for c in concurrent_list if company)
+    if is_reject and route and not is_in_concurrent:
+        # 不在同時送件清單 → 正常推進 route
         next_co = get_next_company(route)
         new_route = advance_route(route, "婉拒")
 
@@ -2806,7 +2810,15 @@ def _handle_a_case_block_locked(block_text, reply_token, id_no, name) -> Optiona
     gname = get_group_name(customer["source_group_id"])
     msg = f"✅ 已結案並回貼到{gname}：{customer['customer_name']}" if new_status == "CLOSED" else f"✅ 已回貼到{gname}：{customer['customer_name']}"
     if is_reject:
-        msg += f"\n➡️ 下一家：{next_co}" if next_co else f"\n⚠️ {customer['customer_name']} 已無下一家送件方案"
+        if is_in_concurrent:
+            # 同時送件婉拒 → 從清單移除，剩下的還在送
+            remaining = [c for c in concurrent_list if company not in c and c not in company]
+            if remaining:
+                msg += f"\n➡️ 剩下同時送件：{'、'.join(remaining)}"
+            else:
+                msg += f"\n➡️ 下一家：{next_co}" if next_co else f"\n⚠️ {customer['customer_name']} 已無下一家送件方案"
+        else:
+            msg += f"\n➡️ 下一家：{next_co}" if next_co else f"\n⚠️ {customer['customer_name']} 已無下一家送件方案"
     # 核准時在A群顯示金額確認
     if is_approved and approved_amount:
         msg += f"\n💰 核准金額：{approved_amount}（已存入）"
