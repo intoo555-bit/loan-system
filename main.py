@@ -1626,8 +1626,9 @@ def extract_status_summary(first_line: str, customer_name: str) -> str:
     # 去掉日期
     text = re.sub(r"^\d{1,4}/\d{1,2}(/\d{1,2})?[-－]?\s*", "", text).strip()
 
-    # 去掉公司名稱（COMPANY_LIST）
-    for c in sorted(COMPANY_LIST, key=len, reverse=True):
+    # 去掉公司名稱（COMPANY_LIST + COMPANY_ALIAS 別名）
+    all_companies = list(COMPANY_LIST) + list(COMPANY_ALIAS.keys())
+    for c in sorted(all_companies, key=len, reverse=True):
         text = text.replace(c, "").strip()
 
     # 去掉【N】之後的內容
