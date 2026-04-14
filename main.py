@@ -63,6 +63,631 @@ def get_custom_template_path(plan_name: str) -> str:
     """回傳自訂範本絕對路徑（不檢查是否存在）"""
     return os.path.join(TEMPLATES_DIR, f"{_plan_to_safe_key(plan_name)}.xlsx")
 
+def get_template_mapping_path(plan_name: str) -> str:
+    """回傳映射 JSON 路徑"""
+    return os.path.join(TEMPLATES_DIR, f"{_plan_to_safe_key(plan_name)}.mapping.json")
+
+def get_template_prev_path(plan_name: str) -> str:
+    """回傳上一版範本路徑（用於異動比對）"""
+    return os.path.join(TEMPLATES_DIR, f"{_plan_to_safe_key(plan_name)}.prev.xlsx")
+
+# ==========================================================
+# 範本欄位系統（階段 2：可自訂映射）
+# ==========================================================
+
+# 中文欄位字典（顯示給使用者選擇）
+FIELD_LABELS = {
+    # 基本個人資料
+    "customer_name": "姓名",
+    "id_no": "身分證字號",
+    "birth_date": "出生日期",
+    "phone": "行動電話",
+    "email": "電子信箱",
+    "line_id": "LINE ID",
+    "marriage": "婚姻狀態",
+    "education": "最高學歷",
+    # 身分證
+    "id_issue_date": "發證日期",
+    "id_issue_place": "發證地",
+    "id_issue_type": "換補發類別（初發/補發/換發）",
+    # 戶籍地址
+    "reg_city": "戶籍縣市",
+    "reg_district": "戶籍鄉鎮區",
+    "reg_address": "戶籍詳細地址",
+    "reg_phone": "戶籍電話",
+    "reg_full_address": "戶籍完整地址（縣市+區+地址）",
+    # 現居地址
+    "live_city": "現居縣市",
+    "live_district": "現居鄉鎮區",
+    "live_address": "現居詳細地址",
+    "live_phone": "現住電話",
+    "live_same_as_reg": "現居同戶籍（0/1）",
+    "live_full_address": "現居完整地址（自動判斷同戶籍）",
+    "live_status": "居住狀況",
+    "live_years": "現居年數",
+    "live_months": "現居月數",
+    # 公司
+    "company": "公司名稱（簡版）",
+    "company_name_detail": "公司名稱（詳細版）",
+    "company_role": "職稱",
+    "company_phone_area": "公司電話區碼",
+    "company_phone_num": "公司電話號碼",
+    "company_phone_ext": "公司電話分機",
+    "company_full_phone": "公司完整電話（區碼-號碼）",
+    "company_years": "工作年資（年）",
+    "company_months": "工作年資（月）",
+    "company_salary": "月薪",
+    "company_city": "公司縣市",
+    "company_district": "公司鄉鎮區",
+    "company_address": "公司詳細地址",
+    "company_full_address": "公司完整地址",
+    # 聯絡人
+    "contact1_name": "聯絡人1 姓名",
+    "contact1_relation": "聯絡人1 關係",
+    "contact1_phone": "聯絡人1 電話",
+    "contact1_known": "聯絡人1 知情狀態",
+    "contact2_name": "聯絡人2 姓名",
+    "contact2_relation": "聯絡人2 關係",
+    "contact2_phone": "聯絡人2 電話",
+    "contact2_known": "聯絡人2 知情狀態",
+    "carrier": "電信業者",
+    "fb": "客戶 Facebook",
+    # 車輛（機車/汽車）
+    "adminb_brand": "廠牌",
+    "vehicle_plate": "牌照號碼",
+    "adminb_vehicle_type": "車輛型式",
+    "adminb_engine_no": "引擎號碼",
+    "adminb_body_no": "車身號碼",
+    "adminb_mfg_date": "出廠年月",
+    "adminb_displacement": "排氣量",
+    "adminb_color": "車身顏色",
+    # adminB 其他
+    "adminb_fund_use": "資金用途（亞太分類）",
+    "adminb_industry": "行業類別（亞太用）",
+    "adminb_role": "職務（亞太用）",
+    "adminb_hr_industry": "行業類別（和裕用）",
+    "adminb_hr_role": "職務（和裕用）",
+    "adminb_bank": "撥款銀行",
+    "adminb_branch": "撥款分行",
+    "adminb_product": "商品名稱（和裕）",
+    "adminb_model": "商品型號（和裕）",
+    "adminb_product_name": "商品名稱（貸就補）",
+    "adminb_product_model": "商品型號（貸就補）",
+    "adminb_contact_time": "可照會時間",
+    # 其他
+    "approved_amount": "核准金額",
+    # 特殊
+    "__CLEAR__": "清空（填空白，不保留示範值）",
+    "__KEEP__": "保留原值（不要動這格）",
+}
+
+# 每個方案主填寫表名稱對照（用於 sheet 匹配 fallback）
+PRIMARY_SHEET_NAMES = {
+    "亞太商品": ["進件表格", "工作表3"],
+    "亞太機車15萬": ["進件表格", "工作表3"],
+    "亞太機車25萬": ["進件表格", "工作表3"],
+    "亞太工會機車": ["進件表格", "工作表3"],
+    "和裕機車": ["和裕維力貸"],
+    "和裕商品": ["和裕維力貸"],
+    "第一": ["申請書"],
+    "貸就補": ["進件申請書"],
+    "21機車12萬": ["工作表1"],
+    "21機車25萬": ["工作表1"],
+    "21商品": ["工作表1"],
+}
+
+# 預設映射模板（使用者首次建立映射時可套用）
+# 結構：{plan: {sheet_name: {cell: field_key}}}
+# 特殊值：_rule: "clear_all" 表示該 sheet 所有對應儲存格清空
+DEFAULT_MAPPINGS = {
+    "亞太商品": {
+        "進件表格": {
+            "B5": "adminb_fund_use",
+            "B9": "customer_name", "D9": "id_no", "F9": "birth_date",
+            "B10": "marriage", "D10": "education",
+            "B11": "id_issue_date", "D11": "id_issue_place", "F11": "id_issue_type",
+            "B12": "reg_city", "C12": "reg_district", "D12": "reg_address",
+            "B13": "live_city", "C13": "live_district", "D13": "live_address",
+            "B14": "live_status", "D14": "live_years",
+            "B15": "phone", "B16": "email",
+            "B17": "company_name_detail",
+            "E17": "adminb_industry", "G17": "adminb_role",
+            "B18": "company_phone_area", "C18": "company_phone_num", "E18": "company_phone_ext",
+            "G18": "company_years", "H18": "company_salary",
+            "B19": "company_city", "C19": "company_district", "D19": "company_address",
+            "B21": "contact1_name", "D21": "contact1_relation",
+            "B25": "contact1_phone",
+        },
+        "擔保品資訊": {
+            "B2": "__CLEAR__", "B3": "__CLEAR__", "B4": "__CLEAR__",
+            "B5": "__CLEAR__", "B6": "__CLEAR__", "B7": "__CLEAR__", "B8": "__CLEAR__",
+        }
+    },
+    "亞太機車15萬": {
+        "進件表格": {
+            "B5": "adminb_fund_use",
+            "B7": "adminb_vehicle_type", "D7": "adminb_engine_no",
+            "F7": "adminb_displacement", "H7": "adminb_color",
+            "B9": "customer_name", "D9": "id_no", "F9": "birth_date",
+            "B10": "marriage", "D10": "education",
+            "B11": "id_issue_date", "D11": "id_issue_place", "F11": "id_issue_type",
+            "B12": "reg_city", "C12": "reg_district", "D12": "reg_address",
+            "B13": "live_city", "C13": "live_district", "D13": "live_address",
+            "B14": "live_status", "D14": "live_years",
+            "B15": "phone", "B16": "email",
+            "B17": "company_name_detail",
+            "E17": "adminb_industry", "G17": "adminb_role",
+            "B18": "company_phone_area", "C18": "company_phone_num", "E18": "company_phone_ext",
+            "G18": "company_years", "H18": "company_salary",
+            "B19": "company_city", "C19": "company_district", "D19": "company_address",
+            "B21": "contact1_name", "D21": "contact1_relation",
+            "B25": "contact1_phone",
+            "K2": "adminb_brand", "K3": "vehicle_plate",
+        },
+        "擔保品資訊": {
+            "B2": "adminb_brand", "B3": "vehicle_plate",
+            "B4": "adminb_vehicle_type", "B5": "adminb_engine_no",
+            "B6": "adminb_body_no", "B7": "adminb_mfg_date",
+            "B8": "adminb_displacement",
+        }
+    },
+    "和裕機車": {
+        "和裕維力貸": {
+            "C11": "customer_name", "F11": "id_no",
+            "C12": "birth_date", "F12": "id_issue_date",
+            "C13": "marriage", "F13": "id_issue_place",
+            "C14": "education", "F14": "phone",
+            "C15": "reg_full_address", "G15": "reg_phone",
+            "C16": "live_full_address", "G16": "live_phone",
+            "C17": "line_id",
+            "C18": "company_name_detail", "G18": "company_role",
+            "H17": "company_full_phone",
+            "C19": "company_full_address",
+            "I18": "company_years", "I19": "company_salary",
+            "C20": "carrier",
+            "G19": "adminb_hr_industry",
+            "D22": "contact1_known", "G22": "contact2_known",
+            "C23": "contact1_name", "F23": "contact2_name",
+            "C24": "contact1_relation", "F24": "contact2_relation",
+            "C25": "contact1_phone", "F25": "contact2_phone",
+            "C37": "adminb_bank", "C38": "adminb_branch",
+            "C42": "adminb_product", "F42": "adminb_model",
+        },
+        "擔保品資訊": {
+            "B2": "adminb_brand", "B3": "vehicle_plate",
+            "B4": "adminb_vehicle_type", "B5": "adminb_engine_no",
+            "B6": "adminb_body_no", "B7": "adminb_mfg_date",
+            "B8": "adminb_displacement",
+        }
+    },
+    "21機車12萬": {
+        "工作表1": {
+            "C3": "customer_name", "E3": "id_no", "J3": "phone",
+            "C4": "birth_date", "E4": "id_issue_date",
+            "F4": "id_issue_place", "G4": "id_issue_type",
+            "J4": "live_phone",
+            "C6": "reg_city", "D6": "reg_district", "E6": "reg_address",
+            "C7": "live_city", "D7": "live_district", "E7": "live_address",
+            "C8": "email",
+            "C9": "company_name_detail",
+            "C10": "company_role", "E10": "company_salary",
+            "G10": "company_years", "H10": "company_months",
+            "C17": "contact1_name", "E17": "contact1_relation",
+            "H17": "contact1_phone", "K17": "contact1_known",
+            "C18": "contact2_name", "E18": "contact2_relation",
+            "H18": "contact2_phone", "K18": "contact2_known",
+        },
+        "擔保品資訊": {
+            "B2": "adminb_brand", "B3": "vehicle_plate",
+            "B4": "adminb_vehicle_type", "B5": "adminb_engine_no",
+            "B6": "adminb_body_no", "B7": "adminb_mfg_date",
+            "B8": "adminb_displacement",
+        }
+    },
+}
+# 相近方案共用預設映射
+DEFAULT_MAPPINGS["亞太機車25萬"] = DEFAULT_MAPPINGS["亞太機車15萬"]
+DEFAULT_MAPPINGS["亞太工會機車"] = DEFAULT_MAPPINGS["亞太機車15萬"]
+DEFAULT_MAPPINGS["和裕商品"] = {
+    "和裕維力貸": dict(DEFAULT_MAPPINGS["和裕機車"]["和裕維力貸"]),
+    # 和裕商品沒有擔保品資訊需求
+}
+DEFAULT_MAPPINGS["21機車25萬"] = DEFAULT_MAPPINGS["21機車12萬"]
+DEFAULT_MAPPINGS["21商品"] = {
+    "工作表1": dict(DEFAULT_MAPPINGS["21機車12萬"]["工作表1"])
+    # 21商品無擔保品
+}
+
+
+def _build_reverse_field_map(plan_name: str) -> dict:
+    """從 DEFAULT_MAPPINGS 主表反向產生 {field_key: 預設原始 cell}。
+    僅使用「主表」（如進件表格、工作表1、申請書等）建立反向映射，
+    避免跨 sheet 衝突（例如進件表格 B7=車輛型式 vs 擔保品資訊 B7=出廠年月）。
+    """
+    out = {}
+    plan_defaults = DEFAULT_MAPPINGS.get(plan_name, {})
+    primary_aliases = set(PRIMARY_SHEET_NAMES.get(plan_name, []))
+    # 找主表：優先 PRIMARY_SHEET_NAMES 內的名稱，否則第一個 sheet
+    primary_sheet = None
+    for sn in plan_defaults.keys():
+        if sn in primary_aliases:
+            primary_sheet = sn
+            break
+    if primary_sheet is None and plan_defaults:
+        primary_sheet = next(iter(plan_defaults.keys()))
+    if primary_sheet is None:
+        return out
+    cell_map = plan_defaults.get(primary_sheet, {})
+    for cell, field in cell_map.items():
+        if not field or field in ("__CLEAR__", "__KEEP__"):
+            continue
+        if field not in out:
+            out[field] = cell
+    return out
+
+
+def compute_field_value(field_key: str, r: dict, plan_name: str = "",
+                        processed_cells: dict = None, reverse_map: dict = None) -> str:
+    """
+    回傳該 field 在該 plan 下要填入的值。
+    優先順序：__CLEAR__/__KEEP__ → 衍生欄位 → plan-aware 處理過的值 → 原始 DB 值
+    """
+    if field_key is None or field_key == "":
+        return None
+    if field_key == "__KEEP__":
+        return None
+    if field_key == "__CLEAR__":
+        return ""
+
+    def v(k):
+        x = r.get(k, "")
+        if x is None:
+            return ""
+        return str(x).strip()
+
+    # 衍生欄位（不需 plan formatter）
+    if field_key == "reg_full_address":
+        return (v("reg_city") + v("reg_district") + v("reg_address")).strip()
+    if field_key == "live_full_address":
+        if v("live_same_as_reg") == "1":
+            return (v("reg_city") + v("reg_district") + v("reg_address")).strip()
+        return (v("live_city") + v("live_district") + v("live_address")).strip()
+    if field_key == "company_full_address":
+        return (v("company_city") + v("company_district") + v("company_address")).strip()
+    if field_key == "company_full_phone":
+        a = v("company_phone_area")
+        n = v("company_phone_num")
+        if a == "mobile":
+            a = ""
+        return (a + "-" + n) if (a and n) else n
+
+    # plan-aware 處理：從現有 _build_cell_map 取得處理過的值
+    # 必須有 processed_cells（_build_cell_map 結果）+ reverse_map
+    if processed_cells and reverse_map and field_key in reverse_map:
+        original_cell = reverse_map[field_key]
+        if original_cell in processed_cells:
+            val = processed_cells[original_cell]
+            if val is None:
+                # 預設邏輯回 None 表示不動 → 我們改為清空 / 用 raw
+                return v(field_key)
+            return str(val) if not isinstance(val, str) else val
+
+    # Fallback：直接取 DB 值
+    return v(field_key)
+
+
+def scan_xlsx_structure(xlsx_bytes: bytes) -> dict:
+    """
+    掃描 xlsx 結構，回傳所有 sheet 的儲存格資訊（含下拉選單）。
+    回傳格式：
+    {
+        "sheets": [
+            {
+                "name": "進件表格",
+                "state": "visible",
+                "cells": [
+                    {"ref": "A1", "row": 1, "col": "A", "value": "申請書", "type": "text"},
+                    {"ref": "B5", "row": 5, "col": "B", "value": "", "type": "empty",
+                     "dropdown": ["選項1","選項2"]},
+                ]
+            },
+            ...
+        ]
+    }
+    """
+    import zipfile as _zf
+    import re as _re
+
+    z = _zf.ZipFile(io.BytesIO(xlsx_bytes))
+    try:
+        wb_xml = z.read("xl/workbook.xml").decode("utf-8", errors="replace")
+        rels_xml = z.read("xl/_rels/workbook.xml.rels").decode("utf-8", errors="replace")
+    except KeyError:
+        return {"sheets": [], "error": "不是合法 xlsx"}
+
+    # shared strings
+    ss_texts = []
+    try:
+        ss_xml = z.read("xl/sharedStrings.xml").decode("utf-8", errors="replace")
+        for m in _re.finditer(r'<si>(.*?)</si>', ss_xml, _re.DOTALL):
+            si = m.group(1)
+            ts = _re.findall(r'<t[^>]*>([^<]*)</t>', si)
+            ss_texts.append("".join(ts))
+    except KeyError:
+        pass
+
+    # sheet 列表
+    rel_map = dict(_re.findall(r'Id="(rId\d+)"[^>]*Target="([^"]+)"', rels_xml))
+    sheets_info = []
+    for m in _re.finditer(r'<sheet\b[^/]*?/>', wb_xml):
+        block = m.group(0)
+        nm = _re.search(r'name="([^"]+)"', block)
+        rm = _re.search(r'r:id="([^"]+)"', block)
+        sm = _re.search(r'state="([^"]+)"', block)
+        if not (nm and rm):
+            continue
+        sheet_name = nm.group(1)
+        rid = rm.group(1)
+        state = sm.group(1) if sm else "visible"
+        target = rel_map.get(rid, "")
+        if not target:
+            continue
+        path = "xl/" + target.lstrip("/")
+        try:
+            sheet_xml = z.read(path).decode("utf-8", errors="replace")
+        except KeyError:
+            continue
+
+        # 解析所有儲存格
+        cells = []
+        for cm in _re.finditer(
+            r'<c\s+r="([A-Z]+)(\d+)"(?:\s+[^>]*?)?\s*(?:\s+t="(\w+)")?[^>]*?>(?:\s*<f[^>]*>([^<]*)</f>)?\s*(?:<v>([^<]*)</v>|<is><t[^>]*>([^<]*)</t></is>)?\s*</c>',
+            sheet_xml
+        ):
+            col = cm.group(1); row = int(cm.group(2))
+            t = cm.group(3)
+            formula = cm.group(4)
+            v_content = cm.group(5)
+            inline_t = cm.group(6)
+
+            if inline_t is not None:
+                val = inline_t
+                ctype = "text"
+            elif t == "s" and v_content is not None:
+                try:
+                    val = ss_texts[int(v_content)]
+                    ctype = "text"
+                except (ValueError, IndexError):
+                    val = f"ss#{v_content}"
+                    ctype = "text"
+            elif v_content is not None:
+                val = v_content
+                ctype = "number" if not formula else "formula"
+            elif formula:
+                val = ""
+                ctype = "formula"
+            else:
+                val = ""
+                ctype = "empty"
+
+            cells.append({
+                "ref": f"{col}{row}",
+                "row": row, "col": col,
+                "value": val,
+                "type": ctype,
+                "has_formula": bool(formula),
+            })
+
+        # 下拉選單 (dataValidations)
+        for dv in _re.finditer(
+            r'<dataValidation\s+type="list"[^>]*?sqref="([^"]+)"[^>]*>(.*?)</dataValidation>',
+            sheet_xml, _re.DOTALL
+        ):
+            sqref = dv.group(1)
+            inner = dv.group(2)
+            f1 = _re.search(r'<formula1>([^<]+)</formula1>', inner)
+            if not f1:
+                continue
+            raw = f1.group(1)
+            options = []
+            if raw.startswith('"') and raw.endswith('"'):
+                # 內嵌選項 "選項1,選項2"
+                options = [o.strip() for o in raw.strip('"').split(",")]
+            # 套用到所有符合的 cell（sqref 可能是 "B5 B6" 或 "B5:B10"）
+            targets = set()
+            for part in sqref.split():
+                if ":" in part:
+                    a, b = part.split(":")
+                    am = _re.match(r'([A-Z]+)(\d+)', a)
+                    bm = _re.match(r'([A-Z]+)(\d+)', b)
+                    if am and bm and am.group(1) == bm.group(1):
+                        for rr in range(int(am.group(2)), int(bm.group(2)) + 1):
+                            targets.add(f"{am.group(1)}{rr}")
+                else:
+                    targets.add(part)
+            for c in cells:
+                if c["ref"] in targets:
+                    c["dropdown"] = options
+
+        sheets_info.append({
+            "name": sheet_name,
+            "state": state,
+            "cells": cells,
+        })
+
+    z.close()
+    return {"sheets": sheets_info}
+
+
+SIBLING_PLAN_GROUPS = [
+    # 同一群組內的方案共用映射框架（座標不變、欄位對應一致）
+    {"亞太機車15萬", "亞太機車25萬", "亞太工會機車"},
+    {"和裕機車", "和裕商品"},
+    {"21機車12萬", "21機車25萬", "21商品"},
+]
+
+def load_template_mapping(plan_name: str) -> dict:
+    """讀取 {plan}.mapping.json，若不存在則回傳同群組 sibling 的映射作為 fallback"""
+    path = get_template_mapping_path(plan_name)
+    if os.path.isfile(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+    # 自己沒映射 → 找同群組 sibling 的
+    for group in SIBLING_PLAN_GROUPS:
+        if plan_name in group:
+            for sibling in group:
+                if sibling == plan_name:
+                    continue
+                sib_path = get_template_mapping_path(sibling)
+                if os.path.isfile(sib_path):
+                    try:
+                        with open(sib_path, "r", encoding="utf-8") as f:
+                            return json.load(f)
+                    except Exception:
+                        pass
+    return {}
+
+
+def get_inherited_mapping_source(plan_name: str) -> str:
+    """若該方案的映射是繼承自 sibling，回傳 sibling 名稱；否則回傳空字串。"""
+    if os.path.isfile(get_template_mapping_path(plan_name)):
+        return ""
+    for group in SIBLING_PLAN_GROUPS:
+        if plan_name in group:
+            for sibling in group:
+                if sibling != plan_name and os.path.isfile(get_template_mapping_path(sibling)):
+                    return sibling
+    return ""
+
+
+def save_template_mapping(plan_name: str, mapping: dict) -> None:
+    os.makedirs(TEMPLATES_DIR, exist_ok=True)
+    path = get_template_mapping_path(plan_name)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(mapping, f, ensure_ascii=False, indent=2)
+
+
+def get_default_mapping(plan_name: str) -> dict:
+    """取得預設映射（做為首次編輯時的起點）"""
+    return DEFAULT_MAPPINGS.get(plan_name, {})
+
+
+def _strip_sheet_colors(xlsx_bytes: bytes, target_sheet_name: str) -> bytes:
+    """
+    把指定工作表的所有儲存格 fill 改為無色（白色），並清除該工作表的條件格式。
+    保留字體、邊框、對齊、數字格式。
+    用於上傳範本時自動清除「擔保品資訊」分頁的黃底等視覺干擾。
+    """
+    import zipfile as _zf
+    import re as _re
+
+    try:
+        z_in = _zf.ZipFile(io.BytesIO(xlsx_bytes))
+    except Exception:
+        return xlsx_bytes
+
+    try:
+        wb_xml = z_in.read('xl/workbook.xml').decode('utf-8')
+        rels_xml = z_in.read('xl/_rels/workbook.xml.rels').decode('utf-8')
+    except KeyError:
+        z_in.close()
+        return xlsx_bytes
+
+    rel_map = dict(_re.findall(r'Id="(rId\d+)"[^>]*Target="([^"]+)"', rels_xml))
+    target_path = None
+    for m in _re.finditer(r'<sheet\b[^/]*?/>', wb_xml):
+        block = m.group(0)
+        nm = _re.search(r'name="([^"]+)"', block)
+        rm = _re.search(r'r:id="([^"]+)"', block)
+        if nm and rm and nm.group(1) == target_sheet_name:
+            target_path = 'xl/' + rel_map[rm.group(1)].lstrip('/')
+            break
+
+    if not target_path or target_path not in z_in.namelist():
+        z_in.close()
+        return xlsx_bytes
+
+    sheet_xml = z_in.read(target_path).decode('utf-8')
+    try:
+        styles_xml = z_in.read('xl/styles.xml').decode('utf-8')
+    except KeyError:
+        z_in.close()
+        return xlsx_bytes
+
+    # 解析 cellXfs
+    xfs_m = _re.search(r'(<cellXfs[^>]*>)(.*?)(</cellXfs>)', styles_xml, _re.DOTALL)
+    if not xfs_m:
+        z_in.close()
+        return xlsx_bytes
+    xfs_open = xfs_m.group(1)
+    xfs_body = xfs_m.group(2)
+    xfs_close = xfs_m.group(3)
+
+    xf_blocks = _re.findall(r'<xf\s[^/]*(?:/>|>(?:[^<]|<(?!/xf>))*</xf>)', xfs_body, _re.DOTALL)
+
+    # 對該 sheet 內所有 cell 的 s="X"，建立 X -> 新 index 映射（fillId=0 版本）
+    s_old_to_new = {}
+    new_xfs = []
+    for s_match in _re.finditer(r'<c\s+r="[A-Z]+\d+"\s+s="(\d+)"', sheet_xml):
+        old_s = int(s_match.group(1))
+        if old_s in s_old_to_new or old_s >= len(xf_blocks):
+            continue
+        old_xf = xf_blocks[old_s]
+        fill_m = _re.search(r'fillId="(\d+)"', old_xf)
+        if fill_m and fill_m.group(1) != '0':
+            new_xf = _re.sub(r'fillId="\d+"', 'fillId="0"', old_xf)
+            new_xf = _re.sub(r'\s+applyFill="1"', '', new_xf)
+            new_idx = len(xf_blocks) + len(new_xfs)
+            new_xfs.append(new_xf)
+            s_old_to_new[old_s] = new_idx
+        else:
+            s_old_to_new[old_s] = old_s
+
+    # 更新 styles.xml
+    if new_xfs:
+        new_count = len(xf_blocks) + len(new_xfs)
+        new_xfs_open = _re.sub(r'count="\d+"', f'count="{new_count}"', xfs_open)
+        new_styles_xml = (styles_xml[:xfs_m.start()] +
+                          new_xfs_open + xfs_body + ''.join(new_xfs) + xfs_close +
+                          styles_xml[xfs_m.end():])
+    else:
+        new_styles_xml = styles_xml
+
+    # 更新 sheet xml: 替換 s 屬性
+    def repl_s(mm):
+        old_s = int(mm.group(1))
+        new_s = s_old_to_new.get(old_s, old_s)
+        if new_s == old_s:
+            return mm.group(0)
+        return _re.sub(r's="\d+"', f's="{new_s}"', mm.group(0))
+    new_sheet_xml = _re.sub(r'<c\s+r="[A-Z]+\d+"\s+s="(\d+)"', repl_s, sheet_xml)
+
+    # 移除條件格式（普通 + x14 擴充）
+    new_sheet_xml = _re.sub(r'<conditionalFormatting[^>]*>.*?</conditionalFormatting>',
+                             '', new_sheet_xml, flags=_re.DOTALL)
+    new_sheet_xml = _re.sub(r'<x14:conditionalFormattings[^>]*>.*?</x14:conditionalFormattings>',
+                             '', new_sheet_xml, flags=_re.DOTALL)
+    # 清空殘留 ext / extLst
+    new_sheet_xml = _re.sub(r'<ext\s[^>]*>\s*</ext>', '', new_sheet_xml)
+    new_sheet_xml = _re.sub(r'<extLst>\s*</extLst>', '', new_sheet_xml)
+
+    # 重新打包
+    out_buf = io.BytesIO()
+    z_out = _zf.ZipFile(out_buf, 'w', _zf.ZIP_DEFLATED)
+    for item in z_in.infolist():
+        if item.filename == target_path:
+            z_out.writestr(item, new_sheet_xml.encode('utf-8'))
+        elif item.filename == 'xl/styles.xml' and new_xfs:
+            z_out.writestr(item, new_styles_xml.encode('utf-8'))
+        else:
+            z_out.writestr(item, z_in.read(item.filename))
+    z_out.close()
+    z_in.close()
+    return out_buf.getvalue()
+
 # 日報三段結構
 REPORT_SECTION_1 = [
     "麻吉", "和潤", "中租", "裕融", "21汽車", "亞太", "創鉅", "21",
@@ -1157,6 +1782,7 @@ def init_db():
         ("adminb_displacement", "TEXT"),
         ("adminb_color", "TEXT"),
         ("adminb_body_no", "TEXT"),
+        ("adminb_mfg_date", "TEXT"),
         ("vehicle_duration", "TEXT"),
         ("vehicle_road_reg", "TEXT"),
         ("vehicle_space", "TEXT"),
@@ -5062,6 +5688,7 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
           <div><div class="ab-lbl">排氣量</div><input name="at_disp" class="ab-inp" placeholder="111" value="{h(customer.get('adminb_displacement','') or '')}"></div>
           <div><div class="ab-lbl">顏色</div><input name="at_color" class="ab-inp" placeholder="綠" value="{h(customer.get('adminb_color','') or '')}"></div>
           <div><div class="ab-lbl">車身號碼</div><input name="at_body" class="ab-inp" placeholder="RFGBK..." value="{h(customer.get('adminb_body_no','') or '')}"></div>
+          <div><div class="ab-lbl">出廠年月</div><input name="at_mfg" class="ab-inp" placeholder="2023/08" value="{h(customer.get('adminb_mfg_date','') or '')}"></div>
         </div>
       </div>
       <div class="ab-block" data-plans="和裕機車,和裕商品" style="background:#f0fdf4;">
@@ -5300,6 +5927,7 @@ async def adminb_save(request: Request):
         "adminb_vehicle_type": form.get("at_vtype",""),
         "adminb_engine_no": form.get("at_engine",""),
         "adminb_displacement": form.get("at_disp",""),
+        "adminb_mfg_date": form.get("at_mfg",""),
         "adminb_color": form.get("at_color",""),
         "adminb_body_no": form.get("at_body",""),
         "adminb_fund_use": form.get("at_fund",""),
@@ -7060,6 +7688,198 @@ def adminb_download_excel(request: Request, case_id: str = ""):
         return JSONResponse({"error": f"下載失敗：{str(e)}"}, status_code=500)
 
 
+def _fill_excel_multi_sheet(template_path: str, sheet_cell_maps: dict) -> bytes:
+    """
+    支援多 sheet 填入。
+    sheet_cell_maps: {"進件表格": {"B5": "值", ...}, "擔保品資訊": {"B2": "", ...}}
+    空字串 "" = 清空儲存格；None = 不動原值；__FORMULA_RECALC__ = 清快取。
+    """
+    import zipfile
+    import re as _re
+
+    with open(template_path, "rb") as f:
+        original_bytes = f.read()
+
+    orig_zip = zipfile.ZipFile(io.BytesIO(original_bytes), 'r')
+    try:
+        # 讀 workbook.xml 取得 sheet name → xml path 對照
+        wb_xml = orig_zip.read('xl/workbook.xml').decode('utf-8')
+        rels_xml = orig_zip.read('xl/_rels/workbook.xml.rels').decode('utf-8')
+        rel_map = dict(_re.findall(r'Id="(rId\d+)"[^>]*Target="([^"]+)"', rels_xml))
+
+        sheet_name_to_path = {}
+        first_visible_path = None
+        for m in _re.finditer(r'<sheet\b[^/]*?/>', wb_xml):
+            block = m.group(0)
+            nm = _re.search(r'name="([^"]+)"', block)
+            rm = _re.search(r'r:id="([^"]+)"', block)
+            sm = _re.search(r'state="([^"]+)"', block)
+            if not (nm and rm):
+                continue
+            sname = nm.group(1)
+            rid = rm.group(1)
+            state = sm.group(1) if sm else "visible"
+            target = rel_map.get(rid, "")
+            if not target:
+                continue
+            path = 'xl/' + target.lstrip('/')
+            sheet_name_to_path[sname] = path
+            if state == "visible" and first_visible_path is None:
+                first_visible_path = path
+
+        # sharedStrings
+        ss_xml_name = 'xl/sharedStrings.xml'
+        if ss_xml_name not in orig_zip.namelist():
+            # 沒有 sharedStrings 檔時，無法寫入（下拉選單 xlsx 應一定有）
+            return original_bytes
+        ss_xml = orig_zip.read(ss_xml_name).decode('utf-8')
+        si_blocks = list(_re.finditer(r'(<si>)(.*?)(</si>)', ss_xml, _re.DOTALL))
+        si_list = [m.group(0) for m in si_blocks]
+
+        # 每個 sheet 計算要改的內容
+        new_sheet_xmls = {}  # path -> new xml
+        for sheet_name, cell_map in sheet_cell_maps.items():
+            if not cell_map:
+                continue
+            path = sheet_name_to_path.get(sheet_name)
+            if not path:
+                # 若找不到，嘗試匹配常見舊名
+                for alias in (sheet_name, ):
+                    if alias in sheet_name_to_path:
+                        path = sheet_name_to_path[alias]
+                        break
+                if not path:
+                    continue
+
+            sheet_xml = new_sheet_xmls.get(path) or orig_zip.read(path).decode('utf-8')
+
+            # 解析該 sheet 的 cell → ss_idx 對照
+            cell_to_ss_idx = {}
+            for m in _re.finditer(r'<c\s+r="([A-Z]+\d+)"[^>]*\s+t="s"[^>]*>\s*<v>(\d+)</v>', sheet_xml):
+                cell_to_ss_idx[m.group(1)] = int(m.group(2))
+
+            ss_cell_changes = {}
+            direct_changes = {}
+            formula_recalc = []
+            for cell_ref, new_value in cell_map.items():
+                if new_value is None:
+                    continue
+                if new_value == "__FORMULA_RECALC__":
+                    formula_recalc.append(cell_ref)
+                    continue
+                if not isinstance(new_value, str):
+                    new_value = str(new_value)
+                if cell_ref in cell_to_ss_idx:
+                    ss_cell_changes[cell_ref] = new_value
+                else:
+                    direct_changes[cell_ref] = new_value
+
+            # shared string 改動：新增 ss 並修改 sheet xml 引用
+            for cell_ref, new_value in ss_cell_changes.items():
+                escaped = new_value.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+                new_idx = len(si_list)
+                si_list.append(f'<si><t>{escaped}</t></si>')
+                old_idx = cell_to_ss_idx[cell_ref]
+                cell_pattern = _re.compile(
+                    r'(<c\s+r="' + _re.escape(cell_ref) + r'"[^>]*>)\s*<v>' + str(old_idx) + r'</v>\s*(</c>)')
+                mm = cell_pattern.search(sheet_xml)
+                if mm:
+                    sheet_xml = sheet_xml[:mm.start()] + mm.group(1) + f'<v>{new_idx}</v>' + mm.group(2) + sheet_xml[mm.end():]
+
+            # direct value 改動
+            for cell_ref, new_value in direct_changes.items():
+                escaped_val = new_value.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;') if new_value else ""
+                pattern1 = _re.compile(r'(<c\s+r="' + _re.escape(cell_ref) + r'"[^>]*>)\s*<v>[^<]*</v>\s*(</c>)')
+                mm = pattern1.search(sheet_xml)
+                if mm:
+                    if new_value:
+                        sheet_xml = sheet_xml[:mm.start()] + mm.group(1) + f'<v>{escaped_val}</v>' + mm.group(2) + sheet_xml[mm.end():]
+                    else:
+                        attrs_match = _re.search(r'<c\s+r="' + _re.escape(cell_ref) + r'"([^>]*)>', mm.group(1))
+                        if attrs_match:
+                            attrs = _re.sub(r'\s+t="[^"]*"', '', attrs_match.group(1))
+                            new_cell = f'<c r="{cell_ref}"{attrs}/>'
+                            sheet_xml = sheet_xml[:mm.start()] + new_cell + sheet_xml[mm.end():]
+                    continue
+                # self-closing 空格：<c r="B7" s="77"/>
+                pattern2 = _re.compile(r'<c\s+r="' + _re.escape(cell_ref) + r'"([^/]*)/>')
+                mm2 = pattern2.search(sheet_xml)
+                if mm2 and new_value:
+                    attrs = mm2.group(1).strip()
+                    new_cell = f'<c r="{cell_ref}" {attrs} t="inlineStr"><is><t>{escaped_val}</t></is></c>'
+                    sheet_xml = sheet_xml[:mm2.start()] + new_cell + sheet_xml[mm2.end():]
+
+            # 公式快取清除
+            for cell_ref in formula_recalc:
+                pattern = _re.compile(
+                    r'<c\s+r="' + _re.escape(cell_ref) + r'"([^>]*)>(.*?)<v>[^<]*</v>(.*?)</c>',
+                    _re.DOTALL
+                )
+                mm = pattern.search(sheet_xml)
+                if mm:
+                    attrs = _re.sub(r'\s+t="[^"]*"', '', mm.group(1))
+                    inner = mm.group(2) + mm.group(3)
+                    new_cell = f'<c r="{cell_ref}"{attrs}>{inner}</c>'
+                    sheet_xml = sheet_xml[:mm.start()] + new_cell + sheet_xml[mm.end():]
+
+            # 若什麼都沒改，跳過
+            if ss_cell_changes or direct_changes or formula_recalc:
+                new_sheet_xmls[path] = sheet_xml
+
+        # 重組 sharedStrings
+        added = len(si_list) - len(si_blocks)
+        if added > 0 and si_blocks:
+            first_si = si_blocks[0].start()
+            last_si_end = si_blocks[-1].end()
+            new_si_content = ''.join(si_list)
+            header_xml = ss_xml[:first_si]
+            orig_count_m = _re.search(r'count="(\d+)"', header_xml)
+            if orig_count_m:
+                new_count = int(orig_count_m.group(1)) + added
+                header_xml = _re.sub(r'count="\d+"', f'count="{new_count}"', header_xml)
+            header_xml = _re.sub(r'uniqueCount="\d+"', f'uniqueCount="{len(si_list)}"', header_xml)
+            new_ss_xml = header_xml + new_si_content + ss_xml[last_si_end:]
+        else:
+            new_ss_xml = ss_xml
+
+        # 重新打包 ZIP
+        output_buf = io.BytesIO()
+        output_zip = zipfile.ZipFile(output_buf, 'w', zipfile.ZIP_DEFLATED)
+        for item in orig_zip.infolist():
+            if item.filename == ss_xml_name and added > 0:
+                output_zip.writestr(item, new_ss_xml.encode('utf-8'))
+            elif item.filename in new_sheet_xmls:
+                output_zip.writestr(item, new_sheet_xmls[item.filename].encode('utf-8'))
+            else:
+                output_zip.writestr(item, orig_zip.read(item.filename))
+        output_zip.close()
+        output_buf.seek(0)
+        return output_buf.getvalue()
+    finally:
+        orig_zip.close()
+
+
+def build_sheet_cell_maps_from_mapping(plan_name: str, mapping: dict, r: dict) -> dict:
+    """
+    根據儲存的 mapping JSON 與客戶資料，產生每個 sheet 的 cell_map。
+    mapping 格式: {sheet_name: {cell: field_key}}
+    回傳: {sheet_name: {cell: 處理後的值}}
+    """
+    out = {}
+    for sheet_name, cell_field_map in mapping.items():
+        if not isinstance(cell_field_map, dict):
+            continue
+        sheet_cm = {}
+        for cell_ref, field_key in cell_field_map.items():
+            val = compute_field_value(field_key, r, plan_name)
+            # None = 不動；否則寫入（含空字串 = 清空）
+            if val is not None:
+                sheet_cm[cell_ref] = val
+        if sheet_cm:
+            out[sheet_name] = sheet_cm
+    return out
+
+
 def _fill_excel_template(template_path: str, cell_map: dict) -> bytes:
     """
     Fill customer data into Excel template by modifying ONLY sharedStrings.xml.
@@ -8233,12 +9053,33 @@ def _do_download_excel(request: Request, case_id: str):
                 txt_content = _build_txt_content(template_path, r)
                 files_to_zip.append((f"{name}_{plan}.txt", txt_content.encode("utf-8")))
             else:
-                cell_map = _build_cell_map(plan, r)
-                if cell_map:
-                    filled_bytes = _fill_excel_template(template_path, cell_map)
+                # 若存在自訂映射 → 使用動態多 sheet 填入（階段 2）
+                custom_mapping = load_template_mapping(plan)
+                if custom_mapping:
+                    # 取得 plan-aware 處理過的 cell 值（民國年/月薪萬/縣市短碼/智能判別等）
+                    processed_cells = _build_cell_map(plan, r) or {}
+                    reverse_map = _build_reverse_field_map(plan)
+                    # 組成多 sheet cell_map
+                    sheet_cell_maps = {}
+                    for sheet_name, cell_field_map in custom_mapping.items():
+                        if not isinstance(cell_field_map, dict):
+                            continue
+                        sheet_cm = {}
+                        for cell_ref, field_key in cell_field_map.items():
+                            val = compute_field_value(field_key, r, plan, processed_cells, reverse_map)
+                            if val is not None:
+                                sheet_cm[cell_ref] = val
+                        if sheet_cm:
+                            sheet_cell_maps[sheet_name] = sheet_cm
+                    filled_bytes = _fill_excel_multi_sheet(template_path, sheet_cell_maps)
                 else:
-                    with open(template_path, "rb") as f:
-                        filled_bytes = f.read()
+                    # 未設定自訂映射 → 用原本寫死的 cell_map（向後相容）
+                    cell_map = _build_cell_map(plan, r)
+                    if cell_map:
+                        filled_bytes = _fill_excel_template(template_path, cell_map)
+                    else:
+                        with open(template_path, "rb") as f:
+                            filled_bytes = f.read()
                 files_to_zip.append((f"{name}_{plan}.xlsx", filled_bytes))
         except Exception as e:
             print(f"Generate error for {plan}: {e}")
@@ -8525,13 +9366,25 @@ def admin_templates_page(request: Request):
         builtin_path = os.path.join(_base, "申請書", builtin_file)
         builtin_exists = os.path.isfile(builtin_path)
 
+        mapping_path = get_template_mapping_path(plan_name)
+        has_mapping = os.path.isfile(mapping_path)
+        inherited_src = "" if has_mapping else get_inherited_mapping_source(plan_name)
+        if has_mapping:
+            mapping_badge = '<span style="background:#dcfce7;color:#15803d;padding:1px 8px;border-radius:8px;font-size:11px;margin-left:4px;">已設定映射</span>'
+        elif inherited_src:
+            mapping_badge = f'<span style="background:#fef3c7;color:#92400e;padding:1px 8px;border-radius:8px;font-size:11px;margin-left:4px;">繼承「{h(inherited_src)}」</span>'
+        else:
+            mapping_badge = '<span style="background:#f3f4f6;color:#6b7280;padding:1px 8px;border-radius:8px;font-size:11px;margin-left:4px;">未設定映射</span>'
+
         if has_custom:
             st = os.stat(custom_path)
-            status_badge = '<span style="background:#dcfce7;color:#15803d;padding:2px 10px;border-radius:10px;font-size:12px;font-weight:500;">● 自訂範本</span>'
+            status_badge = '<span style="background:#dcfce7;color:#15803d;padding:2px 10px;border-radius:10px;font-size:12px;font-weight:500;">● 自訂範本</span>' + mapping_badge
             size_kb = max(1, st.st_size // 1024)
             updated = datetime.fromtimestamp(st.st_mtime).strftime("%Y-%m-%d %H:%M")
             info = f"{size_kb} KB　·　更新於 {updated}"
             actions = (
+                f'<a href="/admin/templates/edit?plan={h(plan_name)}" '
+                f'style="display:inline-block;background:#eef2ff;color:#4338ca;border:1px solid #c7d2fe;padding:5px 12px;border-radius:4px;text-decoration:none;font-size:12px;margin-right:6px;font-weight:500;">🔧 編輯映射</a>'
                 f'<a href="/admin/templates/download?plan={h(plan_name)}" '
                 f'style="color:#4e7055;margin-right:10px;font-size:13px;text-decoration:none;">📥 下載</a>'
                 f'<button onclick="upFor(\'{h(plan_name)}\')" '
@@ -8540,11 +9393,13 @@ def admin_templates_page(request: Request):
                 f'style="background:#fff;color:#dc2626;border:1px solid #fecaca;padding:5px 12px;border-radius:4px;cursor:pointer;font-size:12px;">還原內建</button>'
             )
         else:
-            status_badge = '<span style="background:#f3f4f6;color:#6b7280;padding:2px 10px;border-radius:10px;font-size:12px;">○ 內建範本</span>'
+            status_badge = '<span style="background:#f3f4f6;color:#6b7280;padding:2px 10px;border-radius:10px;font-size:12px;">○ 內建範本</span>' + mapping_badge
             info = f'<span style="color:#9ca3af;">（尚未上傳自訂範本）</span>'
             if not builtin_exists:
                 info += ' <span style="color:#dc2626;font-size:12px;">⚠ 內建檔案遺失</span>'
             actions = (
+                f'<a href="/admin/templates/edit?plan={h(plan_name)}" '
+                f'style="display:inline-block;background:#eef2ff;color:#4338ca;border:1px solid #c7d2fe;padding:5px 12px;border-radius:4px;text-decoration:none;font-size:12px;margin-right:6px;font-weight:500;">🔧 編輯映射</a>'
                 f'<a href="/admin/templates/download?plan={h(plan_name)}" '
                 f'style="color:#4e7055;margin-right:10px;font-size:13px;text-decoration:none;">📥 下載內建</a>'
                 f'<button onclick="upFor(\'{h(plan_name)}\')" '
@@ -8667,6 +9522,12 @@ async def admin_templates_upload(request: Request):
     except Exception as e:
         return RedirectResponse(f"/admin/templates?err={quote('檔案解析失敗：' + str(e))}", status_code=303)
 
+    # 自動清除「擔保品資訊」分頁的填色 + 條件格式（讓填寫欄位變白色）
+    try:
+        content = _strip_sheet_colors(content, "擔保品資訊")
+    except Exception as e:
+        print(f"[strip_colors] warning: {e}")
+
     target_path = get_custom_template_path(plan_name)
     try:
         os.makedirs(TEMPLATES_DIR, exist_ok=True)
@@ -8675,7 +9536,8 @@ async def admin_templates_upload(request: Request):
     except Exception as e:
         return RedirectResponse(f"/admin/templates?err={quote('寫入失敗：' + str(e))}", status_code=303)
 
-    return RedirectResponse("/admin/templates?ok=1", status_code=303)
+    # 上傳成功 → 導向編輯頁讓使用者檢查 / 調整映射
+    return RedirectResponse(f"/admin/templates/edit?plan={quote(plan_name)}&uploaded=1", status_code=303)
 
 
 @app.post("/admin/templates/reset")
@@ -8725,6 +9587,258 @@ def admin_templates_download(request: Request, plan: str = ""):
     if os.path.isfile(builtin_path):
         return FileResponse(builtin_path, filename=f"{plan}_內建.xlsx", media_type=xlsx_mime)
     return JSONResponse({"error": "範本不存在"}, status_code=404)
+
+
+# =========================
+# 範本編輯頁（階段 2：映射設定）
+# =========================
+def _get_template_xlsx_bytes(plan_name: str) -> bytes:
+    """取得目前使用中的範本 bytes（自訂優先，否則內建）"""
+    custom_path = get_custom_template_path(plan_name)
+    if os.path.isfile(custom_path):
+        with open(custom_path, "rb") as f:
+            return f.read()
+    _base = os.path.dirname(os.path.abspath(__file__))
+    filename = dict(APPLICATION_PLAN_LIST).get(plan_name)
+    if filename:
+        builtin_path = os.path.join(_base, "申請書", filename)
+        if os.path.isfile(builtin_path):
+            with open(builtin_path, "rb") as f:
+                return f.read()
+    return b""
+
+
+@app.get("/admin/templates/edit", response_class=HTMLResponse)
+def admin_templates_edit(request: Request, plan: str = ""):
+    role = check_auth(request)
+    if role not in ("admin", "adminB"):
+        from fastapi.responses import RedirectResponse
+        return RedirectResponse("/login", status_code=303)
+
+    valid_plans = {p for p, _ in APPLICATION_PLAN_LIST}
+    if plan not in valid_plans:
+        return HTMLResponse("<h3>方案名稱無效</h3>", status_code=400)
+
+    xlsx_bytes = _get_template_xlsx_bytes(plan)
+    if not xlsx_bytes:
+        return HTMLResponse(f"<h3>找不到「{h(plan)}」的範本檔案</h3>", status_code=404)
+
+    scan = scan_xlsx_structure(xlsx_bytes)
+    if scan.get("error"):
+        return HTMLResponse(f"<h3>掃描範本失敗：{h(scan['error'])}</h3>", status_code=500)
+
+    # 讀取現有映射（含 sibling fallback）
+    mapping = load_template_mapping(plan)
+    inherited_from = get_inherited_mapping_source(plan)
+    is_new_mapping = not mapping
+    if is_new_mapping:
+        mapping = get_default_mapping(plan)
+
+    # 建立欄位下拉選項（中文）
+    field_options_html = ['<option value="">（不填入資料）</option>']
+    # 分組：把同類欄位放一起
+    groups = [
+        ("個人基本", ["customer_name","id_no","birth_date","phone","email","line_id","marriage","education","carrier","fb"]),
+        ("身分證", ["id_issue_date","id_issue_place","id_issue_type"]),
+        ("戶籍地址", ["reg_city","reg_district","reg_address","reg_phone","reg_full_address"]),
+        ("現居地址", ["live_city","live_district","live_address","live_phone","live_same_as_reg","live_full_address","live_status","live_years","live_months"]),
+        ("公司職務", ["company","company_name_detail","company_role","company_phone_area","company_phone_num","company_phone_ext","company_full_phone","company_years","company_months","company_salary","company_city","company_district","company_address","company_full_address"]),
+        ("聯絡人", ["contact1_name","contact1_relation","contact1_phone","contact1_known","contact2_name","contact2_relation","contact2_phone","contact2_known"]),
+        ("車輛", ["adminb_brand","vehicle_plate","adminb_vehicle_type","adminb_engine_no","adminb_body_no","adminb_mfg_date","adminb_displacement","adminb_color"]),
+        ("亞太專用", ["adminb_fund_use","adminb_industry","adminb_role"]),
+        ("和裕專用", ["adminb_hr_industry","adminb_hr_role","adminb_bank","adminb_branch","adminb_product","adminb_model","adminb_contact_time"]),
+        ("貸就補", ["adminb_product_name","adminb_product_model"]),
+        ("特殊操作", ["__CLEAR__","__KEEP__"]),
+    ]
+    for grp_name, keys in groups:
+        field_options_html.append(f'<optgroup label="{grp_name}">')
+        for k in keys:
+            label = FIELD_LABELS.get(k, k)
+            field_options_html.append(f'<option value="{h(k)}">{h(label)}</option>')
+        field_options_html.append("</optgroup>")
+    field_options_str = "".join(field_options_html)
+
+    # 產生每個 sheet 的儲存格清單
+    # 只讀 sheet（隱藏表、下拉參照表）不列儲存格、但顯示摘要讓使用者知道存在
+    READONLY_SHEET_KEYWORDS = ("參照表", "對照表", "代碼表")
+    sheets_html = []
+    for si, sheet in enumerate(scan["sheets"]):
+        sheet_name = sheet["name"]
+        is_hidden = sheet["state"] != "visible"
+        is_readonly_named = any(kw in sheet_name for kw in READONLY_SHEET_KEYWORDS)
+        is_readonly = is_hidden or is_readonly_named
+        state_badge = ' <span style="color:#9ca3af;font-size:11px;">(hidden)</span>' if is_hidden else ''
+
+        # 該 sheet 的現有映射
+        sheet_mapping = mapping.get(sheet_name, {})
+
+        # 只讀分頁：不列儲存格
+        if is_readonly:
+            reason = "隱藏分頁（系統資料對照）" if is_hidden else "下拉選單參照表"
+            sheets_html.append(
+                f'<div class="sheet-block" data-sheet="{h(sheet_name)}" style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;margin-bottom:18px;overflow:hidden;">'
+                f'<div style="padding:12px 16px;display:flex;justify-content:space-between;align-items:center;">'
+                f'<div><span style="font-weight:600;color:#991b1b;">🔒 {h(sheet_name)}{state_badge}</span>'
+                f'<span style="color:#64748b;font-size:12px;margin-left:10px;">{reason}，不可動也不填入資料</span></div>'
+                f'<div style="font-size:12px;color:#64748b;">共 {len(sheet["cells"])} 格（不列出）</div>'
+                f'</div></div>'
+            )
+            continue
+
+        # 排序儲存格（依欄字母、再依列）
+        def _cell_sort_key(c):
+            col = c["col"]
+            # A→1, B→2, Z→26, AA→27
+            n = 0
+            for ch in col:
+                n = n * 26 + (ord(ch) - ord('A') + 1)
+            return (c["row"], n)
+        cells_sorted = sorted(sheet["cells"], key=_cell_sort_key)
+
+        rows_html = []
+        empty_cells_with_dropdown = []
+        for c in cells_sorted:
+            ref = c["ref"]
+            val = c["value"] or ""
+            ctype = c["type"]
+            has_dd = "dropdown" in c
+            current_field = sheet_mapping.get(ref, "")
+
+            # 類型標記
+            if ctype == "formula":
+                type_tag = '<span style="background:#fef3c7;color:#92400e;padding:1px 6px;border-radius:3px;font-size:10px;">公式</span>'
+            elif ctype == "empty":
+                type_tag = '<span style="background:#e0f2fe;color:#075985;padding:1px 6px;border-radius:3px;font-size:10px;">空白</span>'
+            elif has_dd:
+                type_tag = '<span style="background:#dbeafe;color:#1d4ed8;padding:1px 6px;border-radius:3px;font-size:10px;">下拉</span>'
+            elif val:
+                type_tag = '<span style="background:#f3f4f6;color:#6b7280;padding:1px 6px;border-radius:3px;font-size:10px;">內容</span>'
+            else:
+                type_tag = ''
+
+            dd_preview = ""
+            if has_dd and c.get("dropdown"):
+                opts = c["dropdown"][:4]
+                more = "..." if len(c["dropdown"]) > 4 else ""
+                dd_preview = f'<div style="color:#64748b;font-size:11px;margin-top:2px;">選項：{h(", ".join(opts))}{more}</div>'
+
+            val_display = h(val[:60] + ("..." if len(val) > 60 else "")) if val else '<span style="color:#cbd5e1;">（空）</span>'
+
+            # 選中的欄位標記
+            selected_options = field_options_str.replace(
+                f'value="{h(current_field)}"',
+                f'value="{h(current_field)}" selected'
+            ) if current_field else field_options_str
+
+            rows_html.append(
+                f'<tr>'
+                f'<td style="padding:6px 10px;font-family:monospace;font-weight:600;color:#475569;">{ref}</td>'
+                f'<td style="padding:6px 10px;">{type_tag}</td>'
+                f'<td style="padding:6px 10px;font-size:13px;max-width:300px;overflow:hidden;">{val_display}{dd_preview}</td>'
+                f'<td style="padding:6px 10px;">'
+                f'<select name="map_{h(sheet_name)}_{ref}" class="map-sel" style="width:100%;padding:3px 6px;font-size:12px;border:1px solid #cbd5e1;border-radius:4px;">{selected_options}</select>'
+                f'</td>'
+                f'</tr>'
+            )
+
+        sheet_note = ""
+
+        sheets_html.append(
+            f'<div class="sheet-block" data-sheet="{h(sheet_name)}" style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;margin-bottom:18px;overflow:hidden;">'
+            f'<div style="background:#f8fafc;padding:10px 16px;border-bottom:1px solid #e5e7eb;display:flex;justify-content:space-between;align-items:center;">'
+            f'<div style="font-weight:600;color:#1e293b;">📊 工作表：{h(sheet_name)}{state_badge}</div>'
+            f'<div style="font-size:12px;color:#64748b;">共 {len(cells_sorted)} 格</div>'
+            f'</div>'
+            f'<div style="padding:10px 16px;">{sheet_note}'
+            f'<table style="width:100%;border-collapse:collapse;font-size:13px;">'
+            f'<thead><tr style="background:#f9fafb;border-bottom:1px solid #e5e7eb;">'
+            f'<th style="padding:6px 10px;text-align:left;font-weight:600;color:#6b7280;font-size:11px;width:70px;">座標</th>'
+            f'<th style="padding:6px 10px;text-align:left;font-weight:600;color:#6b7280;font-size:11px;width:60px;">類型</th>'
+            f'<th style="padding:6px 10px;text-align:left;font-weight:600;color:#6b7280;font-size:11px;">目前內容</th>'
+            f'<th style="padding:6px 10px;text-align:left;font-weight:600;color:#6b7280;font-size:11px;width:280px;">對應系統欄位</th>'
+            f'</tr></thead>'
+            f'<tbody>{"".join(rows_html)}</tbody>'
+            f'</table></div></div>'
+        )
+
+    nav = make_topnav(role, "templates")
+    if inherited_from:
+        default_badge = f'<span style="background:#fef3c7;color:#92400e;padding:2px 10px;border-radius:10px;font-size:12px;font-weight:500;">繼承自「{h(inherited_from)}」的映射</span>'
+    elif is_new_mapping:
+        default_badge = '<span style="background:#dbeafe;color:#1d4ed8;padding:2px 10px;border-radius:10px;font-size:12px;font-weight:500;">套用系統預設映射</span>'
+    else:
+        default_badge = '<span style="background:#dcfce7;color:#15803d;padding:2px 10px;border-radius:10px;font-size:12px;font-weight:500;">已儲存自訂映射</span>'
+
+    body = f"""<!DOCTYPE html><html><head>{PAGE_CSS}<title>{h(plan)} - 範本編輯</title></head><body>
+{nav}
+<div class="container" style="max-width:1300px;margin:20px auto;padding:0 16px;">
+  <div style="margin-bottom:16px;">
+    <a href="/admin/templates" style="color:#4e7055;text-decoration:none;font-size:13px;">← 返回範本列表</a>
+  </div>
+  <div style="background:#fff;padding:16px 20px;border:1px solid #e5e7eb;border-radius:8px;margin-bottom:20px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;">
+      <div>
+        <h2 style="font-size:18px;font-weight:600;color:#1e293b;margin:0 0 4px 0;">📄 {h(plan)} 範本編輯</h2>
+        <div style="color:#64748b;font-size:13px;">範本內含 {len(scan['sheets'])} 個工作表，共 {sum(len(s['cells']) for s in scan['sheets'])} 個儲存格</div>
+      </div>
+      <div>{default_badge}</div>
+    </div>
+  </div>
+  <div style="background:#eef2ff;border:1px solid #c7d2fe;padding:12px 16px;border-radius:6px;font-size:13px;color:#3730a3;margin-bottom:20px;line-height:1.7;">
+    💡 <b>使用說明：</b>下表列出範本的每個儲存格。在「對應系統欄位」下拉選擇要填入什麼資料（例如「姓名」「身分證」），空白則不填。
+    <br>📌 <b>特殊選項：</b>「清空」= 下載時強制清空（清除範本示範值）、「保留原值」= 不動。
+    <br>⚠️ 標題文字儲存格通常<b>不要選</b>對應欄位（否則會蓋掉標題）。
+  </div>
+  <form method="post" action="/admin/templates/save-mapping">
+    <input type="hidden" name="plan" value="{h(plan)}">
+    {''.join(sheets_html)}
+    <div style="position:sticky;bottom:0;background:#fff;border-top:2px solid #4e7055;padding:14px 0;margin-top:20px;text-align:center;">
+      <a href="/admin/templates" style="display:inline-block;padding:10px 24px;margin-right:10px;background:#fff;color:#64748b;border:1px solid #cbd5e1;border-radius:6px;text-decoration:none;font-size:14px;">取消</a>
+      <button type="submit" style="padding:10px 32px;background:#4e7055;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:14px;font-weight:600;">💾 儲存映射</button>
+    </div>
+  </form>
+</div>
+</body></html>"""
+    return HTMLResponse(body)
+
+
+@app.post("/admin/templates/save-mapping")
+async def admin_templates_save_mapping(request: Request):
+    role = check_auth(request)
+    if role not in ("admin", "adminB"):
+        return JSONResponse({"error": "無權限"}, status_code=403)
+
+    from fastapi.responses import RedirectResponse
+    from urllib.parse import quote
+
+    valid_plans = {p for p, _ in APPLICATION_PLAN_LIST}
+    form = await request.form()
+    plan_name = (form.get("plan") or "").strip()
+    if plan_name not in valid_plans:
+        return RedirectResponse(f"/admin/templates?err={quote('方案名稱無效')}", status_code=303)
+
+    # 解析 map_{sheet_name}_{cell} 格式的 form field
+    mapping = {}
+    for key, val in form.multi_items() if hasattr(form, 'multi_items') else form.items():
+        if not key.startswith("map_"):
+            continue
+        val = (val or "").strip()
+        if not val:
+            continue
+        # key = "map_{sheet_name}_{cell}"，cell 固定是 [A-Z]+\d+
+        m = re.match(r"^map_(.+)_([A-Z]+\d+)$", key)
+        if not m:
+            continue
+        sheet_name = m.group(1)
+        cell_ref = m.group(2)
+        mapping.setdefault(sheet_name, {})[cell_ref] = val
+
+    try:
+        save_template_mapping(plan_name, mapping)
+    except Exception as e:
+        return RedirectResponse(f"/admin/templates?err={quote('儲存失敗：' + str(e))}", status_code=303)
+
+    return RedirectResponse(f"/admin/templates/edit?plan={quote(plan_name)}&saved=1", status_code=303)
 
 
 # ── PDF export JS（必須在 init_db 之前定義，因為 /new-customer 頁面需要引用）──
