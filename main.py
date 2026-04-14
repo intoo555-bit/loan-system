@@ -576,14 +576,23 @@ def extract_id_no(text: str) -> str:
 def extract_company(text: str) -> str:
     if not text:
         return ""
+    # 只看狀態關鍵字之前的部分（狀態後面都是備註原因，不抓）
+    search_text = text
+    for kw in ["核准", "核準", "婉拒", "申覆失敗", "補件", "待核准", "照會", "撥款"]:
+        idx = search_text.find(kw)
+        if idx > 0:
+            search_text = search_text[:idx]
+            break
+    # 只看第一行（多行訊息後面通常是備註）
+    search_text = search_text.splitlines()[0] if search_text else ""
     # 找出所有匹配及其位置，取最前面出現的
     matches = []
     for c in COMPANY_LIST:
-        idx = text.find(c)
+        idx = search_text.find(c)
         if idx >= 0:
             matches.append((idx, c, c))
     for alias, real in COMPANY_ALIAS.items():
-        idx = text.find(alias)
+        idx = search_text.find(alias)
         if idx >= 0:
             matches.append((idx, alias, real))
     if not matches:
