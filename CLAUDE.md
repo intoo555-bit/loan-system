@@ -137,7 +137,7 @@ status IN ('CLOSED','PENALTY','ABANDONED','REJECTED')
 
 這是一個 **貸款案件管理系統**，整合 LINE Bot + Web 管理介面，用於追蹤貸款客戶從進件、送件、核准到撥款的完整流程。系統以 FastAPI 為後端，SQLite 為資料庫，部署在 Render 平台上。
 
-**主要檔案：** `main (2).py`（單檔架構，約 4400 行）
+**主要檔案：** `main.py`（Render 部署檔，Procfile 指向 `uvicorn main:app`，單檔架構，約 8500 行）。注意：`main (2).py` 是舊版備份，不會被部署，修改請對準 `main.py`。
 
 ---
 
