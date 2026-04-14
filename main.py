@@ -1614,12 +1614,27 @@ def get_all_admin_groups() -> List[str]:
 def extract_status_summary(first_line: str, customer_name: str) -> str:
     """
     從訊息第一行提取狀態關鍵字，用於日報顯示。
-    例：「林美伶 等保書 21」→「等保書」
-        「劉依庭21 婉拒 【1】...」→「婉拒」
-        「王鴻銘 21 待補」→「待補」
+    標準化標籤：
+    - 有核准 → 「核准」
+    - 補照會/照會 → 「已補照會」
+    - 補申覆/申覆 → 「已補申覆」
+    - 補件類 → 「已補資料」
+    - NA/未接照會 → 「NA」
+    - 其他 → 顯示前20字
     """
     if not first_line:
         return ""
+    # 優先用標準化標籤
+    if "核准" in first_line or "核準" in first_line:
+        return "核准"
+    if "補照會" in first_line or "照會" in first_line:
+        return "已補照會"
+    if "補申覆" in first_line or "申覆" in first_line:
+        return "已補申覆"
+    if any(w in first_line for w in ["補件", "補資料", "補行照", "補聯徵", "補保人", "補薪轉", "補照片", "補時段"]):
+        return "已補資料"
+    if "未接照會" in first_line or first_line.strip().endswith("NA") or " NA" in first_line:
+        return "NA"
 
     # 去掉客戶姓名
     text = first_line.replace(customer_name, "").strip()
