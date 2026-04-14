@@ -574,12 +574,14 @@ def extract_id_no(text: str) -> str:
 
 
 def extract_company(text: str) -> str:
-    for alias, real in COMPANY_ALIAS.items():
-        if alias in (text or ""):
-            return real
+    # 優先檢查主要貸款公司（避免「玉山+凱基」蓋過「亞太」）
     for c in COMPANY_LIST:
         if c in (text or ""):
             return c
+    # 主要公司沒找到才找別名（銀行類、零卡類）
+    for alias, real in COMPANY_ALIAS.items():
+        if alias in (text or ""):
+            return real
     return ""
 
 
