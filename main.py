@@ -2639,11 +2639,15 @@ def handle_route_order_block(block_text, source_group_id, reply_token) -> Option
     name, companies = parsed["name"], parsed["companies"]
     route_json = make_route_json(companies)
     current_co = companies[0]
+    # 判斷第一家是否為民間方案 → 直接放對應區塊，不放送件
+    private_keywords = ["銀行", "零卡", "商品貸", "代書", "當舖", "鄉民", "房地", "新鑫", "慢點付", "分期趣", "銀角", "刷卡換現", "鄉"]
+    is_private = any(k in current_co for k in private_keywords)
+    init_section = "" if is_private else "送件"
     rows = find_active_by_name(name)
     same = [r for r in rows if r["source_group_id"] == source_group_id]
     if same:
         update_customer(same[0]["case_id"], route_plan=route_json, current_company=current_co,
-                        report_section="送件",
+                        report_section=init_section,
                         text=block_text, from_group_id=source_group_id)
         return f"📋 已更新 {name} 送件順序：{'/'.join(companies)}"
     other = [r for r in rows if r["source_group_id"] != source_group_id]
@@ -2652,10 +2656,11 @@ def handle_route_order_block(block_text, source_group_id, reply_token) -> Option
         return "QUICK_REPLY_SENT"
     create_customer_record(name, "", current_co, source_group_id, block_text,
                            route_plan=route_json, current_company=current_co)
-    # 新建客戶先放送件區塊
-    conn = get_conn(); cur = conn.cursor()
-    cur.execute("UPDATE customers SET report_section='送件' WHERE customer_name=? AND source_group_id=? AND status='ACTIVE' ORDER BY created_at DESC LIMIT 1", (name, source_group_id))
-    conn.commit(); conn.close()
+    # 新建客戶：貸款方案先放送件，民間方案直接放對應區塊
+    if not is_private:
+        conn = get_conn(); cur = conn.cursor()
+        cur.execute("UPDATE customers SET report_section='送件' WHERE customer_name=? AND source_group_id=? AND status='ACTIVE' ORDER BY created_at DESC LIMIT 1", (name, source_group_id))
+        conn.commit(); conn.close()
     return f"🆕 已建立客戶 {name}，送件順序：{'/'.join(companies)}"
 
 
