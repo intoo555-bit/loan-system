@@ -2709,6 +2709,14 @@ a{color:#3b82f6;text-decoration:none}
 .nl{padding:6px 12px;border-radius:6px;color:rgba(255,255,255,.65);font-size:13px;transition:all .15s}
 .nl:hover{background:rgba(255,255,255,.1);color:#fff}
 .nl.active{background:rgba(255,255,255,.15);color:#fff;font-weight:500}
+.nl-drop{position:relative;display:inline-block}
+.nl-drop-btn{padding:6px 12px;border-radius:6px;color:rgba(255,255,255,.65);font-size:13px;cursor:pointer;background:none;border:none;font-family:inherit;transition:all .15s}
+.nl-drop-btn:hover{background:rgba(255,255,255,.1);color:#fff}
+.nl-drop.open .nl-drop-btn,.nl-drop.active-parent .nl-drop-btn{background:rgba(255,255,255,.15);color:#fff;font-weight:500}
+.nl-drop-menu{display:none;position:absolute;top:calc(100% + 4px);right:0;background:#1a1a2e;border:1px solid rgba(255,255,255,.1);border-radius:8px;padding:4px;min-width:160px;box-shadow:0 4px 12px rgba(0,0,0,.3);z-index:110}
+.nl-drop.open .nl-drop-menu{display:block}
+.nl-drop-menu .nl{display:block;padding:8px 12px;border-radius:5px;white-space:nowrap}
+.nl-drop-caret{font-size:10px;margin-left:4px;opacity:.7}
 .page{max-width:1100px;margin:0 auto;padding:20px 16px}
 .stats-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:20px}
 .stat-card{background:#fff;border:1px solid #e5e7eb;border-radius:9px;padding:14px 16px}
@@ -2763,6 +2771,7 @@ a{color:#3b82f6;text-decoration:none}
   .topnav{flex-wrap:wrap;height:auto;padding:8px 12px}
   .topnav-links{flex-wrap:wrap}
   .page{padding:12px 8px}
+  .nl-drop-menu{position:static;box-shadow:none;border:none;padding:0;min-width:0;background:transparent}
 }
 @media(max-width:480px){
   .stats-grid{grid-template-columns:1fr}
@@ -2803,14 +2812,24 @@ def make_topnav(role: str, active: str) -> str:
         links.append(("➕ 新增客戶","/new-customer","new"))
     if role in ("admin","adminB"):
         links.append(("📋 行政B作業","/adminb","adminb"))
-    if role == "admin":
-        links += [("⚙️ 群組管理","/admin/groups","admin"),
-                  ("🔑 密碼管理","/admin/passwords","passwords"),
-                  ("🗑️ 清除資料","/admin/reset_data","reset")]
     nav = "".join(f'<a class="nl {"active" if a==active else ""}" href="{u}">{n}</a>'
                   for n,u,a in links)
+    if role == "admin":
+        admin_items = [("⚙️ 群組管理","/admin/groups","admin"),
+                       ("🔑 密碼管理","/admin/passwords","passwords"),
+                       ("🗑️ 清除資料","/admin/reset_data","reset")]
+        is_active_parent = active in ("admin","passwords","reset")
+        drop_items = "".join(f'<a class="nl {"active" if a==active else ""}" href="{u}">{n}</a>'
+                             for n,u,a in admin_items)
+        nav += (
+            f'<div class="nl-drop{" active-parent" if is_active_parent else ""}" id="adminDrop">'
+            f'<button class="nl-drop-btn" onclick="event.stopPropagation();document.getElementById(\'adminDrop\').classList.toggle(\'open\')">⚙️ 管理<span class="nl-drop-caret">▾</span></button>'
+            f'<div class="nl-drop-menu">{drop_items}</div>'
+            f'</div>'
+        )
     nav += '<a class="nl" href="/logout">登出</a>'
-    return f'<nav class="topnav"><div class="topnav-title">貸款案件管理</div><div class="topnav-links">{nav}</div></nav>'
+    script = '<script>document.addEventListener("click",function(e){var d=document.getElementById("adminDrop");if(d&&!d.contains(e.target))d.classList.remove("open");});</script>'
+    return f'<nav class="topnav"><div class="topnav-title">貸款案件管理</div><div class="topnav-links">{nav}</div></nav>{script}'
 
 def get_badge(row) -> str:
     sec = row["report_section"] or ""
