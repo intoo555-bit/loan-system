@@ -854,8 +854,7 @@ def looks_like_case_start(line: str) -> bool:
         return True
     if SHORT_DATE_NAME_RE.search(line) or is_route_order_line(line) or is_format_trigger(line):
         return True
-    name = extract_name(line)
-    return bool(name and (extract_company(line) or contains_status_word(line)))
+    return False
 
 
 def split_multi_cases(text: str) -> List[str]:
