@@ -2819,8 +2819,8 @@ def _handle_a_case_block_locked(block_text, reply_token, id_no, name) -> Optiona
     current_co = customer["current_company"] or customer["company"] or ""
     is_in_route = any(company and (company in rc or rc in company) for rc in route_companies)
     is_current = company and (company in current_co or current_co in company)
-    # 如果公司不在路線、不是 current、不在同送清單 → 跳按鈕詢問
-    if company and not is_in_concurrent and not is_in_route and not is_current and (is_approved or is_reject):
+    # 如果公司不在路線、不是 current、不在同送清單 → 跳按鈕詢問（不管什麼狀態）
+    if company and not is_in_concurrent and not is_in_route and not is_current:
         action_id = short_id()
         save_pending_action(action_id, "unknown_company", {
             "case_id": customer["case_id"], "block_text": block_text,
