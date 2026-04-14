@@ -1983,6 +1983,11 @@ def parse_special_command(text: str, group_id: str) -> Optional[Dict]:
     if m:
         return {"type": "advance", "name": m.group(1), "target": None}
 
+    # 加送：@AI 姓名 送公司 → 加入同時送件清單，不換掉原本的
+    m = re.match(r"^([\u4e00-\u9fff]{2,6})\s*送\s*(.+)$", clean)
+    if m and "下一家" not in m.group(2) and "轉" not in m.group(2):
+        return {"type": "add_concurrent", "name": m.group(1), "company": m.group(2).strip()}
+
     # 轉指定公司
     m = re.match(r"^([\u4e00-\u9fff]{2,6})\s*轉(.+)$", clean)
     if m and m.group(2).strip() != "下一家":
@@ -2531,6 +2536,31 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
             reply_text(reply_token, f"❌ 找不到客戶：{name}"); return
         update_customer(target["case_id"], approved_amount=amount, from_group_id=group_id)
         reply_text(reply_token, f"✅ {name} 核准金額已更新：{amount}")
+        return
+
+    if t == "add_concurrent":
+        name = cmd["name"]
+        company = cmd["company"]
+        rows = find_active_by_name(name)
+        same = [r for r in rows if r["source_group_id"] == group_id]
+        target = same[0] if same else (rows[0] if rows else None)
+        if not target:
+            reply_text(reply_token, f"❌ 找不到客戶：{name}"); return
+        # 加入同時送件清單
+        current_concurrent = target["concurrent_companies"] or ""
+        parts = [c.strip() for c in current_concurrent.split(",") if c.strip()]
+        if company not in parts:
+            parts.append(company)
+        new_concurrent = ",".join(parts)
+        conn = get_conn(); cur = conn.cursor()
+        cur.execute("UPDATE customers SET concurrent_companies=?, updated_at=? WHERE case_id=?",
+                    (new_concurrent, now_iso(), target["case_id"]))
+        conn.commit(); conn.close()
+        update_customer(target["case_id"], text=f"{name} 加送 {company}", from_group_id=group_id)
+        # 帶金額期數
+        plan = PLAN_INFO.get(company)
+        info_line = f"{plan[0]} {plan[1]}" if plan and plan[1] else company
+        reply_text(reply_token, f"✅ {name} 已加送：{info_line}\n日報會多顯示此公司區塊")
         return
 
     if t == "advance":
