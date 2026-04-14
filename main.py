@@ -574,15 +574,23 @@ def extract_id_no(text: str) -> str:
 
 
 def extract_company(text: str) -> str:
-    # 優先檢查主要貸款公司（避免「玉山+凱基」蓋過「亞太」）
+    if not text:
+        return ""
+    # 找出所有匹配及其位置，取最前面出現的
+    matches = []
     for c in COMPANY_LIST:
-        if c in (text or ""):
-            return c
-    # 主要公司沒找到才找別名（銀行類、零卡類）
+        idx = text.find(c)
+        if idx >= 0:
+            matches.append((idx, c, c))
     for alias, real in COMPANY_ALIAS.items():
-        if alias in (text or ""):
-            return real
-    return ""
+        idx = text.find(alias)
+        if idx >= 0:
+            matches.append((idx, alias, real))
+    if not matches:
+        return ""
+    # 按位置排序，同位置時長度長的優先（亞太商品 > 亞太）
+    matches.sort(key=lambda x: (x[0], -len(x[1])))
+    return matches[0][2]
 
 
 def get_group_name(group_id: str) -> str:
