@@ -1159,6 +1159,7 @@ def init_db():
         ("fb", "TEXT"),
         ("company_months", "TEXT"),
         ("concurrent_companies", "TEXT"),
+        ("company_status", "TEXT"),
     ]:
         ensure_column(cur, "customers", col, defn)
     # groups 表新增業務群對應欄位
@@ -1711,6 +1712,20 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
         first_line = last_update.splitlines()[0].strip() if last_update.strip() else ""
         status_short = extract_status_summary(first_line, row["customer_name"])
 
+        # 讀取每家公司各自的狀態
+        try:
+            company_status = json.loads(row["company_status"] or "{}")
+        except Exception:
+            company_status = {}
+
+        def get_section_status(sec_name):
+            """取得該區塊對應公司的狀態"""
+            if sec_name in company_status:
+                cs_text = company_status[sec_name]
+                cs_first = cs_text.splitlines()[0].strip() if cs_text.strip() else ""
+                return extract_status_summary(cs_first, row["customer_name"])
+            return status_short
+
         if section == "待撥款":
             created = row["created_at"] or ""
             created_date = created[5:10].replace("-", "/") if created else date_str
@@ -1736,9 +1751,10 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
                 amount_str = ""
             line = f"{created_date}-{row['customer_name']}{amount_str}"
         else:
+            sec_status = get_section_status(section)
             line = f"{date_str}-{row['customer_name']}-{company_str}"
-            if status_short:
-                line += f"-{status_short}"
+            if sec_status:
+                line += f"-{sec_status}"
         # 今日新進件標記
         if created[:10] == today_str:
             line = "🆕" + line
@@ -1758,9 +1774,10 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
                     continue
                 co_section = normalize_section(co)
                 if co_section != section:
+                    co_status = get_section_status(co_section)
                     co_line = f"{date_str}-{row['customer_name']}-{co}"
-                    if status_short:
-                        co_line += f"-{status_short}"
+                    if co_status:
+                        co_line += f"-{co_status}"
                     if created[:10] == today_str:
                         co_line = "🆕" + co_line
                     section_map.setdefault(co_section, []).append(co_line)
@@ -2797,6 +2814,21 @@ def _handle_a_case_block_locked(block_text, reply_token, id_no, name) -> Optiona
         conn3 = get_conn(); cur3 = conn3.cursor()
         cur3.execute("UPDATE customers SET concurrent_companies=? WHERE case_id=?", (concurrent, customer["case_id"]))
         conn3.commit(); conn3.close()
+
+    # 更新該公司的狀態（每家公司各存一份）
+    if company:
+        try:
+            cs_str = customer["company_status"] or "{}"
+            cs = json.loads(cs_str)
+        except Exception:
+            cs = {}
+        # 用 normalize_section 統一 key（亞太商品→亞太）
+        co_key = normalize_section(company)
+        cs[co_key] = block_text
+        conn4 = get_conn(); cur4 = conn4.cursor()
+        cur4.execute("UPDATE customers SET company_status=? WHERE case_id=?",
+                     (json.dumps(cs, ensure_ascii=False), customer["case_id"]))
+        conn4.commit(); conn4.close()
 
     if is_approved:
         update_customer(customer["case_id"], text=block_text,
