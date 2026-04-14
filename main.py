@@ -2075,6 +2075,11 @@ def parse_special_command(text: str, group_id: str) -> Optional[Dict]:
     if m and m.group(2).strip() != "下一家":
         return {"type": "advance", "name": m.group(1), "target": m.group(2).strip()}
 
+    # 取消核准：@AI 姓名 公司 取消核准
+    m = re.match(r"^([\u4e00-\u9fff]{2,6})\s*(.+?)\s*取消核准$", clean)
+    if m:
+        return {"type": "cancel_approval", "name": m.group(1), "company": m.group(2).strip()}
+
     # 修改核准金額：@AI 姓名 公司 核准 金額（姓名和公司之間必須有空格）
     m = re.match(r"^([\u4e00-\u9fff]{2,6})\s+(.+?)\s*核准\s*(.+)$", clean)
     if m:
@@ -2472,6 +2477,40 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
                         text=f"{name} 重啟案件",
                         from_group_id=group_id)
         reply_text(reply_token, f"✅ {name} 已重啟，恢復到日報")
+        return
+
+    if t == "cancel_approval":
+        name = cmd["name"]
+        company = cmd["company"]
+        rows = find_active_by_name(name)
+        same = [r for r in rows if r["source_group_id"] == group_id]
+        target = same[0] if same else (rows[0] if rows else None)
+        if not target:
+            reply_text(reply_token, f"❌ 找不到客戶：{name}"); return
+        # 從 route_plan history 移除該公司的核准記錄
+        route = target["route_plan"] or ""
+        data = parse_route_json(route) if route else {"order":[], "current_index":0, "history":[]}
+        history = data.get("history", [])
+        new_history = []
+        removed = False
+        for h2 in history:
+            hc = h2.get("company", "")
+            if (company in hc or hc in company) and h2.get("status") in ("核准", "待撥款", "撥款"):
+                removed = True
+                continue
+            new_history.append(h2)
+        data["history"] = new_history
+        new_route = json.dumps(data, ensure_ascii=False)
+        # 判斷是否還有其他核准 → 沒有就從待撥款區塊移除
+        still_approved = any(h2.get("status") in ("核准", "待撥款", "撥款") and h2.get("amount") for h2 in new_history)
+        new_section = "待撥款" if still_approved else ""
+        new_amount = "" if not still_approved else target["approved_amount"]
+        update_customer(target["case_id"], route_plan=new_route,
+                        approved_amount=new_amount or None,
+                        report_section=new_section,
+                        text=f"{name} {company} 取消核准", from_group_id=group_id)
+        push_text(target["source_group_id"], f"{name} {company} 取消核准")
+        reply_text(reply_token, f"✅ {name} 已取消 {company} 核准" + ("，仍有其他核准保留" if still_approved else "，已從待撥款移除"))
         return
 
     if t == "update_amount":
