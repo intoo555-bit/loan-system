@@ -1635,8 +1635,11 @@ def extract_status_summary(first_line: str, customer_name: str) -> str:
     # 去掉【N】之後的內容
     text = re.sub(r"【\d+】.*", "", text).strip()
 
+    # 去掉空括號（公司名被清掉後留下的括號）
+    text = re.sub(r"[\(（][\s]*[\)）]", "", text).strip()
+
     # 去掉多餘標點
-    text = re.sub(r"^[-－/\s]+|[-－/\s]+$", "", text).strip()
+    text = re.sub(r"^[-－/\s()（）]+|[-－/\s()（）]+$", "", text).strip()
 
     # 只取前20字
     return text[:20] if text else ""
@@ -1719,11 +1722,16 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
             company_status = {}
 
         def get_section_status(sec_name):
-            """取得該區塊對應公司的狀態"""
+            """取得該區塊對應公司的狀態（各家獨立，沒有就不顯示）"""
             if sec_name in company_status:
                 cs_text = company_status[sec_name]
                 cs_first = cs_text.splitlines()[0].strip() if cs_text.strip() else ""
                 return extract_status_summary(cs_first, row["customer_name"])
+            # 如果是同時送件的公司但還沒收到A群回貼 → 不顯示狀態
+            concurrent_list = [c.strip() for c in (row["concurrent_companies"] or "").split(",") if c.strip()]
+            is_concurrent = any(normalize_section(c) == sec_name for c in concurrent_list)
+            if is_concurrent:
+                return ""
             return status_short
 
         if section == "待撥款":
