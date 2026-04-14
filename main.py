@@ -33,6 +33,36 @@ B_GROUP_ID = "Cd14f3ee775f1d9f5cfdafb223173cbef"
 C_GROUP_ID = "C1a647fcb29a74842eceeb18e7a53823d"
 DB_PATH = os.getenv("DB_PATH", "/var/data/loan_system.db")
 
+# 申請書範本自訂上傳目錄（與 DB 同目錄，保證 Render 持久磁碟保留）
+TEMPLATES_DIR = os.path.join(os.path.dirname(DB_PATH) or ".", "templates")
+try:
+    os.makedirs(TEMPLATES_DIR, exist_ok=True)
+except Exception:
+    pass
+
+# 11 個 Excel 申請書方案（名稱, 內建範本檔名）— 與 PLAN_TEMPLATE_MAP 對齊
+APPLICATION_PLAN_LIST = [
+    ("亞太商品", "亞太商品範本.xlsx"),
+    ("亞太機車15萬", "亞太15萬機車範本.xlsx"),
+    ("亞太機車25萬", "亞太15萬機車範本.xlsx"),
+    ("亞太工會機車", "亞太工會範本.xlsx"),
+    ("和裕機車", "和裕維力貸機車範本).xlsx"),
+    ("和裕商品", "和裕維力貸商品範本.xlsx"),
+    ("第一", "第一申請書範本.xlsx"),
+    ("貸就補", "貸就補範本.xlsx"),
+    ("21機車12萬", "21機車申請書範本xlsx.xlsx"),
+    ("21機車25萬", "21機25萬範本.xlsx"),
+    ("21商品", "21商品範本.xlsx"),
+]
+
+def _plan_to_safe_key(plan_name: str) -> str:
+    """把中文方案名轉為安全檔名（防 path traversal）"""
+    return plan_name.replace("/", "_").replace("\\", "_").replace("..", "_")
+
+def get_custom_template_path(plan_name: str) -> str:
+    """回傳自訂範本絕對路徑（不檢查是否存在）"""
+    return os.path.join(TEMPLATES_DIR, f"{_plan_to_safe_key(plan_name)}.xlsx")
+
 # 日報三段結構
 REPORT_SECTION_1 = [
     "麻吉", "和潤", "中租", "裕融", "21汽車", "亞太", "創鉅", "21",
@@ -1631,7 +1661,7 @@ def extract_status_summary(first_line: str, customer_name: str) -> str:
         return "已補照會"
     if "補申覆" in first_line or "申覆" in first_line:
         return "已補申覆"
-    if any(w in first_line for w in ["補件", "補資料", "補行照", "補聯徵", "補保人", "補薪轉", "補照片", "補時段"]):
+    if any(w in first_line for w in ["補件", "補資料", "補行照", "補聯徵", "補保人", "補薪轉", "補照片", "補時段", "補JCIC", "補jcic", "補在職", "補存摺", "補勞保", "補駕照"]):
         return "已補資料"
     if "未接照會" in first_line or first_line.strip().endswith("NA") or " NA" in first_line:
         return "NA"
@@ -2847,8 +2877,8 @@ def _handle_a_case_block_locked(block_text, reply_token, id_no, name) -> Optiona
 
     company = extract_company(block_text) or customer["company"] or ""
     new_status = "CLOSED" if is_closed_text(block_text) else None
-    is_approved = "核准" in block_text and new_status != "CLOSED"
-    is_reject = not is_approved and any(w in block_text for w in ["婉拒", "申覆失敗", "建議維持原審", "不予承作", "無法再進件", "無法承作", "30日內有進件", "已建檔", "不提供申覆"])
+    is_approved = any(w in block_text for w in ["核准", "核準", "過件", "通過", "核貸"]) and new_status != "CLOSED"
+    is_reject = not is_approved and any(w in block_text for w in ["婉拒", "申覆失敗", "建議維持原審", "不予承作", "無法再進件", "無法承作", "30日內有進件", "已建檔", "不提供申覆", "退件", "撤件", "客戶撤件", "無法核貸", "無法進件"])
     route = customer["route_plan"] or ""
     new_route, next_co = route, ""
     # 檢查公司是否在同時送件清單或 route 裡
@@ -4072,6 +4102,7 @@ def make_topnav(role: str, active: str) -> str:
         admin_items = [("⚙️ 群組管理","/admin/groups","admin"),
                        ("🔑 密碼管理","/admin/passwords","passwords"),
                        ("📝 操作紀錄","/admin/logs","logs"),
+                       ("📄 申請書範本","/admin/templates","templates"),
                        ("💾 下載備份","/admin/download-db","download"),
                        ("🗑️ 清除資料","/admin/reset_data","reset")]
     nav = "".join(f'<a class="nl {"active" if a==active else ""}" href="{u}">{n}</a>'
@@ -7268,6 +7299,14 @@ def _do_download_excel(request: Request, case_id: str):
         "21汽車":   os.path.join(_base, "申請書", "21汽車申請書.txt"),
     }
 
+    # 自訂範本覆蓋：若使用者在 /admin/templates 上傳過該方案的範本，優先使用
+    for _plan_name in list(PLAN_TEMPLATE_MAP.keys()):
+        if not PLAN_TEMPLATE_MAP[_plan_name].endswith(".xlsx"):
+            continue
+        _custom = get_custom_template_path(_plan_name)
+        if os.path.isfile(_custom):
+            PLAN_TEMPLATE_MAP[_plan_name] = _custom
+
     files_to_zip = []
     name = r.get("customer_name", "")
 
@@ -8449,6 +8488,243 @@ async def download_db(request: Request):
     today = datetime.now().strftime("%Y%m%d_%H%M")
     return FileResponse(backup_path, filename=f"loan_system_{today}.db",
                         media_type="application/octet-stream")
+
+
+# =========================
+# 申請書範本管理（階段 1：上傳替換，座標不變時可用）
+# =========================
+@app.get("/admin/templates", response_class=HTMLResponse)
+def admin_templates_page(request: Request):
+    role = check_auth(request)
+    if role not in ("admin", "adminB"):
+        from fastapi.responses import RedirectResponse
+        return RedirectResponse("/login", status_code=303)
+
+    qs = str(request.url.query or "")
+    flash = ""
+    if "ok=1" in qs:
+        flash = '<div style="background:#dcfce7;color:#15803d;padding:10px 14px;border-radius:6px;font-size:13px;margin-bottom:16px;">✅ 範本已上傳並套用。下次下載申請書會使用新範本。</div>'
+    elif "reset=1" in qs:
+        flash = '<div style="background:#e0f2fe;color:#075985;padding:10px 14px;border-radius:6px;font-size:13px;margin-bottom:16px;">↩️ 已還原為系統內建範本。</div>'
+    elif "err=" in qs:
+        _em = re.search(r"err=([^&]+)", qs)
+        _msg = _em.group(1) if _em else "上傳失敗"
+        try:
+            from urllib.parse import unquote
+            _msg = unquote(_msg)
+        except Exception:
+            pass
+        flash = f'<div style="background:#fef2f2;color:#dc2626;padding:10px 14px;border-radius:6px;font-size:13px;margin-bottom:16px;">❌ {h(_msg)}</div>'
+
+    _base = os.path.dirname(os.path.abspath(__file__))
+    rows_html = []
+    # 記錄已顯示過的檔名（亞太機車15萬/25萬共用一份內建），避免重複說明
+    for plan_name, builtin_file in APPLICATION_PLAN_LIST:
+        custom_path = get_custom_template_path(plan_name)
+        has_custom = os.path.isfile(custom_path)
+        builtin_path = os.path.join(_base, "申請書", builtin_file)
+        builtin_exists = os.path.isfile(builtin_path)
+
+        if has_custom:
+            st = os.stat(custom_path)
+            status_badge = '<span style="background:#dcfce7;color:#15803d;padding:2px 10px;border-radius:10px;font-size:12px;font-weight:500;">● 自訂範本</span>'
+            size_kb = max(1, st.st_size // 1024)
+            updated = datetime.fromtimestamp(st.st_mtime).strftime("%Y-%m-%d %H:%M")
+            info = f"{size_kb} KB　·　更新於 {updated}"
+            actions = (
+                f'<a href="/admin/templates/download?plan={h(plan_name)}" '
+                f'style="color:#4e7055;margin-right:10px;font-size:13px;text-decoration:none;">📥 下載</a>'
+                f'<button onclick="upFor(\'{h(plan_name)}\')" '
+                f'style="background:#4e7055;color:#fff;border:none;padding:5px 12px;border-radius:4px;cursor:pointer;font-size:12px;margin-right:6px;">上傳新範本</button>'
+                f'<button onclick="rstFor(\'{h(plan_name)}\')" '
+                f'style="background:#fff;color:#dc2626;border:1px solid #fecaca;padding:5px 12px;border-radius:4px;cursor:pointer;font-size:12px;">還原內建</button>'
+            )
+        else:
+            status_badge = '<span style="background:#f3f4f6;color:#6b7280;padding:2px 10px;border-radius:10px;font-size:12px;">○ 內建範本</span>'
+            info = f'<span style="color:#9ca3af;">（尚未上傳自訂範本）</span>'
+            if not builtin_exists:
+                info += ' <span style="color:#dc2626;font-size:12px;">⚠ 內建檔案遺失</span>'
+            actions = (
+                f'<a href="/admin/templates/download?plan={h(plan_name)}" '
+                f'style="color:#4e7055;margin-right:10px;font-size:13px;text-decoration:none;">📥 下載內建</a>'
+                f'<button onclick="upFor(\'{h(plan_name)}\')" '
+                f'style="background:#4e7055;color:#fff;border:none;padding:5px 12px;border-radius:4px;cursor:pointer;font-size:12px;">上傳範本</button>'
+            )
+
+        rows_html.append(
+            f'<tr style="border-bottom:1px solid #f1f1f1;">'
+            f'<td style="padding:12px 14px;font-weight:500;color:#3a3530;">{h(plan_name)}</td>'
+            f'<td style="padding:12px 14px;">{status_badge}</td>'
+            f'<td style="padding:12px 14px;color:#6b7280;font-size:13px;">{info}</td>'
+            f'<td style="padding:12px 14px;text-align:right;white-space:nowrap;">{actions}</td>'
+            f'</tr>'
+        )
+
+    nav = make_topnav(role, "templates")
+    body = f"""<!DOCTYPE html><html><head>{PAGE_CSS}<title>申請書範本管理</title></head><body>
+{nav}
+<div class="container" style="max-width:1100px;margin:24px auto;padding:0 16px;">
+  <h2 style="font-size:20px;font-weight:600;margin-bottom:6px;color:#3a3530;">📄 申請書範本管理</h2>
+  <p style="color:#6b7280;font-size:13px;margin-bottom:16px;line-height:1.6;">
+    上傳自訂範本後，<b>行政B下載</b>申請書會優先使用你的版本。填入邏輯（欄位對應、下拉選單匹配、格式處理）完全不變。
+  </p>
+  {flash}
+  <div style="background:#fffbea;border:1px solid #fde68a;padding:12px 16px;border-radius:6px;font-size:13px;color:#854d0e;margin-bottom:20px;line-height:1.7;">
+    ⚠️ <b>階段 1 限制</b>：目前版本要求「儲存格座標與原範本一致」，你可以改：
+    <br>&nbsp;&nbsp;✅ 標題文字、欄寬、字型、顏色、邊框、下拉選項　　✅ 新增說明欄、Logo
+    <br>&nbsp;&nbsp;❌ 不要搬動填入欄位的座標（例如原本 E17 填行業類別，不要搬到 F20）
+    <br>若需要「欄位可搬動」的完整功能（自動掃描 + 人工標註映射 + 異動比對），請等階段 2。
+  </div>
+  <table style="width:100%;border-collapse:collapse;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,0.05);border-radius:6px;overflow:hidden;">
+    <thead><tr style="background:#f9fafb;font-size:13px;color:#374151;">
+      <th style="padding:11px 14px;text-align:left;font-weight:600;">方案</th>
+      <th style="padding:11px 14px;text-align:left;font-weight:600;">目前範本</th>
+      <th style="padding:11px 14px;text-align:left;font-weight:600;">檔案資訊</th>
+      <th style="padding:11px 14px;text-align:right;font-weight:600;">操作</th>
+    </tr></thead>
+    <tbody>{''.join(rows_html)}</tbody>
+  </table>
+  <p style="margin-top:20px;color:#9ca3af;font-size:12px;line-height:1.7;">
+    上傳限制：副檔名 .xlsx / 檔案大小 10MB 以內。<br>
+    儲存位置：{h(TEMPLATES_DIR)}（與資料庫同目錄，部署重啟後仍保留）
+  </p>
+</div>
+
+<form id="upForm" method="post" action="/admin/templates/upload" enctype="multipart/form-data" style="display:none;">
+  <input type="hidden" name="plan" id="upPlan">
+  <input type="file" name="file" id="upFile" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
+</form>
+<form id="rstForm" method="post" action="/admin/templates/reset" style="display:none;">
+  <input type="hidden" name="plan" id="rstPlan">
+</form>
+<script>
+function upFor(plan) {{
+  document.getElementById('upPlan').value = plan;
+  var fi = document.getElementById('upFile');
+  fi.value = '';
+  fi.onchange = function() {{
+    if (!fi.files.length) return;
+    var f = fi.files[0];
+    var nm = f.name.toLowerCase();
+    if (!nm.endsWith('.xlsx')) {{ alert('只接受 .xlsx 檔案'); return; }}
+    if (f.size > 10 * 1024 * 1024) {{ alert('檔案超過 10MB 限制'); return; }}
+    if (confirm('確定把「' + plan + '」的範本替換為「' + f.name + '」嗎？\\n\\n覆蓋後，原本的自訂範本會被取代。')) {{
+      document.getElementById('upForm').submit();
+    }}
+  }};
+  fi.click();
+}}
+function rstFor(plan) {{
+  if (!confirm('確定要還原「' + plan + '」為系統內建範本嗎？\\n\\n你上傳的自訂檔案會被刪除。')) return;
+  document.getElementById('rstPlan').value = plan;
+  document.getElementById('rstForm').submit();
+}}
+</script>
+</body></html>"""
+    return HTMLResponse(body)
+
+
+@app.post("/admin/templates/upload")
+async def admin_templates_upload(request: Request):
+    role = check_auth(request)
+    if role not in ("admin", "adminB"):
+        return JSONResponse({"error": "無權限"}, status_code=403)
+
+    from fastapi.responses import RedirectResponse
+    from urllib.parse import quote
+
+    valid_plans = {p for p, _ in APPLICATION_PLAN_LIST}
+    try:
+        form = await request.form()
+    except Exception as e:
+        return RedirectResponse(f"/admin/templates?err={quote('表單解析失敗：' + str(e))}", status_code=303)
+
+    plan_name = (form.get("plan") or "").strip()
+    uploaded = form.get("file")
+
+    if plan_name not in valid_plans:
+        return RedirectResponse(f"/admin/templates?err={quote('方案名稱無效')}", status_code=303)
+
+    if not uploaded or not hasattr(uploaded, "filename") or not uploaded.filename:
+        return RedirectResponse(f"/admin/templates?err={quote('未選擇檔案')}", status_code=303)
+
+    if not uploaded.filename.lower().endswith(".xlsx"):
+        return RedirectResponse(f"/admin/templates?err={quote('僅接受 .xlsx 檔案')}", status_code=303)
+
+    content = await uploaded.read()
+    if len(content) > 10 * 1024 * 1024:
+        return RedirectResponse(f"/admin/templates?err={quote('檔案超過 10MB 限制')}", status_code=303)
+    if len(content) < 200:
+        return RedirectResponse(f"/admin/templates?err={quote('檔案太小，疑似不是合法 xlsx')}", status_code=303)
+
+    # 驗證 xlsx 合法性：必須是 zip 且含 xl/workbook.xml
+    import zipfile as _zf
+    try:
+        zf = _zf.ZipFile(io.BytesIO(content))
+        names = zf.namelist()
+        if "xl/workbook.xml" not in names:
+            return RedirectResponse(f"/admin/templates?err={quote('檔案不是合法 xlsx（缺 xl/workbook.xml）')}", status_code=303)
+    except Exception as e:
+        return RedirectResponse(f"/admin/templates?err={quote('檔案解析失敗：' + str(e))}", status_code=303)
+
+    target_path = get_custom_template_path(plan_name)
+    try:
+        os.makedirs(TEMPLATES_DIR, exist_ok=True)
+        with open(target_path, "wb") as f:
+            f.write(content)
+    except Exception as e:
+        return RedirectResponse(f"/admin/templates?err={quote('寫入失敗：' + str(e))}", status_code=303)
+
+    return RedirectResponse("/admin/templates?ok=1", status_code=303)
+
+
+@app.post("/admin/templates/reset")
+async def admin_templates_reset(request: Request):
+    role = check_auth(request)
+    if role not in ("admin", "adminB"):
+        return JSONResponse({"error": "無權限"}, status_code=403)
+
+    from fastapi.responses import RedirectResponse
+    from urllib.parse import quote
+
+    valid_plans = {p for p, _ in APPLICATION_PLAN_LIST}
+    form = await request.form()
+    plan_name = (form.get("plan") or "").strip()
+    if plan_name not in valid_plans:
+        return RedirectResponse(f"/admin/templates?err={quote('方案名稱無效')}", status_code=303)
+
+    target_path = get_custom_template_path(plan_name)
+    if os.path.isfile(target_path):
+        try:
+            os.remove(target_path)
+        except Exception as e:
+            return RedirectResponse(f"/admin/templates?err={quote('刪除失敗：' + str(e))}", status_code=303)
+
+    return RedirectResponse("/admin/templates?reset=1", status_code=303)
+
+
+@app.get("/admin/templates/download")
+def admin_templates_download(request: Request, plan: str = ""):
+    role = check_auth(request)
+    if role not in ("admin", "adminB"):
+        from fastapi.responses import RedirectResponse
+        return RedirectResponse("/login", status_code=303)
+
+    valid_plans = {p: f for p, f in APPLICATION_PLAN_LIST}
+    if plan not in valid_plans:
+        return JSONResponse({"error": "方案名稱無效"}, status_code=400)
+
+    custom_path = get_custom_template_path(plan)
+    xlsx_mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    if os.path.isfile(custom_path):
+        return FileResponse(custom_path, filename=f"{plan}.xlsx", media_type=xlsx_mime)
+
+    # fallback：回傳內建範本
+    _base = os.path.dirname(os.path.abspath(__file__))
+    builtin_path = os.path.join(_base, "申請書", valid_plans[plan])
+    if os.path.isfile(builtin_path):
+        return FileResponse(builtin_path, filename=f"{plan}_內建.xlsx", media_type=xlsx_mime)
+    return JSONResponse({"error": "範本不存在"}, status_code=404)
 
 
 # ── PDF export JS（必須在 init_db 之前定義，因為 /new-customer 頁面需要引用）──
