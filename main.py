@@ -2819,7 +2819,7 @@ def _handle_a_case_block_locked(block_text, reply_token, id_no, name) -> Optiona
     current_co = customer["current_company"] or customer["company"] or ""
     is_in_route = any(company and (company in rc or rc in company) for rc in route_companies)
     is_current = company and (company in current_co or current_co in company)
-    # 如果公司不在路線、不是 current、不在同送清單 → 跳按鈕詢問（不管什麼狀態）
+    # 如果公司不在路線、不是 current、不在同送清單 → 跳按鈕詢問
     if company and not is_in_concurrent and not is_in_route and not is_current:
         action_id = short_id()
         save_pending_action(action_id, "unknown_company", {
@@ -3082,9 +3082,16 @@ def handle_command_text(text: str, reply_token: str) -> bool:
         msg = f"✅ 已結案並回貼到{gname}：{c['customer_name']}" if new_status == "CLOSED" else f"✅ 已回貼到{gname}：{c['customer_name']}"
         reply_text(reply_token, msg); delete_pending_action(action_id); return True
 
-    if text.startswith("UNKNOWN_CO_REROUTE|") or text.startswith("UNKNOWN_CO_CONCURRENT|") or text.startswith("UNKNOWN_CO_CANCEL|"):
-        parts = text.split("|", 1)
-        action_id = parts[1]
+    # 先處理二次確認（CONFIRM_UNKNOWN_CO_XXX|）
+    is_confirm = text.startswith("CONFIRM_UNKNOWN_CO_")
+    is_first = (text.startswith("UNKNOWN_CO_REROUTE|") or text.startswith("UNKNOWN_CO_CONCURRENT|") or text.startswith("UNKNOWN_CO_CANCEL|"))
+    if is_first or is_confirm:
+        if is_first:
+            action_type = text.split("|")[0].replace("UNKNOWN_CO_", "")  # REROUTE/CONCURRENT/CANCEL
+            action_id = text.split("|", 1)[1]
+        else:
+            action_type = text.split("|")[0].replace("CONFIRM_UNKNOWN_CO_", "")
+            action_id = text.split("|", 1)[1]
         a = get_action(action_id, "unknown_company")
         if not a: return True
         p = a["payload"]
@@ -3092,7 +3099,17 @@ def handle_command_text(text: str, reply_token: str) -> bool:
         company = p.get("company", "")
         block_text = p.get("block_text", "")
         name = p.get("name", "")
-        if text.startswith("UNKNOWN_CO_CANCEL|"):
+        # 第一次點 → 顯示二次確認
+        if is_first and action_type != "CANCEL":
+            act_label = "再送" if action_type == "REROUTE" else "同送"
+            items = [
+                make_quick_reply_item(f"✅ 確定{act_label}{company}", f"CONFIRM_UNKNOWN_CO_{action_type}|{action_id}"),
+                make_quick_reply_item("↩️ 返回", f"UNKNOWN_CO_CANCEL|{action_id}"),
+            ]
+            reply_quick_reply(reply_token, f"⚠️ 確認要將 {company} {act_label}給 {name} 嗎？", items)
+            return True
+        # 取消或二次確認 → 執行
+        if action_type == "CANCEL":
             reply_text(reply_token, f"已取消：{name} 的 {company} 訊息不處理")
             delete_pending_action(action_id)
             return True
@@ -3101,8 +3118,7 @@ def handle_command_text(text: str, reply_token: str) -> bool:
         cust = cur.fetchone(); conn.close()
         if not cust:
             reply_text(reply_token, "⚠️ 客戶已不存在"); delete_pending_action(action_id); return True
-        if text.startswith("UNKNOWN_CO_REROUTE|"):
-            # 再送：加到 route 並設為當前公司
+        if action_type == "REROUTE":
             route = cust["route_plan"] or ""
             data = parse_route_json(route) if route else {"order":[], "current_index":0, "history":[]}
             order = data.get("order", [])
