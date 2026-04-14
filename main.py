@@ -4182,12 +4182,12 @@ def render_customer_row(row, role="") -> str:
         + '</div>'
     )
 
-def render_section_block(label, rows, color_bg, color_text, icon) -> str:
+def render_section_block(label, rows, color_bg, color_text, icon, gid_prefix="") -> str:
     """產生可收合的狀態區塊"""
     if not rows:
         return ""
     count = len(rows)
-    sec_id = label.replace(" ","_").replace("/","_")
+    sec_id = (gid_prefix + "_" if gid_prefix else "") + label.replace(" ","_").replace("/","_")
     rows_html = "".join(render_customer_row(r) for r in rows)
     onclick_js = "togS('" + h(sec_id) + "')"
     return (
@@ -4461,15 +4461,15 @@ def report_web(request: Request):
         if cats["paid_unverified"]: pills += f'<span class="gm-pill" style="background:#fef2f2;color:#991b1b">未對保 {len(cats["paid_unverified"])}</span>'
         if cats["paid_verified"]: pills += f'<span class="gm-pill" style="background:#dcfce7;color:#166534">已對保 {len(cats["paid_verified"])}</span>'
 
-        # 各狀態區塊
+        # 各狀態區塊（用 gid 當 prefix，避免多群組 ID 衝突）
         secs_html = ""
-        secs_html += render_section_block("新客戶－需排送件順序", cats["new"], "#e0f2fe", "#0369a1", "🆕")
-        secs_html += render_section_block("補件中", cats["supplement"], "#fef9c3", "#854d0e", "📋")
-        secs_html += render_section_block("送件中", cats["active"], "#f0fdf4", "#166534", "📤")
-        secs_html += render_section_block("待撥款－未對保", cats["paid_unverified"], "#fef2f2", "#991b1b", "💰")
-        secs_html += render_section_block("待撥款－已對保", cats["paid_verified"], "#dcfce7", "#166534", "✅")
+        secs_html += render_section_block("新客戶－需排送件順序", cats["new"], "#e0f2fe", "#0369a1", "🆕", gid)
+        secs_html += render_section_block("補件中", cats["supplement"], "#fef9c3", "#854d0e", "📋", gid)
+        secs_html += render_section_block("送件中", cats["active"], "#f0fdf4", "#166534", "📤", gid)
+        secs_html += render_section_block("待撥款－未對保", cats["paid_unverified"], "#fef2f2", "#991b1b", "💰", gid)
+        secs_html += render_section_block("待撥款－已對保", cats["paid_verified"], "#dcfce7", "#166534", "✅", gid)
         if closed_rows:
-            secs_html += render_section_block("本月結案", closed_rows, "#f8fafc", "#64748b", "📁")
+            secs_html += render_section_block("本月結案", closed_rows, "#f8fafc", "#64748b", "📁", gid)
         if not secs_html:
             secs_html = '<div class="empty-sec">（目前無有效案件）</div>'
 
