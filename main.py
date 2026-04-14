@@ -4346,12 +4346,12 @@ async def report_update_progress(request: Request):
     data = await request.json()
     case_id = data.get("case_id", "")
     progress = data.get("progress", "").strip()
-    if not case_id or not progress:
+    if not case_id:
         return JSONResponse({"ok": False, "message": "資料不完整"})
     conn = get_conn(); cur = conn.cursor()
     cur.execute("UPDATE customers SET last_update=?, updated_at=? WHERE case_id=?", (progress, now_iso(), case_id))
     conn.commit(); conn.close()
-    return JSONResponse({"ok": True, "message": "進度已更新"})
+    return JSONResponse({"ok": True, "message": "進度已更新" if progress else "進度已清空"})
 
 
 @app.post("/report/batch-close")
@@ -4550,8 +4550,10 @@ def report_web(request: Request):
     }}
     function saveProgress(cid){{
       const el=document.getElementById('prog-'+cid);
-      if(!el||!el.value.trim()){{alert('請輸入進度');return;}}
-      fetch('/report/update-progress',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{case_id:cid,progress:el.value.trim()}})}})
+      if(!el)return;
+      const val=el.value.trim();
+      if(!val && !confirm('確定要清空進度嗎？'))return;
+      fetch('/report/update-progress',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{case_id:cid,progress:val}})}})
       .then(r=>r.json()).then(d=>{{alert(d.message);if(d.ok)location.reload();}});
     }}
     function batchClose(){{
