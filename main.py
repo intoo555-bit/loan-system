@@ -351,6 +351,9 @@ def compute_field_value(field_key: str, r: dict, plan_name: str = "",
     if field_key == "live_full_address":
         if v("live_same_as_reg") == "1":
             return (v("reg_city") + v("reg_district") + v("reg_address")).strip()
+        # 縣市+區相同 → 當成同戶籍，用戶籍地
+        if v("live_city") and v("live_city") == v("reg_city") and v("live_district") == v("reg_district"):
+            return (v("reg_city") + v("reg_district") + v("reg_address")).strip()
         return (v("live_city") + v("live_district") + v("live_address")).strip()
     if field_key == "company_full_address":
         return (v("company_city") + v("company_district") + v("company_address")).strip()
