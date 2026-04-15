@@ -2310,8 +2310,15 @@ def extract_status_summary(first_line: str, customer_name: str) -> str:
     # 優先用標準化標籤
     if "核准" in first_line or "核準" in first_line:
         return "核准"
-    if "補照會" in first_line or "照會" in first_line:
-        return "已補照會"
+    if "補照會" in first_line:
+        # 如果有時段（時間字或數字:數字）→ 顯示時段
+        import re as _re
+        tm = _re.search(r"(\d{1,2}[:：點]\d{0,2}(?:[-~至到]\d{1,2}[:：點]?\d{0,2})?)", first_line)
+        if tm:
+            return f"補照會{tm.group(1)}"
+        return "待補照會"
+    if "照會" in first_line:
+        return "已送件"
     if "補申覆" in first_line or "申覆" in first_line:
         return "已補申覆"
     if any(w in first_line for w in ["補件", "補資料", "補行照", "補聯徵", "補保人", "補薪轉", "補照片", "補時段", "補JCIC", "補jcic", "補在職", "補存摺", "補勞保", "補駕照"]):
@@ -6890,6 +6897,17 @@ function doSubmit(){
   var ls2=qq('[name="lstatus"]');
   if(!ly)e.push('居住年數不可空白');
   if(!ls2)e.push('居住狀況不可空白');
+  // 居住年數 vs 年齡
+  var birthStr=qq('[name="birth"]').trim();
+  if(ly&&birthStr){
+    var bm=birthStr.match(/^(\d{2,4})\/(\d{1,2})\/(\d{1,2})$/);
+    if(bm){
+      var by=parseInt(bm[1]);
+      if(by<200)by+=1911;
+      var age=(new Date()).getFullYear()-by;
+      if(age>0&&parseInt(ly)>age)e.push('居住年數('+ly+')不能大於年齡('+age+')');
+    }
+  }
   if(!cn)e.push('公司名稱不可空白');
   var isPackWork=cn&&(cn.indexOf('包工作')>=0||cn==='包工');
   if(!isPackWork){
@@ -6986,8 +7004,25 @@ async def new_customer_post(request: Request):
     if not line_id: errs.append("LINE ID為必填")
     if not raddr: errs.append("戶籍地址不可空白")
     if not live_same and not laddr: errs.append("居住地址不可空白（或勾選同戶籍）")
-    if not f.get("lyear","").strip(): errs.append("居住年數不可空白")
+    lyear_str = f.get("lyear","").strip()
+    if not lyear_str: errs.append("居住年數不可空白")
     if not f.get("lstatus","").strip(): errs.append("居住狀況不可空白")
+    # 居住年數 vs 年齡檢查
+    if lyear_str and f.get("birth","").strip():
+        try:
+            ly = int(float(lyear_str))
+            birth = f.get("birth","").strip()
+            bm = _re.match(r"^(\d{2,4})/(\d{1,2})/(\d{1,2})$", birth)
+            if bm:
+                by = int(bm.group(1))
+                if by < 200:  # 民國年
+                    by += 1911
+                from datetime import datetime as _dt
+                age = _dt.now().year - by
+                if age > 0 and ly > age:
+                    errs.append(f"居住年數({ly})不能大於年齡({age})")
+        except Exception:
+            pass
     if not cmpname: errs.append("公司名稱不可空白")
     is_pack_work = cmpname and ("包工作" in cmpname or cmpname == "包工")
     if not is_pack_work:
