@@ -628,7 +628,22 @@ def _strip_sheet_colors(xlsx_bytes: bytes, target_sheet_name: str) -> bytes:
 
     xf_blocks = _re.findall(r'<xf\s[^/]*(?:/>|>(?:[^<]|<(?!/xf>))*</xf>)', xfs_body, _re.DOTALL)
 
-    # 對該 sheet 內所有 cell 的 s="X"，建立 X -> 新 index 映射（fillId=0 版本）
+    # 找出哪些 fontId 的字體有非預設色（紅、藍等），等下要把它們也標準化
+    fonts_m = _re.search(r'<fonts[^>]*>(.*?)</fonts>', styles_xml, _re.DOTALL)
+    colored_fonts = set()
+    if fonts_m:
+        font_blocks = _re.findall(r'<font>(.*?)</font>', fonts_m.group(1), _re.DOTALL)
+        for fi, fb in enumerate(font_blocks):
+            cm = _re.search(r'<color\s+rgb="([^"]+)"', fb)
+            if cm:
+                rgb = cm.group(1).upper()
+                # 任何指定 RGB（非 theme/auto）都視為「有顏色」，包括 FF000000 黑色
+                # 但黑色 (FF000000 / 000000) 不算干擾
+                if rgb not in ("FF000000", "000000"):
+                    colored_fonts.add(fi)
+
+    # 對該 sheet 內所有 cell 的 s="X"，建立 X -> 新 index 映射
+    # 兩個目標：(1) fillId=0  (2) fontId 非彩色字體
     s_old_to_new = {}
     new_xfs = []
     for s_match in _re.finditer(r'<c\s+r="[A-Z]+\d+"\s+s="(\d+)"', sheet_xml):
@@ -637,9 +652,19 @@ def _strip_sheet_colors(xlsx_bytes: bytes, target_sheet_name: str) -> bytes:
             continue
         old_xf = xf_blocks[old_s]
         fill_m = _re.search(r'fillId="(\d+)"', old_xf)
+        font_m = _re.search(r'fontId="(\d+)"', old_xf)
+        need_new = False
+        new_xf = old_xf
         if fill_m and fill_m.group(1) != '0':
-            new_xf = _re.sub(r'fillId="\d+"', 'fillId="0"', old_xf)
+            new_xf = _re.sub(r'fillId="\d+"', 'fillId="0"', new_xf)
             new_xf = _re.sub(r'\s+applyFill="1"', '', new_xf)
+            need_new = True
+        if font_m and int(font_m.group(1)) in colored_fonts:
+            # 把 fontId 改成 0（預設黑字）
+            new_xf = _re.sub(r'fontId="\d+"', 'fontId="0"', new_xf)
+            new_xf = _re.sub(r'\s+applyFont="1"', '', new_xf)
+            need_new = True
+        if need_new:
             new_idx = len(xf_blocks) + len(new_xfs)
             new_xfs.append(new_xf)
             s_old_to_new[old_s] = new_idx
@@ -1231,6 +1256,8 @@ def extract_id_no(text: str) -> str:
 def extract_company(text: str) -> str:
     if not text:
         return ""
+    # 先把身分證/居留證號碼移除（避免 U121558670 的 21 被抓成公司）
+    text = re.sub(r"[A-Z][A-Z0-9]\d{8}", "", text, flags=re.IGNORECASE)
     # 只看狀態關鍵字之前的部分（狀態後面都是備註原因，不抓）
     search_text = text
     for kw in ["核准", "核準", "婉拒", "申覆失敗", "補件", "待核准", "照會", "撥款"]:
@@ -3395,7 +3422,9 @@ def is_single_approval_line(line: str) -> bool:
 def handle_new_case_block(block_text, source_group_id, reply_token) -> Optional[str]:
     f = parse_header_fields(block_text)
     first_line = extract_first_line(block_text)
-    name, id_no, company = f.get("name", ""), f.get("id_no", ""), extract_company(first_line)
+    # 抓公司前先把身分證移除，避免 U121558670 的「21」被當成公司
+    first_line_no_id = re.sub(r"[A-Z][A-Z0-9]\d{8}", "", first_line, flags=re.IGNORECASE)
+    name, id_no, company = f.get("name", ""), f.get("id_no", ""), extract_company(first_line_no_id)
     if not name or not id_no:
         return None
     existing = find_active_by_id_no(id_no)
