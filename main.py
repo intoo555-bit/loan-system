@@ -1551,6 +1551,46 @@ def extract_name(text: str) -> str:
     return name if name and name not in IGNORE_NAME_SET else ""
 
 
+# ===== 聯絡人姓氏驗證 =====
+STRICT_SAME_SURNAME_KW = ["父","爸","哥","弟","姊","姐","妹","兒子","女兒","祖父","爺爺"]
+ALLOW_DIFF_SURNAME_KW = ["母","媽","配偶","夫","妻","老公","老婆","太太","先生",
+                         "外公","外婆","祖母","奶奶","公公","婆婆","岳父","岳母",
+                         "媳","婿","姻","朋友","同事","同學","叔嬸","姑丈","舅媽","姨丈"]
+COMPOUND_SURNAMES = {"歐陽","司馬","諸葛","上官","公孫","夏侯","皇甫","尉遲","令狐","東方","西門","慕容"}
+
+def get_surname(full_name: str) -> str:
+    if not full_name:
+        return ""
+    s = str(full_name).strip()
+    if len(s) >= 2 and s[:2] in COMPOUND_SURNAMES:
+        return s[:2]
+    return s[:1] if s else ""
+
+def check_surname_mismatch(applicant_name: str, contact_name: str, relation: str):
+    """檢查聯絡人姓氏與申請人是否一致
+    回傳 (level, msg)：
+      level = 'block'（關係屬必同姓但姓氏不同）
+            = 'warn' （關係分類不明且姓氏不同）
+            = None   （正常或無法判斷）
+    """
+    a = get_surname(applicant_name)
+    c = get_surname(contact_name)
+    if not a or not c or a == c:
+        return (None, "")
+    rel = relation or ""
+    for kw in ALLOW_DIFF_SURNAME_KW:
+        if kw in rel:
+            return (None, "")
+    for kw in STRICT_SAME_SURNAME_KW:
+        if kw in rel:
+            return ("block",
+                    f"聯絡人「{contact_name}」（{c}姓）與申請人「{applicant_name}」（{a}姓）"
+                    f"姓氏不同，但關係為「{rel}」通常應同姓，請確認是否填寫錯誤")
+    return ("warn",
+            f"聯絡人「{contact_name}」（{c}姓）與申請人「{applicant_name}」（{a}姓）"
+            f"姓氏不同，關係「{rel or '未填'}」分類不明，請確認")
+
+
 def looks_like_new_case_block(block: str) -> bool:
     f = parse_header_fields(block)
     return bool(f.get("date") and f.get("name") and f.get("id_no"))
@@ -5513,10 +5553,17 @@ def apply_adminb_rules(row: dict) -> dict:
         result["live_status_val"] = "親屬"
         result["live_status_adj"] = True
     elif any(k in ls for k in own_kw):
-        result["live_status_display"] = f"填入：{ls}"
-        result["live_status_val"] = ls
-        result["live_status_adj"] = False
-        warnings.append("⚠️ 居住狀況「自有」請確認無私設！")
+        alert_v = str(row.get("eval_alert","") or "")
+        if "有" in alert_v and "無" not in alert_v:
+            result["live_status_display"] = f"填入：{ls}（有私設 → 申請書請填「父母名下」）"
+            result["live_status_val"] = "父母"
+            result["live_status_adj"] = True
+            warnings.append("⚠️ 居住狀況「自有」且有私設 → 申請書「居住狀況」欄位請填「父母名下」")
+        else:
+            result["live_status_display"] = f"填入：{ls}"
+            result["live_status_val"] = ls
+            result["live_status_adj"] = False
+            warnings.append("⚠️ 居住狀況「自有」請確認無私設！")
     else:
         result["live_status_display"] = f"填入：{ls}"
         result["live_status_val"] = ls
@@ -6153,6 +6200,23 @@ renderDebts();
 document.querySelector('form').addEventListener('submit',function(){
   document.getElementById('debt_json_input').value=JSON.stringify(debts);
 });
+function updatePrivateSetHintEp(){
+  var ls=(document.querySelector('[name="lstatus"]')||{value:''}).value;
+  var ea=(document.querySelector('[name="eprivate"]')||{value:''}).value;
+  var sel=document.querySelector('[name="lstatus"]');
+  if(!sel)return;
+  var hint=document.getElementById('ps-hint-ep');
+  if(ls==='自有'&&ea==='有'){
+    if(!hint){
+      hint=document.createElement('div');hint.id='ps-hint-ep';
+      hint.style.cssText='margin-top:6px;padding:6px 10px;background:#fef3c7;border:1px solid #fcd34d;border-radius:5px;font-size:12px;color:#854d0e;font-weight:600;';
+      hint.textContent='⚠️ 有私設 → 行政B 申請書「居住狀況」請填「父母名下」';
+      sel.parentNode.appendChild(hint);
+    }
+  }else if(hint){hint.remove();}
+}
+document.addEventListener('change',updatePrivateSetHintEp);
+updatePrivateSetHintEp();
 </script>
 </div></body></html>"""
 
@@ -6166,6 +6230,30 @@ async def edit_pending_post(request: Request):
     f = dict(form)
     case_id = f.get("case_id","")
     if not case_id: return RedirectResponse("/pending-customers")
+    # 未婚+配偶聯絡人 驗證
+    edit_errs = []
+    _marry_e = f.get("marry","").strip()
+    _SPOUSE_KW = ["老公","老婆","配偶","太太","先生","丈夫","妻子","夫","妻"]
+    if _marry_e=="未婚":
+        for _lbl, _k in [("聯絡人1","c1rel"),("聯絡人2","c2rel")]:
+            _r = f.get(_k,"")
+            if any(kw in _r for kw in _SPOUSE_KW):
+                edit_errs.append(f"婚姻為「未婚」但{_lbl}關係含「{_r}」，請確認")
+    if edit_errs:
+        err_html = "<ul>" + "".join(f"<li>{h(e)}</li>" for e in edit_errs) + "</ul>"
+        return HTMLResponse(f"""<!DOCTYPE html><html><head><meta charset="UTF-8"><style>body{{font-family:'Microsoft JhengHei',sans-serif;background:#ece8e2;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;}}.box{{background:#faf7f4;border:1px solid #ddd5ca;border-radius:12px;padding:32px;max-width:520px;}}.title{{font-size:18px;font-weight:700;color:#991b1b;margin-bottom:12px;}}.btn{{background:#6a5e4e;color:#fff;border:none;padding:10px 24px;border-radius:8px;font-size:14px;cursor:pointer;text-decoration:none;display:inline-block;margin-top:16px;}}</style></head><body><div class="box"><div class="title">⚠️ 請修正以下欄位</div>{err_html}<a href="javascript:history.back()" class="btn">← 返回修正</a></div></body></html>""", status_code=400)
+    # 聯絡人姓氏驗證
+    if f.get("confirm_surname") != "1":
+        surname_issues = []
+        ap_name = f.get("cname","").strip()
+        for label, cname_key, crel_key in [("聯絡人1","c1name","c1rel"), ("聯絡人2","c2name","c2rel")]:
+            lv, msg = check_surname_mismatch(ap_name, f.get(cname_key,"").strip(), f.get(crel_key,"").strip())
+            if lv == "block":
+                surname_issues.append(f"{label}：{msg}")
+        if surname_issues:
+            issues_html = "".join(f"<li>{h(m)}</li>" for m in surname_issues)
+            form_data_json = json.dumps(f, ensure_ascii=False).replace("</","<\\/")
+            return HTMLResponse(f"""<!DOCTYPE html><html><head><meta charset="UTF-8"><style>body{{font-family:'Microsoft JhengHei',sans-serif;background:#ece8e2;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;padding:20px;}}.box{{background:#faf7f4;border:1px solid #ddd5ca;border-radius:12px;padding:32px;max-width:560px;}}.title{{font-size:18px;font-weight:700;color:#991b1b;margin-bottom:12px;}}.msg{{font-size:14px;color:#4a3e30;line-height:1.8;margin-bottom:16px;}}ul{{margin:12px 0 16px 20px;color:#b84a35;}}.btn{{background:#6a5e4e;color:#fff;border:none;padding:10px 24px;border-radius:8px;font-size:14px;cursor:pointer;text-decoration:none;display:inline-block;margin:4px;}}.btn2{{background:#e8e2da;color:#4a3e30;border:1px solid #ddd5ca;padding:10px 24px;border-radius:8px;font-size:14px;cursor:pointer;text-decoration:none;display:inline-block;margin:4px;}}</style></head><body><div class="box"><div class="title">⚠️ 聯絡人姓氏確認</div><div class="msg">請確認以下聯絡人資料是否正確：</div><ul>{issues_html}</ul><div class="msg">若資料無誤（如繼父母/抱養/改姓等），請按「確認無誤送出」；若要修正請返回。</div><form method="post" action="/edit-pending" style="display:inline" id="cform"></form><button class="btn" onclick="submitConfirm()">確認無誤送出</button><a href="javascript:history.back()" class="btn2">← 返回修正</a><script>var fd={form_data_json};function submitConfirm(){{var f=document.getElementById('cform');Object.keys(fd).forEach(function(k){{var i=document.createElement('input');i.type='hidden';i.name=k;i.value=fd[k];f.appendChild(i);}});var cf=document.createElement('input');cf.type='hidden';cf.name='confirm_surname';cf.value='1';f.appendChild(cf);f.submit();}}</script></div></body></html>""", status_code=400)
     live_same = "1" if f.get("sameck") else "0"
     now = now_iso()
     conn = get_conn(); cur = conn.cursor()
@@ -6902,6 +6990,14 @@ function doSubmit(){
   if(!ls2)e.push('居住狀況不可空白');
   // 居住年數 vs 年齡
   var birthStr=qq('[name="birth"]').trim();
+  // 未婚 vs 聯絡人關係含配偶字眼
+  var marry=qq('[name="marry"]');
+  var SPOUSE_KW=['老公','老婆','配偶','太太','先生','丈夫','妻子','夫','妻'];
+  var r1s=qq('[name="c1rel"]').trim();
+  var r2s=qq('[name="c2rel"]').trim();
+  function hasSpouseKw(r){if(!r)return false;for(var i=0;i<SPOUSE_KW.length;i++){if(r.indexOf(SPOUSE_KW[i])>=0)return true;}return false;}
+  if(marry==='未婚'&&hasSpouseKw(r1s))e.push('婚姻為「未婚」但聯絡人1關係含「'+r1s+'」，請確認婚姻狀態或聯絡人關係');
+  if(marry==='未婚'&&hasSpouseKw(r2s))e.push('婚姻為「未婚」但聯絡人2關係含「'+r2s+'」，請確認婚姻狀態或聯絡人關係');
   if(ly&&birthStr){
     var bm=birthStr.match(/^(\d{2,4})\/(\d{1,2})\/(\d{1,2})$/);
     if(bm){
@@ -6935,6 +7031,16 @@ function doSubmit(){
   if(ls==='自有')w.push('居住「自有」請確認無私設');
   var lc=sa?rc:qq('[name="lcity"]');
   if(lc&&cc&&lc!==cc)w.push('居住('+lc+')與公司('+cc+')不同縣市，請確認距離合理');
+  // 聯絡人姓氏檢查
+  var COMPOUND=['歐陽','司馬','諸葛','上官','公孫','夏侯','皇甫','尉遲','令狐','東方','西門','慕容'];
+  var STRICT=['父','爸','哥','弟','姊','姐','妹','兒子','女兒','祖父','爺爺'];
+  var ALLOW=['母','媽','配偶','夫','妻','老公','老婆','太太','先生','外公','外婆','祖母','奶奶','公公','婆婆','岳父','岳母','媳','婿','姻','朋友','同事','同學','叔嬸','姑丈','舅媽','姨丈'];
+  function gSur(s){if(!s)return'';s=s.trim();if(s.length>=2&&COMPOUND.indexOf(s.substr(0,2))>=0)return s.substr(0,2);return s.substr(0,1);}
+  function chkSur(an,cn,r){var a=gSur(an),c=gSur(cn);if(!a||!c||a===c)return null;r=r||'';for(var i=0;i<ALLOW.length;i++){if(r.indexOf(ALLOW[i])>=0)return null;}for(var j=0;j<STRICT.length;j++){if(r.indexOf(STRICT[j])>=0)return{lvl:'block',msg:'聯絡人「'+cn+'」('+c+'姓) 與申請人「'+an+'」('+a+'姓) 姓氏不同，但關係「'+r+'」通常應同姓'};}return{lvl:'warn',msg:'聯絡人「'+cn+'」('+c+'姓) 與申請人「'+an+'」('+a+'姓) 姓氏不同，關係「'+(r||'未填')+'」分類不明'};}
+  var r1=qq('[name="c1rel"]').trim(),r2=qq('[name="c2rel"]').trim();
+  var s1=chkSur(n,n1,r1),s2=chkSur(n,n2,r2);
+  if(s1)w.push('聯絡人1：'+s1.msg);
+  if(s2)w.push('聯絡人2：'+s2.msg);
   w.push('請逐字確認所有欄位填寫正確');
   var b2=document.getElementById('err-box');
   b2.innerHTML='<div style="color:#854d0e;font-weight:700;margin-bottom:8px;">人工確認事項：</div>'+w.map(function(x){return '<div style="color:#854d0e;padding:2px 0;">'+x+'</div>';}).join('')+'<div style="margin-top:10px;"><button onclick="doConfirmSubmit()" style="background:#6a5e4e;color:#fff;border:none;padding:8px 18px;border-radius:6px;cursor:pointer;">確認無誤，送出</button></div>';
@@ -6963,10 +7069,25 @@ function collectDebt(){
   if(!h){h=document.createElement('input');h.type='hidden';h.name='debt_list';h.id='debt_list_input';document.getElementById('cf').appendChild(h);}
   h.value=JSON.stringify(rows);
 }
-function doConfirmSubmit(){collectDebt();localStorage.removeItem('nc_draft');document.forms[0].submit();}
+function doConfirmSubmit(){collectDebt();var f=document.forms[0];if(!f.querySelector('[name="confirm_surname"]')){var cf=document.createElement('input');cf.type='hidden';cf.name='confirm_surname';cf.value='1';f.appendChild(cf);}localStorage.removeItem('nc_draft');f.submit();}
 function saveForm(){var data={};document.querySelectorAll('#cf input,#cf select,#cf textarea').forEach(function(el){if(!el.name)return;if(el.type==='checkbox')data[el.name]=el.checked;else data[el.name]=el.value;});localStorage.setItem('nc_draft',JSON.stringify(data));}
 function restoreForm(){var raw=localStorage.getItem('nc_draft');if(!raw)return;var data=JSON.parse(raw);Object.keys(data).forEach(function(k){var el=document.querySelector('#cf [name="'+k+'"]');if(!el)return;if(el.type==='checkbox')el.checked=data[k];else el.value=data[k];});var ck=document.getElementById('sameck');if(ck)document.getElementById('lsec').style.display=ck.checked?'none':'block';}
-window.addEventListener('DOMContentLoaded',function(){restoreForm();document.getElementById('cf').addEventListener('input',saveForm);document.getElementById('cf').addEventListener('change',saveForm);});
+function updatePrivateSetHint(){
+  var ls=(document.querySelector('[name="lstatus"]')||{value:''}).value;
+  var ea=(document.querySelector('[name="eprivate"]')||{value:''}).value;
+  var sel=document.querySelector('[name="lstatus"]');
+  if(!sel)return;
+  var hint=document.getElementById('ps-hint');
+  if(ls==='自有'&&ea==='有'){
+    if(!hint){
+      hint=document.createElement('div');hint.id='ps-hint';
+      hint.style.cssText='margin-top:6px;padding:6px 10px;background:#fef3c7;border:1px solid #fcd34d;border-radius:5px;font-size:12px;color:#854d0e;font-weight:600;';
+      hint.textContent='⚠️ 有私設 → 行政B 申請書「居住狀況」請填「父母名下」';
+      sel.parentNode.appendChild(hint);
+    }
+  }else if(hint){hint.remove();}
+}
+window.addEventListener('DOMContentLoaded',function(){restoreForm();document.getElementById('cf').addEventListener('input',function(){saveForm();updatePrivateSetHint();});document.getElementById('cf').addEventListener('change',function(){saveForm();updatePrivateSetHint();});updatePrivateSetHint();});
 // page-init
 """
     HTML_PAGE = HTML_PAGE.replace('// page-init', inject_js + '\n' + (pdf_js or ''))
@@ -7010,6 +7131,15 @@ async def new_customer_post(request: Request):
     lyear_str = f.get("lyear","").strip()
     if not lyear_str: errs.append("居住年數不可空白")
     if not f.get("lstatus","").strip(): errs.append("居住狀況不可空白")
+    # 未婚 vs 聯絡人關係含配偶字眼
+    marry_v = f.get("marry","").strip()
+    SPOUSE_KW = ["老公","老婆","配偶","太太","先生","丈夫","妻子","夫","妻"]
+    def _has_spouse_kw(r): return any(k in (r or "") for k in SPOUSE_KW)
+    if marry_v=="未婚":
+        if _has_spouse_kw(f.get("c1rel","")):
+            errs.append(f"婚姻為「未婚」但聯絡人1關係含「{f.get('c1rel','')}」，請確認婚姻狀態或聯絡人關係")
+        if _has_spouse_kw(f.get("c2rel","")):
+            errs.append(f"婚姻為「未婚」但聯絡人2關係含「{f.get('c2rel','')}」，請確認婚姻狀態或聯絡人關係")
     # 居住年數 vs 年齡檢查
     if lyear_str and f.get("birth","").strip():
         try:
@@ -7047,6 +7177,18 @@ async def new_customer_post(request: Request):
     if errs:
         err_html = "<ul>" + "".join(f"<li>{h(e)}</li>" for e in errs) + "</ul>"
         return HTMLResponse(f"""<!DOCTYPE html><html><head><meta charset="UTF-8"><style>body{{font-family:'Microsoft JhengHei',sans-serif;background:#ece8e2;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;}}.box{{background:#faf7f4;border:1px solid #ddd5ca;border-radius:12px;padding:32px;max-width:480px;}}.title{{font-size:18px;font-weight:700;color:#991b1b;margin-bottom:12px;}}.btn{{background:#6a5e4e;color:#fff;border:none;padding:10px 24px;border-radius:8px;font-size:14px;cursor:pointer;text-decoration:none;display:inline-block;margin-top:16px;}}</style></head><body><div class="box"><div class="title">⚠️ 請修正以下欄位</div>{err_html}<a href="javascript:history.back()" class="btn">← 返回修正</a></div></body></html>""", status_code=400)
+    # 聯絡人姓氏驗證（未經前端確認時後端擋 block 等級）
+    if f.get("confirm_surname") != "1":
+        surname_issues = []
+        c1rel = f.get("c1rel","").strip(); c2rel = f.get("c2rel","").strip()
+        for label, cname, crel in [("聯絡人1", c1name, c1rel), ("聯絡人2", c2name, c2rel)]:
+            lv, msg = check_surname_mismatch(name, cname, crel)
+            if lv == "block":
+                surname_issues.append(f"{label}：{msg}")
+        if surname_issues:
+            issues_html = "".join(f"<li>{h(m)}</li>" for m in surname_issues)
+            form_data_json = json.dumps(f, ensure_ascii=False).replace("</","<\\/")
+            return HTMLResponse(f"""<!DOCTYPE html><html><head><meta charset="UTF-8"><style>body{{font-family:'Microsoft JhengHei',sans-serif;background:#ece8e2;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;padding:20px;}}.box{{background:#faf7f4;border:1px solid #ddd5ca;border-radius:12px;padding:32px;max-width:560px;}}.title{{font-size:18px;font-weight:700;color:#991b1b;margin-bottom:12px;}}.msg{{font-size:14px;color:#4a3e30;line-height:1.8;margin-bottom:16px;}}ul{{margin:12px 0 16px 20px;color:#b84a35;}}.btn{{background:#6a5e4e;color:#fff;border:none;padding:10px 24px;border-radius:8px;font-size:14px;cursor:pointer;text-decoration:none;display:inline-block;margin:4px;}}.btn2{{background:#e8e2da;color:#4a3e30;border:1px solid #ddd5ca;padding:10px 24px;border-radius:8px;font-size:14px;cursor:pointer;text-decoration:none;display:inline-block;margin:4px;}}</style></head><body><div class="box"><div class="title">⚠️ 聯絡人姓氏確認</div><div class="msg">請確認以下聯絡人資料是否正確：</div><ul>{issues_html}</ul><div class="msg">若資料無誤（如繼父母/抱養/改姓等），請按「確認無誤送出」；若要修正請返回。</div><form method="post" action="/new-customer" style="display:inline" id="cform"></form><button class="btn" onclick="submitConfirm()">確認無誤送出</button><a href="javascript:history.back()" class="btn2">← 返回修正</a><script>var fd={form_data_json};function submitConfirm(){{var f=document.getElementById('cform');Object.keys(fd).forEach(function(k){{var i=document.createElement('input');i.type='hidden';i.name=k;i.value=fd[k];f.appendChild(i);}});var cf=document.createElement('input');cf.type='hidden';cf.name='confirm_surname';cf.value='1';f.appendChild(cf);f.submit();}}</script></div></body></html>""", status_code=400)
     source_group_id = f.get("grp","")
     live_same = "1" if f.get("sameck") else "0"
     conn = get_conn(); cur = conn.cursor()
