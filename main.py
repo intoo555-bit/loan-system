@@ -9589,11 +9589,9 @@ async def admin_templates_upload(request: Request):
     except Exception as e:
         return RedirectResponse(f"/admin/templates?err={quote('檔案解析失敗：' + str(e))}", status_code=303)
 
-    # 自動清除「擔保品資訊」分頁的填色 + 條件格式（讓填寫欄位變白色）
-    try:
-        content = _strip_sheet_colors(content, "擔保品資訊")
-    except Exception as e:
-        print(f"[strip_colors] warning: {e}")
+    # NOTE: 之前會在此自動清除「擔保品資訊」分頁的填色/條件格式，
+    # 但發現會破壞 x14 擴充（下拉選單/公式變純文字），關閉自動處理。
+    # 若需要白底請直接在 Excel 範本內設定白底後再上傳。
 
     target_path = get_custom_template_path(plan_name)
     try:
