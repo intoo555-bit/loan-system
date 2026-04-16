@@ -3555,8 +3555,12 @@ def _handle_a_case_block_locked(block_text, reply_token, id_no, name) -> Optiona
     is_current = company and (company in current_co or current_co in company)
     # 如果公司不在路線、不是 current、不在同送清單 → 跳按鈕詢問
     if company and not is_in_concurrent and not is_in_route and not is_current:
-        # 偵測補保人/補JCIC 關鍵字（婉拒後恢復類）
-        is_supplement_recovery = any(kw in block_text for kw in ["補保人", "補JCIC", "補jcic", "補申覆", "補JCIC申覆"])
+        # 偵測任何「補X」關鍵字（婉拒後恢復類：補保人/補JCIC/補聯徵/補信用/補件/補薪轉...）
+        is_supplement_recovery = any(kw in block_text for kw in [
+            "補保人", "補JCIC", "補jcic", "補申覆", "補聯徵", "補信用",
+            "補件", "補資料", "補薪轉", "補照片", "補時段", "補照會",
+            "補行照", "補在職", "補存摺", "補勞保", "補駕照", "補身分證"
+        ])
         action_id = short_id()
         save_pending_action(action_id, "unknown_company", {
             "case_id": customer["case_id"], "block_text": block_text,
