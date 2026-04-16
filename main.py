@@ -2313,6 +2313,22 @@ def extract_status_summary(first_line: str, customer_name: str) -> str:
     # 優先用標準化標籤
     if "核准" in first_line or "核準" in first_line:
         return "核准"
+    # 等保書細分：根據訊息內其他關鍵字決定實際子狀態
+    if "等保書" in first_line or "等保人" in first_line:
+        # 換保人類：更換/不合格/另找/換一位/換個
+        if any(k in first_line for k in ["更換", "換一位", "換個", "換另", "不合格", "不符合", "重找", "另找", "另外找", "再找"]):
+            return "換保人"
+        # 補保人類：沒保人/還沒/需補/提供保人
+        if any(k in first_line for k in ["補保人", "沒保人", "沒有保人", "找保人", "提供保人"]):
+            return "補保人"
+        # 簽名類
+        if any(k in first_line for k in ["簽名", "等簽", "親簽", "待簽"]):
+            return "等保人簽"
+        # 補資料/文件類
+        if any(k in first_line for k in ["保人補", "保書補", "補資料", "補件", "資料不齊"]):
+            return "保人補件"
+        # 什麼特定關鍵字都沒 → 顯示「等保書」
+        return "等保書"
     if "補照會" in first_line:
         # 如果有時段（時間字或數字:數字）→ 顯示時段
         import re as _re
