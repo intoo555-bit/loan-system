@@ -6168,8 +6168,9 @@ label{{display:block;font-size:12px;font-weight:600;color:#5a4e40;margin-bottom:
 <div class="card"><div class="sec">負債明細</div>
   <div id="ep-debt-list"></div>
   <input type="hidden" name="debt_json" id="debt_json_input">
-  <div style="display:flex;gap:8px;margin-top:8px">
-    <button type="button" onclick="addDebt()" style="background:#e8e2da;color:#4a3e30;border:1px dashed #a09080;border-radius:6px;padding:6px 14px;font-size:12px;cursor:pointer;font-weight:600">+ 新增負債</button>
+  <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+    <button type="button" onclick="addD('車貸')" style="background:#e8e2da;color:#4a3e30;border:1px dashed #a09080;border-radius:6px;padding:8px 16px;font-size:13px;cursor:pointer;font-weight:600">+ 新增車貸</button>
+    <button type="button" onclick="addD('信貸')" style="background:#e8e2da;color:#4a3e30;border:1px dashed #a09080;border-radius:6px;padding:8px 16px;font-size:13px;cursor:pointer;font-weight:600">+ 新增信貸/其他</button>
   </div>
 </div>
 <div style="display:flex;gap:10px;margin-top:8px">
@@ -6178,38 +6179,103 @@ label{{display:block;font-size:12px;font-weight:600;color:#5a4e40;margin-bottom:
 </div>
 </form>
 """ + """<script>
-var debts=""" + debt_json + """;
-var dIdx=0;
-function renderDebts(){
-  var box=document.getElementById('ep-debt-list');
-  if(!debts.length){box.innerHTML='<div style="color:#8a7a68;font-size:13px">無負債資料</div>';return}
+var existingDebts=""" + debt_json + """;
+var dc=0;
+function addD(type, preset){
+  dc++;var n=dc;
+  var isCar=(type==='車貸');
+  var d=preset||{};
+  var r=document.createElement('div');
+  r.id='d'+n;r.className='d-row';
+  var bg=isCar?'#f2f8f4':'#f8f5f1';
+  var bc=isCar?'#4e7055':'#8a7a68';
+  r.style.cssText='border-radius:8px;margin-bottom:8px;padding:10px 14px;background:'+bg+';border-left:4px solid '+bc+';';
+  var lbl=isCar?'🚗 車貸':'💳 信貸/其他';
+  var lc=isCar?'#4e7055':'#6a5e4e';
+  var LS='font-size:12px;font-weight:500;color:#2c2820;height:17px;';
+  var IS='width:100%;height:34px;padding:0 8px;border:0.5px solid #ddd5ca;border-radius:6px;font-size:13px;font-family:inherit;box-sizing:border-box;background:#fff;color:#2c2820;';
+  var RS='width:100%;height:34px;padding:0 8px;border:0.5px solid #e8c0b0;border-radius:6px;font-size:13px;font-weight:500;color:#b84a35;background:#fff8f5;display:flex;align-items:center;justify-content:flex-end;box-sizing:border-box;';
+  var SS='width:100%;height:34px;padding:0 6px;border:0.5px solid #ddd5ca;border-radius:6px;font-size:13px;font-family:inherit;box-sizing:border-box;background:#fff;color:#2c2820;';
+  var FS='display:flex;flex-direction:column;gap:4px;';
+  var GS='display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-bottom:8px;';
+  function esc(s){return String(s==null?'':s).replace(/"/g,'&quot;');}
+  var pe=esc(d.pe||''),pa=esc(d.pa||'');
+  var peDisplay=(pe||pa)?(pe+' / '+pa):'';
   var h='';
-  for(var i=0;i<debts.length;i++){
-    var d=debts[i];
-    h+='<div style="padding:8px 0;border-bottom:1px solid #ece8e2;display:grid;grid-template-columns:1fr 1fr 1fr 1fr auto;gap:6px;align-items:center;font-size:12px">';
-    h+='<div><div style="font-size:11px;color:#6a5e4e;font-weight:600">商家</div><input value="'+(d.co||'')+'" onchange="debts['+i+'].co=this.value" class="ep" style="font-size:12px;padding:4px 6px"></div>';
-    h+='<div><div style="font-size:11px;color:#6a5e4e;font-weight:600">金額</div><input value="'+(d.lo||'')+'" onchange="debts['+i+'].lo=this.value" class="ep" style="font-size:12px;padding:4px 6px"></div>';
-    h+='<div><div style="font-size:11px;color:#6a5e4e;font-weight:600">期數</div><input value="'+(d.pe||'')+'" onchange="debts['+i+'].pe=this.value" class="ep" style="font-size:12px;padding:4px 6px"></div>';
-    h+='<div><div style="font-size:11px;color:#6a5e4e;font-weight:600">月繳</div><input value="'+(d.mo||'')+'" onchange="debts['+i+'].mo=this.value" class="ep" style="font-size:12px;padding:4px 6px"></div>';
-    h+='<button type="button" onclick="debts.splice('+i+',1);renderDebts()" style="background:#f5ddd8;color:#b84a35;border:none;border-radius:4px;width:28px;height:28px;cursor:pointer;font-size:13px;margin-top:14px">X</button>';
+  h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">';
+  h+='<span style="font-size:13px;font-weight:500;color:'+lc+';">'+lbl+'</span>';
+  h+='<button type="button" onclick="rmD('+n+')" style="background:#f5ddd8;color:#b84a35;border:none;border-radius:5px;width:28px;height:28px;cursor:pointer;font-size:13px;">✕</button>';
+  h+='</div>';
+  h+='<div style="'+GS+'">';
+  h+='<div style="'+FS+'"><div style="'+LS+'">貸款商家</div><input id="dc'+n+'" value="'+esc(d.co||'')+'" placeholder="裕融" style="'+IS+'"></div>';
+  h+='<div style="'+FS+'"><div style="'+LS+'">貸款金額</div><input id="dl'+n+'" value="'+esc(d.lo||'')+'" placeholder="150000" type="number" style="'+IS+'"></div>';
+  h+='<div style="'+FS+'"><div style="'+LS+'">期數／已繳</div><input id="dp'+n+'" value="'+esc(peDisplay)+'" placeholder="36 / 0" oninput="calcD('+n+')" style="'+IS+'"></div>';
+  h+='<div style="'+FS+'"><div style="'+LS+'">月繳金額</div><input id="dm'+n+'" value="'+esc(d.mo||'')+'" placeholder="5265" type="number" oninput="calcD('+n+')" style="'+IS+'"></div>';
+  h+='<div style="'+FS+'"><div style="'+LS+'">剩餘金額</div><div id="dr'+n+'" style="'+RS+'">-</div></div>';
+  h+='</div>';
+  if(isCar){
+    h+='<div style="'+GS+'">';
+    h+='<div style="'+FS+'"><div style="'+LS+'">設定日期（民國）</div><input id="dd'+n+'" value="'+esc(d.da||'')+'" placeholder="112/01" style="'+IS+'"></div>';
+    var dyVal=d.dy||'無';
+    var spVal=d.sp||'有';
+    var dyOpts=['無','公路','動保','公路+動保'].map(function(o){return '<option'+(o===dyVal?' selected':'')+'>'+o+'</option>';}).join('');
+    var spOpts=['有','無'].map(function(o){return '<option'+(o===spVal?' selected':'')+'>'+o+'</option>';}).join('');
+    h+='<div style="'+FS+'"><div style="'+LS+'">動保／公路</div><select id="dg'+n+'" style="'+SS+'">'+dyOpts+'</select></div>';
+    h+='<div style="'+FS+'"><div style="'+LS+'">空間</div><select id="ds'+n+'" style="'+SS+'">'+spOpts+'</select></div>';
+    h+='<div style="height:49px;"></div><div style="height:49px;"></div>';
     h+='</div>';
-    h+='<div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr auto;gap:6px;font-size:12px;padding-bottom:8px">';
-    h+='<div><div style="font-size:11px;color:#6a5e4e;font-weight:600">已繳</div><input value="'+(d.pa||'')+'" onchange="debts['+i+'].pa=this.value" class="ep" style="font-size:12px;padding:4px 6px"></div>';
-    h+='<div><div style="font-size:11px;color:#6a5e4e;font-weight:600">剩餘</div><input value="'+(d.re||'')+'" onchange="debts['+i+'].re=this.value" class="ep" style="font-size:12px;padding:4px 6px"></div>';
-    h+='<div><div style="font-size:11px;color:#6a5e4e;font-weight:600">日期</div><input value="'+(d.da||'')+'" onchange="debts['+i+'].da=this.value" class="ep" style="font-size:12px;padding:4px 6px"></div>';
-    h+='<div><div style="font-size:11px;color:#6a5e4e;font-weight:600">動保</div><input value="'+(d.dy||'')+'" onchange="debts['+i+'].dy=this.value" class="ep" style="font-size:12px;padding:4px 6px"></div>';
-    h+='<div style="width:28px"></div>';
-    h+='</div>';
+  }else{
+    h+='<input id="dd'+n+'" value="" style="display:none;"><input id="dg'+n+'" value="-" style="display:none;"><input id="ds'+n+'" value="-" style="display:none;">';
   }
-  box.innerHTML=h;
+  r.innerHTML=h;
+  document.getElementById('ep-debt-list').appendChild(r);
+  calcD(n);
 }
-function addDebt(){
-  debts.push({co:'',lo:'',pe:'',mo:'',pa:'',re:'',da:'',dy:''});
-  renderDebts();
+function rmD(n){var el=document.getElementById('d'+n);if(el)el.remove();}
+function calcD(n){
+  var m=parseFloat((document.getElementById('dm'+n)||{}).value)||0;
+  var dpv=((document.getElementById('dp'+n)||{}).value||'').trim();
+  var parts=dpv.split('/');
+  var p=parseFloat(parts[0])||0;
+  var a=parseFloat(parts[1])||0;
+  var el=document.getElementById('dr'+n);if(!el)return;
+  if(m>0&&p>0){
+    var rem=(m*p)-(m*a);
+    el.textContent='$'+Math.round(rem).toLocaleString();
+    el.style.color=rem>0?'#b84a35':'#4e7055';
+  }else el.textContent='-';
 }
-renderDebts();
+function collectDebts(){
+  var rows=[];
+  for(var i=1;i<=dc;i++){
+    var el=document.getElementById('d'+i);if(!el)continue;
+    var co=(document.getElementById('dc'+i)||{}).value||'';
+    if(!co)continue;
+    var dpv=((document.getElementById('dp'+i)||{}).value||'').split('/');
+    rows.push({
+      co:co,
+      lo:(document.getElementById('dl'+i)||{}).value||'',
+      pe:(dpv[0]||'').trim(),
+      mo:(document.getElementById('dm'+i)||{}).value||'',
+      pa:(dpv[1]||'').trim(),
+      re:(document.getElementById('dr'+i)||{}).textContent||'',
+      da:(document.getElementById('dd'+i)||{}).value||'',
+      dy:(document.getElementById('dg'+i)||{}).value||'',
+      sp:(document.getElementById('ds'+i)||{}).value||''
+    });
+  }
+  return rows;
+}
+// 載入既有負債：有 da 或 dy 非空非「-」→ 車貸，否則信貸
+(function(){
+  if(!existingDebts||!existingDebts.length){return;}
+  existingDebts.forEach(function(d){
+    var isCar=(d.da&&d.da!=='')||(d.dy&&d.dy!=='-'&&d.dy!=='')||(d.sp&&d.sp!=='-'&&d.sp!=='');
+    addD(isCar?'車貸':'信貸',d);
+  });
+})();
 document.querySelector('form').addEventListener('submit',function(){
-  document.getElementById('debt_json_input').value=JSON.stringify(debts);
+  document.getElementById('debt_json_input').value=JSON.stringify(collectDebts());
 });
 </script>
 </div></body></html>"""
