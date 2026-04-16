@@ -9169,6 +9169,15 @@ def _do_download_excel(request: Request, case_id: str):
                                 sheet_cm[cell_ref] = val
                         if sheet_cm:
                             sheet_cell_maps[sheet_name] = sheet_cm
+                    # 亞太機車：擔保品 B7=年、C7=月，若來源是「YYYY/MM」格式自動拆開
+                    if plan in ("亞太機車15萬", "亞太機車25萬", "亞太工會機車"):
+                        for sname, cmap in sheet_cell_maps.items():
+                            if "擔保品" in sname and "B7" in cmap:
+                                val = str(cmap["B7"] or "")
+                                mm = re.match(r"^(\d{3,4})[/\-年.](\d{1,2})", val)
+                                if mm:
+                                    cmap["B7"] = mm.group(1)
+                                    cmap["C7"] = str(int(mm.group(2)))
                     filled_bytes = _fill_excel_multi_sheet(template_path, sheet_cell_maps)
                 else:
                     # 未設定自訂映射 → 先嘗試用 DEFAULT_MAPPINGS 多 sheet 填入
@@ -9184,6 +9193,15 @@ def _do_download_excel(request: Request, case_id: str):
                                     sheet_cm[cell_ref] = val
                             if sheet_cm:
                                 sheet_cell_maps[sheet_name] = sheet_cm
+                        # 亞太機車：擔保品 B7=年、C7=月，拆開「YYYY/MM」格式
+                        if plan in ("亞太機車15萬", "亞太機車25萬", "亞太工會機車"):
+                            for sname, cmap in sheet_cell_maps.items():
+                                if "擔保品" in sname and "B7" in cmap:
+                                    val = str(cmap["B7"] or "")
+                                    mm = re.match(r"^(\d{3,4})[/\-年.](\d{1,2})", val)
+                                    if mm:
+                                        cmap["B7"] = mm.group(1)
+                                        cmap["C7"] = str(int(mm.group(2)))
                         if sheet_cell_maps:
                             filled_bytes = _fill_excel_multi_sheet(template_path, sheet_cell_maps)
                         else:
