@@ -3555,17 +3555,25 @@ def _handle_a_case_block_locked(block_text, reply_token, id_no, name) -> Optiona
     is_current = company and (company in current_co or current_co in company)
     # 如果公司不在路線、不是 current、不在同送清單 → 跳按鈕詢問
     if company and not is_in_concurrent and not is_in_route and not is_current:
+        # 偵測補保人/補JCIC 關鍵字（婉拒後恢復類）
+        is_supplement_recovery = any(kw in block_text for kw in ["補保人", "補JCIC", "補jcic", "補申覆", "補JCIC申覆"])
         action_id = short_id()
         save_pending_action(action_id, "unknown_company", {
             "case_id": customer["case_id"], "block_text": block_text,
-            "company": company, "name": customer["customer_name"]
+            "company": company, "name": customer["customer_name"],
+            "is_supplement": is_supplement_recovery
         })
         items = [
             make_quick_reply_item(f"再送{company}", f"UNKNOWN_CO_REROUTE|{action_id}"),
             make_quick_reply_item(f"同送{company}", f"UNKNOWN_CO_CONCURRENT|{action_id}"),
-            make_quick_reply_item("取消", f"UNKNOWN_CO_CANCEL|{action_id}"),
         ]
-        reply_quick_reply(reply_token, f"⚠️ {company} 不在 {customer['customer_name']} 的路線裡，請選擇：", items)
+        if is_supplement_recovery:
+            items.insert(0, make_quick_reply_item("補件恢復", f"UNKNOWN_CO_SUPPLEMENT|{action_id}"))
+        items.append(make_quick_reply_item("取消", f"UNKNOWN_CO_CANCEL|{action_id}"))
+        prompt = f"⚠️ {company} 不在 {customer['customer_name']} 的路線裡，請選擇："
+        if is_supplement_recovery:
+            prompt = f"⚠️ {customer['customer_name']} 的 {company} 已婉拒/不在路線，收到補件訊息，請選擇："
+        reply_quick_reply(reply_token, prompt, items)
         return "QUICK_REPLY_SENT"
     if is_reject and route and not is_in_concurrent:
         # 不在同時送件清單 → 正常推進 route
@@ -3818,10 +3826,10 @@ def handle_command_text(text: str, reply_token: str) -> bool:
 
     # 先處理二次確認（CONFIRM_UNKNOWN_CO_XXX|）
     is_confirm = text.startswith("CONFIRM_UNKNOWN_CO_")
-    is_first = (text.startswith("UNKNOWN_CO_REROUTE|") or text.startswith("UNKNOWN_CO_CONCURRENT|") or text.startswith("UNKNOWN_CO_CANCEL|"))
+    is_first = (text.startswith("UNKNOWN_CO_REROUTE|") or text.startswith("UNKNOWN_CO_CONCURRENT|") or text.startswith("UNKNOWN_CO_SUPPLEMENT|") or text.startswith("UNKNOWN_CO_CANCEL|"))
     if is_first or is_confirm:
         if is_first:
-            action_type = text.split("|")[0].replace("UNKNOWN_CO_", "")  # REROUTE/CONCURRENT/CANCEL
+            action_type = text.split("|")[0].replace("UNKNOWN_CO_", "")  # REROUTE/CONCURRENT/SUPPLEMENT/CANCEL
             action_id = text.split("|", 1)[1]
         else:
             action_type = text.split("|")[0].replace("CONFIRM_UNKNOWN_CO_", "")
@@ -3835,7 +3843,7 @@ def handle_command_text(text: str, reply_token: str) -> bool:
         name = p.get("name", "")
         # 第一次點 → 顯示二次確認
         if is_first and action_type != "CANCEL":
-            act_label = "再送" if action_type == "REROUTE" else "同送"
+            act_label = {"REROUTE": "再送", "CONCURRENT": "同送", "SUPPLEMENT": "補件恢復"}.get(action_type, action_type)
             items = [
                 make_quick_reply_item(f"✅ 確定{act_label}{company}", f"CONFIRM_UNKNOWN_CO_{action_type}|{action_id}"),
                 make_quick_reply_item("↩️ 返回", f"UNKNOWN_CO_CANCEL|{action_id}"),
@@ -3852,7 +3860,7 @@ def handle_command_text(text: str, reply_token: str) -> bool:
         cust = cur.fetchone(); conn.close()
         if not cust:
             reply_text(reply_token, "⚠️ 客戶已不存在"); delete_pending_action(action_id); return True
-        if action_type == "REROUTE":
+        if action_type in ("REROUTE", "SUPPLEMENT"):
             route = cust["route_plan"] or ""
             data = parse_route_json(route) if route else {"order":[], "current_index":0, "history":[]}
             order = data.get("order", [])
@@ -3861,8 +3869,22 @@ def handle_command_text(text: str, reply_token: str) -> bool:
             data["order"] = order
             data["current_index"] = order.index(company)
             new_route = json.dumps(data, ensure_ascii=False)
+            # SUPPLEMENT：跑婉拒公司的 company_status 清除，狀態會由訊息內容自動判定
+            extra_fields = {}
+            if action_type == "SUPPLEMENT":
+                try:
+                    cs_raw = cust["company_status"] or ""
+                    cs_dict = json.loads(cs_raw) if cs_raw else {}
+                    # 清掉該公司之前的婉拒狀態，新狀態會由 update_customer 依訊息重算
+                    if company in cs_dict:
+                        cs_dict[company] = ""
+                    extra_fields["company_status"] = json.dumps(cs_dict, ensure_ascii=False)
+                except Exception:
+                    pass
+            act_verb = "再送" if action_type == "REROUTE" else "補件恢復"
             update_customer(case_id, route_plan=new_route, current_company=company,
-                            text=f"{name} 再送 {company}\n{block_text}", from_group_id=A_GROUP_ID)
+                            text=f"{name} {act_verb} {company}\n{block_text}", from_group_id=A_GROUP_ID,
+                            **extra_fields)
             reply_text(reply_token, f"✅ 已將 {company} 加入 {name} 的送件順序並設為當前公司")
         else:  # CONCURRENT
             concurrent = cust["concurrent_companies"] or ""
