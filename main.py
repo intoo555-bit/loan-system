@@ -8065,21 +8065,6 @@ def _fill_excel_inner(orig_zip, original_bytes, cell_map, _re):
         m = cell_pattern.search(new_sheet_xml)
         if m:
             new_sheet_xml = new_sheet_xml[:m.start()] + m.group(1) + f'<v>{new_idx}</v>' + m.group(2) + new_sheet_xml[m.end():]
-    # 更新 sharedStrings：count 是引用總次數（保留原值+新增數），uniqueCount 是 si 數量
-    first_si = si_blocks[0].start()
-    last_si_end = si_blocks[-1].end()
-    new_si_content = ''.join(si_list)
-    new_unique = len(si_list)
-    added = new_unique - len(si_blocks)  # 新增的 si 數量
-    header_xml = ss_xml[:first_si]
-    # 取得原始 count 並加上新增數（每個新 si 至少被引用 1 次）
-    orig_count_m = _re.search(r'count="(\d+)"', header_xml)
-    if orig_count_m:
-        new_count = int(orig_count_m.group(1)) + added
-        header_xml = _re.sub(r'count="\d+"', f'count="{new_count}"', header_xml)
-    header_xml = _re.sub(r'uniqueCount="\d+"', f'uniqueCount="{new_unique}"', header_xml)
-    new_ss_xml = header_xml + new_si_content + ss_xml[last_si_end:]
-
     # Step 4b: Modify sheet XML for direct-value cells
     if not ss_cell_changes:
         new_sheet_xml = sheet_xml  # 只有在 Step 4 沒修改時才重新賦值
@@ -8129,6 +8114,20 @@ def _fill_excel_inner(orig_zip, original_bytes, cell_map, _re):
                 inner = m.group(2) + m.group(3)
                 new_cell = f'<c r="{cell_ref}"{attrs}>{inner}</c>'
                 new_sheet_xml = new_sheet_xml[:m.start()] + new_cell + new_sheet_xml[m.end():]
+
+    # Step 4d: 更新 sharedStrings（在所有 cell 處理完後才重建，確保 direct_changes 新增的 si 也包含在內）
+    first_si = si_blocks[0].start()
+    last_si_end = si_blocks[-1].end()
+    new_si_content = ''.join(si_list)
+    new_unique = len(si_list)
+    added = new_unique - len(si_blocks)
+    header_xml = ss_xml[:first_si]
+    orig_count_m = _re.search(r'count="(\d+)"', header_xml)
+    if orig_count_m:
+        new_count = int(orig_count_m.group(1)) + added
+        header_xml = _re.sub(r'count="\d+"', f'count="{new_count}"', header_xml)
+    header_xml = _re.sub(r'uniqueCount="\d+"', f'uniqueCount="{new_unique}"', header_xml)
+    new_ss_xml = header_xml + new_si_content + ss_xml[last_si_end:]
 
     # Step 5: Repackage ZIP
     output_buf = io.BytesIO()
