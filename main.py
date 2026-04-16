@@ -7868,12 +7868,14 @@ def _fill_excel_multi_sheet(template_path: str, sheet_cell_maps: dict) -> bytes:
                             new_cell = f'<c r="{cell_ref}"{attrs}/>'
                             sheet_xml = sheet_xml[:mm.start()] + new_cell + sheet_xml[mm.end():]
                     continue
-                # self-closing 空格：<c r="B7" s="77"/>
+                # self-closing 空格：<c r="B7" s="77"/> → 用 shared string 寫入（不用 inlineStr 避免 Excel 修復提示）
                 pattern2 = _re.compile(r'<c\s+r="' + _re.escape(cell_ref) + r'"([^/]*)/>')
                 mm2 = pattern2.search(sheet_xml)
                 if mm2 and new_value:
                     attrs = mm2.group(1).strip()
-                    new_cell = f'<c r="{cell_ref}" {attrs} t="inlineStr"><is><t>{escaped_val}</t></is></c>'
+                    new_idx = len(si_list)
+                    si_list.append(f'<si><t>{escaped_val}</t></si>')
+                    new_cell = f'<c r="{cell_ref}" {attrs} t="s"><v>{new_idx}</v></c>'
                     sheet_xml = sheet_xml[:mm2.start()] + new_cell + sheet_xml[mm2.end():]
 
             # 公式快取清除
@@ -8097,12 +8099,14 @@ def _fill_excel_inner(orig_zip, original_bytes, cell_map, _re):
                     new_cell = f'<c r="{cell_ref}"{attrs}/>'
                     new_sheet_xml = new_sheet_xml[:m.start()] + new_cell + new_sheet_xml[m.end():]
             continue
-        # Case 2: 空的 self-closing <c r="B7" s="77"/>
+        # Case 2: 空的 self-closing <c r="B7" s="77"/> → 用 shared string 寫入（不用 inlineStr 避免 Excel 修復提示）
         pattern2 = _re.compile(r'<c\s+r="' + _re.escape(cell_ref) + r'"([^/]*)/>')
         m2 = pattern2.search(new_sheet_xml)
         if m2 and new_value:  # 只在有值時寫入
             attrs = m2.group(1).strip()
-            new_cell = f'<c r="{cell_ref}" {attrs} t="inlineStr"><is><t>{escaped_val}</t></is></c>'
+            new_idx = len(si_list)
+            si_list.append(f'<si><t>{escaped_val}</t></si>')
+            new_cell = f'<c r="{cell_ref}" {attrs} t="s"><v>{new_idx}</v></c>'
             new_sheet_xml = new_sheet_xml[:m2.start()] + new_cell + new_sheet_xml[m2.end():]
 
     # Step 4c: 清除公式儲存格的快取值（強制 Excel 重算）
