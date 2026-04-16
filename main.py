@@ -7854,13 +7854,28 @@ def _fill_excel_multi_sheet(template_path: str, sheet_cell_maps: dict) -> bytes:
                     sheet_xml = sheet_xml[:mm.start()] + mm.group(1) + f'<v>{new_idx}</v>' + mm.group(2) + sheet_xml[mm.end():]
 
             # direct value 改動
+            def _is_numeric(s):
+                if not s: return False
+                try: float(s); return True
+                except: return False
             for cell_ref, new_value in direct_changes.items():
                 escaped_val = new_value.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;') if new_value else ""
                 pattern1 = _re.compile(r'(<c\s+r="' + _re.escape(cell_ref) + r'"[^>]*>)\s*<v>[^<]*</v>\s*(</c>)')
                 mm = pattern1.search(sheet_xml)
                 if mm:
                     if new_value:
-                        sheet_xml = sheet_xml[:mm.start()] + mm.group(1) + f'<v>{escaped_val}</v>' + mm.group(2) + sheet_xml[mm.end():]
+                        # 非數字值要用 shared string 寫入，避免 Excel 解析數字失敗
+                        if not _is_numeric(new_value):
+                            open_tag = mm.group(1)
+                            # 移除舊的 t 屬性
+                            open_tag_clean = _re.sub(r'\s+t="[^"]*"', '', open_tag)
+                            # 在 > 前插入 t="s"
+                            new_open = open_tag_clean[:-1] + ' t="s">'
+                            new_idx = len(si_list)
+                            si_list.append(f'<si><t>{escaped_val}</t></si>')
+                            sheet_xml = sheet_xml[:mm.start()] + new_open + f'<v>{new_idx}</v>' + mm.group(2) + sheet_xml[mm.end():]
+                        else:
+                            sheet_xml = sheet_xml[:mm.start()] + mm.group(1) + f'<v>{escaped_val}</v>' + mm.group(2) + sheet_xml[mm.end():]
                     else:
                         attrs_match = _re.search(r'<c\s+r="' + _re.escape(cell_ref) + r'"([^>]*)>', mm.group(1))
                         if attrs_match:
@@ -8068,6 +8083,10 @@ def _fill_excel_inner(orig_zip, original_bytes, cell_map, _re):
     # Step 4b: Modify sheet XML for direct-value cells
     if not ss_cell_changes:
         new_sheet_xml = sheet_xml  # 只有在 Step 4 沒修改時才重新賦值
+    def _is_numeric_inner(s):
+        if not s: return False
+        try: float(s); return True
+        except: return False
     for cell_ref, new_value in direct_changes.items():
         escaped_val = new_value.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;') if new_value else ""
         # Case 1: 已有值 <c r="G18" s="48"><v>5.4</v></c>
@@ -8075,7 +8094,16 @@ def _fill_excel_inner(orig_zip, original_bytes, cell_map, _re):
         m = pattern1.search(new_sheet_xml)
         if m:
             if new_value:
-                new_sheet_xml = new_sheet_xml[:m.start()] + m.group(1) + f'<v>{escaped_val}</v>' + m.group(2) + new_sheet_xml[m.end():]
+                # 非數字值改用 shared string 避免 Excel 解析數字失敗
+                if not _is_numeric_inner(new_value):
+                    open_tag = m.group(1)
+                    open_tag_clean = _re.sub(r'\s+t="[^"]*"', '', open_tag)
+                    new_open = open_tag_clean[:-1] + ' t="s">'
+                    new_idx = len(si_list)
+                    si_list.append(f'<si><t>{escaped_val}</t></si>')
+                    new_sheet_xml = new_sheet_xml[:m.start()] + new_open + f'<v>{new_idx}</v>' + m.group(2) + new_sheet_xml[m.end():]
+                else:
+                    new_sheet_xml = new_sheet_xml[:m.start()] + m.group(1) + f'<v>{escaped_val}</v>' + m.group(2) + new_sheet_xml[m.end():]
             else:
                 # 清空：移除 <v> 標籤
                 attrs_match = _re.search(r'<c\s+r="' + _re.escape(cell_ref) + r'"([^>]*)>', m.group(1))
