@@ -11,6 +11,9 @@ from datetime import datetime
 import uuid
 import secrets
 import pathlib
+import hmac
+import hashlib
+import base64
 from html import escape as _html_escape
 from typing import Optional, List, Dict, Any
 
@@ -28,6 +31,7 @@ def h(val) -> str:
 app = FastAPI()
 
 CHANNEL_ACCESS_TOKEN = os.getenv("CHANNEL_ACCESS_TOKEN", "")
+LINE_CHANNEL_SECRET = os.getenv("LINE_CHANNEL_SECRET", "")
 A_GROUP_ID = os.getenv("A_GROUP_ID", "Cb3579e75c94437ed22aafc7b1f6aecdd")
 B_GROUP_ID = "Cd14f3ee775f1d9f5cfdafb223173cbef"
 C_GROUP_ID = "C1a647fcb29a74842eceeb18e7a53823d"
@@ -4343,8 +4347,16 @@ def _process_event_inner(event: dict):
 
 @app.post("/callback")
 async def callback(request: Request, background_tasks: BackgroundTasks):
+    body_bytes = await request.body()
+    if LINE_CHANNEL_SECRET:
+        signature = request.headers.get("X-Line-Signature", "")
+        expected = base64.b64encode(
+            hmac.new(LINE_CHANNEL_SECRET.encode("utf-8"), body_bytes, hashlib.sha256).digest()
+        ).decode("utf-8")
+        if not signature or not hmac.compare_digest(signature, expected):
+            return JSONResponse({"status": "forbidden"}, status_code=403)
     try:
-        body = await request.json()
+        body = json.loads(body_bytes) if body_bytes else {}
     except Exception:
         return {"status": "ok"}
     if not isinstance(body, dict):
@@ -5071,6 +5083,9 @@ async def login_post(request: Request):
     pw = form.get("password","")
     role = form.get("role","normal")
     group_id = form.get("group_id","")
+    # 基本防護：group_id 僅允許字母數字（LINE 群組 ID 格式），防止 XSS payload 寫入 login_attempts.identifier
+    if group_id and not re.fullmatch(r"[A-Za-z0-9]{1,64}", group_id):
+        group_id = ""
     identifier = role if role != "group" else f"group_{group_id}"
     if is_login_locked(identifier):
         return RedirectResponse("/login?error=locked", status_code=303)
@@ -5636,7 +5651,7 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
 
     if not customer:
         # 預先產生 JSON，避免 f-string 大括號衝突
-        cust_json = json.dumps([{"id":cu["case_id"],"name":cu["customer_name"],"idno":cu["id_no"] or "","gid":cu["source_group_id"],"gname":get_group_name(cu["source_group_id"])} for cu in all_customers], ensure_ascii=False)
+        cust_json = json.dumps([{"id":cu["case_id"],"name":cu["customer_name"],"idno":cu["id_no"] or "","gid":cu["source_group_id"],"gname":get_group_name(cu["source_group_id"])} for cu in all_customers], ensure_ascii=False).replace("</", "<\\/").replace("\u2028", "\\u2028").replace("\u2029", "\\u2029")
         return """<!DOCTYPE html><html><head>""" + PAGE_CSS + ADMINB_CSS + """<title>行政B作業</title></head><body>
     """ + make_topnav(role,"adminb") + """
     <div class="page">
@@ -5652,6 +5667,7 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
     </div>
     <script>
     const allCusts=""" + cust_json + """;
+    function _escHtml(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c];});}
     document.getElementById('ab-search').addEventListener('keydown',function(e){if(e.key==='Enter')doSearch()});
     function doSearch(){
       const q=document.getElementById('ab-search').value.trim().toLowerCase();
@@ -5664,7 +5680,7 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
         return matchQ&&matchG;
       }).slice(0,30);
       if(!matches.length){box.innerHTML='<div style="color:#999;font-size:13px;padding:12px">找不到符合的客戶</div>';return;}
-      box.innerHTML=matches.map(c=>'<div onclick="location.href=\\'/adminb?case_id='+c.id+'\\'" style="padding:10px 14px;border-bottom:1px solid #ece8e2;cursor:pointer;display:flex;justify-content:space-between;align-items:center" onmouseover="this.style.background=\\'#f5f0eb\\'" onmouseout="this.style.background=\\'\\'"><div><div style="font-size:14px;font-weight:600">'+c.name+'</div><div style="font-size:12px;color:#6a5e4e">'+(c.idno||'-')+'</div></div><div style="font-size:11px;color:#999">'+c.gname+'</div></div>').join('');
+      box.innerHTML=matches.map(c=>'<div onclick="location.href=\\'/adminb?case_id='+encodeURIComponent(c.id)+'\\'" style="padding:10px 14px;border-bottom:1px solid #ece8e2;cursor:pointer;display:flex;justify-content:space-between;align-items:center" onmouseover="this.style.background=\\'#f5f0eb\\'" onmouseout="this.style.background=\\'\\'"><div><div style="font-size:14px;font-weight:600">'+_escHtml(c.name)+'</div><div style="font-size:12px;color:#6a5e4e">'+_escHtml(c.idno||'-')+'</div></div><div style="font-size:11px;color:#999">'+_escHtml(c.gname)+'</div></div>').join('');
     }
     </script>
     </body></html>"""
