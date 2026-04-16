@@ -9143,9 +9143,24 @@ def _do_download_excel(request: Request, case_id: str):
                             sheet_cell_maps[sheet_name] = sheet_cm
                     filled_bytes = _fill_excel_multi_sheet(template_path, sheet_cell_maps)
                 else:
-                    # 未設定自訂映射 → 用原本寫死的 cell_map（向後相容）
+                    # 未設定自訂映射 → 先嘗試用 DEFAULT_MAPPINGS 多 sheet 填入
                     cell_map = _build_cell_map(plan, r)
-                    if cell_map:
+                    if plan in DEFAULT_MAPPINGS and cell_map:
+                        dm = DEFAULT_MAPPINGS[plan]
+                        sheet_cell_maps = {}
+                        for sheet_name, field_map in dm.items():
+                            sheet_cm = {}
+                            for cell_ref, field_key in field_map.items():
+                                val = compute_field_value(field_key, r, plan, cell_map, _build_reverse_field_map(plan))
+                                if val is not None:
+                                    sheet_cm[cell_ref] = val
+                            if sheet_cm:
+                                sheet_cell_maps[sheet_name] = sheet_cm
+                        if sheet_cell_maps:
+                            filled_bytes = _fill_excel_multi_sheet(template_path, sheet_cell_maps)
+                        else:
+                            filled_bytes = _fill_excel_template(template_path, cell_map)
+                    elif cell_map:
                         filled_bytes = _fill_excel_template(template_path, cell_map)
                     else:
                         with open(template_path, "rb") as f:
