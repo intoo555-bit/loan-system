@@ -3034,10 +3034,18 @@ def parse_special_command(text: str, group_id: str) -> Optional[Dict]:
     if m:
         return {"type": "close", "name": m.group(1)}
 
-    # 婉拒 轉XXX（跳到指定公司）
+    # 婉拒 轉XXX（明確指定要婉拒的公司 + 跳到指定公司）
+    # 例：「王陽明 裕融 婉拒 轉亞太」= 婉拒裕融（不管在 current 或 concurrent）+ current 改亞太
+    m = re.match(r"^([一-鿿]{2,6})\s+(.+?)\s*婉拒\s*轉\s*(.+)$", clean)
+    if m:
+        return {"type": "reject_to", "name": m.group(1),
+                "company": m.group(2).strip(), "target": m.group(3).strip()}
+
+    # 婉拒 轉XXX（沒指定公司，婉拒當前 current_company）
     m = re.match(r"^([一-鿿]{2,6})\s*婉拒\s*轉\s*(.+)$", clean)
     if m:
-        return {"type": "reject_to", "name": m.group(1), "target": m.group(2).strip()}
+        return {"type": "reject_to", "name": m.group(1),
+                "company": "", "target": m.group(2).strip()}
 
     # 婉拒（推到下一家）
     m = re.match(r"^([一-鿿]{2,6})\s*婉拒$", clean)
@@ -3694,22 +3702,48 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
     if t == "reject_to":
         name = cmd["name"]
         target_co = cmd["target"]
-        rows = find_active_by_name(name)
-        same = [r for r in rows if r["source_group_id"] == group_id]
-        target = same[0] if same else (rows[0] if rows else None)
+        reject_company = cmd.get("company", "")  # 可空（舊格式「婉拒轉XX」沒指定）
+        target = _resolve_target_strict(cmd, name, group_id, reply_token, "婉拒轉")
         if not target:
-            reply_text(reply_token, f"❌ 找不到客戶：{name}"); return
+            return
+        # 規範化公司名（套 alias）
+        target_co = COMPANY_ALIAS.get(target_co, target_co)
+        # 驗證 target 公司名
+        if not _validate_companies_or_warn([target_co], reply_token, name):
+            return
         route = target["route_plan"] or ""
         current = get_current_company(route)
-        new_route, ok, err = advance_route_to(route, target_co, "婉拒")
-        if not ok:
-            reply_text(reply_token, f"❌ {err}\n請確認公司名稱是否正確"); return
+        reject_co = COMPANY_ALIAS.get(reject_company, reject_company) if reject_company else current
+        if reject_company and not _validate_companies_or_warn([reject_co], reply_token, name):
+            return
+        # 從 concurrent_companies 移除婉拒的公司（不留在同送清單）
+        concurrent_str = target["concurrent_companies"] or ""
+        concurrent_list = [c.strip() for c in concurrent_str.split(",") if c.strip()]
+        concurrent_list = [c for c in concurrent_list
+                           if not (reject_co and (reject_co in c or c in reject_co))]
+        new_concurrent = ",".join(concurrent_list)
+        # 更新 route_plan：加婉拒歷史 + 把 target_co 設為 current
+        data = parse_route_json(route)
+        order = data.get("order", []) or []
+        history = data.get("history", []) or []
+        # 避免重複寫歷史
+        if reject_co and not any(h.get("company") == reject_co and h.get("status") == "婉拒"
+                                  for h in history):
+            history.append({"company": reject_co, "status": "婉拒", "date": now_iso()[:10]})
+        if target_co not in order:
+            order.append(target_co)
+        data["order"] = order
+        data["current_index"] = order.index(target_co)
+        data["history"] = history
+        new_route = json.dumps(data, ensure_ascii=False)
         update_customer(target["case_id"], route_plan=new_route,
                         current_company=target_co,
-                        text=f"{name} {current} 婉拒，轉送 {target_co}", from_group_id=group_id)
+                        concurrent_companies=new_concurrent,
+                        text=f"{name} {reject_co} 婉拒，轉送 {target_co}",
+                        from_group_id=group_id)
         # 回貼業務群
-        push_text(target["source_group_id"], f"{name} {current} 婉拒\n➡️ 跳轉到：{target_co}")
-        reply_text(reply_token, f"✅ {name} {current} 婉拒\n➡️ 跳轉到：{target_co}")
+        push_text(target["source_group_id"], f"{name} {reject_co} 婉拒\n➡️ 跳轉到：{target_co}")
+        reply_text(reply_token, f"✅ {name} {reject_co} 婉拒\n➡️ 跳轉到：{target_co}")
         return
 
     if t == "penalty":

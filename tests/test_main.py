@@ -157,6 +157,23 @@ class TestNotifyAmount:
         assert "亞太商" not in valid
         assert "亂打公司" not in valid
 
+    def test_reject_to_with_company(self, tmp_db):
+        """『姓名 公司 婉拒 轉XX』→ reject_to with company"""
+        main, _ = tmp_db
+        cmd = main.parse_special_command("王陽明 裕融 婉拒 轉亞太", "g1")
+        assert cmd["type"] == "reject_to"
+        assert cmd["name"] == "王陽明"
+        assert cmd["company"] == "裕融"
+        assert cmd["target"] == "亞太"
+
+    def test_reject_to_without_company(self, tmp_db):
+        """『姓名 婉拒轉XX』→ reject_to without company（舊格式）"""
+        main, _ = tmp_db
+        cmd = main.parse_special_command("王陽明 婉拒轉亞太", "g1")
+        assert cmd["type"] == "reject_to"
+        assert cmd["company"] == ""
+        assert cmd["target"] == "亞太"
+
     def test_missing_verb_vs_valid_transfer(self, tmp_db):
         """有打『轉』時正常走 advance，不誤判為 missing_verb"""
         main, _ = tmp_db
