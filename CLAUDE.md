@@ -247,35 +247,67 @@ PENDING → ACTIVE → CLOSED
 - `send_transfer_case_buttons()`：跨群組轉移確認
 - `send_confirm_new_case_buttons()`：身分證重複確認
 
-### 11. 特殊 @AI 指令（L1300-1488）
+### 11. 特殊 @AI 指令（L2914~）
+
+**進入前必經**：`parse_special_command` 進入前先跑 `normalize_command_text`（全形→半形、異體字統一「核準→核准」、多空白合併）。regex 只需寫單一標準寫法。
+
+#### 指令表
+
 | 指令格式 | 功能 |
 |----------|------|
 | `@AI 群組ID` | 查詢群組資訊 |
 | `@AI 日報` | 產生日報 |
 | `@AI 查 姓名` | 查詢客戶 |
 | `@AI 姓名 轉下一家` | 推進送件順序 |
-| `@AI 姓名 轉XXX` | 轉到指定公司 |
-| `@AI 姓名 結案` | 結案 |
+| `@AI 姓名 轉XXX` | 轉到指定公司（current 改，concurrent 不動）|
+| `@AI 姓名 轉A+B` | 轉到多公司同送（清原 route，重建 [A, B]） |
+| `@AI 姓名 轉A+B 100萬/24期` | 轉送 + 設送件金額給最後一家 |
+| `@AI 姓名 送XX` | 加送一家（原 route 保留）|
+| `@AI 姓名 送A+B` | 加送多家 |
+| `@AI 姓名 結案` / `結案 原因` | 結案 |
 | `@AI 姓名 婉拒` | 婉拒並推下一家 |
-| `@AI 姓名 婉拒轉XXX` | 婉拒並跳到指定公司 |
+| `@AI 姓名 婉拒轉XX` | 婉拒當前 + 跳 XX |
+| `@AI 姓名 公司 婉拒 轉XX` | **明確指定**哪家婉拒（可同送的某家）+ 跳 XX，從 concurrent 移除 |
 | `@AI 姓名 違約金已支付XXXX` | 違約金結案 |
-| `@AI 姓名 公司 核准 金額` | 修改核准金額（→ 移到待撥款） |
-| `@AI 姓名 公司[+公司2] 金額/期數` | 設送件金額（notify_amount）+ 同送 |
+| `@AI 姓名 公司 核准 金額` | 修改核准金額（→ 自動移到待撥款） |
+| `@AI 姓名 核准 金額` | 同上，未指定公司時用 current_company |
+| `@AI 姓名 撥款 M/D` | 更新撥款日 + 日期合理性檢查 |
+| `@AI 姓名 重啟` | 結案客戶回到 ACTIVE |
+| `@AI 姓名 改名 新名` | 改名 |
+| `@AI 姓名 改身分證 新ID` | 改身分證 |
+| `@AI 姓名 歷史` | 列最近 10 筆操作（附編號、時間）|
+| `@AI 姓名 還原 N` | 跳回第 N 筆之前的狀態（snapshot rollback）|
 
-**送件金額 vs 核准金額**：
-- `notify_amount` / `notify_period` = **送件金額/期數**（業務希望送多少），由上表最後一個指令、送件順序尾巴 `N/M @AI`、或 A 群照會注意事項寫入
-- `approved_amount` = **核准金額**（公司實際核准多少），由 A 群核准訊息或「@AI 姓名 公司 核准 金額」寫入
-- 兩欄獨立，核准訊息不會覆蓋 notify_amount
+#### 送件金額 vs 核准金額
+
+- `notify_amount` / `notify_period` = **送件金額/期數**（業務希望送多少）；由「轉 A+B N/M」尾巴、送件順序尾巴 `N/M @AI`、A 群照會注意事項寫入
+- `approved_amount` = **核准金額**（公司實際核准多少）；由 A 群核准訊息或「姓名 公司 核准 金額」寫入
+- **兩欄獨立**，核准訊息不會覆蓋 notify_amount
 - `generate_notification_text` 優先用 notify_amount → PLAN_INFO → eval_fund_need，**不** fallback 到 approved_amount
 
-**送件順序/轉送尾巴帶金額**（`extract_notify_amount_period`）：
+#### 送件順序/轉送尾巴帶金額（`extract_notify_amount_period`）
+
 - `4/17-姓名-A/B/C 100/24 @AI` → 建案 + notify_amount=100 / notify_period=24
 - `4/17-姓名-轉A+B 30萬/24期 @AI` → 轉送（+）= 同送，寫入 concurrent_companies
 - 只在訊息末尾是 `@AI` 且前有 `N[萬]/M[期]` 才抓，避免誤判日期
 
-**補件/補申覆 待補 vs 已補**（`extract_status_summary`）：
+#### 補件/補申覆 待補 vs 已補（`extract_status_summary`）
+
 - A 群貼「補XX / 補申覆」→ 「待補資料 / 待補申覆」（要求補）
 - 業務回「已補XX / 補好 / 補完 / 申覆通過」→ 「已補資料 / 已補申覆」（真的補了）
+- 內部動作文字（「設送件」/「核准金額修改為」/「轉送」）不顯示為業務狀態
+
+#### 對應詞（COMPANY_ALIAS 摘錄）
+
+| 簡稱 | 對應 |
+|------|------|
+| 貸10 / 貸救 / 貸就補（錯字）| 貸救補 |
+| 21 → 21商品；21機 → 21機車12萬；21機25 → 21機車25萬 | - |
+| 喬 / 鼎多 → 喬美；麻 → 麻吉機車；分 → 分貝機車 | - |
+| 鄉→鄉民、銀→銀行、C→零卡、商→商品貸、代→代書、當→當舖、研→商品貸 | - |
+| 維力 / 新新 / 新新專 → 和裕；熊速貸 → 亞太商品 | - |
+| TAC / 一路發 → 裕融；EGO → 第一 | - |
+| 亞太系列 `亞太機 / 亞太機車` PLAN_INFO 對應 15萬/36期；亞太機車25萬 → 25萬/48期 | - |
 
 ### 12. 主要業務邏輯（L1490-2019）
 - `handle_new_case_block()`：處理新案件建立
@@ -283,15 +315,61 @@ PENDING → ACTIVE → CLOSED
 - `handle_a_case_block()`：A 群訊息處理（回貼到業務群、核准金額、婉拒推進）
 - `handle_bc_case_block()`：業務群訊息處理（含 @AI 補件回貼 A 群功能）
 
-### 13. 按鈕指令處理（L1664-1799）
-處理 Quick Reply 回調：`FORCE_CREATE_NEW|`、`USE_EXISTING_CASE|`、`TRANSFER_FROM_CONFIRM|`、`CONFIRM_TRANSFER|`、`KEEP_OLD_CASE|`、`CREATE_NEW_FROM_TRANSFER|`、`SELECT_CASE|`、`REOPEN_CASE|`、`CREATE_NEW_CASE|` 等
+### 13. 按鈕指令處理（L4200~）
 
-**跨群組同身分證三按鈕語意**（`send_confirm_new_case_buttons` / `send_transfer_case_buttons`）：
+**Quick Reply 回調**：`FORCE_CREATE_NEW|`、`USE_EXISTING_CASE|`、`TRANSFER_FROM_CONFIRM|`、`CONFIRM_TRANSFER|`、`KEEP_OLD_CASE|`、`CREATE_NEW_FROM_TRANSFER|`、`SELECT_CASE|`、`REOPEN_CASE|`、`CREATE_NEW_CASE|`、`EXEC_CMD|`、`SELECT_SUPPLEMENT|`、`SAME_PERSON|`、`NEW_PERSON|` 等
+
+#### 跨群組同身分證三按鈕（`send_confirm_new_case_buttons` / `send_transfer_case_buttons`）
+
 - **沿用(兩邊都有)** → 各群組獨立案件（呼叫 `create_customer_record` 建新 case_id）
 - **轉移到{新群組}** → 改 `source_group_id` 把原案搬到新群組
 - **取消** → 不動作
 
-業務群訊息查找策略：`_handle_bc_case_block_locked` 先用 `find_active_by_id_no_in_group(id_no, group_id)` 找本群組 ACTIVE；本群組沒有才用 `find_active_by_id_no` 跨群組找 → 跳按鈕。
+#### 同姓名不同身分證（`send_same_name_diff_id_buttons`）
+
+新案件姓名與本群組既有客戶相同但身分證不同 → 跳按鈕：
+- **同一人-XX末4** → 更新既有客戶的身分證（糾正打錯）
+- **不同人(建新)** → 建立新客戶
+- **取消** → 不處理
+
+#### 破壞性指令多筆同名（`_resolve_target_strict` + `EXEC_CMD` callback）
+
+本群組多筆同名時，結案/婉拒/轉/送/核准金額/取消核准/撥款/改身分證/重啟 等指令 → 跳按鈕列每筆「公司-末4:XXXX」讓使用者選。callback 用 `_forced_case_id` 重新執行指令。
+
+#### 補件多筆同名（`send_same_name_supplement_buttons`）
+
+業務群打「XX 補件/補照會/核准」遇多筆同名 → 跳按鈕選，`SELECT_SUPPLEMENT` callback 用 `update_with_verify` 執行並實測回報變化。
+
+#### 查找策略
+
+`_handle_bc_case_block_locked` 先用 `find_active_by_id_no_in_group(id_no, group_id)` 找本群組 ACTIVE；本群組沒有才用 `find_active_by_id_no` 跨群組找 → 跳按鈕。
+
+---
+
+### 13.5 系統性防錯（L3200~）
+
+為避免誤操作產生錯誤資料，所有破壞性指令套用：
+
+1. **已結案/非 ACTIVE 客戶再操作** (`_check_active_or_warn`)：阻擋 + 提示「請先重啟」
+2. **金額異常** (`_validate_amount_or_warn`)：核准金額 = 0/負數 → 阻擋；> 1000 萬 → 警告要求加「確認」重打
+3. **送件順序重複公司**：`parse_route_order_line` 自動去重 + 回覆「已去除 N 家」
+4. **身分證校驗位** (`validate_tw_id_checksum`)：台灣身分證校驗碼不符 → 警告（不擋）
+5. **建客戶欄位檢查** (`_validate_new_case_fields`)：日期民國年異常、身分證格式、姓名過長 → 警告
+6. **重複訊息偵測** (`is_duplicate_message`, 5 秒窗)：同群組同內容 5 秒內 → 自動忽略（防手滑）
+7. **撥款日期邏輯**：撥款日 > 30 天後 / 早於建案 → 警告但仍執行
+8. **push_text 長訊息分段**：> 4900 字優先在換行處切，每段加「(N/M)」
+
+**update_with_verify**：破壞性 callback 執行 update 後讀回 DB 比對前後，回報具體變化（「公司: 亞太 → 裕融」），避免「顯示已更新但 DB 沒改」誤導。
+
+---
+
+### 13.6 誤操作救急（L3500~）
+
+- **`@AI 姓名 歷史`** → 列最近 10 筆 case_logs（編號 + 時間 + 訊息摘要）
+- **`@AI 姓名 還原 N`** → 跳回第 N 筆之前的狀態
+  - `update_customer` 每次改前自動存 before snapshot 到 `case_logs.snapshot_json`
+  - 還原時讀 snapshot 套回所有關鍵欄位（current/concurrent/status/金額/報表區塊等）
+  - `update_with_verify` 回報實際變化給使用者確認
 
 ### 14. Webhook 入口（L2031-2127）
 - `process_event()`：LINE Webhook 事件分發
