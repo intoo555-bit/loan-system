@@ -7327,11 +7327,23 @@ label{{display:block;font-size:12px;font-weight:600;color:#5a4e40;margin-bottom:
     <button type="button" onclick="addD('信貸')" style="background:#e8e2da;color:#4a3e30;border:1px dashed #a09080;border-radius:6px;padding:8px 16px;font-size:13px;cursor:pointer;font-weight:600">+ 新增信貸/其他</button>
   </div>
 </div>
-<div style="display:flex;gap:10px;margin-top:8px">
+<div style="display:flex;gap:10px;margin-top:8px;align-items:center;flex-wrap:wrap">
   <button type="submit" class="btn-s">💾 儲存變更</button>
   <a href="/pending-customers" class="btn-b">取消</a>
+  <div style="flex:1"></div>
+  <button type="button" onclick="confirmDelete()" style="background:#b91c1c;color:#fff;border:none;padding:10px 22px;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit;">🗑 刪除此客戶</button>
 </div>
 </form>
+<form id="delete-form" method="post" action="/delete-customer" style="display:none;">
+  <input type="hidden" name="case_id" value="{h(case_id)}">
+</form>
+<script>
+function confirmDelete() {{
+  if (confirm('⚠️ 確定要刪除這位客戶嗎？\\n刪除後無法復原，所有編輯紀錄都會一併清除。\\n\\n只能刪除 PENDING 狀態的客戶（已送件的案件不能刪）。')) {{
+    document.getElementById('delete-form').submit();
+  }}
+}}
+</script>
 """ + """<script>
 var existingDebts=""" + debt_json + """;
 var dc=0;
@@ -7489,6 +7501,33 @@ async def edit_pending_post(request: Request):
         cur.execute("UPDATE customers SET debt_list=?, updated_at=? WHERE case_id=?", (debt_json_str, now, case_id))
     conn.commit(); conn.close()
     return RedirectResponse("/edit-pending?case_id=" + case_id + "&saved=1", status_code=303)
+
+
+@app.post("/delete-customer")
+async def delete_customer(request: Request):
+    """刪除單筆客戶（只允許 PENDING 狀態，防誤刪已送件案）"""
+    from fastapi.responses import RedirectResponse
+    role = check_auth(request)
+    if not role or role not in ("admin", "adminB"):
+        return HTMLResponse("<h3>❌ 無權限（需 admin 或 adminB）</h3>", status_code=403)
+    form = await request.form()
+    case_id = form.get("case_id", "").strip()
+    if not case_id:
+        return RedirectResponse("/pending-customers", status_code=303)
+    conn = get_conn(); cur = conn.cursor()
+    cur.execute("SELECT case_id, customer_name, status FROM customers WHERE case_id=?", (case_id,))
+    row = cur.fetchone()
+    if not row:
+        conn.close()
+        return RedirectResponse("/pending-customers?err=notfound", status_code=303)
+    if row["status"] != "PENDING":
+        conn.close()
+        return HTMLResponse(f"<h3>❌ 只能刪除 PENDING 狀態的客戶（此客戶狀態：{row['status']}）</h3>", status_code=400)
+    cur.execute("DELETE FROM case_logs WHERE case_id=?", (case_id,))
+    cur.execute("DELETE FROM customers WHERE case_id=?", (case_id,))
+    conn.commit(); conn.close()
+    return RedirectResponse("/pending-customers?deleted=1", status_code=303)
+
 
 # 計算客戶資料完整度（填寫欄位比例 0-100）
 _COMPLETENESS_EXCLUDE = {
@@ -8594,18 +8633,17 @@ _PDF_STYLE = """<style>
 @media print { @page { size: A4 portrait; margin: 10mm 12mm; } .no-print { display: none !important; } }
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html, body { width: 210mm; }
-body { font-family: 'Microsoft JhengHei', 'PingFang TC', sans-serif; background: #eee; color: #1a1a1a; font-size: 14px; margin: 0 auto; }
+body { font-family: 'Microsoft JhengHei', 'PingFang TC', sans-serif; background: #eee; color: #1a1a1a; font-size: 14px; margin: 0 auto; -webkit-font-smoothing: antialiased; }
 #pdf-content { width: 210mm; min-height: 297mm; padding: 10mm 12mm; margin: 20px auto 0; background: #fff; }
 @media print { html, body { width: auto; } body { background: #fff; } #pdf-content { margin: 0; padding: 0; width: auto; min-height: auto; } }
 .header { background: #3a3530; color: #fff; padding: 10px 16px; border-radius: 6px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; }
-.header-name { font-size: 18px; font-weight: 700; }
-.header-sub { font-size: 11px; color: #c8bfb5; margin-top: 2px; }
-table { width: 100%; border-collapse: collapse; margin-bottom: 10px; }
-th, td { border: 1px solid #bbb; padding: 6px 9px; font-size: 14px; line-height: 1.4; }
-th { background: #f0ebe4; color: #3a3020; font-weight: 700; width: 105px; white-space: nowrap; text-align: left; }
-td { background: #fff; }
-.sec { background: #3a3530; color: #fff; font-size: 11px; font-weight: 700; padding: 4px 8px; }
-.sec td { background: #3a3530; color: #fff; font-weight: 700; padding: 4px 8px; }
+.header-name { font-size: 18px; font-weight: 700; line-height: 1.3; }
+.header-sub { font-size: 11px; color: #c8bfb5; margin-top: 2px; line-height: 1.3; }
+table { width: 100%; border-collapse: collapse; margin-bottom: 10px; table-layout: fixed; }
+th, td { border: 1px solid #bbb; padding: 6px 9px; font-size: 14px !important; line-height: 1.4; vertical-align: middle; word-break: break-all; }
+th { background: #f0ebe4; color: #3a3020; font-weight: 700; width: 14%; white-space: nowrap; text-align: left; }
+td { background: #fff; width: 36%; }
+.sec td { background: #3a3530 !important; color: #fff !important; font-size: 11px !important; font-weight: 700; padding: 4px 8px; width: auto; }
 </style>"""
 
 
