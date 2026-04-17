@@ -2105,6 +2105,16 @@ def find_active_by_id_no_in_group(id_no, group_id):
         return cur.fetchone()
 
 
+def find_all_active_by_id_no(id_no):
+    """查所有同身分證的 ACTIVE 案件（可能跨群組多筆，用於 A 群回貼時跳按鈕選擇）"""
+    id_no = normalize_id_no(id_no)
+    if not id_no: return []
+    with db_conn() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM customers WHERE id_no=? AND status='ACTIVE' ORDER BY updated_at DESC", (id_no,))
+        return cur.fetchall()
+
+
 def find_active_by_name(name):
     with db_conn() as conn:
         cur = conn.cursor()
@@ -3834,7 +3844,13 @@ def handle_a_case_block(block_text, reply_token) -> Optional[str]:
 def _handle_a_case_block_locked(block_text, reply_token, id_no, name) -> Optional[str]:
     customer = None
     if id_no:
-        customer = find_active_by_id_no(id_no)
+        # 同身分證可能有多筆獨立案（B 群、C 群各一）→ 跳按鈕讓 A 群選
+        candidates = find_all_active_by_id_no(id_no)
+        if len(candidates) == 1:
+            customer = candidates[0]
+        elif len(candidates) > 1:
+            send_ambiguous_case_buttons(reply_token, block_text, candidates)
+            return "QUICK_REPLY_SENT"
     if not customer and name:
         matches = find_active_by_name(name)
         if len(matches) == 1:

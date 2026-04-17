@@ -259,6 +259,23 @@ PENDING → ACTIVE → CLOSED
 | `@AI 姓名 婉拒` | 婉拒並推下一家 |
 | `@AI 姓名 婉拒轉XXX` | 婉拒並跳到指定公司 |
 | `@AI 姓名 違約金已支付XXXX` | 違約金結案 |
+| `@AI 姓名 公司 核准 金額` | 修改核准金額（→ 移到待撥款） |
+| `@AI 姓名 公司[+公司2] 金額/期數` | 設送件金額（notify_amount）+ 同送 |
+
+**送件金額 vs 核准金額**：
+- `notify_amount` / `notify_period` = **送件金額/期數**（業務希望送多少），由上表最後一個指令、送件順序尾巴 `N/M @AI`、或 A 群照會注意事項寫入
+- `approved_amount` = **核准金額**（公司實際核准多少），由 A 群核准訊息或「@AI 姓名 公司 核准 金額」寫入
+- 兩欄獨立，核准訊息不會覆蓋 notify_amount
+- `generate_notification_text` 優先用 notify_amount → PLAN_INFO → eval_fund_need，**不** fallback 到 approved_amount
+
+**送件順序/轉送尾巴帶金額**（`extract_notify_amount_period`）：
+- `4/17-姓名-A/B/C 100/24 @AI` → 建案 + notify_amount=100 / notify_period=24
+- `4/17-姓名-轉A+B 30萬/24期 @AI` → 轉送（+）= 同送，寫入 concurrent_companies
+- 只在訊息末尾是 `@AI` 且前有 `N[萬]/M[期]` 才抓，避免誤判日期
+
+**補件/補申覆 待補 vs 已補**（`extract_status_summary`）：
+- A 群貼「補XX / 補申覆」→ 「待補資料 / 待補申覆」（要求補）
+- 業務回「已補XX / 補好 / 補完 / 申覆通過」→ 「已補資料 / 已補申覆」（真的補了）
 
 ### 12. 主要業務邏輯（L1490-2019）
 - `handle_new_case_block()`：處理新案件建立
@@ -267,7 +284,14 @@ PENDING → ACTIVE → CLOSED
 - `handle_bc_case_block()`：業務群訊息處理（含 @AI 補件回貼 A 群功能）
 
 ### 13. 按鈕指令處理（L1664-1799）
-處理 Quick Reply 回調：`FORCE_CREATE_NEW|`、`USE_EXISTING_CASE|`、`CONFIRM_TRANSFER|`、`KEEP_OLD_CASE|`、`SELECT_CASE|`、`REOPEN_CASE|`、`CREATE_NEW_CASE|` 等
+處理 Quick Reply 回調：`FORCE_CREATE_NEW|`、`USE_EXISTING_CASE|`、`TRANSFER_FROM_CONFIRM|`、`CONFIRM_TRANSFER|`、`KEEP_OLD_CASE|`、`CREATE_NEW_FROM_TRANSFER|`、`SELECT_CASE|`、`REOPEN_CASE|`、`CREATE_NEW_CASE|` 等
+
+**跨群組同身分證三按鈕語意**（`send_confirm_new_case_buttons` / `send_transfer_case_buttons`）：
+- **沿用(兩邊都有)** → 各群組獨立案件（呼叫 `create_customer_record` 建新 case_id）
+- **轉移到{新群組}** → 改 `source_group_id` 把原案搬到新群組
+- **取消** → 不動作
+
+業務群訊息查找策略：`_handle_bc_case_block_locked` 先用 `find_active_by_id_no_in_group(id_no, group_id)` 找本群組 ACTIVE；本群組沒有才用 `find_active_by_id_no` 跨群組找 → 跳按鈕。
 
 ### 14. Webhook 入口（L2031-2127）
 - `process_event()`：LINE Webhook 事件分發
