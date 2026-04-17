@@ -32,6 +32,11 @@ app = FastAPI()
 
 CHANNEL_ACCESS_TOKEN = os.getenv("CHANNEL_ACCESS_TOKEN", "")
 LINE_CHANNEL_SECRET = os.getenv("LINE_CHANNEL_SECRET", "")
+BACKUP_ENABLED = os.getenv("BACKUP_ENABLED", "").lower() == "true"
+GOOGLE_SERVICE_ACCOUNT_JSON = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON", "")
+GOOGLE_DRIVE_FOLDER_ID = os.getenv("GOOGLE_DRIVE_FOLDER_ID", "")
+BACKUP_KEEP_DAILY = int(os.getenv("BACKUP_KEEP_DAILY", "30"))
+BACKUP_KEEP_MONTHLY = int(os.getenv("BACKUP_KEEP_MONTHLY", "12"))
 A_GROUP_ID = os.getenv("A_GROUP_ID", "Cb3579e75c94437ed22aafc7b1f6aecdd")
 B_GROUP_ID = "Cd14f3ee775f1d9f5cfdafb223173cbef"
 C_GROUP_ID = "C1a647fcb29a74842eceeb18e7a53823d"
@@ -1850,6 +1855,11 @@ def init_db():
         ("company_months", "TEXT"),
         ("concurrent_companies", "TEXT"),
         ("company_status", "TEXT"),
+        ("signing_area", "TEXT"),
+        ("signing_salesperson", "TEXT"),
+        ("signing_company", "TEXT"),
+        ("signing_time", "TEXT"),
+        ("signing_location", "TEXT"),
     ]:
         ensure_column(cur, "customers", col, defn)
     # groups 表新增業務群對應欄位
@@ -1875,6 +1885,17 @@ def init_db():
         group_id TEXT DEFAULT '',
         created_at TEXT NOT NULL,
         expires_at TEXT NOT NULL
+    )""")
+    # form_tokens 表（客戶自助填單一次性連結）
+    cur.execute("""CREATE TABLE IF NOT EXISTS form_tokens (
+        token TEXT PRIMARY KEY NOT NULL,
+        group_id TEXT NOT NULL,
+        note TEXT DEFAULT '',
+        created_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        used_at TEXT DEFAULT '',
+        case_id TEXT DEFAULT '',
+        revoked_at TEXT DEFAULT ''
     )""")
     # 索引
     cur.execute("CREATE INDEX IF NOT EXISTS idx_cust_id_no ON customers(id_no)")
@@ -1981,7 +2002,9 @@ def create_customer_record(name, id_no, company, source_group_id, text,
 def update_customer(case_id, company=None, text=None, from_group_id="", status=None,
                     name=None, source_group_id=None, route_plan=None,
                     current_company=None, report_section=None,
-                    approved_amount=None, disbursement_date=None):
+                    approved_amount=None, disbursement_date=None,
+                    signing_area=None, signing_salesperson=None,
+                    signing_company=None, signing_time=None, signing_location=None):
     """更新客戶（Bug 5/6 修復：context manager + transaction）
 
     UPDATE + INSERT case_logs 包在同一交易內，確保原子性。
@@ -1993,7 +2016,12 @@ def update_customer(case_id, company=None, text=None, from_group_id="", status=N
                      ("route_plan", route_plan), ("current_company", current_company),
                      ("report_section", report_section),
                      ("approved_amount", approved_amount),
-                     ("disbursement_date", disbursement_date)]:
+                     ("disbursement_date", disbursement_date),
+                     ("signing_area", signing_area),
+                     ("signing_salesperson", signing_salesperson),
+                     ("signing_company", signing_company),
+                     ("signing_time", signing_time),
+                     ("signing_location", signing_location)]:
         if val is not None:
             fields.append(f"{col} = ?"); values.append(val)
     fields.append("updated_at = ?"); values.append(now); values.append(case_id)
@@ -2473,6 +2501,10 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
             created = row["created_at"] or ""
             created_date = created[5:10].replace("-", "/") if created else date_str
             amount = row["approved_amount"] or ""
+            # 對保時間（已排定對保的待撥款案件）
+            signing_time = (row["signing_time"] or "").strip()
+            signing_date = signing_time.split()[0] if signing_time else ""
+            pending_tag = f"(對保{signing_date})" if signing_date else "(待撥款)"
             # 從 route_plan 歷史找核准公司（每家各自顯示撥款狀態）
             approved_list = get_all_approved(row["route_plan"] or "")
             if approved_list:
@@ -2484,11 +2516,11 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
                     if disb:
                         parts.append(f"{co}{amt}(撥款{disb})")
                     else:
-                        parts.append(f"{co}{amt}(待撥款)")
+                        parts.append(f"{co}{amt}{pending_tag}")
                 amount_str = "-核准" + "/".join(parts)
             elif amount:
                 disb_date = row["disbursement_date"] or ""
-                disb_str = f"(撥款{disb_date})" if disb_date else "(待撥款)"
+                disb_str = f"(撥款{disb_date})" if disb_date else pending_tag
                 amount_str = f"-核准{amount}{disb_str}"
             else:
                 amount_str = ""
@@ -2602,7 +2634,10 @@ def generate_report_lines(group_id: str) -> List[str]:
                 try:
                     days = (datetime.now() - datetime.fromisoformat(created.replace("Z",""))).days
                     if days >= 7:
-                        overdue_lines.append(f"  {row['customer_name']}（{days}天）")
+                        signing_time = (row["signing_time"] or "").strip()
+                        signing_date = signing_time.split()[0] if signing_time else ""
+                        extra = f"，對保{signing_date}" if signing_date else ""
+                        overdue_lines.append(f"  {row['customer_name']}（{days}天{extra}）")
                 except Exception:
                     pass
     if overdue_lines:
@@ -2857,6 +2892,48 @@ def parse_special_command(text: str, group_id: str) -> Optional[Dict]:
     m = re.match(r"^([\u4e00-\u9fff]{2,6})\s+(.+?)\s*照會$", clean)
     if m:
         return {"type": "notification", "name": m.group(1), "company": m.group(2).strip()}
+
+    # 對保派件（A 訊息）：辦理方案/核准金額/客戶姓名/對保地區
+    if "客戶姓名" in clean and "對保地區" in clean:
+        fields = {}
+        for line in clean.splitlines():
+            mm = re.match(r"^\s*(辦理方案|核准金額|客戶姓名|對保地區)\s*[:：]\s*(.+?)\s*$", line)
+            if mm:
+                fields[mm.group(1)] = mm.group(2).strip()
+        name = fields.get("客戶姓名", "")
+        if name:
+            return {
+                "type": "signing_request",
+                "name": name,
+                "plan": fields.get("辦理方案", ""),
+                "amount": fields.get("核准金額", ""),
+                "area": fields.get("對保地區", ""),
+            }
+
+    # 對保時間地點（B 訊息）：對保 XXX XX對保 / 時間 X / 地點 X
+    lines_b = [ln.strip() for ln in clean.splitlines() if ln.strip()]
+    if lines_b:
+        m = re.match(r"^對保\s+([\u4e00-\u9fff]{2,6})\s+(.+?)對保\s*$", lines_b[0])
+        if m:
+            salesperson = m.group(1)
+            signing_co = m.group(2).strip()
+            time_str = ""
+            loc_str = ""
+            for line in lines_b[1:]:
+                mt = re.match(r"^時間\s*[:：]?\s*(.+)$", line)
+                if mt:
+                    time_str = mt.group(1).strip()
+                    continue
+                ml = re.match(r"^地點\s*[:：]?\s*(.+)$", line)
+                if ml:
+                    loc_str = ml.group(1).strip()
+            return {
+                "type": "signing_schedule",
+                "salesperson": salesperson,
+                "signing_company": signing_co,
+                "time": time_str,
+                "location": loc_str,
+            }
 
     return None
 
@@ -3173,9 +3250,52 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
         new_route = set_disbursed_in_history(target["route_plan"] or "", company, disb_date)
         update_customer(target["case_id"], disbursement_date=disb_date,
                         route_plan=new_route, report_section="待撥款",
+                        signing_area="", signing_salesperson="",
+                        signing_company="", signing_time="", signing_location="",
                         text=f"{name} {company} 撥款{disb_date}",
                         from_group_id=group_id)
         reply_text(reply_token, f"✅ {name} 已更新撥款日期：{disb_date}")
+        return
+
+    if t == "signing_request":
+        name = cmd["name"]
+        area = cmd["area"]
+        rows = find_active_by_name(name)
+        same = [r for r in rows if r["source_group_id"] == group_id]
+        target = same[0] if same else (rows[0] if rows else None)
+        if not target:
+            reply_text(reply_token, f"❌ 找不到客戶：{name}"); return
+        update_customer(target["case_id"],
+                        signing_area=area,
+                        text=f"{name} 派對保（地區：{area}）",
+                        from_group_id=group_id)
+        reply_text(reply_token, f"✅ {name} 已記錄派對保：{area}")
+        return
+
+    if t == "signing_schedule":
+        conn = get_conn(); cur = conn.cursor()
+        cur.execute(
+            "SELECT * FROM customers WHERE status='ACTIVE' AND source_group_id=? "
+            "AND signing_area IS NOT NULL AND signing_area!='' "
+            "AND (signing_time IS NULL OR signing_time='') "
+            "ORDER BY updated_at DESC LIMIT 1",
+            (group_id,))
+        target = cur.fetchone(); conn.close()
+        if not target:
+            reply_text(reply_token, "❌ 找不到待對保客戶（請先用「辦理方案/客戶姓名/對保地區」派對保）"); return
+        update_customer(target["case_id"],
+                        signing_salesperson=cmd["salesperson"],
+                        signing_company=cmd["signing_company"],
+                        signing_time=cmd["time"],
+                        signing_location=cmd["location"],
+                        text=f"{target['customer_name']} 對保 {cmd['salesperson']} {cmd['signing_company']} {cmd['time']} {cmd['location']}",
+                        from_group_id=group_id)
+        reply_text(reply_token,
+                   f"✅ {target['customer_name']} 對保已記錄\n"
+                   f"  業務：{cmd['salesperson']}\n"
+                   f"  公司：{cmd['signing_company']}\n"
+                   f"  時間：{cmd['time']}\n"
+                   f"  地點：{cmd['location']}")
         return
 
     if t == "reopen":
@@ -4023,6 +4143,11 @@ def handle_disbursement_list(text: str, reply_token: str):
                     disbursement_date=disb_date,
                     route_plan=new_route,
                     report_section="待撥款",
+                    signing_area="",
+                    signing_salesperson="",
+                    signing_company="",
+                    signing_time="",
+                    signing_location="",
                     text=name + " " + company + " 撥款" + disb_date,
                     from_group_id=A_GROUP_ID,
                 )
@@ -4675,6 +4800,64 @@ def _delete_session(token: str):
     except Exception as e:
         print(f"Session delete error: {e}")
 
+
+# =========================
+# form_tokens helpers（客戶自助填單 Magic Link）
+# =========================
+def create_form_token(group_id: str, note: str = "", days: int = 7) -> str:
+    import secrets as _secrets
+    from datetime import datetime as _dt, timedelta as _td
+    token = _secrets.token_urlsafe(24)
+    created = now_iso()
+    expires = (_dt.now() + _td(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+    with db_conn(commit=True) as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO form_tokens (token, group_id, note, created_at, expires_at) VALUES (?,?,?,?,?)",
+            (token, group_id, note, created, expires),
+        )
+    return token
+
+
+def get_form_token(token: str):
+    """回傳 row（可用）或 None（不存在/過期/已用/已撤回）。"""
+    if not token:
+        return None
+    with db_conn() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM form_tokens WHERE token=?", (token,))
+        row = cur.fetchone()
+    if not row:
+        return None
+    if row["used_at"] or row["revoked_at"]:
+        return None
+    if _is_session_expired(row["expires_at"]):
+        return None
+    return row
+
+
+def consume_form_token(token: str, case_id: str):
+    with db_conn(commit=True) as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE form_tokens SET used_at=?, case_id=? WHERE token=?",
+            (now_iso(), case_id, token),
+        )
+
+
+def revoke_form_token(token: str):
+    with db_conn(commit=True) as conn:
+        cur = conn.cursor()
+        cur.execute("UPDATE form_tokens SET revoked_at=? WHERE token=?", (now_iso(), token))
+
+
+def list_form_tokens(limit: int = 100):
+    with db_conn() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM form_tokens ORDER BY created_at DESC LIMIT ?", (limit,))
+        return cur.fetchall()
+
+
 PAGE_CSS = """
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
@@ -4823,6 +5006,7 @@ def make_topnav(role: str, active: str) -> str:
                        ("📝 操作紀錄","/admin/logs","logs"),
                        ("📄 申請書範本","/admin/templates","templates"),
                        ("💾 下載備份","/admin/download-db","download"),
+                       ("☁️ Drive 備份","/admin/gdrive-backup","gdrive-backup"),
                        ("🗑️ 清除資料","/admin/reset_data","reset")]
     nav = "".join(f'<a class="nl {"active" if a==active else ""}" href="{u}">{n}</a>'
                   for n,u,a in links)
@@ -9586,6 +9770,79 @@ async def download_db(request: Request):
                         media_type="application/octet-stream")
 
 
+@app.get("/admin/gdrive-backup", response_class=HTMLResponse)
+async def gdrive_backup_page(request: Request):
+    from fastapi.responses import RedirectResponse
+    role = check_auth(request)
+    if role != "admin":
+        return RedirectResponse("/login", status_code=303)
+    qs = str(request.url.query or "")
+    flash = ""
+    if "ok=1" in qs:
+        flash = '<div style="background:#dcfce7;color:#15803d;padding:10px 14px;border-radius:6px;font-size:13px;margin-bottom:14px">✅ 備份完成</div>'
+    elif "err=" in qs:
+        import urllib.parse as _up
+        msg = _up.unquote(qs.split("err=",1)[1].split("&",1)[0])
+        flash = f'<div style="background:#fee;color:#b91c1c;padding:10px 14px;border-radius:6px;font-size:13px;margin-bottom:14px">❌ 備份失敗：{h(msg)}</div>'
+    status_txt = "✅ 已啟用" if BACKUP_ENABLED else "❌ 未啟用（BACKUP_ENABLED 環境變數）"
+    cfg_ok = BACKUP_ENABLED and GOOGLE_SERVICE_ACCOUNT_JSON and GOOGLE_DRIVE_FOLDER_ID
+    files = list_gdrive_backups() if cfg_ok else []
+    def _fmt_size(n):
+        try:
+            n = int(n)
+        except Exception:
+            return "-"
+        for u in ("B","KB","MB","GB"):
+            if n < 1024: return f"{n:.1f}{u}"
+            n /= 1024
+        return f"{n:.1f}TB"
+    rows_html = "".join(
+        f'<tr><td style="padding:8px 12px">{h(f.get("name",""))}</td>'
+        f'<td style="padding:8px 12px;text-align:right">{_fmt_size(f.get("size",0))}</td>'
+        f'<td style="padding:8px 12px;color:#666">{h((f.get("createdTime","") or "")[:19].replace("T"," "))}</td></tr>'
+        for f in files
+    ) or '<tr><td colspan="3" style="padding:16px;text-align:center;color:#999">尚無備份（按上方按鈕手動執行一次）</td></tr>'
+    return f"""<!DOCTYPE html><html><head>{PAGE_CSS}<title>Google Drive 備份</title></head><body>
+    {make_topnav(role,"gdrive-backup")}
+    <div class="page">
+      <div class="card" style="max-width:900px;margin:0 auto;padding:20px">
+        {flash}
+        <h2 style="margin:0 0 12px;font-size:18px">💾 Google Drive 自動備份</h2>
+        <div style="background:#f7f4ef;padding:12px 14px;border-radius:8px;margin-bottom:14px;font-size:13px;line-height:1.8">
+          <div>狀態：<b>{status_txt}</b></div>
+          <div>每日自動執行時間：<b>03:00（台灣時間）</b></div>
+          <div>保留策略：<b>近 {BACKUP_KEEP_DAILY} 天每日 + 近 {BACKUP_KEEP_MONTHLY} 個月每月 1 份</b></div>
+        </div>
+        <form method="post" action="/admin/gdrive-backup" style="margin-bottom:16px">
+          <button type="submit" class="btn btn-primary" style="padding:10px 18px;font-size:14px">▶ 立即備份一次</button>
+          <span style="color:#999;font-size:12px;margin-left:10px">（手動測試用，按下後約 5-15 秒完成）</span>
+        </form>
+        <h3 style="margin:20px 0 8px;font-size:15px">Drive 上現存的備份</h3>
+        <table style="width:100%;border-collapse:collapse;font-size:13px">
+          <thead><tr style="background:#ece8e2">
+            <th style="padding:8px 12px;text-align:left">檔名</th>
+            <th style="padding:8px 12px;text-align:right">大小</th>
+            <th style="padding:8px 12px;text-align:left">建立時間(UTC)</th>
+          </tr></thead>
+          <tbody>{rows_html}</tbody>
+        </table>
+      </div>
+    </div></body></html>"""
+
+
+@app.post("/admin/gdrive-backup")
+async def gdrive_backup_trigger(request: Request):
+    from fastapi.responses import RedirectResponse
+    role = check_auth(request)
+    if role != "admin":
+        return RedirectResponse("/login", status_code=303)
+    result = do_backup_now()
+    if result.get("ok"):
+        return RedirectResponse("/admin/gdrive-backup?ok=1", status_code=303)
+    import urllib.parse as _up
+    return RedirectResponse(f"/admin/gdrive-backup?err={_up.quote(str(result.get('reason',''))[:200])}", status_code=303)
+
+
 # =========================
 # 申請書範本管理（階段 1：上傳替換，座標不變時可用）
 # =========================
@@ -10192,10 +10449,159 @@ function exportPDF(){
 
 
 # =========================
+# Google Drive 自動備份
+# =========================
+def _gdrive_service():
+    """建立 Google Drive API client（lazy import，套件沒裝也不會炸）"""
+    from google.oauth2 import service_account
+    from googleapiclient.discovery import build
+    sa_info = json.loads(GOOGLE_SERVICE_ACCOUNT_JSON)
+    creds = service_account.Credentials.from_service_account_info(
+        sa_info, scopes=["https://www.googleapis.com/auth/drive.file"]
+    )
+    return build("drive", "v3", credentials=creds, cache_discovery=False)
+
+
+def _snapshot_db(dest_path: str):
+    """用 SQLite backup API 做一致性快照（避免複製到寫到一半的檔）"""
+    src = sqlite3.connect(DB_PATH)
+    try:
+        dst = sqlite3.connect(dest_path)
+        try:
+            with dst:
+                src.backup(dst)
+        finally:
+            dst.close()
+    finally:
+        src.close()
+
+
+def _prune_gdrive_backups(service) -> dict:
+    """依保留策略清掉過期備份。
+    策略：30 天內每日都留；超過 30 天只留每月最早一份；總共最多留 BACKUP_KEEP_MONTHLY 個月。"""
+    files = service.files().list(
+        q=f"'{GOOGLE_DRIVE_FOLDER_ID}' in parents and trashed=false and name contains 'loan-backup-'",
+        fields="files(id,name,createdTime)", pageSize=1000
+    ).execute().get("files", [])
+    today = datetime.now().date()
+    keep_ids = set()
+    monthly_candidates = {}
+    name_re = re.compile(r"loan-backup-(\d{4}-\d{2}-\d{2})\.db")
+    for f in files:
+        m = name_re.match(f["name"])
+        if not m:
+            keep_ids.add(f["id"])
+            continue
+        try:
+            fdate = datetime.strptime(m.group(1), "%Y-%m-%d").date()
+        except Exception:
+            keep_ids.add(f["id"])
+            continue
+        age = (today - fdate).days
+        if age <= BACKUP_KEEP_DAILY:
+            keep_ids.add(f["id"])
+        else:
+            mk = fdate.strftime("%Y-%m")
+            cur = monthly_candidates.get(mk)
+            if cur is None or fdate < cur[1]:
+                monthly_candidates[mk] = (f["id"], fdate)
+    for mk in sorted(monthly_candidates.keys(), reverse=True)[:BACKUP_KEEP_MONTHLY]:
+        keep_ids.add(monthly_candidates[mk][0])
+    deleted = 0
+    for f in files:
+        if f["id"] not in keep_ids:
+            try:
+                service.files().delete(fileId=f["id"]).execute()
+                deleted += 1
+            except Exception as e:
+                print(f"[backup-prune] delete {f['name']} failed: {e}")
+    return {"total": len(files), "kept": len(keep_ids), "deleted": deleted}
+
+
+def do_backup_now() -> dict:
+    """執行一次備份：快照 → 上傳 Drive → 清理過期檔。回傳 dict 結果。"""
+    if not BACKUP_ENABLED:
+        return {"ok": False, "reason": "BACKUP_ENABLED 未設定為 true"}
+    if not GOOGLE_SERVICE_ACCOUNT_JSON or not GOOGLE_DRIVE_FOLDER_ID:
+        return {"ok": False, "reason": "缺少 GOOGLE_SERVICE_ACCOUNT_JSON 或 GOOGLE_DRIVE_FOLDER_ID"}
+    tmp_path = os.path.join(os.path.dirname(DB_PATH) or ".", ".backup_gdrive_tmp.db")
+    try:
+        _snapshot_db(tmp_path)
+        service = _gdrive_service()
+        from googleapiclient.http import MediaFileUpload
+        today = datetime.now().strftime("%Y-%m-%d")
+        fname = f"loan-backup-{today}.db"
+        existing = service.files().list(
+            q=f"name='{fname}' and '{GOOGLE_DRIVE_FOLDER_ID}' in parents and trashed=false",
+            fields="files(id,name)"
+        ).execute().get("files", [])
+        media = MediaFileUpload(tmp_path, mimetype="application/x-sqlite3", resumable=False)
+        if existing:
+            service.files().update(fileId=existing[0]["id"], media_body=media).execute()
+            action = "updated"
+        else:
+            service.files().create(
+                body={"name": fname, "parents": [GOOGLE_DRIVE_FOLDER_ID]},
+                media_body=media, fields="id"
+            ).execute()
+            action = "created"
+        prune = _prune_gdrive_backups(service)
+        print(f"[backup] {action} {fname}, prune={prune}")
+        return {"ok": True, "file": fname, "action": action, "prune": prune, "ts": now_iso()}
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        print(f"[backup] failed: {e}")
+        return {"ok": False, "reason": str(e)}
+    finally:
+        try:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+        except Exception:
+            pass
+
+
+def list_gdrive_backups() -> list:
+    """列出 Drive 上的備份檔（給管理頁顯示用）"""
+    if not BACKUP_ENABLED or not GOOGLE_SERVICE_ACCOUNT_JSON or not GOOGLE_DRIVE_FOLDER_ID:
+        return []
+    try:
+        service = _gdrive_service()
+        files = service.files().list(
+            q=f"'{GOOGLE_DRIVE_FOLDER_ID}' in parents and trashed=false",
+            fields="files(id,name,size,createdTime)",
+            orderBy="name desc", pageSize=100
+        ).execute().get("files", [])
+        return files
+    except Exception as e:
+        print(f"[backup-list] failed: {e}")
+        return []
+
+
+def _start_backup_scheduler():
+    if not BACKUP_ENABLED:
+        print("[backup] scheduler disabled (BACKUP_ENABLED != true)")
+        return
+    if not GOOGLE_SERVICE_ACCOUNT_JSON or not GOOGLE_DRIVE_FOLDER_ID:
+        print("[backup] scheduler disabled (missing env vars)")
+        return
+    try:
+        from apscheduler.schedulers.background import BackgroundScheduler
+        sched = BackgroundScheduler(daemon=True)
+        # 19:00 UTC = 03:00 Asia/Taipei
+        sched.add_job(do_backup_now, "cron", hour=19, minute=0, id="daily_gdrive_backup")
+        sched.start()
+        print("[backup] scheduler started: daily 19:00 UTC (03:00 Taipei)")
+    except Exception as e:
+        print(f"[backup] scheduler start failed: {e}")
+
+
+# =========================
 # 啟動（模組載入時就初始化 DB，確保任何情況下都能正常運作）
 # =========================
 init_db()
 seed_groups()
+_start_backup_scheduler()
 
 
 if __name__ == "__main__":
