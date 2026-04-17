@@ -4473,9 +4473,16 @@ def handle_a_case_block(block_text, reply_token) -> Optional[str]:
         return _handle_a_case_block_locked(block_text, reply_token, id_no, name)
 
 
-def _handle_a_case_block_locked(block_text, reply_token, id_no, name) -> Optional[str]:
+def _handle_a_case_block_locked(block_text, reply_token, id_no, name, forced_case_id: str = "") -> Optional[str]:
     customer = None
-    if id_no:
+    # 從 SELECT_CASE 按鈕選擇而來：固定用選中的 case，跳過 find 邏輯
+    if forced_case_id:
+        conn = get_conn(); cur = conn.cursor()
+        cur.execute("SELECT * FROM customers WHERE case_id=?", (forced_case_id,))
+        customer = cur.fetchone(); conn.close()
+        if not customer:
+            return f"⚠️ 選中的案件不存在（case_id={forced_case_id}）"
+    if not customer and id_no:
         # 同身分證可能有多筆獨立案（B 群、C 群各一）→ 跳按鈕讓 A 群選
         candidates = find_all_active_by_id_no(id_no)
         if len(candidates) == 1:
@@ -4907,19 +4914,14 @@ def handle_command_text(text: str, reply_token: str) -> bool:
         a = get_action(action_id, "route_a_case")
         if not a: return True
         block_text = a["payload"].get("block_text", "")
-        conn = get_conn(); cur = conn.cursor()
-        cur.execute("SELECT * FROM customers WHERE case_id=?", (case_id,))
-        c = cur.fetchone(); conn.close()
-        if not c: reply_text(reply_token, "⚠️ 案件不存在"); delete_pending_action(action_id); return True
-        new_status = "CLOSED" if is_closed_text(block_text) else None
-        update_customer(case_id, company=extract_company(block_text) or c["company"] or "",
-                        text=block_text, from_group_id=A_GROUP_ID, status=new_status)
-        ok, err = push_text(c["source_group_id"], block_text)
-        if not ok:
-            reply_text(reply_token, f"❌ 找到案件但回貼失敗：{err}"); delete_pending_action(action_id); return True
-        gname = get_group_name(c["source_group_id"])
-        msg = f"✅ 已結案並回貼到{gname}：{c['customer_name']}" if new_status == "CLOSED" else f"✅ 已回貼到{gname}：{c['customer_name']}"
-        reply_text(reply_token, msg); delete_pending_action(action_id); return True
+        # delegate 給完整 A 群處理流程（會寫 company_status / 核准移待撥款 / 婉拒推 route 等）
+        id_no = extract_id_no(block_text)
+        name = extract_name(block_text)
+        with get_name_lock(name):
+            result = _handle_a_case_block_locked(block_text, reply_token, id_no, name, forced_case_id=case_id)
+        if result and result != "QUICK_REPLY_SENT":
+            reply_text(reply_token, result)
+        delete_pending_action(action_id); return True
 
     # 先處理二次確認（CONFIRM_UNKNOWN_CO_XXX|）
     is_confirm = text.startswith("CONFIRM_UNKNOWN_CO_")
