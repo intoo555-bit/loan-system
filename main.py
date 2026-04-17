@@ -8594,18 +8594,18 @@ _PDF_STYLE = """<style>
 @media print { @page { size: A4 portrait; margin: 10mm 12mm; } .no-print { display: none !important; } }
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html, body { width: 210mm; }
-body { font-family: 'Microsoft JhengHei', 'PingFang TC', sans-serif; background: #eee; color: #1a1a1a; font-size: 15px; margin: 0 auto; }
-#pdf-content { width: 210mm; min-height: 297mm; padding: 12mm 14mm; margin: 20px auto 0; background: #fff; }
+body { font-family: 'Microsoft JhengHei', 'PingFang TC', sans-serif; background: #eee; color: #1a1a1a; font-size: 14px; margin: 0 auto; }
+#pdf-content { width: 210mm; min-height: 297mm; padding: 10mm 12mm; margin: 20px auto 0; background: #fff; }
 @media print { html, body { width: auto; } body { background: #fff; } #pdf-content { margin: 0; padding: 0; width: auto; min-height: auto; } }
-.header { background: #3a3530; color: #fff; padding: 16px 20px; border-radius: 8px; margin-bottom: 16px; display: flex; justify-content: space-between; align-items: center; }
-.header-name { font-size: 24px; font-weight: 700; }
-.header-sub { font-size: 13px; color: #c8bfb5; margin-top: 4px; }
-table { width: 100%; border-collapse: collapse; margin-bottom: 16px; }
-th, td { border: 1px solid #bbb; padding: 8px 11px; font-size: 15px; line-height: 1.55; }
-th { background: #f0ebe4; color: #3a3020; font-weight: 700; width: 110px; white-space: nowrap; text-align: left; }
+.header { background: #3a3530; color: #fff; padding: 10px 16px; border-radius: 6px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; }
+.header-name { font-size: 18px; font-weight: 700; }
+.header-sub { font-size: 11px; color: #c8bfb5; margin-top: 2px; }
+table { width: 100%; border-collapse: collapse; margin-bottom: 10px; }
+th, td { border: 1px solid #bbb; padding: 6px 9px; font-size: 14px; line-height: 1.4; }
+th { background: #f0ebe4; color: #3a3020; font-weight: 700; width: 105px; white-space: nowrap; text-align: left; }
 td { background: #fff; }
-.sec { background: #3a3530; color: #fff; font-size: 14px; font-weight: 700; padding: 6px 10px; }
-.sec td { background: #3a3530; color: #fff; font-weight: 700; }
+.sec { background: #3a3530; color: #fff; font-size: 11px; font-weight: 700; padding: 4px 8px; }
+.sec td { background: #3a3530; color: #fff; font-weight: 700; padding: 4px 8px; }
 </style>"""
 
 
