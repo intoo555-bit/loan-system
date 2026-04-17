@@ -4959,6 +4959,15 @@ def handle_command_text(text: str, reply_token: str) -> bool:
         cust = cur.fetchone(); conn.close()
         if not cust:
             reply_text(reply_token, "⚠️ 客戶已不存在"); delete_pending_action(action_id); return True
+        # 先計算新的 company_status（把原訊息寫入，日報才能抓到狀態摘要）
+        try:
+            cs_raw = cust["company_status"] or ""
+            cs_dict = json.loads(cs_raw) if cs_raw else {}
+        except Exception:
+            cs_dict = {}
+        co_key = normalize_section(company)
+        cs_dict[co_key] = block_text  # 各路徑都把訊息當 company 的最新狀態
+        new_company_status = json.dumps(cs_dict, ensure_ascii=False)
         if action_type in ("REROUTE", "SUPPLEMENT"):
             route = cust["route_plan"] or ""
             data = parse_route_json(route) if route else {"order":[], "current_index":0, "history":[]}
@@ -4968,22 +4977,13 @@ def handle_command_text(text: str, reply_token: str) -> bool:
             data["order"] = order
             data["current_index"] = order.index(company)
             new_route = json.dumps(data, ensure_ascii=False)
-            # SUPPLEMENT：跑婉拒公司的 company_status 清除，狀態會由訊息內容自動判定
-            extra_fields = {}
-            if action_type == "SUPPLEMENT":
-                try:
-                    cs_raw = cust["company_status"] or ""
-                    cs_dict = json.loads(cs_raw) if cs_raw else {}
-                    # 清掉該公司之前的婉拒狀態，新狀態會由 update_customer 依訊息重算
-                    if company in cs_dict:
-                        cs_dict[company] = ""
-                    extra_fields["company_status"] = json.dumps(cs_dict, ensure_ascii=False)
-                except Exception:
-                    pass
             act_verb = "再送" if action_type == "REROUTE" else "補件恢復"
             update_customer(case_id, route_plan=new_route, current_company=company,
-                            text=f"{name} {act_verb} {company}\n{block_text}", from_group_id=A_GROUP_ID,
-                            **extra_fields)
+                            text=f"{name} {act_verb} {company}\n{block_text}", from_group_id=A_GROUP_ID)
+            # 另外直接 SQL 寫 company_status（update_customer 簽名未含此欄）
+            with db_conn(commit=True) as _cn:
+                _cn.cursor().execute("UPDATE customers SET company_status=? WHERE case_id=?",
+                                     (new_company_status, case_id))
             reply_text(reply_token, f"✅ 已將 {company} 加入 {name} 的送件順序並設為當前公司")
         else:  # CONCURRENT
             concurrent = cust["concurrent_companies"] or ""
@@ -4991,10 +4991,11 @@ def handle_command_text(text: str, reply_token: str) -> bool:
             if company not in parts2:
                 parts2.append(company)
             new_concurrent = ",".join(parts2)
-            conn2 = get_conn(); cur2 = conn2.cursor()
-            cur2.execute("UPDATE customers SET concurrent_companies=? WHERE case_id=?", (new_concurrent, case_id))
-            conn2.commit(); conn2.close()
-            update_customer(case_id, text=f"{name} 同送 {company}\n{block_text}", from_group_id=A_GROUP_ID)
+            update_customer(case_id, concurrent_companies=new_concurrent,
+                            text=f"{name} 同送 {company}\n{block_text}", from_group_id=A_GROUP_ID)
+            with db_conn(commit=True) as _cn:
+                _cn.cursor().execute("UPDATE customers SET company_status=? WHERE case_id=?",
+                                     (new_company_status, case_id))
             reply_text(reply_token, f"✅ 已將 {company} 加入 {name} 的同時送件清單")
         delete_pending_action(action_id)
         return True
