@@ -1376,10 +1376,18 @@ def parse_route_order_line(line: str) -> Dict:
     if not m:
         return {}
     companies_str = m.group(3).strip()
-    companies = [COMPANY_ALIAS.get(c.strip(), c.strip()) for c in companies_str.split("/") if c.strip()]
-    if len(companies) < 1:
+    raw_companies = [COMPANY_ALIAS.get(c.strip(), c.strip()) for c in companies_str.split("/") if c.strip()]
+    if not raw_companies:
         return {}
-    return {"date": m.group(1), "name": m.group(2), "companies": companies}
+    # 去重（防手滑打兩次同一家），記錄重複數量
+    seen = set()
+    companies = []
+    for c in raw_companies:
+        if c not in seen:
+            seen.add(c)
+            companies.append(c)
+    dupe_count = len(raw_companies) - len(companies)
+    return {"date": m.group(1), "name": m.group(2), "companies": companies, "dupe_count": dupe_count}
 
 
 def is_route_order_line(line: str) -> bool:
@@ -1668,8 +1676,41 @@ def split_multi_cases(text: str) -> List[str]:
 # LINE API
 # =========================
 def push_text(to_group_id: str, text: str):
+    """推送訊息。超過 4900 字會自動分段推送，每段都加「(N/M)」標記"""
     if not CHANNEL_ACCESS_TOKEN:
         return False, "未設定 CHANNEL_ACCESS_TOKEN"
+    text = text or ""
+    # 超長時分段（每段 4900 字）
+    if len(text) > 4900:
+        segments = []
+        # 優先在換行分段，避免切半
+        remaining = text
+        while len(remaining) > 4900:
+            cut = remaining.rfind("\n", 0, 4900)
+            if cut < 3500:  # 沒找到合適換行，強切
+                cut = 4900
+            segments.append(remaining[:cut])
+            remaining = remaining[cut:].lstrip("\n")
+        if remaining:
+            segments.append(remaining)
+        total = len(segments)
+        last_ok, last_err = True, ""
+        for i, seg in enumerate(segments, 1):
+            tag = f"({i}/{total}) " if total > 1 else ""
+            try:
+                resp = req_lib.post(
+                    "https://api.line.me/v2/bot/message/push",
+                    headers={"Authorization": f"Bearer {CHANNEL_ACCESS_TOKEN}", "Content-Type": "application/json"},
+                    json={"to": to_group_id, "messages": [{"type": "text", "text": (tag + seg)[:4900]}]},
+                    timeout=10,
+                )
+                if resp.status_code != 200:
+                    last_ok = False
+                    last_err = f"HTTP {resp.status_code}"
+            except Exception as e:
+                last_ok = False
+                last_err = str(e)
+        return last_ok, last_err
     try:
         resp = req_lib.post(
             "https://api.line.me/v2/bot/message/push",
@@ -3376,6 +3417,8 @@ def _validate_new_case_fields(date: str, name: str, id_no: str):
     if id_no:
         if not re.match(r"^[A-Z][A-Z0-9]\d{8}$", id_no, re.IGNORECASE):
             warnings.append(f"身分證「{id_no}」格式不標準（應為 1 英文字母 + 1 英數 + 8 位數字）")
+        elif not validate_tw_id_checksum(id_no):
+            warnings.append(f"身分證「{id_no}」校驗位不符，可能打錯一碼")
     if name:
         if len(name) > 5:
             warnings.append(f"姓名「{name}」長度 {len(name)} 字，確認無誤？")
@@ -3400,6 +3443,89 @@ def _resolve_target(name: str, group_id: str, reply_token: str):
         return rows[0]
     reply_text(reply_token, f"❌ 找不到客戶：{name}")
     return None
+
+
+def _check_active_or_warn(target, reply_token, action_label: str, customer_name: str = ""):
+    """破壞性指令前檢查 target 是否為 ACTIVE；非 ACTIVE 則警告並回 False"""
+    if not target:
+        return False
+    status = target["status"] if "status" in target.keys() else None
+    if status == "ACTIVE":
+        return True
+    status_label = {"CLOSED": "已結案", "PENALTY": "違約金結案",
+                    "ABANDONED": "已放棄", "REJECTED": "全數婉拒",
+                    "PENDING": "尚未啟用"}.get(status, f"狀態 {status}")
+    name = customer_name or (target["customer_name"] if "customer_name" in target.keys() else "此客戶")
+    reply_text(reply_token,
+               f"⚠️ {name} {status_label}，無法執行「{action_label}」\n"
+               f"如需操作請先打「@AI {name} 重啟」讓客戶回到進行中")
+    return False
+
+
+# 台灣身分證字母對應值（首碼轉換）
+_ID_LETTER_MAP = {
+    'A': 10, 'B': 11, 'C': 12, 'D': 13, 'E': 14, 'F': 15, 'G': 16, 'H': 17,
+    'I': 34, 'J': 18, 'K': 19, 'L': 20, 'M': 21, 'N': 22, 'O': 35, 'P': 23,
+    'Q': 24, 'R': 25, 'S': 26, 'T': 27, 'U': 28, 'V': 29, 'W': 32, 'X': 30,
+    'Y': 31, 'Z': 33,
+}
+
+
+def validate_tw_id_checksum(id_no: str) -> bool:
+    """台灣身分證校驗位。居留證第 2 碼為字母則僅驗格式、跳過 checksum。"""
+    if not id_no or len(id_no) != 10:
+        return False
+    id_no = id_no.upper()
+    first = id_no[0]
+    if first not in _ID_LETTER_MAP:
+        return False
+    if not id_no[1].isdigit():
+        return id_no[1] in _ID_LETTER_MAP and id_no[2:].isdigit()
+    if not id_no[1:].isdigit():
+        return False
+    first_val = _ID_LETTER_MAP[first]
+    digits = [first_val // 10, first_val % 10] + [int(d) for d in id_no[1:]]
+    weights = [1, 9, 8, 7, 6, 5, 4, 3, 2, 1, 1]
+    total = sum(d * w for d, w in zip(digits, weights))
+    return total % 10 == 0
+
+
+def _validate_amount_or_warn(amount_str: str, reply_token, name: str, label: str = "金額"):
+    """金額合理性：0 或負數 block；> 1000 萬警告 block 讓確認"""
+    if not amount_str:
+        return True
+    m = re.search(r"(\d+(?:\.\d+)?)", amount_str)
+    if not m:
+        return True
+    amt = float(m.group(1))
+    if amt <= 0:
+        reply_text(reply_token, f"❌ {name}：{label} {amount_str} 不合理（= 0 或負數），已阻擋")
+        return False
+    if amt > 1000:
+        reply_text(reply_token,
+                   f"⚠️ {name}：{label} {amount_str} 超過 1000 萬\n"
+                   f"如確認無誤，請打「@AI {name} {label} {amount_str} 確認」")
+        return False
+    return True
+
+
+# 重複訊息偵測（5 秒內相同訊息視為手滑）
+_recent_msgs: Dict[str, float] = {}
+_DUP_WINDOW_SEC = 5
+
+
+def is_duplicate_message(group_id: str, content: str) -> bool:
+    """5 秒內同群組收到一模一樣訊息 → True（caller 忽略）"""
+    import time as _time
+    now = _time.time()
+    stale = [k for k, t in _recent_msgs.items() if t < now - _DUP_WINDOW_SEC]
+    for k in stale:
+        _recent_msgs.pop(k, None)
+    key = f"{group_id}|{(content or '')[:200]}"
+    if key in _recent_msgs:
+        return True
+    _recent_msgs[key] = now
+    return False
 
 
 def _resolve_target_strict(cmd: Dict, name: str, group_id: str, reply_token: str, action_label: str):
@@ -3658,6 +3784,32 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
         target = _resolve_target_strict(cmd, name, group_id, reply_token, "撥款")
         if not target:
             return
+        if not _check_active_or_warn(target, reply_token, "撥款", name):
+            return
+        # 撥款日期合理性檢查（未來日期/早於建案日期）
+        disb_warnings = []
+        try:
+            dm = re.match(r"(\d{1,2})/(\d{1,2})", disb_date)
+            if dm:
+                now = datetime.now()
+                month, day = int(dm.group(1)), int(dm.group(2))
+                try:
+                    disb_dt = datetime(now.year, month, day)
+                    # 未來 > 30 天 → 警告
+                    if (disb_dt - now).days > 30:
+                        disb_warnings.append(f"撥款日 {disb_date} 超過 30 天後，是否打錯月份？")
+                    # 早於建案日
+                    if target["created_at"]:
+                        try:
+                            created_dt = datetime.fromisoformat(str(target["created_at"])[:19])
+                            if disb_dt.date() < created_dt.date():
+                                disb_warnings.append(f"撥款日 {disb_date} 早於建案日 {created_dt.strftime('%m/%d')}")
+                        except Exception:
+                            pass
+                except ValueError:
+                    disb_warnings.append(f"撥款日 {disb_date} 日期無效（例如 2/30）")
+        except Exception:
+            pass
         # 更新撥款日期到 route_plan history 和 disbursement_date
         company = target["current_company"] or target["company"] or ""
         new_route = set_disbursed_in_history(target["route_plan"] or "", company, disb_date)
@@ -3667,7 +3819,10 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
                         signing_company="", signing_time="", signing_location="",
                         text=f"{name} {company} 撥款{disb_date}",
                         from_group_id=group_id)
-        reply_text(reply_token, f"✅ {name} 已更新撥款日期：{disb_date}")
+        msg = f"✅ {name} 已更新撥款日期：{disb_date}"
+        if disb_warnings:
+            msg += "\n⚠️ " + "；".join(disb_warnings)
+        reply_text(reply_token, msg)
         return
 
     if t == "signing_request":
@@ -3799,6 +3954,8 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
         target = _resolve_target_strict(cmd, name, group_id, reply_token, "取消核准")
         if not target:
             return
+        if not _check_active_or_warn(target, reply_token, "取消核准", name):
+            return
         # 從 route_plan history 移除該公司的核准記錄
         route = target["route_plan"] or ""
         data = parse_route_json(route) if route else {"order":[], "current_index":0, "history":[]}
@@ -3831,6 +3988,10 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
         amount = cmd["amount"]
         target = _resolve_target_strict(cmd, name, group_id, reply_token, "核准金額")
         if not target:
+            return
+        if not _check_active_or_warn(target, reply_token, "更新核准金額", name):
+            return
+        if not _validate_amount_or_warn(amount, reply_token, name, "核准金額"):
             return
         # 未指定公司 → 用當前 current_company（防錯：使用者常忘了打公司）
         if not company:
@@ -3890,6 +4051,8 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
         target = _resolve_target_strict(cmd, name, group_id, reply_token, "結案")
         if not target:
             return
+        if not _check_active_or_warn(target, reply_token, "結案", name):
+            return
         close_text = f"{name} 結案（{reason}）" if reason else f"{name} 結案"
         update_customer(target["case_id"], status="CLOSED",
                         text=close_text, from_group_id=group_id)
@@ -3901,6 +4064,8 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
         name = cmd["name"]
         target = _resolve_target_strict(cmd, name, group_id, reply_token, "婉拒")
         if not target:
+            return
+        if not _check_active_or_warn(target, reply_token, "婉拒", name):
             return
         route = target["route_plan"] or ""
         current, next_co = get_current_company(route), get_next_company(route)
@@ -4035,6 +4200,8 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
         target = _resolve_target_strict(cmd, name, group_id, reply_token, "加送")
         if not target:
             return
+        if not _check_active_or_warn(target, reply_token, "加送", name):
+            return
         # 支援多公司：送A+B → [A, B] 都加入同送清單
         new_companies = [COMPANY_ALIAS.get(c.strip(), c.strip())
                          for c in re.split(r"[+＋]", company_raw) if c.strip()]
@@ -4067,6 +4234,8 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
         notify_period = cmd.get("notify_period", "")
         target = _resolve_target_strict(cmd, name, group_id, reply_token, "轉送")
         if not target:
+            return
+        if not _check_active_or_warn(target, reply_token, "轉送", name):
             return
         route = target["route_plan"] or ""
         current = get_current_company(route)
@@ -4189,6 +4358,7 @@ def handle_route_order_block(block_text, source_group_id, reply_token) -> Option
     if not parsed:
         return None
     name, companies = parsed["name"], parsed["companies"]
+    dupe_count = parsed.get("dupe_count", 0)
     route_json = make_route_json(companies)
     current_co = companies[0]
     # 判斷第一家是否為民間方案 → 直接放對應區塊，不放送件
@@ -4203,11 +4373,12 @@ def handle_route_order_block(block_text, source_group_id, reply_token) -> Option
         notify_kw["notify_period"] = n_per or ""
     rows = find_active_by_name(name)
     same = [r for r in rows if r["source_group_id"] == source_group_id]
+    dupe_suffix = f"（已去除重複 {dupe_count} 家）" if dupe_count > 0 else ""
     if same:
         update_customer(same[0]["case_id"], route_plan=route_json, current_company=current_co,
                         report_section=init_section,
                         text=block_text, from_group_id=source_group_id, **notify_kw)
-        return f"📋 已更新 {name} 送件順序：{'/'.join(companies)}"
+        return f"📋 已更新 {name} 送件順序：{'/'.join(companies)}{dupe_suffix}"
     other = [r for r in rows if r["source_group_id"] != source_group_id]
     if other:
         send_transfer_case_buttons(reply_token, other[0], source_group_id, block_text, allow_new=True)
@@ -4222,7 +4393,7 @@ def handle_route_order_block(block_text, source_group_id, reply_token) -> Option
         cur.execute("UPDATE customers SET notify_amount=?, notify_period=? WHERE customer_name=? AND source_group_id=? AND status='ACTIVE' ORDER BY created_at DESC LIMIT 1",
                     (n_amt, n_per or "", name, source_group_id))
     conn.commit(); conn.close()
-    return f"🆕 已建立客戶 {name}，送件順序：{'/'.join(companies)}"
+    return f"🆕 已建立客戶 {name}，送件順序：{'/'.join(companies)}{dupe_suffix}"
 
 
 def parse_transfer_line(line: str) -> Dict:
@@ -5165,6 +5336,9 @@ def _process_event_inner(event: dict):
         return
     # Bug 2: reply_token 空值時 LINE API 會錯誤，直接忽略該事件
     if not reply_token:
+        return
+    # 5 秒內同群組同內容 → 視為重複按，直接忽略（防手滑重複送）
+    if group_id and is_duplicate_message(group_id, text):
         return
     if handle_command_text(text, reply_token):
         return
@@ -8419,17 +8593,18 @@ def _build_customer_pdf_body(r: dict) -> str:
 _PDF_STYLE = """<style>
 @media print { @page { size: A4 portrait; margin: 10mm 12mm; } .no-print { display: none !important; } }
 * { box-sizing: border-box; margin: 0; padding: 0; }
-body { font-family: 'Microsoft JhengHei', 'PingFang TC', sans-serif; background: #eee; color: #1a1a1a; font-size: 13px; }
-#pdf-content { width: 210mm; min-height: 297mm; padding: 12mm 14mm; margin: 20px auto; background: #fff; }
-@media print { body { background: #fff; } #pdf-content { margin: 0; padding: 0; width: auto; min-height: auto; } }
+html, body { width: 210mm; }
+body { font-family: 'Microsoft JhengHei', 'PingFang TC', sans-serif; background: #eee; color: #1a1a1a; font-size: 15px; margin: 0 auto; }
+#pdf-content { width: 210mm; min-height: 297mm; padding: 12mm 14mm; margin: 20px auto 0; background: #fff; }
+@media print { html, body { width: auto; } body { background: #fff; } #pdf-content { margin: 0; padding: 0; width: auto; min-height: auto; } }
 .header { background: #3a3530; color: #fff; padding: 16px 20px; border-radius: 8px; margin-bottom: 16px; display: flex; justify-content: space-between; align-items: center; }
-.header-name { font-size: 22px; font-weight: 700; }
-.header-sub { font-size: 12px; color: #c8bfb5; margin-top: 4px; }
+.header-name { font-size: 24px; font-weight: 700; }
+.header-sub { font-size: 13px; color: #c8bfb5; margin-top: 4px; }
 table { width: 100%; border-collapse: collapse; margin-bottom: 16px; }
-th, td { border: 1px solid #bbb; padding: 7px 10px; font-size: 13px; line-height: 1.5; }
-th { background: #f0ebe4; color: #3a3020; font-weight: 700; width: 100px; white-space: nowrap; text-align: left; }
+th, td { border: 1px solid #bbb; padding: 8px 11px; font-size: 15px; line-height: 1.55; }
+th { background: #f0ebe4; color: #3a3020; font-weight: 700; width: 110px; white-space: nowrap; text-align: left; }
 td { background: #fff; }
-.sec { background: #3a3530; color: #fff; font-size: 12px; font-weight: 700; padding: 6px 10px; }
+.sec { background: #3a3530; color: #fff; font-size: 14px; font-weight: 700; padding: 6px 10px; }
 .sec td { background: #3a3530; color: #fff; font-weight: 700; }
 </style>"""
 
@@ -8496,7 +8671,7 @@ function downloadPDF() {{
     margin: 0,
     filename: {json.dumps(pdf_filename, ensure_ascii=False)},
     image: {{ type: 'jpeg', quality: 0.95 }},
-    html2canvas: {{ scale: 2, useCORS: true, letterRendering: true, backgroundColor: '#ffffff' }},
+    html2canvas: {{ scale: 2, useCORS: true, letterRendering: true, backgroundColor: '#ffffff', windowWidth: 794, scrollX: 0, scrollY: 0 }},
     jsPDF: {{ unit: 'mm', format: 'a4', orientation: 'portrait' }},
     pagebreak: {{ mode: ['css', 'legacy'] }}
   }};
