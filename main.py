@@ -8154,7 +8154,7 @@ async def new_customer_post(request: Request):
     source_group_id = f.get("grp","")
     live_same = "1" if f.get("sameck") else "0"
     conn = get_conn(); cur = conn.cursor()
-    cur.execute("SELECT * FROM customers WHERE id_no=? AND status='ACTIVE'", (id_no,))
+    cur.execute("SELECT * FROM customers WHERE id_no=? AND status IN ('ACTIVE','PENDING')", (id_no,))
     existing = cur.fetchone()
     now = now_iso()
     if existing:
@@ -8500,20 +8500,41 @@ function downloadPDF() {{
     jsPDF: {{ unit: 'mm', format: 'a4', orientation: 'portrait' }},
     pagebreak: {{ mode: ['css', 'legacy'] }}
   }};
-  html2pdf().from(element).set(opt).save().then(function() {{
+  var ua = navigator.userAgent || '';
+  var isMobile = /iPhone|iPad|iPod|Android|Line/i.test(ua);
+  var resetBtn = function() {{
     btn.disabled = false;
     btn.innerText = originalText;
     btn.style.opacity = '1';
     btn.style.cursor = 'pointer';
-  }}).catch(function(err) {{
-    console.error('PDF 產生失敗：', err);
-    alert('PDF 產生失敗，改用瀏覽器列印功能');
-    window.print();
-    btn.disabled = false;
-    btn.innerText = originalText;
-    btn.style.opacity = '1';
-    btn.style.cursor = 'pointer';
-  }});
+  }};
+  var worker = html2pdf().from(element).set(opt);
+  if (isMobile) {{
+    // 手機（iOS/Android/LINE 內建瀏覽器）：產生 blob URL 在新分頁開啟
+    // 讓使用者用系統分享鍵存檔或傳送，不靠 programmatic download
+    worker.toPdf().get('pdf').then(function(pdf) {{
+      var blob = pdf.output('blob');
+      var url = URL.createObjectURL(blob);
+      var opened = window.open(url, '_blank');
+      if (!opened) {{
+        // 跳窗被擋 → 直接換頁顯示 PDF
+        window.location.href = url;
+      }}
+      resetBtn();
+    }}).catch(function(err) {{
+      console.error('PDF 產生失敗：', err);
+      alert('PDF 產生失敗：' + (err && err.message ? err.message : err));
+      resetBtn();
+    }});
+  }} else {{
+    // 電腦：直接下載
+    worker.save().then(resetBtn).catch(function(err) {{
+      console.error('PDF 產生失敗：', err);
+      alert('PDF 產生失敗，改用瀏覽器列印功能');
+      window.print();
+      resetBtn();
+    }});
+  }}
 }}
 </script>
 </body></html>"""
