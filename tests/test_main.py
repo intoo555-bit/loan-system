@@ -374,6 +374,64 @@ class TestCrossGroupIndependentCases:
         assert bg["case_id"] != cg["case_id"]
 
 
+# ===== 還原 + 歷史 =====
+class TestRestoreAndHistory:
+    def test_history_command_parse(self, tmp_db):
+        main, _ = tmp_db
+        cmd = main.parse_special_command("王陽明 歷史", "g1")
+        assert cmd["type"] == "history" and cmd["name"] == "王陽明"
+
+    def test_restore_command_parse_default(self, tmp_db):
+        main, _ = tmp_db
+        cmd = main.parse_special_command("王陽明 還原", "g1")
+        assert cmd["type"] == "restore" and cmd["name"] == "王陽明"
+        assert cmd["index"] == 1
+
+    def test_restore_command_parse_with_index(self, tmp_db):
+        main, _ = tmp_db
+        cmd = main.parse_special_command("王陽明 還原 3", "g1")
+        assert cmd["type"] == "restore" and cmd["index"] == 3
+
+    def test_snapshot_stored_on_update(self, tmp_db):
+        """update_customer 應自動把 before 狀態存進 case_logs.snapshot_json"""
+        main, path = tmp_db
+        main.create_customer_record("測試王", "A111111111", "亞太", "g1", "init")
+        c = main.find_active_by_name("測試王")[0]
+        main.update_customer(c["case_id"], current_company="第一", text="轉第一", from_group_id="g1")
+        import sqlite3
+        conn = sqlite3.connect(path); conn.row_factory = sqlite3.Row
+        rows = conn.execute("SELECT snapshot_json FROM case_logs WHERE case_id=? ORDER BY id DESC",
+                            (c["case_id"],)).fetchall()
+        conn.close()
+        # 最新一筆（轉第一）的 snapshot 要含轉之前的 current_company
+        assert rows and rows[0]["snapshot_json"]
+        import json
+        snap = json.loads(rows[0]["snapshot_json"])
+        assert snap.get("current_company") in ("", None) or snap.get("company") == "亞太"
+
+    def test_restore_reverts_state(self, tmp_db):
+        """打 @AI restore 應該把狀態還原到快照時點"""
+        main, path = tmp_db
+        main.create_customer_record("測試林", "A111111112", "亞太", "g1", "init")
+        c = main.find_active_by_name("測試林")[0]
+        # 改到第一
+        main.update_customer(c["case_id"], current_company="第一", text="轉第一", from_group_id="g1")
+        after_first = main.find_active_by_name("測試林")[0]
+        assert after_first["current_company"] == "第一"
+        # 找到最近一筆 log 的 id
+        import sqlite3
+        conn = sqlite3.connect(path); conn.row_factory = sqlite3.Row
+        logs = conn.execute("SELECT snapshot_json FROM case_logs WHERE case_id=? ORDER BY id DESC",
+                            (c["case_id"],)).fetchall()
+        conn.close()
+        # 還原第 1 筆（最新 = 轉第一那筆）→ 回到轉之前
+        snap = __import__("json").loads(logs[0]["snapshot_json"])
+        main.update_with_verify(c["case_id"], snap, from_group_id="g1", text_log="還原")
+        reverted = main.find_active_by_name("測試林")[0]
+        # 原 current_company 可能是空或「亞太」（建客戶時未設 current_company）
+        assert reverted["current_company"] != "第一"
+
+
 # ===== DB schema =====
 class TestDBSchema:
     def test_notify_columns_exist(self, tmp_db):

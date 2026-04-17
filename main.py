@@ -884,6 +884,9 @@ PLAN_INFO = {
     "亞太商品": ("亞太商品", "12萬/30期"), "亞太12": ("亞太商品", "12萬/30期"), "亞太": ("亞太商品", "12萬/30期"),
     "亞太機車15萬": ("亞太機車15萬", "15萬/36期"), "亞太15": ("亞太機車15萬", "15萬/36期"),
     "亞太機車25萬": ("亞太機車25萬", "25萬/48期"), "亞太25": ("亞太機車25萬", "25萬/48期"),
+    "亞太機25萬": ("亞太機車25萬", "25萬/48期"),
+    "亞太機": ("亞太機車15萬", "15萬/36期"), "亞太機車": ("亞太機車15萬", "15萬/36期"),
+    "亞太汽車": ("亞太汽車", ""), "亞太汽": ("亞太汽車", ""),
     "亞太工會機車": ("亞太工會機車", "15萬"), "亞太工會": ("亞太工會機車", "15萬"), "亞太工": ("亞太工會機車", "15萬"),
     "和裕機車": ("和裕機車", "15萬/24期"), "和裕機": ("和裕機車", "15萬/24期"),
     "和裕商品": ("和裕商品", "12萬/24期"), "和裕": ("和裕商品", "12萬/24期"),
@@ -1921,6 +1924,8 @@ def init_db():
     # groups 表新增業務群對應欄位
     ensure_column(cur, "groups", "linked_sales_group_id", "TEXT")
     ensure_column(cur, "groups", "password_hash", "TEXT")
+    # case_logs 加快照欄位（用於 @AI 姓名 還原）
+    ensure_column(cur, "case_logs", "snapshot_json", "TEXT")
     # settings 表
     cur.execute("""CREATE TABLE IF NOT EXISTS settings (
         key TEXT PRIMARY KEY NOT NULL,
@@ -2061,7 +2066,8 @@ def update_customer(case_id, company=None, text=None, from_group_id="", status=N
                     approved_amount=None, disbursement_date=None,
                     signing_area=None, signing_salesperson=None,
                     signing_company=None, signing_time=None, signing_location=None,
-                    notify_amount=None, notify_period=None, concurrent_companies=None):
+                    notify_amount=None, notify_period=None, concurrent_companies=None,
+                    id_no=None):
     """更新客戶（Bug 5/6 修復：context manager + transaction）
 
     UPDATE + INSERT case_logs 包在同一交易內，確保原子性。
@@ -2081,18 +2087,32 @@ def update_customer(case_id, company=None, text=None, from_group_id="", status=N
                      ("signing_location", signing_location),
                      ("notify_amount", notify_amount),
                      ("notify_period", notify_period),
-                     ("concurrent_companies", concurrent_companies)]:
+                     ("concurrent_companies", concurrent_companies),
+                     ("id_no", id_no)]:
         if val is not None:
             fields.append(f"{col} = ?"); values.append(val)
     fields.append("updated_at = ?"); values.append(now); values.append(case_id)
     with db_conn(commit=True) as conn:
         cur = conn.cursor()
+        # 先讀 before 快照（供還原用）— 只存關鍵欄位避免龐大
+        cur.execute("SELECT * FROM customers WHERE case_id=?", (case_id,))
+        before_row = cur.fetchone()
+        snapshot = None
+        if before_row:
+            snap_fields = ["company", "current_company", "concurrent_companies",
+                           "route_plan", "report_section", "approved_amount",
+                           "notify_amount", "notify_period", "disbursement_date",
+                           "status", "id_no", "customer_name", "source_group_id",
+                           "signing_area", "signing_salesperson", "signing_company",
+                           "signing_time", "signing_location"]
+            snapshot = json.dumps({k: before_row[k] for k in snap_fields if k in before_row.keys()},
+                                  ensure_ascii=False)
         cur.execute(f"UPDATE customers SET {', '.join(fields)} WHERE case_id=?", values)
         cur.execute("SELECT * FROM customers WHERE case_id=?", (case_id,))
         row = cur.fetchone()
         if row and text is not None:
-            cur.execute("INSERT INTO case_logs (case_id,customer_name,id_no,company,message_text,from_group_id,created_at) VALUES (?,?,?,?,?,?,?)",
-                (row["case_id"], row["customer_name"], row["id_no"], row["company"], text, from_group_id, now))
+            cur.execute("INSERT INTO case_logs (case_id,customer_name,id_no,company,message_text,from_group_id,created_at,snapshot_json) VALUES (?,?,?,?,?,?,?,?)",
+                (row["case_id"], row["customer_name"], row["id_no"], row["company"], text, from_group_id, now, snapshot))
 
 
 def find_active_by_id_no(id_no):
@@ -2525,6 +2545,7 @@ COMPANY_SECTION_MAP = {
     # 帶金額版本 → 主公司
     "亞太工15": "亞太", "亞太25": "亞太", "亞太15": "亞太",
     "亞太汽車": "亞太",
+    "亞太機25萬": "亞太", "亞太機車25萬": "亞太", "亞太機車15萬": "亞太",
     "21商品": "21",
     "合信機車": "合信", "合信手機": "合信", "合信二輪": "合信",
     "第一商品": "第一", "第一機車": "第一",
@@ -2913,6 +2934,8 @@ def send_confirm_new_case_buttons(reply_token, block_text, existing_customer, so
 # =========================
 def parse_special_command(text: str, group_id: str) -> Optional[Dict]:
     clean = strip_ai_trigger(text).strip()
+    # 文字正規化（全形→半形、異體字統一、空白合併）
+    clean = normalize_command_text(clean)
 
     # 批次結案：@AI 批次結案\n姓名1\n姓名2\n...
     if clean.startswith("批次結案"):
@@ -2975,12 +2998,12 @@ def parse_special_command(text: str, group_id: str) -> Optional[Dict]:
         return {"type": "cancel_approval", "name": m.group(1), "company": m.group(2).strip()}
 
     # 修改核准金額：@AI 姓名 公司 核准 金額（姓名和公司之間必須有空格）
-    # 用 negative lookbehind 排除「待核准」（= 還有缺，不是真正核准）
+    # 異體字（核準→核准）由 normalize_command_text 統一；用 lookbehind 排除「待核准」
     m = re.match(r"^([\u4e00-\u9fff]{2,6})\s+(.+?)\s*(?<!待)核准\s*(.+)$", clean)
     if m:
         return {"type": "update_amount", "name": m.group(1), "company": m.group(2).strip(), "amount": m.group(3).strip()}
 
-    # 核准金額（未指定公司 → 用當前 current_company）：姓名核准 金額 / 姓名 核准 金額
+    # 核准金額（未指定公司 → 用當前 current_company）：姓名核准 金額
     m = re.match(r"^([\u4e00-\u9fff]{2,6})\s*(?<!待)核准\s*(.+)$", clean)
     if m:
         return {"type": "update_amount", "name": m.group(1), "company": "", "amount": m.group(2).strip()}
@@ -3023,6 +3046,20 @@ def parse_special_command(text: str, group_id: str) -> Optional[Dict]:
     m = re.match(r"^([\u4e00-\u9fff]{2,6})\s*重啟$", clean)
     if m:
         return {"type": "reopen", "name": m.group(1)}
+
+    # 查歷史：@AI 姓名 歷史
+    m = re.match(r"^([\u4e00-\u9fff]{2,6})\s*歷史$", clean)
+    if m:
+        return {"type": "history", "name": m.group(1)}
+
+    # 還原：@AI 姓名 還原 N（N 預設 1 = 最近一筆）
+    m = re.match(r"^([\u4e00-\u9fff]{2,6})\s*還原\s*(\d+)?$", clean)
+    if m:
+        try:
+            idx = int(m.group(2) or "1")
+        except Exception:
+            idx = 1
+        return {"type": "restore", "name": m.group(1), "index": idx}
 
     # 結案帶原因：@AI 姓名 結案 原因
     m = re.match(r"^([一-鿿]{2,6})\s*結案\s+(.+)$", clean)
@@ -3219,7 +3256,7 @@ def _get_valid_company_names():
 
 
 def _validate_companies_or_warn(companies, reply_token, name):
-    """驗證公司名清單，若有未知回覆警告並回 False；全部合法回 True"""
+    """驗證公司名清單，若有未知回覆警告 + 合法名清單 並回 False；全部合法回 True"""
     valid = _get_valid_company_names()
     unknown = [c for c in companies if c not in valid]
     if unknown:
@@ -3228,6 +3265,121 @@ def _validate_companies_or_warn(companies, reply_token, name):
                    f"常見合法名：亞太、喬美、第一、房地、21、裕融、和裕、麻吉、貸救補、鄉民、銀行、零卡、商品貸、代書、當舖")
         return False
     return True
+
+
+def _field_display_label(field_name: str) -> str:
+    """DB 欄位名翻譯成業務看得懂的中文（用於執行摘要）"""
+    return {
+        "company": "公司",
+        "current_company": "當前公司",
+        "concurrent_companies": "同送",
+        "report_section": "日報區塊",
+        "approved_amount": "核准金額",
+        "notify_amount": "送件金額(萬)",
+        "notify_period": "送件期數",
+        "disbursement_date": "撥款日",
+        "status": "狀態",
+        "id_no": "身分證",
+        "customer_name": "姓名",
+        "route_plan": "送件順序",
+        "source_group_id": "所屬群組",
+    }.get(field_name, field_name)
+
+
+def update_with_verify(case_id: str, changes: Dict, from_group_id: str = "", text_log: str = ""):
+    """執行 update_customer 並實測 DB 前後變化，回傳 (ok, diff_lines, customer_name)。
+    changes 是要 update 的欄位 dict；diff_lines 是實際變動的欄位摘要（「欄位: 舊 → 新」）。
+    若 case_id 不存在 → ok=False；所有欄位都沒變 → diff_lines 空（表面無變化）。
+    """
+    conn = get_conn(); cur = conn.cursor()
+    cur.execute("SELECT * FROM customers WHERE case_id=?", (case_id,))
+    before = cur.fetchone()
+    if not before:
+        conn.close()
+        return False, ["⚠️ 案件不存在"], ""
+    before_dict = dict(before)
+    conn.close()
+    # 過濾 + key 轉換（update_customer 簽名用 name 對應 customer_name）
+    allowed_keys = {"company", "status", "source_group_id", "route_plan",
+                    "current_company", "report_section", "approved_amount",
+                    "disbursement_date", "signing_area", "signing_salesperson",
+                    "signing_company", "signing_time", "signing_location",
+                    "notify_amount", "notify_period", "concurrent_companies",
+                    "id_no", "name"}
+    filtered = {}
+    for k, v in changes.items():
+        if k == "customer_name":
+            filtered["name"] = v
+        elif k in allowed_keys:
+            filtered[k] = v
+    kwargs = {"text": text_log, "from_group_id": from_group_id}
+    kwargs.update(filtered)
+    update_customer(case_id, **kwargs)
+    conn2 = get_conn(); cur2 = conn2.cursor()
+    cur2.execute("SELECT * FROM customers WHERE case_id=?", (case_id,))
+    after = cur2.fetchone()
+    conn2.close()
+    after_dict = dict(after) if after else {}
+    diffs = []
+    for k in changes.keys():
+        if k in ("text", "from_group_id"):
+            continue
+        old_v = before_dict.get(k)
+        new_v = after_dict.get(k)
+        if old_v != new_v:
+            old_disp = old_v if old_v not in (None, "") else "(空)"
+            new_disp = new_v if new_v not in (None, "") else "(空)"
+            diffs.append(f"• {_field_display_label(k)}: {old_disp} → {new_disp}")
+    return True, diffs, before_dict.get("customer_name", "")
+
+
+def normalize_command_text(text: str) -> str:
+    """@AI 指令文字正規化：全形→半形、異體字統一、多空白合併。
+    parse_special_command 進入前先跑，讓 regex 只需寫一套標準寫法。
+    """
+    if not text:
+        return ""
+    # 全形英數/標點 → 半形（U+FF01~U+FF5E）
+    out = []
+    for ch in text:
+        code = ord(ch)
+        if 0xFF01 <= code <= 0xFF5E:
+            out.append(chr(code - 0xFEE0))
+        elif code == 0x3000:  # 全形空白
+            out.append(" ")
+        else:
+            out.append(ch)
+    text = "".join(out)
+    # 符號統一
+    text = text.replace("／", "/").replace("＋", "+")
+    # 異體字統一（台灣業務可能打「核准/核準/核凖」）
+    text = text.replace("核準", "核准").replace("核凖", "核准")
+    # 多個空白/Tab → 單一空白
+    text = re.sub(r"[ \t]+", " ", text).strip()
+    return text
+
+
+def _validate_new_case_fields(date: str, name: str, id_no: str):
+    """建客戶前檢查資料，回傳警告訊息列表（不 block 建立，只提示）。"""
+    warnings = []
+    if date:
+        m = re.match(r"^(\d{1,4})/(\d{1,2})", date)
+        if m:
+            y = int(m.group(1))
+            # 合理：民國 100-130（2011-2041）、西元 2020-2100；3 位數 or 2 位數民國年常見
+            if 1 <= y <= 3:
+                warnings.append(f"日期「{date}」民國年太小，可能打錯")
+            elif 4 <= y < 80:  # 民國 4~79 (1915~1990)，年紀太大的客戶？
+                warnings.append(f"日期「{date}」對應民國{y}年({1911+y}年)，確認無誤？")
+            elif 131 <= y < 1000:
+                warnings.append(f"日期「{date}」民國年太大，可能打錯")
+    if id_no:
+        if not re.match(r"^[A-Z][A-Z0-9]\d{8}$", id_no, re.IGNORECASE):
+            warnings.append(f"身分證「{id_no}」格式不標準（應為 1 英文字母 + 1 英數 + 8 位數字）")
+    if name:
+        if len(name) > 5:
+            warnings.append(f"姓名「{name}」長度 {len(name)} 字，確認無誤？")
+    return warnings
 
 
 def _resolve_target(name: str, group_id: str, reply_token: str):
@@ -3557,6 +3709,74 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
                    f"  公司：{cmd['signing_company']}\n"
                    f"  時間：{cmd['time']}\n"
                    f"  地點：{cmd['location']}")
+        return
+
+    if t == "history":
+        name = cmd["name"]
+        target = _resolve_target_strict(cmd, name, group_id, reply_token, "查歷史")
+        if not target:
+            return
+        conn = get_conn(); cur = conn.cursor()
+        cur.execute("""SELECT id, created_at, message_text FROM case_logs
+                       WHERE case_id=? ORDER BY id DESC LIMIT 10""",
+                    (target["case_id"],))
+        rows = cur.fetchall(); conn.close()
+        if not rows:
+            reply_text(reply_token, f"📋 {name} 尚無操作紀錄"); return
+        lines = [f"📋 {name} 最近操作（最新在上）："]
+        for i, r in enumerate(rows, 1):
+            ts = (r["created_at"] or "")[5:16].replace("T", " ")  # MM-DD HH:MM
+            first_line = ((r["message_text"] or "").splitlines() or [""])[0]
+            msg = first_line[:30]
+            lines.append(f"[{i}] {ts} - {msg}")
+        lines.append("\n要還原：@AI 姓名 還原 N（N = 編號）")
+        lines.append("例：@AI " + name + " 還原 1  → 回到第 1 筆之前的狀態")
+        reply_text(reply_token, "\n".join(lines))
+        return
+
+    if t == "restore":
+        name = cmd["name"]
+        idx = int(cmd.get("index", 1) or 1)
+        if idx < 1:
+            reply_text(reply_token, "❌ 編號須 ≥ 1"); return
+        target = _resolve_target_strict(cmd, name, group_id, reply_token, "還原")
+        if not target:
+            return
+        case_id = target["case_id"]
+        conn = get_conn(); cur = conn.cursor()
+        cur.execute("""SELECT id, created_at, snapshot_json, message_text FROM case_logs
+                       WHERE case_id=? ORDER BY id DESC LIMIT ?""",
+                    (case_id, idx))
+        rows = cur.fetchall(); conn.close()
+        if len(rows) < idx:
+            reply_text(reply_token,
+                       f"❌ {name} 只有 {len(rows)} 筆紀錄，無法還原到第 {idx} 筆\n"
+                       f"請先打「@AI {name} 歷史」確認編號")
+            return
+        target_log = rows[idx - 1]
+        snapshot_json = target_log["snapshot_json"]
+        if not snapshot_json:
+            reply_text(reply_token,
+                       f"❌ 第 {idx} 筆無快照資料（舊紀錄可能沒存，只有本次版本新增後的紀錄才能還原）")
+            return
+        try:
+            snapshot = json.loads(snapshot_json)
+        except Exception:
+            reply_text(reply_token, "❌ 快照資料損毀，無法還原")
+            return
+        # 套回快照欄位
+        ok_v, diffs, cust_name = update_with_verify(
+            case_id, snapshot, from_group_id=group_id,
+            text_log=f"{name} 還原到第 {idx} 筆之前")
+        if not ok_v:
+            reply_text(reply_token, "⚠️ 案件不存在，無法還原")
+            return
+        ts = (target_log["created_at"] or "")[5:16].replace("T", " ")
+        if diffs:
+            msg = f"✅ {cust_name} 已還原到 {ts} 之前的狀態\n" + "\n".join(diffs)
+        else:
+            msg = f"ℹ️ {cust_name}：還原完成，但狀態無實際變動（可能已經是這個版本）"
+        reply_text(reply_token, msg)
         return
 
     if t == "reopen":
@@ -3935,6 +4155,9 @@ def handle_new_case_block(block_text, source_group_id, reply_token) -> Optional[
     name, id_no, company = f.get("name", ""), f.get("id_no", ""), extract_company(first_line_no_id)
     if not name or not id_no:
         return None
+    # 欄位合理性檢查（日期/身分證/姓名異常 → 警告但不擋，讓業務看到確認）
+    date_val = f.get("date", "")
+    warnings = _validate_new_case_fields(date_val, name, id_no)
     # 先查本群組：若本群組已有 ACTIVE（同身分證），直接更新
     same_group = find_active_by_id_no_in_group(id_no, source_group_id)
     if same_group:
@@ -3954,7 +4177,11 @@ def handle_new_case_block(block_text, source_group_id, reply_token) -> Optional[
         send_confirm_new_case_buttons(reply_token, block_text, existing, source_group_id)
         return "QUICK_REPLY_SENT"
     create_customer_record(name, id_no, company, source_group_id, block_text)
-    return f"🆕 已建立客戶：{name}"
+    msg = f"🆕 已建立客戶：{name}"
+    if warnings:
+        msg += "\n⚠️ 資料檢查：\n" + "\n".join(f"  • {w}" for w in warnings) + \
+               "\n（客戶仍已建立，如需修正可用 @AI 姓名 改身分證/改名）"
+    return msg
 
 
 def handle_route_order_block(block_text, source_group_id, reply_token) -> Optional[str]:
@@ -4358,7 +4585,7 @@ def handle_command_text(text: str, reply_token: str) -> bool:
         _, action_id = text.split("|", 1)
         delete_pending_action(action_id); reply_text(reply_token, "✅ 已取消"); return True
 
-    # 同姓名不同身分證：使用者選了「是同一人，更新既有案件的身分證」
+    # 同姓名不同身分證：使用者選了「是同一人，更新既有案件的身分證 + 套用新訊息」
     if text.startswith("SAME_PERSON|"):
         parts = text.split("|", 2)
         if len(parts) < 3: return False
@@ -4374,15 +4601,18 @@ def handle_command_text(text: str, reply_token: str) -> bool:
         cur.execute("SELECT * FROM customers WHERE case_id=?", (case_id,))
         c = cur.fetchone()
         if not c:
-            reply_text(reply_token, "⚠️ 原案件不存在"); delete_pending_action(action_id); return True
+            reply_text(reply_token, "⚠️ 原案件不存在"); conn.close()
+            delete_pending_action(action_id); return True
         old_id = c["id_no"] or "無"
         cur.execute("UPDATE customers SET id_no=?, updated_at=? WHERE case_id=?",
                     (normalize_id_no(new_id), now_iso(), case_id))
         conn.commit(); conn.close()
+        # 更新客戶資料：公司（若新訊息有指定）+ 原訊息寫入 case_logs 讓日報更新
         update_customer(case_id, company=new_company or c["company"] or "",
                         text=block_text + f"\n[身分證 {old_id} → {new_id}]",
-                        from_group_id=source_group_id)
-        reply_text(reply_token, f"✅ 已更新 {c['customer_name']} 身分證：{old_id} → {new_id}")
+                        from_group_id=source_group_id,
+                        name=p.get("new_name", c["customer_name"]))
+        reply_text(reply_token, f"✅ 已更新 {c['customer_name']} 身分證：{old_id} → {new_id}\n日報會顯示既有案件")
         delete_pending_action(action_id); return True
 
     if text.startswith("NEW_PERSON|"):
@@ -4390,10 +4620,20 @@ def handle_command_text(text: str, reply_token: str) -> bool:
         a = get_action(action_id, "same_name_diff_id")
         if not a: return True
         p = a["payload"]
-        create_customer_record(p.get("new_name", ""), p.get("new_id", ""),
-                               p.get("new_company", ""), p.get("source_group_id", ""),
-                               p.get("block_text", ""))
-        reply_text(reply_token, f"🆕 已建立新客戶：{p.get('new_name', '')}（身分證 {p.get('new_id', '')}）")
+        new_name = p.get("new_name", "")
+        new_id = p.get("new_id", "")
+        new_company = p.get("new_company", "")
+        new_sg = p.get("source_group_id", "")
+        block_text = p.get("block_text", "")
+        if not new_name or not new_sg:
+            reply_text(reply_token, "⚠️ 缺姓名或群組資訊，無法建立")
+            delete_pending_action(action_id); return True
+        # 建客戶 + 設 report_section 讓日報看得到（民間方案直接對應區塊，其他進「送件」）
+        private_keywords = ["銀行", "零卡", "商品貸", "代書", "當舖", "鄉民", "房地", "新鑫"]
+        init_section = "" if any(k in new_company for k in private_keywords) else "送件"
+        case_id = create_customer_record(new_name, new_id, new_company, new_sg, block_text,
+                                          current_company=new_company, report_section=init_section)
+        reply_text(reply_token, f"🆕 已建立新客戶：{new_name}（身分證 {new_id}）\n已顯示在日報")
         delete_pending_action(action_id); return True
 
     if text.startswith("CANCEL_SAMENAME|"):
@@ -4418,12 +4658,28 @@ def handle_command_text(text: str, reply_token: str) -> bool:
             reply_text(reply_token, "⚠️ 案件不存在"); delete_pending_action(action_id); return True
         company = extract_company(block_text) or c["company"] or ""
         new_status = "CLOSED" if is_closed_text(block_text) else None
-        update_customer(c["case_id"], company=company,
-                        text=block_text, from_group_id=source_group_id, status=new_status)
+        # 偵測核准/金額（normalize 後「核準」已統一為「核准」）
+        text_wo_pending = block_text.replace("待核准", "")
+        is_approved = any(w in text_wo_pending for w in ["核准", "過件", "通過", "核貸"]) and new_status != "CLOSED"
+        changes = {"company": company, "status": new_status}
+        if is_approved:
+            amt = extract_approved_amount(block_text) or ""
+            if amt:
+                changes["approved_amount"] = amt
+            changes["report_section"] = "待撥款"
+        ok, diffs, cust_name = update_with_verify(case_id, changes,
+                                                    from_group_id=source_group_id,
+                                                    text_log=block_text)
+        if not ok:
+            reply_text(reply_token, "⚠️ 案件不存在")
+            delete_pending_action(action_id); return True
         pushed = False
         if want_push_a and new_status != "CLOSED":
-            ok, _ = push_text(A_GROUP_ID, block_text); pushed = ok
-        msg = f"✅ 已更新客戶：{c['customer_name']}（{company or '未填'}）"
+            ok_push, _ = push_text(A_GROUP_ID, block_text); pushed = ok_push
+        if diffs:
+            msg = f"✅ 已更新客戶：{cust_name}\n" + "\n".join(diffs)
+        else:
+            msg = f"ℹ️ {cust_name}：訊息已記錄（無實際欄位變動）"
         if pushed: msg += f"\n✅ 已回貼A群"
         reply_text(reply_token, msg); delete_pending_action(action_id); return True
 
