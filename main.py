@@ -3675,7 +3675,7 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
                 single_co = targets[0]
                 new_route, ok, err = advance_route_to(route, single_co, "轉送")
                 update_kw = {"current_company": single_co,
-                             "text": f"{name} 轉{single_co}", "from_group_id": group_id}
+                             "text": f"{name} 轉送{single_co}", "from_group_id": group_id}
                 if ok:
                     update_kw["route_plan"] = new_route
                 if notify_amount:
@@ -3696,7 +3696,7 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
                 concurrent_str = ",".join(targets[1:])
                 update_kw = {"route_plan": new_route, "current_company": first_co,
                              "concurrent_companies": concurrent_str,
-                             "text": f"{name} 轉{'+'.join(targets)}", "from_group_id": group_id}
+                             "text": f"{name} 轉送{'+'.join(targets)}", "from_group_id": group_id}
                 if notify_amount:
                     update_kw["notify_amount"] = notify_amount
                     update_kw["notify_period"] = notify_period
@@ -3844,10 +3844,10 @@ def handle_transfer_block(block_text, source_group_id, reply_token) -> Optional[
         new_route, ok, err = advance_route_to(route, first_co, "轉送")
         if not ok:
             update_customer(target["case_id"], current_company=first_co,
-                            text=f"{name} 轉{first_co}", from_group_id=source_group_id, **notify_kw)
+                            text=f"{name} 轉送{first_co}", from_group_id=source_group_id, **notify_kw)
             return f"✅ {name} 已轉送：{current or '無'} → {first_co}"
         update_customer(target["case_id"], route_plan=new_route, current_company=first_co,
-                        text=f"{name} 轉{first_co}", from_group_id=source_group_id, **notify_kw)
+                        text=f"{name} 轉送{first_co}", from_group_id=source_group_id, **notify_kw)
         return f"✅ {name} 已轉送：{current or '無'} → {first_co}"
     # 多公司（「轉 A+B」= 同送）：
     # 第一家為 current_company，其餘加入 concurrent_companies → 日報同時顯示 A、B 區塊
@@ -3867,7 +3867,7 @@ def handle_transfer_block(block_text, source_group_id, reply_token) -> Optional[
     concurrent_str = ",".join(existing) if existing else ""
     update_customer(target["case_id"], route_plan=new_route, current_company=first_co,
                     concurrent_companies=concurrent_str,
-                    text=f"{name} 轉{targets_str}", from_group_id=source_group_id, **notify_kw)
+                    text=f"{name} 轉送{targets_str}", from_group_id=source_group_id, **notify_kw)
     return f"✅ {name} 已轉送（同送）：{current or '無'} → {targets_str}"
 
 
@@ -7866,7 +7866,9 @@ def _build_customer_pdf_body(r: dict) -> str:
 _PDF_STYLE = """<style>
 @media print { @page { size: A4 portrait; margin: 10mm 12mm; } .no-print { display: none !important; } }
 * { box-sizing: border-box; margin: 0; padding: 0; }
-body { font-family: 'Microsoft JhengHei', 'PingFang TC', sans-serif; background: #fff; color: #1a1a1a; font-size: 13px; padding: 20px; }
+body { font-family: 'Microsoft JhengHei', 'PingFang TC', sans-serif; background: #eee; color: #1a1a1a; font-size: 13px; }
+#pdf-content { width: 210mm; min-height: 297mm; padding: 12mm 14mm; margin: 20px auto; background: #fff; }
+@media print { body { background: #fff; } #pdf-content { margin: 0; padding: 0; width: auto; min-height: auto; } }
 .header { background: #3a3530; color: #fff; padding: 16px 20px; border-radius: 8px; margin-bottom: 16px; display: flex; justify-content: space-between; align-items: center; }
 .header-name { font-size: 22px; font-weight: 700; }
 .header-sub { font-size: 12px; color: #c8bfb5; margin-top: 4px; }
@@ -7938,10 +7940,10 @@ function downloadPDF() {{
   btn.style.cursor = 'wait';
   var element = document.getElementById('pdf-content');
   var opt = {{
-    margin: [8, 8, 8, 8],
+    margin: 0,
     filename: {json.dumps(pdf_filename, ensure_ascii=False)},
     image: {{ type: 'jpeg', quality: 0.95 }},
-    html2canvas: {{ scale: 2, windowWidth: 1024, useCORS: true }},
+    html2canvas: {{ scale: 2, useCORS: true, letterRendering: true, backgroundColor: '#ffffff' }},
     jsPDF: {{ unit: 'mm', format: 'a4', orientation: 'portrait' }},
     pagebreak: {{ mode: ['css', 'legacy'] }}
   }};
