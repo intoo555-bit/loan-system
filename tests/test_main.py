@@ -313,6 +313,17 @@ class TestStrictResolveTarget:
         assert target is not None
         assert target["source_group_id"] == "g1"
 
+    def test_status_summary_strips_id_no(self, tmp_db):
+        """extract_status_summary fallback 時不把身分證末碼當狀態"""
+        main, _ = tmp_db
+        # 建新客戶的第一行訊息「115/4/17-周馮鈺婷 H215115852」
+        # fallback 抓狀態應為空（去除姓名、日期、身分證後無剩）
+        s = main.extract_status_summary("115/4/17-周馮鈺婷 H215115852", "周馮鈺婷")
+        assert "H215115852" not in s
+        assert "215115852" not in s
+        # 實際上應為空
+        assert s == "" or len(s) < 3  # 允許留個空白或少量字
+
     def test_resolve_strict_forced_case_id(self, tmp_db):
         """cmd 含 _forced_case_id（按鈕 callback 模擬）→ 直接取該 case"""
         main, _ = tmp_db

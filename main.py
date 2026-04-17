@@ -2473,6 +2473,9 @@ def extract_status_summary(first_line: str, customer_name: str) -> str:
     # 去掉客戶姓名
     text = first_line.replace(customer_name, "").strip()
 
+    # 去掉身分證/居留證（避免身分證末碼被當狀態文字）
+    text = re.sub(r"[A-Z][A-Z0-9]\d{8}", "", text, flags=re.IGNORECASE).strip()
+
     # 去掉日期
     text = re.sub(r"^\d{1,4}/\d{1,2}(/\d{1,2})?[-－]?\s*", "", text).strip()
 
@@ -2848,6 +2851,24 @@ def send_transfer_case_buttons(reply_token, customer, source_group_id, block_tex
              make_quick_reply_item(f"轉移到{new_g}", f"CONFIRM_TRANSFER|{action_id}"),
              make_quick_reply_item("取消", f"CANCEL_TRANSFER|{action_id}")]
     reply_quick_reply(reply_token, f"⚠️ {old_g} 已有同名客戶，請選擇：沿用(兩邊各建獨立案)/轉移(搬到{new_g})/取消", items)
+
+
+def send_same_name_supplement_buttons(reply_token, block_text, matches, source_group_id, want_push_a):
+    """本群組多筆同名補件時 → 跳按鈕讓業務選要更新哪位"""
+    action_id = short_id()
+    save_pending_action(action_id, "select_case_for_supplement", {
+        "block_text": block_text, "source_group_id": source_group_id,
+        "want_push_a": want_push_a, "case_ids": [m["case_id"] for m in matches]
+    })
+    items = []
+    for r in matches[:12]:
+        id4 = (r["id_no"] or "")[-4:] or "無"
+        co = r["current_company"] or r["company"] or "未填"
+        items.append(make_quick_reply_item(
+            f"{co}-末4:{id4}", f"SELECT_SUPPLEMENT|{action_id}|{r['case_id']}"))
+    items.append(make_quick_reply_item("取消", f"CANCEL_SUPPLEMENT|{action_id}"))
+    name = extract_name(block_text) or matches[0]["customer_name"]
+    reply_quick_reply(reply_token, f"⚠️ 本群組有 {len(matches)} 位「{name}」，要更新哪位？", items)
 
 
 def send_same_name_diff_id_buttons(reply_token, block_text, matches, source_group_id,
@@ -4345,6 +4366,37 @@ def handle_command_text(text: str, reply_token: str) -> bool:
         _, action_id = text.split("|", 1)
         delete_pending_action(action_id); reply_text(reply_token, "✅ 已取消，未建立案件"); return True
 
+    # 補件時多筆同名，使用者選了要更新哪筆
+    if text.startswith("SELECT_SUPPLEMENT|"):
+        parts = text.split("|", 2)
+        if len(parts) < 3: return False
+        _, action_id, case_id = parts
+        a = get_action(action_id, "select_case_for_supplement")
+        if not a: return True
+        p = a["payload"]
+        block_text = p.get("block_text", "")
+        source_group_id = p.get("source_group_id", "")
+        want_push_a = p.get("want_push_a", False)
+        conn = get_conn(); cur = conn.cursor()
+        cur.execute("SELECT * FROM customers WHERE case_id=?", (case_id,))
+        c = cur.fetchone(); conn.close()
+        if not c:
+            reply_text(reply_token, "⚠️ 案件不存在"); delete_pending_action(action_id); return True
+        company = extract_company(block_text) or c["company"] or ""
+        new_status = "CLOSED" if is_closed_text(block_text) else None
+        update_customer(c["case_id"], company=company,
+                        text=block_text, from_group_id=source_group_id, status=new_status)
+        pushed = False
+        if want_push_a and new_status != "CLOSED":
+            ok, _ = push_text(A_GROUP_ID, block_text); pushed = ok
+        msg = f"✅ 已更新客戶：{c['customer_name']}（{company or '未填'}）"
+        if pushed: msg += f"\n✅ 已回貼A群"
+        reply_text(reply_token, msg); delete_pending_action(action_id); return True
+
+    if text.startswith("CANCEL_SUPPLEMENT|"):
+        _, action_id = text.split("|", 1)
+        delete_pending_action(action_id); reply_text(reply_token, "✅ 已取消"); return True
+
     if text.startswith("CONFIRM_TRANSFER|"):
         _, action_id = text.split("|", 1)
         a = get_action(action_id, "transfer_customer")
@@ -4733,6 +4785,11 @@ def _handle_bc_case_block_locked(block_text, source_group_id, reply_token, sourc
         send_reopen_case_buttons(reply_token, block_text, same_closed, source_group_id, push_to_a_after_reopen=want_push_a)
         return "QUICK_REPLY_SENT"
     if has_action and same_active:
+        # 多筆同名 → 跳按鈕讓使用者選
+        if len(same_active) > 1:
+            send_same_name_supplement_buttons(reply_token, block_text, same_active,
+                                               source_group_id, want_push_a)
+            return "QUICK_REPLY_SENT"
         c = same_active[0]
         new_status = "CLOSED" if is_closed_text(block_text) else None
         update_customer(c["case_id"], company=company or c["company"] or "",
@@ -4746,6 +4803,11 @@ def _handle_bc_case_block_locked(block_text, source_group_id, reply_token, sourc
     if not has_action and not is_format_trigger(block_text):
         return None
     if same_active:
+        # 多筆同名 → 跳按鈕
+        if len(same_active) > 1:
+            send_same_name_supplement_buttons(reply_token, block_text, same_active,
+                                               source_group_id, want_push_a)
+            return "QUICK_REPLY_SENT"
         r = same_active[0]
         update_customer(r["case_id"], company=company or r["company"] or "",
                         text=block_text, from_group_id=source_group_id)
