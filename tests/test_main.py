@@ -36,7 +36,7 @@ class TestRouteOrderAndCompany:
         """喬 → 喬美；貸救補 → 貸就補（向下相容）"""
         main, _ = tmp_db
         r = main.parse_route_order_line("4/17-郭小名-21/喬/貸10")
-        assert r["companies"] == ["21", "喬美", "貸就補"]
+        assert r["companies"] == ["21商品", "喬美", "貸就補"]
         # 舊資料用「貸救補」也能歸到貸就補區塊
         assert main.normalize_section("貸救補") == "貸就補"
 
@@ -50,10 +50,10 @@ class TestRouteOrderAndCompany:
         assert main.normalize_section("鼎多") == "喬美"
 
     def test_21_machine_alias(self, tmp_db):
-        """21機12萬 / 21機25萬 要轉成完整名稱"""
+        """21/21機12萬/21機25萬 轉成完整名稱"""
         main, _ = tmp_db
         r = main.parse_route_order_line("4/15-測試甲-21/21機12萬/21機25萬")
-        assert r["companies"] == ["21", "21機車12萬", "21機車25萬"]
+        assert r["companies"] == ["21商品", "21機車12萬", "21機車25萬"]
 
 
 # ===== TRANSFER 多公司 =====
@@ -66,7 +66,7 @@ class TestTransferMultiCompany:
     def test_transfer_parse_single(self, tmp_db):
         main, _ = tmp_db
         r = main.parse_transfer_line("8/5-戴君哲-轉21")
-        assert r["targets"] == ["21"]
+        assert r["targets"] == ["21商品"]
 
 
 # ===== 待核准不誤判 =====
