@@ -278,6 +278,31 @@ PENDING → ACTIVE → CLOSED
 | `@AI 姓名 歷史` | 列最近 10 筆操作（附編號、時間）|
 | `@AI 姓名 還原 N` | 跳回第 N 筆之前的狀態（snapshot rollback）|
 
+#### 對保派件/時間地點（A/B 兩段訊息，無 @AI 前綴）
+
+**A：派對保訊息**（行政 A/B 發）
+```
+辦理方案：裕融
+核准金額：50萬
+客戶姓名：王陽明
+對保地區：台北
+```
+→ 系統抓到「客戶姓名」「對保地區」兩關鍵字 → type=`signing_request` → 寫入 `signing_area` + 標 `report_section="派對保"`
+
+**B：對保員回覆（接單 + 排時間地點）**
+```
+對保 張三 新光對保
+時間：8/20 下午2點
+地點：台北 XX 路
+```
+→ 第一行匹配 `^對保 業務員 XX對保$` → type=`signing_return_time` → 寫入 `signing_salesperson` / `signing_company` / `signing_time` / `signing_location`
+
+**對保子步驟偵測**（`detect_pairing_substep`）：訊息含特定關鍵字會自動辨識
+- `派對保` / `辦理方案` + `對保地區` → 「派對保」
+- `委對收` → 「委對收」
+- `對保時間` / `對保地點` → 「約時間」
+- `對好` / `對保完成` / `不收不簽` → 「對好」
+
 #### 送件金額 vs 核准金額
 
 - `notify_amount` / `notify_period` = **送件金額/期數**（業務希望送多少）；由「轉 A+B N/M」尾巴、送件順序尾巴 `N/M @AI`、A 群照會注意事項寫入
