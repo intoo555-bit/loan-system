@@ -2409,6 +2409,9 @@ def get_all_admin_groups() -> List[str]:
 # =========================
 # 狀態摘要提取
 # =========================
+_INTERNAL_ACTION_KEYWORDS = ["設送件", "核准金額修改為", "轉送"]
+
+
 def extract_status_summary(first_line: str, customer_name: str) -> str:
     """
     從訊息第一行提取狀態關鍵字，用於日報顯示。
@@ -2421,6 +2424,9 @@ def extract_status_summary(first_line: str, customer_name: str) -> str:
     - 其他 → 顯示前20字
     """
     if not first_line:
+        return ""
+    # 內部動作（@AI 指令產生的記錄文字）不顯示為業務狀態
+    if any(kw in first_line for kw in _INTERNAL_ACTION_KEYWORDS):
         return ""
     # 優先用標準化標籤
     if "核准" in first_line or "核準" in first_line:
@@ -2914,10 +2920,11 @@ def parse_special_command(text: str, group_id: str) -> Optional[Dict]:
     if m and "下一家" not in m.group(2) and "轉" not in m.group(2):
         return {"type": "add_concurrent", "name": m.group(1), "company": m.group(2).strip()}
 
-    # 轉指定公司
-    m = re.match(r"^([\u4e00-\u9fff]{2,6})\s*轉(.+)$", clean)
+    # 轉指定公司（支援多家同送「轉A+B」、可帶送件金額「轉A+B 100萬/24期」）
+    m = re.match(r"^([\u4e00-\u9fff]{2,6})\s*轉([^\s]+)(?:\s+(\d+(?:\.\d+)?)\s*萬?\s*[/／]\s*(\d+)\s*期?)?\s*$", clean)
     if m and m.group(2).strip() != "下一家":
-        return {"type": "advance", "name": m.group(1), "target": m.group(2).strip()}
+        return {"type": "advance", "name": m.group(1), "target": m.group(2).strip(),
+                "notify_amount": m.group(3) or "", "notify_period": m.group(4) or ""}
 
     # 取消核准：@AI 姓名 公司 取消核准
     m = re.match(r"^([\u4e00-\u9fff]{2,6})\s*(.+?)\s*取消核准$", clean)
@@ -2929,16 +2936,6 @@ def parse_special_command(text: str, group_id: str) -> Optional[Dict]:
     m = re.match(r"^([\u4e00-\u9fff]{2,6})\s+(.+?)\s*(?<!待)核准\s*(.+)$", clean)
     if m:
         return {"type": "update_amount", "name": m.group(1), "company": m.group(2).strip(), "amount": m.group(3).strip()}
-
-    # 設照會金額/期數（可含同送）：@AI 姓名 公司[+公司2] 金額[萬]/期數[期]
-    # 範例：@AI 吳承諺 亞太+房地 100/24、@AI 王小明 第一 30萬/24期
-    m = re.match(r"^([\u4e00-\u9fff]{2,6})\s+([^\s@]+?)\s+(\d+(?:\.\d+)?)\s*萬?\s*[/／]\s*(\d+)\s*期?$", clean)
-    if m:
-        companies_raw = m.group(2)
-        companies = [COMPANY_ALIAS.get(c.strip(), c.strip()) for c in re.split(r"[+＋]", companies_raw) if c.strip()]
-        if companies:
-            return {"type": "set_notify", "name": m.group(1), "companies": companies,
-                    "amount": m.group(3), "period": m.group(4)}
 
     # 改名：@AI 舊名 改名 新名
     m = re.match(r"^([\u4e00-\u9fff]{2,6})\s*改名\s*([\u4e00-\u9fff]{2,6})$", clean)
@@ -3136,6 +3133,31 @@ def generate_notification_text(r: dict, company: str = "") -> str:
         "     🎀白天通知進件 中午或是下午以前注意來電",
     ]
     return "\n".join(lines)
+
+
+def _resolve_target(name: str, group_id: str, reply_token: str):
+    """依姓名在本群組找 ACTIVE 客戶：
+    - 本群組 1 筆 → 回該筆
+    - 本群組多筆 → 回覆警告列出所有同名，回傳 None 讓 handler 停止
+    - 本群組 0 筆，但其他群組有 → 回其他群組最近更新那筆
+    - 完全找不到 → 回覆錯誤，回傳 None
+    """
+    rows = find_active_by_name(name)
+    same = [r for r in rows if r["source_group_id"] == group_id]
+    if len(same) == 1:
+        return same[0]
+    if len(same) > 1:
+        lines = [f"⚠️ 本群組有 {len(same)} 位「{name}」，請用身分證或更精確識別："]
+        for r in same:
+            id4 = (r["id_no"] or "")[-4:] or "無"
+            co = r["current_company"] or r["company"] or "未填"
+            lines.append(f"  - {co}（身分證末4：{id4}）")
+        reply_text(reply_token, "\n".join(lines))
+        return None
+    if rows:
+        return rows[0]
+    reply_text(reply_token, f"❌ 找不到客戶：{name}")
+    return None
 
 
 def handle_special_command(cmd: Dict, reply_token: str, group_id: str):
@@ -3478,36 +3500,6 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
         reply_text(reply_token, f"✅ {name} {company} 核准金額已更新為 {amount}，已移到待撥款")
         return
 
-    if t == "set_notify":
-        name = cmd["name"]
-        companies = cmd.get("companies", []) or []
-        amount = cmd.get("amount", "")
-        period = cmd.get("period", "")
-        rows = find_active_by_name(name)
-        same = [r for r in rows if r["source_group_id"] == group_id]
-        target = same[0] if same else (rows[0] if rows else None)
-        if not target:
-            reply_text(reply_token, f"❌ 找不到客戶：{name}"); return
-
-        # 同送處理：第一家為 current_company，其餘加到 concurrent_companies
-        cur_concurrent = target["concurrent_companies"] or ""
-        existing = [c.strip() for c in cur_concurrent.split(",") if c.strip()]
-        update_kw = {"notify_amount": amount, "notify_period": period}
-        if len(companies) >= 1:
-            update_kw["current_company"] = companies[0]
-        for co in companies[1:]:
-            if co not in existing and not any(co in e or e in co for e in existing):
-                existing.append(co)
-        if existing:
-            update_kw["concurrent_companies"] = ",".join(existing)
-        cos_str = "+".join(companies) if companies else ""
-        update_customer(target["case_id"],
-                        text=f"{name} 設送件 {cos_str} {amount}萬/{period}期",
-                        from_group_id=group_id, **update_kw)
-        info = f"{cos_str} " if cos_str else ""
-        reply_text(reply_token, f"✅ {name} 送件金額已設：{info}{amount}萬/{period}期（不等於核准金額）")
-        return
-
     if t == "close":
         name = cmd["name"]
         reason = cmd.get("reason", "")
@@ -3638,46 +3630,81 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
 
     if t == "add_concurrent":
         name = cmd["name"]
-        company = cmd["company"]
-        rows = find_active_by_name(name)
-        same = [r for r in rows if r["source_group_id"] == group_id]
-        target = same[0] if same else (rows[0] if rows else None)
+        company_raw = cmd["company"]
+        target = _resolve_target(name, group_id, reply_token)
         if not target:
-            reply_text(reply_token, f"❌ 找不到客戶：{name}"); return
-        # 加入同時送件清單
+            return
+        # 支援多公司：送A+B → [A, B] 都加入同送清單
+        new_companies = [COMPANY_ALIAS.get(c.strip(), c.strip())
+                         for c in re.split(r"[+＋]", company_raw) if c.strip()]
+        if not new_companies:
+            reply_text(reply_token, f"❌ 未辨識公司名：{company_raw}"); return
         current_concurrent = target["concurrent_companies"] or ""
         parts = [c.strip() for c in current_concurrent.split(",") if c.strip()]
-        if company not in parts:
-            parts.append(company)
+        added = []
+        for co in new_companies:
+            if co not in parts and not any(co in p or p in co for p in parts):
+                parts.append(co)
+                added.append(co)
         new_concurrent = ",".join(parts)
-        conn = get_conn(); cur = conn.cursor()
-        cur.execute("UPDATE customers SET concurrent_companies=?, updated_at=? WHERE case_id=?",
-                    (new_concurrent, now_iso(), target["case_id"]))
-        conn.commit(); conn.close()
-        update_customer(target["case_id"], text=f"{name} 加送 {company}", from_group_id=group_id)
-        # 帶金額期數
-        plan = PLAN_INFO.get(company)
-        info_line = f"{plan[0]} {plan[1]}" if plan and plan[1] else company
-        reply_text(reply_token, f"✅ {name} 已加送：{info_line}\n日報會多顯示此公司區塊")
+        update_customer(target["case_id"], concurrent_companies=new_concurrent,
+                        text=f"{name} 加送 {'+'.join(new_companies)}", from_group_id=group_id)
+        info_lines = []
+        for co in new_companies:
+            plan = PLAN_INFO.get(co)
+            info_lines.append(f"{plan[0]} {plan[1]}" if plan and plan[1] else co)
+        added_str = "、".join(info_lines) if info_lines else "、".join(new_companies)
+        reply_text(reply_token, f"✅ {name} 已加送：{added_str}\n日報會多顯示對應公司區塊")
         return
 
     if t == "advance":
         name, target_co = cmd["name"], cmd.get("target")
-        rows = find_active_by_name(name)
-        same = [r for r in rows if r["source_group_id"] == group_id]
-        target = same[0] if same else (rows[0] if rows else None)
+        notify_amount = cmd.get("notify_amount", "")
+        notify_period = cmd.get("notify_period", "")
+        target = _resolve_target(name, group_id, reply_token)
         if not target:
-            reply_text(reply_token, f"❌ 找不到客戶：{name}"); return
+            return  # 未找到或多筆同名已回覆
         route = target["route_plan"] or ""
         current = get_current_company(route)
         if target_co:
-            new_route, ok, err = advance_route_to(route, target_co, "轉送")
-            if not ok:
-                reply_text(reply_token, f"❌ {err}"); return
-            update_customer(target["case_id"], route_plan=new_route, current_company=target_co,
-                            text=f"{name} 轉{target_co}", from_group_id=group_id)
-            push_text(target["source_group_id"], f"{name} 已轉送：{current} → {target_co}")
-            reply_text(reply_token, f"✅ {name} 已轉送：{current} → {target_co}")
+            # 解析目標：可能含「+」多公司同送，套 COMPANY_ALIAS
+            targets = [COMPANY_ALIAS.get(c.strip(), c.strip())
+                       for c in re.split(r"[+＋]", target_co) if c.strip()]
+            if len(targets) == 1:
+                # 單公司：維持原邏輯（試 advance_route_to，失敗改 current_company）
+                single_co = targets[0]
+                new_route, ok, err = advance_route_to(route, single_co, "轉送")
+                update_kw = {"current_company": single_co,
+                             "text": f"{name} 轉{single_co}", "from_group_id": group_id}
+                if ok:
+                    update_kw["route_plan"] = new_route
+                if notify_amount:
+                    update_kw["notify_amount"] = notify_amount
+                    update_kw["notify_period"] = notify_period
+                update_customer(target["case_id"], **update_kw)
+                push_text(target["source_group_id"], f"{name} 已轉送：{current} → {single_co}")
+                amt_suffix = f"（送件金額 {notify_amount}萬/{notify_period}期）" if notify_amount else ""
+                reply_text(reply_token, f"✅ {name} 已轉送：{current} → {single_co}{amt_suffix}")
+            else:
+                # 多公司（轉 A+B = 同送）：清掉原 route，重建為 [A, B, ...]，第一家 current、其餘 concurrent
+                data = parse_route_json(route)
+                history = data.get("history", []) or []
+                if current:
+                    history.append({"company": current, "status": "轉送", "date": now_iso()[:10]})
+                new_route = make_route_json(targets, current_index=0, history=history)
+                first_co = targets[0]
+                concurrent_str = ",".join(targets[1:])
+                update_kw = {"route_plan": new_route, "current_company": first_co,
+                             "concurrent_companies": concurrent_str,
+                             "text": f"{name} 轉{'+'.join(targets)}", "from_group_id": group_id}
+                if notify_amount:
+                    update_kw["notify_amount"] = notify_amount
+                    update_kw["notify_period"] = notify_period
+                update_customer(target["case_id"], **update_kw)
+                targets_str = "+".join(targets)
+                amt_suffix = f"（送件金額 {notify_amount}萬/{notify_period}期 → {targets[-1]}）" if notify_amount else ""
+                push_text(target["source_group_id"], f"{name} 已轉送（同送）：{current} → {targets_str}")
+                reply_text(reply_token, f"✅ {name} 已轉送（同送）：{current} → {targets_str}{amt_suffix}")
         else:
             next_co = get_next_company(route)
             if not next_co:
@@ -3879,7 +3906,8 @@ def _handle_a_case_block_locked(block_text, reply_token, id_no, name) -> Optiona
     # 「待核准」= 還有缺、還沒真正核准，不觸發待撥款；先把「待核准/待核準」字串移除再比對
     text_wo_pending = block_text.replace("待核准", "").replace("待核準", "")
     is_approved = any(w in text_wo_pending for w in ["核准", "核準", "過件", "通過", "核貸"]) and new_status != "CLOSED"
-    is_reject = not is_approved and any(w in block_text for w in ["婉拒", "申覆失敗", "建議維持原審", "不予承作", "無法再進件", "無法承作", "30日內有進件", "已建檔", "不提供申覆", "退件", "撤件", "客戶撤件", "無法核貸", "無法進件"])
+    # 「撤件」「客戶撤件」「客戶自行撤件」不算婉拒（只記錄，不推進 route；後續若業務明確打「轉XXX」才動）
+    is_reject = not is_approved and any(w in block_text for w in ["婉拒", "申覆失敗", "建議維持原審", "不予承作", "無法再進件", "無法承作", "30日內有進件", "已建檔", "不提供申覆", "退件", "無法核貸", "無法進件"])
     route = customer["route_plan"] or ""
     new_route, next_co = route, ""
     # 檢查公司是否在同時送件清單或 route 裡

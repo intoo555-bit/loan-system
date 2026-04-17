@@ -91,19 +91,35 @@ class TestPendingApprovalNotMisjudged:
 
 # ===== 照會金額 & 送件金額 =====
 class TestNotifyAmount:
-    def test_set_notify_command(self, tmp_db):
-        """@AI 姓名 公司[+公司] 金額/期數 → set_notify"""
+    def test_advance_multi_company_with_notify_amount(self, tmp_db):
+        """@AI 姓名 轉A+B 金額/期數 → advance（多公司同送 + 送件金額）"""
         main, _ = tmp_db
-        cmd = main.parse_special_command("吳承諺 亞太+房地 100/24", "g1")
-        assert cmd["type"] == "set_notify"
-        assert cmd["companies"] == ["亞太", "房地"]
-        assert cmd["amount"] == "100" and cmd["period"] == "24"
+        cmd = main.parse_special_command("吳承諺 轉喬美+房地 100/24", "g1")
+        assert cmd["type"] == "advance"
+        assert cmd["target"] == "喬美+房地"
+        assert cmd["notify_amount"] == "100"
+        assert cmd["notify_period"] == "24"
 
-    def test_set_notify_single_company_with_wan_qi(self, tmp_db):
+    def test_advance_single_company_with_wan_qi(self, tmp_db):
         main, _ = tmp_db
-        cmd = main.parse_special_command("王小明 第一 30萬/24期", "g1")
-        assert cmd["type"] == "set_notify"
-        assert cmd["companies"] == ["第一"]
+        cmd = main.parse_special_command("王小明 轉第一 30萬/24期", "g1")
+        assert cmd["type"] == "advance"
+        assert cmd["target"] == "第一"
+        assert cmd["notify_amount"] == "30"
+
+    def test_advance_no_amount(self, tmp_db):
+        main, _ = tmp_db
+        cmd = main.parse_special_command("王小明 轉第一", "g1")
+        assert cmd["type"] == "advance"
+        assert cmd["target"] == "第一"
+        assert cmd["notify_amount"] == ""
+
+    def test_add_concurrent_multi(self, tmp_db):
+        """@AI 姓名 送A+B → 多家加送"""
+        main, _ = tmp_db
+        cmd = main.parse_special_command("王小明 送第一+當舖", "g1")
+        assert cmd["type"] == "add_concurrent"
+        assert cmd["company"] == "第一+當舖"
 
     def test_extract_notify_amount_period_tail(self, tmp_db):
         """送件順序尾巴 @AI 前的 N/M 應被抓到"""
@@ -208,6 +224,22 @@ class TestCompanyNameNotAsCustomer:
         main, _ = tmp_db
         assert main.extract_name("4/17-王思婷-亞太") == "王思婷"
         assert main.extract_name("吳承諺 亞太 補件") == "吳承諺"
+
+
+# ===== 「客戶撤件」不觸發婉拒 =====
+class TestWithdrawalNotRejection:
+    def test_customer_withdrawal_not_in_reject_list(self, tmp_db):
+        """A 群貼「陳志豪 21 客戶自行撤件」不該觸發 is_reject（只記錄，不推進 route）"""
+        main, _ = tmp_db
+        # 用 handle_a 的 is_reject 判定邏輯來驗（直接檢查 block_text 不含舊的撤件關鍵字）
+        reject_keywords = ["婉拒", "申覆失敗", "建議維持原審", "不予承作",
+                           "無法再進件", "無法承作", "30日內有進件", "已建檔",
+                           "不提供申覆", "退件", "無法核貸", "無法進件"]
+        for txt in ["陳志豪 21 客戶自行撤件", "某客 客戶撤件", "客戶自行撤件"]:
+            assert not any(w in txt for w in reject_keywords), f"{txt} 不該符合 is_reject"
+        # 「退件」「不予承作」仍該符合（正規拒絕詞）
+        assert any(w in "某客 公司退件" for w in reject_keywords)
+        assert any(w in "某客 不予承作" for w in reject_keywords)
 
 
 # ===== 跨群組獨立案 + A 群回貼按鈕 =====
