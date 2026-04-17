@@ -2431,10 +2431,17 @@ def extract_status_summary(first_line: str, customer_name: str) -> str:
         return "待補照會"
     if "照會" in first_line:
         return "已送件"
-    if "補申覆" in first_line or "申覆" in first_line:
+    # 補申覆：A 群貼「補申覆」= 要求補（待補）；業務回「已補申覆/申覆完/申覆通過」= 已補
+    if "已補申覆" in first_line or "申覆完" in first_line or "申覆通過" in first_line or "申覆好" in first_line:
         return "已補申覆"
-    if any(w in first_line for w in ["補件", "補資料", "補行照", "補聯徵", "補保人", "補薪轉", "補照片", "補時段", "補JCIC", "補jcic", "補在職", "補存摺", "補勞保", "補駕照"]):
+    if "補申覆" in first_line or "申覆" in first_line:
+        return "待補申覆"
+    # 補件類：A 群貼「補XX」= 要求補（待補）；業務回「已補XX/補好/補完」= 已補
+    _bu_list = ["補件", "補資料", "補行照", "補聯徵", "補保人", "補薪轉", "補照片", "補時段", "補JCIC", "補jcic", "補在職", "補存摺", "補勞保", "補駕照"]
+    if "已補" in first_line or "補好" in first_line or "補完" in first_line:
         return "已補資料"
+    if any(w in first_line for w in _bu_list):
+        return "待補資料"
     if "未接照會" in first_line or first_line.strip().endswith("NA") or " NA" in first_line:
         return "NA"
 
