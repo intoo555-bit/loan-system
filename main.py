@@ -58,7 +58,7 @@ APPLICATION_PLAN_LIST = [
     ("和裕機車", "和裕維力貸機車範本).xlsx"),
     ("和裕商品", "和裕維力貸商品範本.xlsx"),
     ("第一", "第一申請書範本.xlsx"),
-    ("貸就補", "貸就補範本.xlsx"),
+    ("貸救補", "貸就補範本.xlsx"),
     ("21機車12萬", "21機車申請書範本xlsx.xlsx"),
     ("21機車25萬", "21機25萬範本.xlsx"),
     ("21商品", "21商品範本.xlsx"),
@@ -160,8 +160,8 @@ FIELD_LABELS = {
     "adminb_branch": "撥款分行",
     "adminb_product": "商品名稱（和裕）",
     "adminb_model": "商品型號（和裕）",
-    "adminb_product_name": "商品名稱（貸就補）",
-    "adminb_product_model": "商品型號（貸就補）",
+    "adminb_product_name": "商品名稱（貸救補）",
+    "adminb_product_model": "商品型號（貸救補）",
     "adminb_contact_time": "可照會時間",
     # 其他
     "approved_amount": "核准金額",
@@ -179,7 +179,7 @@ PRIMARY_SHEET_NAMES = {
     "和裕機車": ["和裕維力貸"],
     "和裕商品": ["和裕維力貸"],
     "第一": ["申請書"],
-    "貸就補": ["進件申請書"],
+    "貸救補": ["進件申請書"],
     "21機車12萬": ["工作表1"],
     "21機車25萬": ["工作表1"],
     "21商品": ["工作表1"],
@@ -729,7 +729,7 @@ def _strip_sheet_colors(xlsx_bytes: bytes, target_sheet_name: str) -> bytes:
 REPORT_SECTION_1 = [
     "麻吉", "和潤", "中租", "裕融", "21汽車", "亞太", "創鉅", "21",
     "第一", "合信", "興達", "和裕", "鄉民", "喬美",
-    "分貝汽車", "分貝機車", "貸就補", "預付手機分期", "融易", "手機分期", "鼎多",
+    "分貝汽車", "分貝機車", "貸救補", "預付手機分期", "融易", "手機分期", "鼎多",
     "送件",
 ]
 REPORT_SECTION_4 = ["待撥款"]
@@ -751,7 +751,7 @@ COMPANY_LIST = [
     "亞太工15", "亞太工", "亞太機",
     "亞太25", "亞太15",
     "預付手機原融", "預付手機分期",
-    "手機分期", "貸就補",
+    "手機分期", "貸救補",
     "合信機車", "合信手機", "合信二輪",
     # 分貝方案
     "分貝汽車", "分貝機車", "分貝汽", "分貝機",
@@ -844,11 +844,11 @@ COMPANY_ALIAS = {
     "分": "分貝機車",
     "研": "商品貸",  # 研=商
     "鼎多": "喬美",  # 鼎多=喬美
-    # 興達/貸就補/歐
+    # 興達/貸救補/歐
     "興機": "興達機車",
-    "貸10": "貸就補",
-    "貸救": "貸就補",
-    "貸救補": "貸就補",  # 向下相容舊字
+    "貸10": "貸救補",
+    "貸救": "貸救補",
+    "貸就補": "貸救補",  # 錯字向下相容
     "歐": "商品貸",
     # 新新專/維力
     "新新專": "和裕",
@@ -891,7 +891,7 @@ PLAN_INFO = {
     "21機車25萬": ("21機車25萬", "25萬/48期"), "21機25": ("21機車25萬", "25萬/48期"),
     "21商品": ("21商品", "12萬/24期"), "21": ("21商品", "12萬/24期"),
     "第一": ("第一", "30萬/24期"),
-    "貸就補": ("貸就補", "10萬/24期"), "貸10": ("貸就補", "10萬/24期"), "貸救補": ("貸就補", "10萬/24期"),
+    "貸救補": ("貸救補", "10萬/24期"), "貸10": ("貸救補", "10萬/24期"), "貸就補": ("貸救補", "10萬/24期"),
     "麻吉機車": ("麻吉機車", "10萬/24期"), "麻吉機": ("麻吉機車", "10萬/24期"),
     "麻吉手機": ("麻吉手機", "10萬/24期"), "麻吉手": ("麻吉手機", "10萬/24期"),
     "喬美": ("喬美", ""), "分貝機車": ("分貝機車", ""), "分貝機": ("分貝機車", ""),
@@ -2526,7 +2526,7 @@ COMPANY_SECTION_MAP = {
     # 新鑫/土地 → 房地
     "新鑫": "房地", "土地": "房地",
     # 向下相容舊字
-    "貸救補": "貸就補",
+    "貸就補": "貸救補",
     # 民間方案簡稱
     "鄉": "鄉民", "研": "商品貸", "當": "當舖專案", "商": "商品貸",
     "銀角": "零卡", "慢點付": "零卡", "分期趣": "零卡",
@@ -6153,7 +6153,7 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
           ("亞太工會機車","亞太工會機車","工會機車動擔 15萬"),("亞太機車25萬","亞太機車25萬","機車動擔 25萬 48期"),
           ("和裕機車","和裕機車","維力機車專 15萬 24期"),("和裕商品","和裕商品","維力商品專 12萬 24期"),
           ("21機車12萬","21機車12萬","12萬 24期"),("21機車25萬","21機車25萬","25萬 48期"),
-          ("21商品","21商品","12萬 24期"),("第一","第一","30萬 24期"),("貸就補","貸就補","10萬 24期"),
+          ("21商品","21商品","12萬 24期"),("第一","第一","30萬 24期"),("貸救補","貸救補","10萬 24期"),
         ])}
         <label class="ab-plan" style="background:#4e7055;border-color:#3a5040;"><input type="checkbox" name="plans" value="喬美" style="accent-color:#fff;"><div><div class="ab-plan-name" style="color:#fff;">喬美</div><div class="ab-plan-sub" style="color:#c8e6ca;">PDF電子簽名</div></div></label>
       </div>
@@ -6204,8 +6204,8 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
           <div><div class="ab-lbl">型號或車號</div><input name="hr_model" class="ab-inp" placeholder="677-NSY/OPPO A77" value="{h(customer.get('adminb_model','') or '')}"></div>
         </div>
       </div>
-      <div class="ab-block" data-plans="貸就補" style="background:#fef9c3;">
-        <div style="font-size:12px;font-weight:700;color:#854d0e;margin-bottom:10px;">貸就補</div>
+      <div class="ab-block" data-plans="貸救補" style="background:#fef9c3;">
+        <div style="font-size:12px;font-weight:700;color:#854d0e;margin-bottom:10px;">貸救補</div>
         <div class="ab-g2">
           <div><div class="ab-lbl">商品名稱</div><input name="lj_pname" class="ab-inp" placeholder="vivo" value="{h(customer.get('adminb_product_name','') or '')}"></div>
           <div><div class="ab-lbl">型號</div><input name="lj_pmodel" class="ab-inp" placeholder="vivo V60" value="{h(customer.get('adminb_product_model','') or '')}"></div>
@@ -7876,15 +7876,63 @@ def customer_pdf_batch(request: Request, ids: str = ""):
         bodies.append(_build_customer_pdf_body(r))
     body_html = "".join(bodies)
 
+    # 第一筆客戶姓名當檔名
+    first_name = (ordered[0].get("customer_name") or "客戶資料").strip()
+    if len(ordered) > 1:
+        pdf_filename = f"{first_name}等{len(ordered)}筆客戶資料.pdf"
+    else:
+        pdf_filename = f"{first_name}_客戶資料.pdf"
+
     return f"""<!DOCTYPE html><html lang="zh-TW"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>客戶資料批次列印（{len(ordered)} 筆）</title>
 {_PDF_STYLE}
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 </head><body>
 <div class="no-print" style="text-align:center;margin-bottom:16px;">
-  <button onclick="window.print()" style="background:#4e7055;color:#fff;border:none;padding:10px 28px;border-radius:6px;font-size:14px;cursor:pointer;font-weight:600;">列印 / 存 PDF（共 {len(ordered)} 筆）</button>
+  <button id="pdf-btn" onclick="downloadPDF()" style="background:#4e7055;color:#fff;border:none;padding:10px 28px;border-radius:6px;font-size:14px;cursor:pointer;font-weight:600;">下載 PDF（共 {len(ordered)} 筆）</button>
   <button onclick="window.close()" style="background:#6a5e4e;color:#fff;border:none;padding:10px 28px;border-radius:6px;font-size:14px;cursor:pointer;font-weight:600;margin-left:8px;">關閉</button>
 </div>
+<div id="pdf-content">
 {body_html}
+</div>
+<script>
+function downloadPDF() {{
+  var btn = document.getElementById('pdf-btn');
+  var originalText = btn.innerText;
+  if (typeof html2pdf === 'undefined') {{
+    window.print();
+    return;
+  }}
+  btn.disabled = true;
+  btn.innerText = '產生中，請稍候…';
+  btn.style.opacity = '0.6';
+  btn.style.cursor = 'wait';
+  var element = document.getElementById('pdf-content');
+  var opt = {{
+    margin: [8, 8, 8, 8],
+    filename: {json.dumps(pdf_filename, ensure_ascii=False)},
+    image: {{ type: 'jpeg', quality: 0.95 }},
+    html2canvas: {{ scale: 2, windowWidth: 1024, useCORS: true }},
+    jsPDF: {{ unit: 'mm', format: 'a4', orientation: 'portrait' }},
+    pagebreak: {{ mode: ['css', 'legacy'] }}
+  }};
+  html2pdf().from(element).set(opt).save().then(function() {{
+    btn.disabled = false;
+    btn.innerText = originalText;
+    btn.style.opacity = '1';
+    btn.style.cursor = 'pointer';
+  }}).catch(function(err) {{
+    console.error('PDF 產生失敗：', err);
+    alert('PDF 產生失敗，改用瀏覽器列印功能');
+    window.print();
+    btn.disabled = false;
+    btn.innerText = originalText;
+    btn.style.opacity = '1';
+    btn.style.cursor = 'pointer';
+  }});
+}}
+</script>
 </body></html>"""
 
 
@@ -8727,7 +8775,7 @@ def _do_download_excel(request: Request, case_id: str):
         "和裕機車": os.path.join(_base, "申請書", "和裕維力貸機車範本).xlsx"),
         "和裕商品": os.path.join(_base, "申請書", "和裕維力貸商品範本.xlsx"),
         "第一": os.path.join(_base, "申請書", "第一申請書範本.xlsx"),
-        "貸就補": os.path.join(_base, "申請書", "貸就補範本.xlsx"),
+        "貸救補": os.path.join(_base, "申請書", "貸就補範本.xlsx"),
         "21機車12萬": os.path.join(_base, "申請書", "21機車申請書範本xlsx.xlsx"),
         "21機車25萬": os.path.join(_base, "申請書", "21機25萬範本.xlsx"),
         "21商品": os.path.join(_base, "申請書", "21商品範本.xlsx"),
@@ -8801,7 +8849,7 @@ def _do_download_excel(request: Request, case_id: str):
         c2_phone = v("contact2_phone")
         c2_known = v("contact2_known")
 
-        if plan_name == "貸就補":
+        if plan_name == "貸救補":
             # F5 發證地下拉
             valid_lj_place = ["北市","新北市","北縣","基市","宜縣","桃市","桃縣","竹市","竹縣",
                               "苗縣","中市","中縣","嘉市","彰縣","投縣","雲縣","嘉縣","南市",
@@ -10372,7 +10420,7 @@ def admin_templates_edit(request: Request, plan: str = ""):
         ("車輛", ["adminb_brand","vehicle_plate","adminb_vehicle_type","adminb_engine_no","adminb_body_no","adminb_mfg_date","adminb_displacement","adminb_color"]),
         ("亞太專用", ["adminb_fund_use","adminb_industry","adminb_role"]),
         ("和裕專用", ["adminb_hr_industry","adminb_hr_role","adminb_bank","adminb_branch","adminb_product","adminb_model","adminb_contact_time"]),
-        ("貸就補", ["adminb_product_name","adminb_product_model"]),
+        ("貸救補", ["adminb_product_name","adminb_product_model"]),
         ("特殊操作", ["__CLEAR__","__KEEP__"]),
     ]
     for grp_name, keys in groups:

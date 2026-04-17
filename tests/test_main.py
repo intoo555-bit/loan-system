@@ -30,15 +30,15 @@ class TestRouteOrderAndCompany:
         """貸10/鄉/銀/C/商/代 應轉成 canonical 名稱"""
         main, _ = tmp_db
         r = main.parse_route_order_line("4/17-測試乙-貸10/鄉/銀/C/商/代")
-        assert r["companies"] == ["貸就補", "鄉民", "銀行", "零卡", "商品貸", "代書"]
+        assert r["companies"] == ["貸救補", "鄉民", "銀行", "零卡", "商品貸", "代書"]
 
     def test_route_order_alias_qiao_and_loan(self, tmp_db):
-        """喬 → 喬美；貸救補 → 貸就補（向下相容）"""
+        """喬 → 喬美；貸10/貸就補（錯字）→ 貸救補"""
         main, _ = tmp_db
         r = main.parse_route_order_line("4/17-郭小名-21/喬/貸10")
-        assert r["companies"] == ["21商品", "喬美", "貸就補"]
-        # 舊資料用「貸救補」也能歸到貸就補區塊
-        assert main.normalize_section("貸救補") == "貸就補"
+        assert r["companies"] == ["21商品", "喬美", "貸救補"]
+        # 打錯字「貸就補」也能正確歸類到「貸救補」區塊
+        assert main.normalize_section("貸就補") == "貸救補"
 
     def test_route_order_alias_yan_and_dingduo(self, tmp_db):
         """研 → 商品貸；鼎多 → 喬美"""
