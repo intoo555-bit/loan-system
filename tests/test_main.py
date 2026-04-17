@@ -299,6 +299,31 @@ class TestWithdrawalNotRejection:
         assert any(w in "某客 不予承作" for w in reject_keywords)
 
 
+# ===== 破壞性指令多筆同名跳按鈕 =====
+class TestStrictResolveTarget:
+    def test_resolve_strict_single(self, tmp_db):
+        """本群組只有 1 筆 → 直接回傳該筆"""
+        main, _ = tmp_db
+        main.create_customer_record("陳某", "A111111111", "亞太", "g1", "init")
+        cmd = {"type": "close", "name": "陳某"}
+        class _Fake:
+            replied = None
+        # 模擬 reply_text 會寫入某處
+        target = main._resolve_target_strict(cmd, "陳某", "g1", "dummy_token", "結案")
+        assert target is not None
+        assert target["source_group_id"] == "g1"
+
+    def test_resolve_strict_forced_case_id(self, tmp_db):
+        """cmd 含 _forced_case_id（按鈕 callback 模擬）→ 直接取該 case"""
+        main, _ = tmp_db
+        main.create_customer_record("林某", "B111111111", "亞太", "g1", "init1")
+        main.create_customer_record("林某", "B222222222", "第一", "g1", "init2")
+        target_row = main.find_active_by_name("林某")[0]
+        cmd = {"type": "close", "name": "林某", "_forced_case_id": target_row["case_id"]}
+        target = main._resolve_target_strict(cmd, "林某", "g1", "dummy_token", "結案")
+        assert target["case_id"] == target_row["case_id"]
+
+
 # ===== 跨群組獨立案 + A 群回貼按鈕 =====
 class TestCrossGroupIndependentCases:
     def test_find_all_active_by_id_no(self, tmp_db):

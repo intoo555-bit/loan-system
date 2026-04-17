@@ -2850,6 +2850,28 @@ def send_transfer_case_buttons(reply_token, customer, source_group_id, block_tex
     reply_quick_reply(reply_token, f"⚠️ {old_g} 已有同名客戶，請選擇：沿用(兩邊各建獨立案)/轉移(搬到{new_g})/取消", items)
 
 
+def send_same_name_diff_id_buttons(reply_token, block_text, matches, source_group_id,
+                                     new_id, new_name, new_company):
+    """本群組已有同姓名但身分證不同 → 跳按鈕讓業務確認是同一人（身分證打錯）或新客戶"""
+    action_id = short_id()
+    save_pending_action(action_id, "same_name_diff_id", {
+        "block_text": block_text, "source_group_id": source_group_id,
+        "new_id": new_id, "new_name": new_name, "new_company": new_company,
+        "case_ids": [m["case_id"] for m in matches]
+    })
+    items = []
+    for r in matches[:10]:
+        id4 = (r["id_no"] or "")[-4:] or "無"
+        co = r["current_company"] or r["company"] or "未填"
+        items.append(make_quick_reply_item(
+            f"同一人-{co}末4:{id4}", f"SAME_PERSON|{action_id}|{r['case_id']}"))
+    items.append(make_quick_reply_item("不同人(建新)", f"NEW_PERSON|{action_id}"))
+    items.append(make_quick_reply_item("取消", f"CANCEL_SAMENAME|{action_id}"))
+    reply_quick_reply(reply_token,
+                      f"⚠️ 本群組已有「{new_name}」，新打的身分證({new_id})不同，是同一人還是新客戶？",
+                      items)
+
+
 def send_confirm_new_case_buttons(reply_token, block_text, existing_customer, source_group_id):
     action_id = short_id()
     save_pending_action(action_id, "confirm_new_case_with_existing_id", {
@@ -3180,12 +3202,7 @@ def _validate_companies_or_warn(companies, reply_token, name):
 
 
 def _resolve_target(name: str, group_id: str, reply_token: str):
-    """依姓名在本群組找 ACTIVE 客戶：
-    - 本群組 1 筆 → 回該筆
-    - 本群組多筆 → 回覆警告列出所有同名，回傳 None 讓 handler 停止
-    - 本群組 0 筆，但其他群組有 → 回其他群組最近更新那筆
-    - 完全找不到 → 回覆錯誤，回傳 None
-    """
+    """依姓名在本群組找 ACTIVE 客戶（輕量版：多筆回警告不跳按鈕）"""
     rows = find_active_by_name(name)
     same = [r for r in rows if r["source_group_id"] == group_id]
     if len(same) == 1:
@@ -3197,6 +3214,47 @@ def _resolve_target(name: str, group_id: str, reply_token: str):
             co = r["current_company"] or r["company"] or "未填"
             lines.append(f"  - {co}（身分證末4：{id4}）")
         reply_text(reply_token, "\n".join(lines))
+        return None
+    if rows:
+        return rows[0]
+    reply_text(reply_token, f"❌ 找不到客戶：{name}")
+    return None
+
+
+def _resolve_target_strict(cmd: Dict, name: str, group_id: str, reply_token: str, action_label: str):
+    """破壞性指令用：多筆同名跳按鈕讓使用者選。
+    - cmd 若含 _forced_case_id（來自按鈕 callback），直接取該 case
+    - 本群組 1 筆 → 回該筆
+    - 本群組多筆 → 跳按鈕 EXEC_CMD，回傳 None
+    - 本群組 0 筆、其他群組有 → 回最近更新那筆（非破壞性公司查詢情境）
+    - 完全找不到 → 回覆錯誤
+    """
+    forced = cmd.get("_forced_case_id") if cmd else None
+    if forced:
+        conn = get_conn(); cur = conn.cursor()
+        cur.execute("SELECT * FROM customers WHERE case_id=?", (forced,))
+        c = cur.fetchone(); conn.close()
+        return c
+    rows = find_active_by_name(name)
+    same = [r for r in rows if r["source_group_id"] == group_id]
+    if len(same) == 1:
+        return same[0]
+    if len(same) > 1:
+        action_id = short_id()
+        # 存 cmd 副本（不含 _forced_case_id）到 pending_action
+        cmd_copy = {k: v for k, v in cmd.items() if k != "_forced_case_id"}
+        save_pending_action(action_id, "select_case_for_cmd", {
+            "cmd": cmd_copy, "group_id": group_id,
+            "case_ids": [r["case_id"] for r in same], "label": action_label
+        })
+        items = []
+        for r in same[:12]:
+            id4 = (r["id_no"] or "")[-4:] or "無"
+            co = r["current_company"] or r["company"] or "未填"
+            items.append(make_quick_reply_item(
+                f"{co}-末4:{id4}", f"EXEC_CMD|{action_id}|{r['case_id']}"))
+        items.append(make_quick_reply_item("取消", f"CANCEL_CMD|{action_id}"))
+        reply_quick_reply(reply_token, f"⚠️ 本群組有 {len(same)} 位「{name}」，要{action_label}哪一位？", items)
         return None
     if rows:
         return rows[0]
@@ -3399,11 +3457,9 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
     if t == "change_id":
         name = cmd["name"]
         new_id = cmd["new_id"]
-        rows = find_active_by_name(name)
-        same = [r for r in rows if r["source_group_id"] == group_id]
-        target = same[0] if same else (rows[0] if rows else None)
+        target = _resolve_target_strict(cmd, name, group_id, reply_token, "改身分證")
         if not target:
-            reply_text(reply_token, f"❌ 找不到客戶：{name}"); return
+            return
         old_id = target["id_no"] or "無"
         conn = get_conn(); cur = conn.cursor()
         cur.execute("UPDATE customers SET id_no=?, updated_at=? WHERE case_id=?",
@@ -3418,11 +3474,9 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
     if t == "disbursed":
         name = cmd["name"]
         disb_date = cmd["date"] or datetime.now().strftime("%-m/%-d") if os.name != "nt" else cmd["date"] or datetime.now().strftime("%#m/%#d")
-        rows = find_active_by_name(name)
-        same = [r for r in rows if r["source_group_id"] == group_id]
-        target = same[0] if same else (rows[0] if rows else None)
+        target = _resolve_target_strict(cmd, name, group_id, reply_token, "撥款")
         if not target:
-            reply_text(reply_token, f"❌ 找不到客戶：{name}"); return
+            return
         # 更新撥款日期到 route_plan history 和 disbursement_date
         company = target["current_company"] or target["company"] or ""
         new_route = set_disbursed_in_history(target["route_plan"] or "", company, disb_date)
@@ -3493,11 +3547,9 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
     if t == "cancel_approval":
         name = cmd["name"]
         company = cmd["company"]
-        rows = find_active_by_name(name)
-        same = [r for r in rows if r["source_group_id"] == group_id]
-        target = same[0] if same else (rows[0] if rows else None)
+        target = _resolve_target_strict(cmd, name, group_id, reply_token, "取消核准")
         if not target:
-            reply_text(reply_token, f"❌ 找不到客戶：{name}"); return
+            return
         # 從 route_plan history 移除該公司的核准記錄
         route = target["route_plan"] or ""
         data = parse_route_json(route) if route else {"order":[], "current_index":0, "history":[]}
@@ -3528,9 +3580,9 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
         name = cmd["name"]
         company = cmd["company"]
         amount = cmd["amount"]
-        target = _resolve_target(name, group_id, reply_token)
+        target = _resolve_target_strict(cmd, name, group_id, reply_token, "核准金額")
         if not target:
-            return  # 找不到或多筆同名已回覆
+            return
         # 未指定公司 → 用當前 current_company（防錯：使用者常忘了打公司）
         if not company:
             company = target["current_company"] or target["company"] or ""
@@ -3586,11 +3638,9 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
     if t == "close":
         name = cmd["name"]
         reason = cmd.get("reason", "")
-        rows = find_active_by_name(name)
-        same = [r for r in rows if r["source_group_id"] == group_id]
-        target = same[0] if same else (rows[0] if rows else None)
+        target = _resolve_target_strict(cmd, name, group_id, reply_token, "結案")
         if not target:
-            reply_text(reply_token, f"❌ 找不到客戶：{name}"); return
+            return
         close_text = f"{name} 結案（{reason}）" if reason else f"{name} 結案"
         update_customer(target["case_id"], status="CLOSED",
                         text=close_text, from_group_id=group_id)
@@ -3600,11 +3650,9 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
 
     if t == "reject":
         name = cmd["name"]
-        rows = find_active_by_name(name)
-        same = [r for r in rows if r["source_group_id"] == group_id]
-        target = same[0] if same else (rows[0] if rows else None)
+        target = _resolve_target_strict(cmd, name, group_id, reply_token, "婉拒")
         if not target:
-            reply_text(reply_token, f"❌ 找不到客戶：{name}"); return
+            return
         route = target["route_plan"] or ""
         current, next_co = get_current_company(route), get_next_company(route)
         new_route = advance_route(route, "婉拒")
@@ -3699,14 +3747,9 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
 
     if t == "set_amount":
         name, amount = cmd["name"], cmd["amount"]
-        rows = find_active_by_name(name)
-        same = [r for r in rows if r["source_group_id"] == group_id]
-        target = same[0] if same else (rows[0] if rows else None)
+        target = _resolve_target_strict(cmd, name, group_id, reply_token, "設金額")
         if not target:
-            all_rows = find_active_by_name(name)
-            target = all_rows[0] if all_rows else None
-        if not target:
-            reply_text(reply_token, f"❌ 找不到客戶：{name}"); return
+            return
         update_customer(target["case_id"], approved_amount=amount, from_group_id=group_id)
         reply_text(reply_token, f"✅ {name} 核准金額已更新：{amount}")
         return
@@ -3714,7 +3757,7 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
     if t == "add_concurrent":
         name = cmd["name"]
         company_raw = cmd["company"]
-        target = _resolve_target(name, group_id, reply_token)
+        target = _resolve_target_strict(cmd, name, group_id, reply_token, "加送")
         if not target:
             return
         # 支援多公司：送A+B → [A, B] 都加入同送清單
@@ -3747,9 +3790,9 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
         name, target_co = cmd["name"], cmd.get("target")
         notify_amount = cmd.get("notify_amount", "")
         notify_period = cmd.get("notify_period", "")
-        target = _resolve_target(name, group_id, reply_token)
+        target = _resolve_target_strict(cmd, name, group_id, reply_token, "轉送")
         if not target:
-            return  # 未找到或多筆同名已回覆
+            return
         route = target["route_plan"] or ""
         current = get_current_company(route)
         if target_co:
@@ -3837,13 +3880,20 @@ def handle_new_case_block(block_text, source_group_id, reply_token) -> Optional[
     name, id_no, company = f.get("name", ""), f.get("id_no", ""), extract_company(first_line_no_id)
     if not name or not id_no:
         return None
-    # 先查本群組：若本群組已有 ACTIVE，直接更新
+    # 先查本群組：若本群組已有 ACTIVE（同身分證），直接更新
     same_group = find_active_by_id_no_in_group(id_no, source_group_id)
     if same_group:
         update_customer(same_group["case_id"], company=company or same_group["company"] or "",
                         text=block_text, from_group_id=source_group_id, name=name)
         return f"🔄 已更新客戶：{name}"
-    # 本群組無，檢查別群組是否已有 → 跳按鈕詢問
+    # 本群組同身分證沒有，但可能有同姓名（身分證不同）→ 跳按鈕確認是同人還是新客戶
+    name_matches = find_active_by_name(name)
+    same_group_by_name = [r for r in name_matches if r["source_group_id"] == source_group_id]
+    if same_group_by_name:
+        send_same_name_diff_id_buttons(reply_token, block_text, same_group_by_name,
+                                        source_group_id, id_no, name, company)
+        return "QUICK_REPLY_SENT"
+    # 本群組無（含姓名），檢查別群組是否已有同身分證 → 跳沿用/轉移按鈕
     existing = find_active_by_id_no(id_no)
     if existing:
         send_confirm_new_case_buttons(reply_token, block_text, existing, source_group_id)
@@ -4232,6 +4282,68 @@ def handle_command_text(text: str, reply_token: str) -> bool:
     if text.startswith("CANCEL_NEW_CASE|"):
         _, action_id = text.split("|", 1)
         delete_pending_action(action_id); reply_text(reply_token, "✅ 已取消"); return True
+
+    # 多筆同名時使用者選了某個 case → 重新執行原指令
+    if text.startswith("EXEC_CMD|"):
+        parts = text.split("|", 2)
+        if len(parts) < 3: return False
+        _, action_id, case_id = parts
+        a = get_action(action_id, "select_case_for_cmd")
+        if not a: return True
+        payload = a["payload"]
+        cmd = dict(payload.get("cmd") or {})
+        cmd["_forced_case_id"] = case_id
+        try:
+            handle_special_command(cmd, reply_token, payload.get("group_id", ""))
+        finally:
+            delete_pending_action(action_id)
+        return True
+
+    if text.startswith("CANCEL_CMD|"):
+        _, action_id = text.split("|", 1)
+        delete_pending_action(action_id); reply_text(reply_token, "✅ 已取消"); return True
+
+    # 同姓名不同身分證：使用者選了「是同一人，更新既有案件的身分證」
+    if text.startswith("SAME_PERSON|"):
+        parts = text.split("|", 2)
+        if len(parts) < 3: return False
+        _, action_id, case_id = parts
+        a = get_action(action_id, "same_name_diff_id")
+        if not a: return True
+        p = a["payload"]
+        new_id = p.get("new_id", "")
+        new_company = p.get("new_company", "")
+        block_text = p.get("block_text", "")
+        source_group_id = p.get("source_group_id", "")
+        conn = get_conn(); cur = conn.cursor()
+        cur.execute("SELECT * FROM customers WHERE case_id=?", (case_id,))
+        c = cur.fetchone()
+        if not c:
+            reply_text(reply_token, "⚠️ 原案件不存在"); delete_pending_action(action_id); return True
+        old_id = c["id_no"] or "無"
+        cur.execute("UPDATE customers SET id_no=?, updated_at=? WHERE case_id=?",
+                    (normalize_id_no(new_id), now_iso(), case_id))
+        conn.commit(); conn.close()
+        update_customer(case_id, company=new_company or c["company"] or "",
+                        text=block_text + f"\n[身分證 {old_id} → {new_id}]",
+                        from_group_id=source_group_id)
+        reply_text(reply_token, f"✅ 已更新 {c['customer_name']} 身分證：{old_id} → {new_id}")
+        delete_pending_action(action_id); return True
+
+    if text.startswith("NEW_PERSON|"):
+        _, action_id = text.split("|", 1)
+        a = get_action(action_id, "same_name_diff_id")
+        if not a: return True
+        p = a["payload"]
+        create_customer_record(p.get("new_name", ""), p.get("new_id", ""),
+                               p.get("new_company", ""), p.get("source_group_id", ""),
+                               p.get("block_text", ""))
+        reply_text(reply_token, f"🆕 已建立新客戶：{p.get('new_name', '')}（身分證 {p.get('new_id', '')}）")
+        delete_pending_action(action_id); return True
+
+    if text.startswith("CANCEL_SAMENAME|"):
+        _, action_id = text.split("|", 1)
+        delete_pending_action(action_id); reply_text(reply_token, "✅ 已取消，未建立案件"); return True
 
     if text.startswith("CONFIRM_TRANSFER|"):
         _, action_id = text.split("|", 1)
