@@ -997,10 +997,11 @@ def parse_notification_fields(text: str) -> dict:
         m = re.search(r"月薪\s*(\d{4,})", text)
         if m:
             fields["company_salary"] = m.group(1)
-    # 金額/期數：14萬/30期 或 10萬 30期
+    # 送件金額/期數：14萬/30期 或 10萬 30期（注意：送件金額 ≠ 核准金額）
     m = re.search(r"(\d+(?:\.\d+)?)\s*萬\s*/?\s*(\d+)\s*期", text)
     if m:
-        fields["approved_amount"] = f"{m.group(1)}萬"
+        fields["notify_amount"] = m.group(1)
+        fields["notify_period"] = m.group(2)
     # 學歷：大學畢 / 高中 / 專科
     for edu, val in [("大學", "專科/大學"), ("專科", "專科/大學"), ("高中", "高中/職"),
                      ("高職", "高中/職"), ("研究所", "研究所以上"), ("碩士", "研究所以上")]:
@@ -1033,13 +1034,18 @@ def handle_notification_briefing(block_text: str, source_group_id: str, reply_to
     fields = parse_notification_fields(block_text)
 
     # 更新客戶：標記已送件 + 寫入欄位
+    # 照會是送件前的動作，金額 → notify_amount（送件金額，非核准金額）
+    # target 是 sqlite3.Row，用 [] 訪問
+    sec = target["current_company"] or target["company"] or "送件"
     update_fields = {
         "text": block_text,
         "from_group_id": source_group_id,
-        "report_section": target.get("current_company") or target.get("company") or "送件",
+        "report_section": sec,
     }
-    if fields.get("approved_amount"):
-        update_fields["approved_amount"] = fields["approved_amount"]
+    if fields.get("notify_amount"):
+        update_fields["notify_amount"] = fields["notify_amount"]
+        if fields.get("notify_period"):
+            update_fields["notify_period"] = fields["notify_period"]
 
     update_customer(target["case_id"], **update_fields)
 
@@ -1070,8 +1076,9 @@ def handle_notification_briefing(block_text: str, source_group_id: str, reply_to
         parsed_info.append(f"年資{fields['company_years']}年")
     if fields.get("company_salary"):
         parsed_info.append(f"月薪{fields['company_salary']}")
-    if fields.get("approved_amount"):
-        parsed_info.append(f"金額{fields['approved_amount']}")
+    if fields.get("notify_amount"):
+        per = fields.get("notify_period", "")
+        parsed_info.append(f"送件金額{fields['notify_amount']}萬/{per}期" if per else f"送件金額{fields['notify_amount']}萬")
     if fields.get("education"):
         parsed_info.append(f"學歷{fields['education']}")
 
