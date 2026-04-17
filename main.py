@@ -1586,7 +1586,14 @@ def parse_header_fields(text: str) -> Dict[str, str]:
 
 def extract_name(text: str) -> str:
     name = parse_header_fields(text).get("name", "")
-    return name if name and name not in IGNORE_NAME_SET else ""
+    if not name or name in IGNORE_NAME_SET:
+        return ""
+    # 避免公司名被誤當客戶姓名（如單獨一行「喬美」「麻吉10」「裕融100萬/72期」）
+    # COMPANY_LIST + COMPANY_ALIAS keys + COMPANY_ALIAS values 都視為公司簡稱
+    all_companies = set(COMPANY_LIST) | set(COMPANY_ALIAS.keys()) | set(COMPANY_ALIAS.values())
+    if name in all_companies:
+        return ""
+    return name
 
 
 def looks_like_new_case_block(block: str) -> bool:
