@@ -2937,6 +2937,30 @@ def parse_special_command(text: str, group_id: str) -> Optional[Dict]:
     if m:
         return {"type": "update_amount", "name": m.group(1), "company": m.group(2).strip(), "amount": m.group(3).strip()}
 
+    # 核准金額（未指定公司 → 用當前 current_company）：姓名核准 金額 / 姓名 核准 金額
+    m = re.match(r"^([\u4e00-\u9fff]{2,6})\s*(?<!待)核准\s*(.+)$", clean)
+    if m:
+        return {"type": "update_amount", "name": m.group(1), "company": "", "amount": m.group(2).strip()}
+
+    # 防錯：看起來像「姓名 公司 金額/期數」但缺動詞（轉/送/同送/核准）
+    # 例：「周馮鈺婷 喬美+房地 100萬/120期」→ 提示使用者加動詞
+    m = re.match(r"^([\u4e00-\u9fff]{2,6})\s+([^\s@]+?)\s*(\d+(?:\.\d+)?)\s*萬?\s*[/／]\s*(\d+)\s*期?\s*$", clean)
+    if m:
+        return {"type": "missing_verb", "name": m.group(1), "companies_raw": m.group(2),
+                "amount": m.group(3), "period": m.group(4)}
+
+    # 防錯：金額期數沒用「/」分隔（空白或其他符號）
+    # 例：「周馮鈺婷 轉喬美 100 24」→ 提示使用者用「N萬/N期」
+    m = re.match(r"^([\u4e00-\u9fff]{2,6})\s*(轉|送)([^\s]+)\s+(\d+(?:\.\d+)?)\s*萬?\s+(\d+)\s*期?\s*$", clean)
+    if m:
+        return {"type": "bad_amount_format", "name": m.group(1), "verb": m.group(2),
+                "target": m.group(3), "n1": m.group(4), "n2": m.group(5)}
+
+    # 防錯：訊息沒任何空白但含中文 + 數字/ → 可能是「姓名公司黏在一起」
+    # 例：「周馮鈺婷喬美+房地100萬/120期」
+    if " " not in clean and "/" in clean and any(c in clean for c in COMPANY_LIST):
+        return {"type": "no_space_hint", "raw": clean}
+
     # 改名：@AI 舊名 改名 新名
     m = re.match(r"^([\u4e00-\u9fff]{2,6})\s*改名\s*([\u4e00-\u9fff]{2,6})$", clean)
     if m:
@@ -3133,6 +3157,26 @@ def generate_notification_text(r: dict, company: str = "") -> str:
         "     🎀白天通知進件 中午或是下午以前注意來電",
     ]
     return "\n".join(lines)
+
+
+def _get_valid_company_names():
+    """所有系統認識的公司名（COMPANY_LIST + COMPANY_ALIAS + PLAN_INFO + COMPANY_SECTION_MAP）"""
+    valid = set(COMPANY_LIST) | set(COMPANY_ALIAS.keys()) | set(COMPANY_ALIAS.values())
+    valid |= {v[0] for v in PLAN_INFO.values()} | set(PLAN_INFO.keys())
+    valid |= set(COMPANY_SECTION_MAP.keys()) | set(COMPANY_SECTION_MAP.values())
+    return valid
+
+
+def _validate_companies_or_warn(companies, reply_token, name):
+    """驗證公司名清單，若有未知回覆警告並回 False；全部合法回 True"""
+    valid = _get_valid_company_names()
+    unknown = [c for c in companies if c not in valid]
+    if unknown:
+        reply_text(reply_token,
+                   f"⚠️ {name}：未知公司「{'、'.join(unknown)}」\n"
+                   f"常見合法名：亞太、喬美、第一、房地、21、裕融、和裕、麻吉、貸救補、鄉民、銀行、零卡、商品貸、代書、當舖")
+        return False
+    return True
 
 
 def _resolve_target(name: str, group_id: str, reply_token: str):
@@ -3484,11 +3528,17 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
         name = cmd["name"]
         company = cmd["company"]
         amount = cmd["amount"]
-        rows = find_active_by_name(name)
-        same = [r for r in rows if r["source_group_id"] == group_id]
-        target = same[0] if same else (rows[0] if rows else None)
+        target = _resolve_target(name, group_id, reply_token)
         if not target:
-            reply_text(reply_token, f"❌ 找不到客戶：{name}"); return
+            return  # 找不到或多筆同名已回覆
+        # 未指定公司 → 用當前 current_company（防錯：使用者常忘了打公司）
+        if not company:
+            company = target["current_company"] or target["company"] or ""
+        if not company:
+            reply_text(reply_token, f"❌ {name} 找不到當前送件公司，請明確指定：{name} 公司 核准 {amount}")
+            return
+        # 套 COMPANY_ALIAS 規範化（例：「貸10」→「貸救補」）
+        company = COMPANY_ALIAS.get(company, company)
         route = target["route_plan"] or ""
         new_route = update_company_amount_in_history(route, company, amount)
         # 核准金額更新時，一律移到「待撥款」區塊（房地/當鋪/C 等都一致）
@@ -3498,6 +3548,39 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
                         text=f"{name} {company} 核准金額修改為 {amount}",
                         from_group_id=group_id)
         reply_text(reply_token, f"✅ {name} {company} 核准金額已更新為 {amount}，已移到待撥款")
+        return
+
+    if t == "no_space_hint":
+        raw = cmd["raw"]
+        reply_text(reply_token,
+                   f"⚠️ 指令看起來沒有用空白分隔，請用空白隔開各部分：\n"
+                   f"  原本：「{raw}」\n"
+                   f"  建議：「姓名 動詞 公司 金額/期數」（各段用空白分開）\n"
+                   f"  例：「周馮鈺婷 轉喬美+房地 100萬/120期」")
+        return
+
+    if t == "bad_amount_format":
+        name = cmd["name"]
+        verb = cmd["verb"]
+        target = cmd["target"]
+        n1 = cmd["n1"]
+        n2 = cmd["n2"]
+        reply_text(reply_token,
+                   f"⚠️ 金額格式錯誤，請用「/」分隔金額和期數：\n"
+                   f"  正確：「{name} {verb}{target} {n1}萬/{n2}期」\n"
+                   f"  錯誤：「{name} {verb}{target} {n1} {n2}」（缺少 /）")
+        return
+
+    if t == "missing_verb":
+        name = cmd["name"]
+        companies_raw = cmd.get("companies_raw", "")
+        amount = cmd.get("amount", "")
+        period = cmd.get("period", "")
+        reply_text(reply_token,
+                   f"⚠️ 「{name} {companies_raw} {amount}萬/{period}期」缺少動詞，請指明要做什麼：\n"
+                   f"  • 轉：砍掉原 route 改送新的 → 「{name} 轉{companies_raw} {amount}萬/{period}期」\n"
+                   f"  • 送：原 route 保留加送 → 「{name} 送{companies_raw}」\n"
+                   f"  • 核准：已核准金額 → 「{name} {companies_raw} 核准 {amount}萬」")
         return
 
     if t == "close":
@@ -3639,6 +3722,9 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
                          for c in re.split(r"[+＋]", company_raw) if c.strip()]
         if not new_companies:
             reply_text(reply_token, f"❌ 未辨識公司名：{company_raw}"); return
+        # 防錯：驗證公司名
+        if not _validate_companies_or_warn(new_companies, reply_token, name):
+            return
         current_concurrent = target["concurrent_companies"] or ""
         parts = [c.strip() for c in current_concurrent.split(",") if c.strip()]
         added = []
@@ -3670,6 +3756,9 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
             # 解析目標：可能含「+」多公司同送，套 COMPANY_ALIAS
             targets = [COMPANY_ALIAS.get(c.strip(), c.strip())
                        for c in re.split(r"[+＋]", target_co) if c.strip()]
+            # 防錯：驗證公司名
+            if not _validate_companies_or_warn(targets, reply_token, name):
+                return
             if len(targets) == 1:
                 # 單公司：維持原邏輯（試 advance_route_to，失敗改 current_company）
                 single_co = targets[0]

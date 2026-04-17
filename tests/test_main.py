@@ -114,6 +114,63 @@ class TestNotifyAmount:
         assert cmd["target"] == "第一"
         assert cmd["notify_amount"] == ""
 
+    def test_update_amount_without_company(self, tmp_db):
+        """『周馮鈺婷核准 100萬』沒打公司 → 走 update_amount，company 為空（handler 會用 current_company 補上）"""
+        main, _ = tmp_db
+        cmd = main.parse_special_command("周馮鈺婷核准 100萬", "g1")
+        assert cmd["type"] == "update_amount"
+        assert cmd["name"] == "周馮鈺婷"
+        assert cmd["company"] == ""
+        assert cmd["amount"] == "100萬"
+
+    def test_missing_verb_detected(self, tmp_db):
+        """『姓名 公司 金額/期數』缺動詞 → missing_verb（防錯提示）"""
+        main, _ = tmp_db
+        cmd = main.parse_special_command("周馮鈺婷 喬美+房地 100萬/120期", "g1")
+        assert cmd["type"] == "missing_verb"
+        assert cmd["name"] == "周馮鈺婷"
+        assert cmd["companies_raw"] == "喬美+房地"
+        assert cmd["amount"] == "100"
+        assert cmd["period"] == "120"
+
+    def test_bad_amount_format(self, tmp_db):
+        """『周馮鈺婷 轉喬美 100 24』沒用 / → bad_amount_format"""
+        main, _ = tmp_db
+        cmd = main.parse_special_command("周馮鈺婷 轉喬美 100 24", "g1")
+        assert cmd["type"] == "bad_amount_format"
+        assert cmd["n1"] == "100" and cmd["n2"] == "24"
+
+    def test_no_space_hint(self, tmp_db):
+        """『周馮鈺婷喬美+房地100萬/120期』黏在一起 → no_space_hint"""
+        main, _ = tmp_db
+        cmd = main.parse_special_command("周馮鈺婷喬美+房地100萬/120期", "g1")
+        assert cmd["type"] == "no_space_hint"
+
+    def test_valid_company_names(self, tmp_db):
+        """_get_valid_company_names 含常見公司"""
+        main, _ = tmp_db
+        valid = main._get_valid_company_names()
+        for co in ["亞太", "喬美", "第一", "房地", "21", "裕融", "和裕",
+                   "麻吉", "貸救補", "鄉民", "銀行", "零卡", "商品貸", "代書", "當舖"]:
+            assert co in valid, f"{co} 不在 valid set"
+        # 打錯的不在
+        assert "亞太商" not in valid
+        assert "亂打公司" not in valid
+
+    def test_missing_verb_vs_valid_transfer(self, tmp_db):
+        """有打『轉』時正常走 advance，不誤判為 missing_verb"""
+        main, _ = tmp_db
+        cmd = main.parse_special_command("周馮鈺婷 轉喬美+房地 100萬/120期", "g1")
+        assert cmd["type"] == "advance"  # 不是 missing_verb
+
+    def test_update_amount_with_company(self, tmp_db):
+        """『姓名 公司 核准 金額』仍優先匹配（有 company）"""
+        main, _ = tmp_db
+        cmd = main.parse_special_command("吳瑞銘 房地 核准 2000萬", "g1")
+        assert cmd["type"] == "update_amount"
+        assert cmd["company"] == "房地"
+        assert cmd["amount"] == "2000萬"
+
     def test_add_concurrent_multi(self, tmp_db):
         """@AI 姓名 送A+B → 多家加送"""
         main, _ = tmp_db
