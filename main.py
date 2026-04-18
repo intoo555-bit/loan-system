@@ -2471,7 +2471,15 @@ def get_all_admin_groups() -> List[str]:
 # =========================
 # 狀態摘要提取
 # =========================
-_INTERNAL_ACTION_KEYWORDS = ["設送件", "核准金額修改為", "轉送", "加送/備註", "加送"]
+_INTERNAL_ACTION_KEYWORDS = [
+    "設送件", "核准金額修改為", "轉送", "加送/備註", "加送",
+    "改名為",            # 改名動作文字
+    "改身分證",          # 改身分證動作文字
+    "重啟案件",          # 重啟動作
+    "還原到",            # 還原動作
+    "不送：",            # A 方案移除同送
+    "婉拒（從同送",      # reject_company 移除同送
+]
 
 
 def extract_status_summary(first_line: str, customer_name: str) -> str:
@@ -3197,10 +3205,24 @@ def parse_special_command(text: str, group_id: str) -> Optional[Dict]:
         return {"type": "reject_to", "name": m.group(1),
                 "company": "", "target": m.group(2).strip()}
 
+    # 婉拒 + 加送 複合指令：@AI 姓名 公司A婉拒 送公司B
+    # 例：吳瑞銘 喬美婉拒 送貸10（喬美婉拒、加送貸救補）
+    m = re.match(r"^([一-鿿]{2,6})\s+(.+?)\s*婉拒\s*送\s*([^\s]+)\s*$", clean)
+    if m:
+        return {"type": "reject_and_add", "name": m.group(1),
+                "reject_company": m.group(2).strip(),
+                "add_company": m.group(3).strip()}
+
     # 婉拒（推到下一家）
     m = re.match(r"^([一-鿿]{2,6})\s*婉拒$", clean)
     if m:
         return {"type": "reject", "name": m.group(1)}
+
+    # 指定某家婉拒（不跳轉）：@AI 姓名 公司 婉拒
+    # 例：林俊杰同送房地+銀行，銀行評估不過 → 「林俊杰 銀行 婉拒」
+    m = re.match(r"^([一-鿿]{2,6})\s+(.+?)\s*婉拒$", clean)
+    if m:
+        return {"type": "reject_company", "name": m.group(1), "company": m.group(2).strip()}
 
     # 違約金已支付 xxxx（有收到違約金）
     m = re.match(r"^([一-鿿]{2,6})\s*違約金已支付\s*([\d,，]+)", clean)
@@ -3629,8 +3651,15 @@ _HELP_APPROVAL = """🔹 審核結果
     @AI 王小明 婉拒
   當前那家被婉拒、跳到指定那家：
     @AI 王小明 婉拒轉亞太
+  同送多家、指定某家被婉拒（不跳轉）：
+    @AI 王小明 銀行 婉拒
+    @AI 王小明 房地 婉拒
+    情境：送房地+銀行，銀行評估不過 → 移除銀行、房地繼續送
   同送多家、指定某家被婉拒+跳指定家：
     @AI 王小明 裕融 婉拒 轉亞太
+  補充：系列類用類別名即可
+       銀行 ↔ 元大/渣打、房地 ↔ 房地一胎/二胎
+       亞太 ↔ 亞太機車15萬/25萬/商品
 
 【撥款】
   有日期：@AI 王小明 裕融 撥款 4/18
@@ -4311,7 +4340,7 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
         update_customer(target["case_id"],
                         text=f"{old_name} 改名為 {new_name}",
                         from_group_id=group_id)
-        reply_text(reply_token, f"✅ 已將「{old_name}」改名為「{new_name}」")
+        reply_text(reply_token, f"✅ 已更新姓名：「{old_name}」→「{new_name}」")
         return
 
     if t == "bad_id_format":
@@ -4345,9 +4374,9 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
                     (new_id, now_iso(), target["case_id"]))
         conn.commit(); conn.close()
         update_customer(target["case_id"],
-                        text=f"{name} 身分證 {old_id} → {new_id}",
+                        text=f"{name} 改身分證 {old_id} → {new_id}",
                         from_group_id=group_id)
-        reply_text(reply_token, f"✅ {name} 身分證已更新為 {new_id}")
+        reply_text(reply_token, f"✅ {name} 身分證已更新為 {new_id}\n（原 {old_id} → 新 {new_id}）")
         return
 
     if t == "disbursed":
@@ -4778,8 +4807,8 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
             msgs.append(f"⚠️ {'、'.join(skipped_current)} 是核准那家，沒處理\n　 （作廢核准用：@AI {name} {skipped_current[0]} 取消核准）")
         if skipped_not_in:
             msgs.append(f"⚠️ 同送清單裡沒有：{'、'.join(skipped_not_in)}")
-        msgs.append(f"保留：{current_co} 核准 {approved}")
-        msgs.append(f"其他同送：{','.join(new_concurrent) if new_concurrent else '無'}")
+        msgs.append(f"核准保留：{current_co} {approved}")
+        msgs.append(f"還在送：{'、'.join(new_concurrent) if new_concurrent else '無'}")
         reply_text(reply_token, "\n".join(msgs))
         return
 
@@ -4804,7 +4833,135 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
         if next_co:
             reply_text(reply_token, f"✅ {name} {current} 婉拒\n➡️ 下一家：{next_co}")
         else:
-            reply_text(reply_token, f"✅ {name} {current} 婉拒\n⚠️ 已經是最後一家，沒有下一家可推")
+            reply_text(reply_token,
+                       f"✅ {name} {current} 婉拒\n"
+                       f"⚠️ 已全數婉拒、請手動處理：\n"
+                       f"  不送了 → @AI {name} 結案\n"
+                       f"  再送別家 → @AI {name} 送XXX")
+        return
+
+    if t == "reject_and_add":
+        # @AI 姓名 公司A婉拒 送公司B ── 一次婉拒 A + 加送 B
+        name = cmd["name"]
+        reject_co_raw = cmd["reject_company"]
+        add_co_raw = cmd["add_company"]
+        target = _resolve_target_strict(cmd, name, group_id, reply_token, "婉拒送")
+        if not target:
+            return
+        if not _check_active_or_warn(target, reply_token, "婉拒送", name):
+            return
+        reject_co = COMPANY_ALIAS.get(reject_co_raw, reject_co_raw)
+        add_co = COMPANY_ALIAS.get(add_co_raw, add_co_raw)
+        if not _validate_companies_or_warn([reject_co, add_co], reply_token, name):
+            return
+        reject_norm = normalize_section(reject_co)
+        add_norm = normalize_section(add_co)
+        current_co = target["current_company"] or ""
+        concurrent_list = [c.strip() for c in (target["concurrent_companies"] or "").split(",") if c.strip()]
+        # 先處理婉拒部分
+        rejected = []
+        new_current = current_co
+        route_update = {}
+        if current_co and normalize_section(current_co) == reject_norm:
+            # 婉拒 current
+            route = target["route_plan"] or ""
+            new_route = advance_route(route, "婉拒")
+            rejected = [current_co]
+            # current 交給下面的加送決定（add_co 取代）
+            new_current = ""
+            route_update = {"route_plan": new_route}
+        else:
+            matches = [c for c in concurrent_list if normalize_section(c) == reject_norm]
+            if matches:
+                concurrent_list = [c for c in concurrent_list if c not in matches]
+                rejected = matches
+            else:
+                reply_text(reply_token,
+                           f"⚠️ {name} 目前沒在送 {reject_co}，無法婉拒\n"
+                           f"目前在送：{current_co or '無'}\n"
+                           f"同送：{','.join(concurrent_list) or '無'}")
+                return
+        # 加送部分：檢查 add_co 是否已在送
+        if normalize_section(new_current) == add_norm or any(normalize_section(c) == add_norm for c in concurrent_list):
+            reply_text(reply_token, f"⚠️ {name} 已經在送 {add_co}，不用再加送")
+            return
+        # 若 current 剛被婉拒空掉、把 add_co 放 current；否則放 concurrent
+        if not new_current:
+            new_current = add_co
+        else:
+            concurrent_list.append(add_co)
+        # 寫入 DB
+        text_note = f"{name} {'、'.join(rejected)} 婉拒 + 加送 {add_co}"
+        update_customer(target["case_id"],
+                        current_company=new_current,
+                        concurrent_companies=",".join(concurrent_list),
+                        text=text_note, from_group_id=group_id,
+                        **route_update)
+        push_text(target["source_group_id"], text_note)
+        all_active = ([new_current] if new_current else []) + concurrent_list
+        reply_text(reply_token,
+                   f"✅ {name}\n"
+                   f"  {'、'.join(rejected)} 婉拒\n"
+                   f"  加送：{add_co}\n"
+                   f"  現在在送：{'、'.join(all_active) if all_active else '無'}")
+        return
+
+    if t == "reject_company":
+        # @AI 姓名 公司 婉拒 ── 指定某家婉拒（不跳轉）
+        # 情境：林俊杰同送房地+銀行，銀行評估不過 → 「林俊杰 銀行 婉拒」
+        name = cmd["name"]
+        co_raw = cmd["company"]
+        target = _resolve_target_strict(cmd, name, group_id, reply_token, "婉拒")
+        if not target:
+            return
+        if not _check_active_or_warn(target, reply_token, "婉拒", name):
+            return
+        co = COMPANY_ALIAS.get(co_raw, co_raw)
+        if not _validate_companies_or_warn([co], reply_token, name):
+            return
+        co_norm = normalize_section(co)
+        current_co = target["current_company"] or ""
+        concurrent_list = [c.strip() for c in (target["concurrent_companies"] or "").split(",") if c.strip()]
+        # 情況 1：是 current（含同系列匹配，例：亞太 ↔ 亞太機車15萬、銀行 ↔ 元大）→ 走一般婉拒邏輯
+        if current_co and normalize_section(current_co) == co_norm:
+            route = target["route_plan"] or ""
+            current = get_current_company(route) or current_co
+            next_co = get_next_company(route)
+            new_route = advance_route(route, "婉拒")
+            update_customer(target["case_id"], route_plan=new_route,
+                            current_company=next_co or current,
+                            text=f"{name} {current} 婉拒", from_group_id=group_id)
+            if next_co:
+                push_text(target["source_group_id"], f"{name} {current} 婉拒\n➡️ 下一家：{next_co}")
+                reply_text(reply_token, f"✅ {name} {current} 婉拒\n➡️ 下一家：{next_co}")
+            else:
+                push_text(target["source_group_id"], f"{name} {current} 婉拒")
+                reply_text(reply_token,
+                           f"✅ {name} {current} 婉拒\n"
+                           f"⚠️ 已全數婉拒、請手動處理：\n"
+                           f"  不送了 → @AI {name} 結案\n"
+                           f"  再送別家 → @AI {name} 送XXX")
+            return
+        # 情況 2：在 concurrent（含同系列匹配）→ 從同送清單移除
+        matches = [c for c in concurrent_list if normalize_section(c) == co_norm]
+        if matches:
+            new_concurrent = [c for c in concurrent_list if c not in matches]
+            text_note = f"{name} {'、'.join(matches)} 婉拒（從同送清單移除）"
+            update_customer(target["case_id"],
+                            concurrent_companies=",".join(new_concurrent),
+                            text=text_note, from_group_id=group_id)
+            push_text(target["source_group_id"], text_note)
+            remain = ",".join(new_concurrent) if new_concurrent else "無"
+            all_active = ([current_co] if current_co else []) + new_concurrent
+            reply_text(reply_token,
+                       f"✅ {name} {'、'.join(matches)} 婉拒（從同送清單移除）\n"
+                       f"現在在送：{'、'.join(all_active) if all_active else '無'}")
+            return
+        # 情況 3：兩邊都沒有
+        all_active = ([current_co] if current_co else []) + concurrent_list
+        reply_text(reply_token,
+                   f"⚠️ {name} 目前沒在送 {co}\n"
+                   f"現在在送：{'、'.join(all_active) if all_active else '無'}")
         return
 
     if t == "reject_to":

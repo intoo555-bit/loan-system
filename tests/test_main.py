@@ -284,13 +284,13 @@ class TestNotifyAmount:
         assert hint2 == ""
 
     def test_plan_info_hint_multi_no_amount(self, tmp_db):
-        """多家同送無手動 → 每家各自 PLAN_INFO 或「金額未定」（民間方案 skip）"""
+        """多家同送無手動 → 每家各自 PLAN_INFO 預設金額"""
         main, _ = tmp_db
         hint = main._build_plan_info_hint(["喬美", "第一"])
-        # 第一 PLAN_INFO 有金額
+        # 第一 PLAN_INFO 預設 30萬/24期
         assert "第一 30萬/24期" in hint
-        # 喬美無 PLAN_INFO → 金額未定
-        assert "喬美 金額未定" in hint
+        # 喬美 PLAN_INFO 預設 14萬/30期
+        assert "喬美 14萬/30期" in hint
 
     def test_extract_notify_amount_period_tail(self, tmp_db):
         """送件順序尾巴 @AI 前的 N/M 應被抓到"""
