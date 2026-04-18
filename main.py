@@ -897,7 +897,8 @@ PLAN_INFO = {
     "貸救補": ("貸救補", "10萬/24期"), "貸10": ("貸救補", "10萬/24期"), "貸就補": ("貸救補", "10萬/24期"),
     "麻吉機車": ("麻吉機車", "10萬/24期"), "麻吉機": ("麻吉機車", "10萬/24期"),
     "麻吉手機": ("麻吉手機", "10萬/24期"), "麻吉手": ("麻吉手機", "10萬/24期"),
-    "喬美": ("喬美", ""), "分貝機車": ("分貝機車", ""), "分貝機": ("分貝機車", ""),
+    "喬美": ("喬美", "14萬/30期"), "鼎多": ("喬美", "14萬/30期"),
+    "分貝機車": ("分貝機車", ""), "分貝機": ("分貝機車", ""),
     "分貝汽車": ("分貝汽車", ""), "分貝汽": ("分貝汽車", ""),
     "21汽車": ("21汽車", ""), "21汽": ("21汽車", ""),
     "鄉民": ("鄉民貸", ""), "鄉": ("鄉民貸", ""),
@@ -3079,7 +3080,8 @@ def parse_special_command(text: str, group_id: str) -> Optional[Dict]:
         return {"type": "update_amount", "name": m.group(1), "company": "", "amount": m.group(2).strip()}
 
     # 撥款（日期在前、有公司）：@AI 姓名 公司 M/D 撥款
-    m = re.match(r"^([\u4e00-\u9fff]{2,6})\s+(\S+)\s+(\d{1,2}/\d{1,2})\s*撥款$", clean)
+    # 排除「結案/違約金/取消核准」等動詞字被當公司名
+    m = re.match(r"^([\u4e00-\u9fff]{2,6})\s+(?!結案|違約金|取消核准)(\S+)\s+(\d{1,2}/\d{1,2})\s*撥款$", clean)
     if m:
         return {"type": "disbursed", "name": m.group(1),
                 "company": m.group(2).strip(), "date": m.group(3)}
@@ -3091,7 +3093,8 @@ def parse_special_command(text: str, group_id: str) -> Optional[Dict]:
                 "company": "", "date": m.group(2)}
 
     # 撥款指定公司（日期在後）：@AI 姓名 公司 撥款 M/D
-    m = re.match(r"^([\u4e00-\u9fff]{2,6})\s+(.+?)\s*撥款\s*(\d{1,2}/\d{1,2})?$", clean)
+    # 排除「結案 已撥款」等會被誤判（「結案 已」當公司）
+    m = re.match(r"^([\u4e00-\u9fff]{2,6})\s+(?!結案|違約金|取消核准)(.+?)\s*撥款\s*(\d{1,2}/\d{1,2})?$", clean)
     if m:
         return {"type": "disbursed", "name": m.group(1),
                 "company": m.group(2).strip(), "date": m.group(3) or ""}
@@ -3511,7 +3514,12 @@ def _resolve_target(name: str, group_id: str, reply_token: str):
         return None
     if rows:
         return rows[0]
-    reply_text(reply_token, f"❌ 找不到客戶：{name}")
+    reply_text(reply_token,
+               f"❌ 找不到客戶：{name}\n"
+               f"可能原因：\n"
+               f"  • 姓名打錯（2-6 個中文字）\n"
+               f"  • 客戶還沒建立\n"
+               f"  • 客戶已結案 → 先打「@AI {name} 重啟」")
     return None
 
 
@@ -4105,7 +4113,12 @@ def _resolve_target_strict(cmd: Dict, name: str, group_id: str, reply_token: str
         return None
     if rows:
         return rows[0]
-    reply_text(reply_token, f"❌ 找不到客戶：{name}")
+    reply_text(reply_token,
+               f"❌ 找不到客戶：{name}\n"
+               f"可能原因：\n"
+               f"  • 姓名打錯（2-6 個中文字）\n"
+               f"  • 客戶還沒建立\n"
+               f"  • 客戶已結案 → 先打「@AI {name} 重啟」")
     return None
 
 
@@ -4313,9 +4326,19 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
     if t == "change_id":
         name = cmd["name"]
         new_id = cmd["new_id"]
-        target = _resolve_target_strict(cmd, name, group_id, reply_token, "改身分證")
+        # 改身分證允許結案客戶（跟 rename 一致）
+        rows = find_active_by_name(name)
+        if not rows:
+            conn2 = get_conn(); cur2 = conn2.cursor()
+            cur2.execute("SELECT * FROM customers WHERE customer_name=? ORDER BY updated_at DESC LIMIT 1", (name,))
+            r = cur2.fetchone(); conn2.close()
+            if r: rows = [r]
+        same = [r for r in rows if r["source_group_id"] == group_id]
+        target = same[0] if same else (rows[0] if rows else None)
         if not target:
-            return
+            reply_text(reply_token,
+                       f"❌ 找不到客戶：{name}\n"
+                       f"可能原因：姓名打錯 / 客戶還沒建立"); return
         old_id = target["id_no"] or "無"
         conn = get_conn(); cur = conn.cursor()
         cur.execute("UPDATE customers SET id_no=?, updated_at=? WHERE case_id=?",
@@ -4728,12 +4751,18 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
         skipped_current = []
         skipped_not_in = []
         new_concurrent = list(concurrent_list)
+        # 用 normalize_section 做模糊比對：「亞太」對應「亞太機車15萬/25萬、亞太商品」等同系列
+        current_norm = normalize_section(current_co) if current_co else ""
         for co in cos:
-            if co == current_co:
+            co_norm = normalize_section(co)
+            if co_norm and co_norm == current_norm:
                 skipped_current.append(co)
-            elif co in new_concurrent:
-                new_concurrent.remove(co)
-                removed.append(co)
+                continue
+            matches = [c for c in new_concurrent if normalize_section(c) == co_norm]
+            if matches:
+                for m in matches:
+                    new_concurrent.remove(m)
+                    removed.append(m)
             else:
                 skipped_not_in.append(co)
         if removed:
@@ -9550,16 +9579,20 @@ function downloadPDF() {{
     image: {{ type: 'jpeg', quality: 0.95 }},
     html2canvas: {{
       scale: 2, useCORS: true, letterRendering: true, backgroundColor: '#ffffff',
-      windowWidth: 794, scrollX: 0, scrollY: 0,
+      scrollX: 0, scrollY: -window.scrollY,
       onclone: function(doc) {{
-        // 擷取前把元素重置到左上角 (0,0)，避免父層 flex/margin 造成偏移
-        var wrap = doc.getElementById('pdf-wrap');
-        if (wrap) {{ wrap.style.display = 'block'; wrap.style.padding = '0'; wrap.style.margin = '0'; }}
         var el = doc.getElementById('pdf-content');
-        if (el) {{ el.style.margin = '0'; el.style.position = 'static'; el.style.left = '0'; }}
+        if (el) {{
+          el.style.margin = '0';
+          el.style.position = 'static';
+          el.style.left = '0';
+          el.style.transform = 'none';
+        }}
         doc.body.style.padding = '0';
         doc.body.style.margin = '0';
         doc.body.style.background = '#fff';
+        doc.documentElement.style.margin = '0';
+        doc.documentElement.style.padding = '0';
       }}
     }},
     jsPDF: {{ unit: 'mm', format: 'a4', orientation: 'portrait' }},
