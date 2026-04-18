@@ -2536,18 +2536,39 @@ def extract_status_summary(first_line: str, customer_name: str) -> str:
         return "待補照會"
     if "照會" in first_line:
         return "已送件"
-    # 補申覆：A 群貼「補申覆」= 要求補（待補）；業務回「已補申覆/申覆完/申覆通過」= 已補
-    if "已補申覆" in first_line or "申覆完" in first_line or "申覆通過" in first_line or "申覆好" in first_line:
-        return "已補申覆"
-    if "補申覆" in first_line or "申覆" in first_line:
+    # 補件/申覆判斷：
+    # - 明確「已補」/「待補」關鍵字優先
+    # - 業務主動語氣（業務說/我補/幫補/補好/補完）→ 已補
+    # - 只有「補XX」含糊 → 預設待補（需跳按鈕由業務確認）
+    _business_done_markers = ["業務說", "我補", "我已補", "幫補", "主動補", "補好了", "補完了",
+                              "補過了", "業務補", "補完成"]
+    _explicit_pending_markers = ["待補", "請補", "要補", "缺", "未補", "還沒補", "尚缺",
+                                  "請提供", "麻煩補", "需補"]
+
+    # 申覆類
+    if "申覆" in first_line:
+        # 明確已補：「已補 XX 申覆」或「申覆完/通過/好」
+        if "已補" in first_line or "申覆完" in first_line or "申覆通過" in first_line or "申覆好" in first_line or "補完申覆" in first_line or "補好申覆" in first_line:
+            return "已補申覆"
+        # 明確待補：「待補/請補/要補/缺」等
+        if any(m in first_line for m in _explicit_pending_markers):
+            return "待補申覆"
+        # C 方案：業務主動語氣 → 已補
+        if any(m in first_line for m in _business_done_markers):
+            return "已補申覆"
+        # 含糊「補 X 申覆」→ 預設待補
         return "待補申覆"
-    # 補件類：A 群貼「補XX / 缺XX」= 要求補（待補）；業務回「已補XX/補好/補完」= 已補
+
+    # 補件類
     _bu_list = ["補件", "補資料", "補行照", "補聯徵", "補保人", "補薪轉", "補照片", "補時段",
                 "補JCIC", "補jcic", "補在職", "補存摺", "補勞保", "補駕照",
                 "缺聯徵", "缺資料", "缺薪轉", "缺JCIC", "缺jcic", "缺保人", "缺在職", "缺存摺"]
     if "已補" in first_line or "補好" in first_line or "補完" in first_line:
         return "已補資料"
     if any(w in first_line for w in _bu_list):
+        # 業務主動語氣 → 已補
+        if any(m in first_line for m in _business_done_markers):
+            return "已補資料"
         return "待補資料"
     if "未接照會" in first_line or first_line.strip().endswith("NA") or " NA" in first_line:
         return "NA"
