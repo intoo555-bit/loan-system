@@ -3032,6 +3032,11 @@ def parse_special_command(text: str, group_id: str) -> Optional[Dict]:
     if re.match(r"^日報$", clean):
         return {"type": "report"}
 
+    # 指令速查卡（多種口語寫法都認）
+    if clean in ["格式", "指令", "說明", "幫助", "help", "HELP"] or \
+       clean in ["查 格式", "查格式", "查 指令"]:
+        return {"type": "help"}
+
     # 查詢：支援所有格式
     # @AI 查 彭駿為 / 彭駿為 查@AI / 彭駿為@AI 查
     m = re.match(r"^查\s*([\u4e00-\u9fff]{2,6})$", clean)
@@ -3534,6 +3539,173 @@ def _is_private_loan_company(co: str) -> bool:
     return normalize_section(co) in _PRIVATE_LOAN_SECTIONS
 
 
+_HELP_CARD = """📖 指令怎麼打（忘記打「@AI 格式」就跳出來）
+
+━━━━━━━━━━━━━
+🔹 送件
+
+【轉】 原本送的取消、改送新的
+  打：@AI 王小明 轉喬美
+  白話：原本在送那家不送了、改送喬美
+  帶金額：@AI 王小明 轉喬美 50萬/24期
+
+【一次送兩家（同送）】
+  打：@AI 王小明 轉喬美+房地
+  白話：喬美跟房地兩家同時送
+  帶金額：@AI 王小明 轉喬美+房地 100萬/120期
+
+【加送】 原本送的保留、再多加一家
+  打：@AI 王小明 送第一
+  白話：原本那家繼續送、再加第一一起送
+  帶金額：@AI 王小明 送第一 30萬/24期
+
+【照會】 要送 + 產生一則給客戶看的照會訊息
+  打：@AI 王小明 裕融+第一 照會
+  白話：兩家一起送、順便產出照會訊息告知客戶
+
+━━━━━━━━━━━━━
+🔹 審核結果
+
+【核准】
+  打：@AI 王小明 第一 核准 30萬
+  白話：客戶已核准 30 萬、系統自動移到「待撥款」區塊
+
+【結案】
+  打：@AI 王小明 結案
+  或：@AI 王小明 結案 已撥款（可加原因）
+  白話：這件事結案了、日報不再顯示
+
+【婉拒】
+  打：@AI 王小明 婉拒
+  白話：婉拒、自動推到下一家送
+
+【婉拒跳家】
+  打：@AI 王小明 婉拒轉亞太
+  白話：婉拒、不走下一家、直接跳到亞太送
+
+【指定哪家婉拒】
+  打：@AI 王小明 裕融 婉拒 轉亞太
+  白話：明確說裕融那家婉拒、跳到亞太送
+
+【撥款】
+  打：@AI 王小明 撥款 4/18
+  白話：記錄 4/18 撥款日期
+
+【取消核准】
+  打：@AI 王小明 第一 取消核准
+  白話：核准打錯要取消、從待撥款移除時用
+
+【違約金結案】
+  打：@AI 王小明 違約金已支付3000
+  白話：客戶違約金結案（通常核准後客戶放棄用這個）
+
+━━━━━━━━━━━━━
+🔹 做錯救急
+
+【還原】 回到前一步
+  打：@AI 王小明 還原 1
+  白話：剛才改錯了、回到前一個狀態
+
+【看歷史】 這客戶做過哪些動作
+  打：@AI 王小明 歷史
+  白話：列最近 10 筆操作給你看
+
+【重啟】 結案客戶要再送
+  打：@AI 王小明 重啟
+  白話：結案的客戶丟回來送、日報會再顯示
+
+━━━━━━━━━━━━━
+🔹 其他小工具
+
+  改名：@AI 舊名 改名 新名
+  改身分證：@AI 王小明 改身分證 A123456789
+  查這客戶：@AI 查 王小明
+  產日報：@AI 日報
+
+━━━━━━━━━━━━━
+🔹 開新客戶（這個不要加 @AI）
+
+範本：
+  115/4/17-董卓 A122999876
+  房屋無貸款
+
+說明：
+  第一行（必填）：日期-姓名 身分證
+  第二行（選填）：客戶備註，可寫任何需要記下的資料
+
+━━━━━━━━━━━━━
+🔹 一次設好送件順序（這個也不用 @AI）
+
+範本：
+  04/18-羅志祥-裕融/和潤/第一/亞太機/21機
+
+說明：
+  每家用「/」分開，系統依序送（失敗自動推到下一家）
+
+━━━━━━━━━━━━━
+🔸 符號代表什麼
+
+  「/」有三種用途：
+    1. 金額跟期數中間（例：50萬/24期）
+    2. 日期月跟日中間（例：4/18）
+    3. 送件順序公司分隔（例：裕融/和潤/第一）
+
+  「-」日期和姓名中間：
+    開新客戶：115/4/17-董卓 A1...
+    送件順序：04/18-羅志祥-裕融/...
+
+  「+」代表「多家一起」（同送/加送）：
+    例：喬美+房地、裕融+第一
+
+  空格：
+    開新客戶姓名和身分證中間
+    @AI 指令姓名和動詞中間
+
+━━━━━━━━━━━━━
+🔸 系統自動幫你（不用特別記）
+
+  ・全形「１２３」→ 變半形「123」
+  ・「核準／核准」、「身份證／身分證」都認
+  ・全形「＋／」→ 變半形「+/」
+  ・「萬」「期」可省（100/24 = 100萬/24期）
+"""
+
+
+def _split_company_amount(item: str):
+    """把「裕融100萬60期」或「裕融 100/60」等字串拆成 (公司, 金額, 期數)。
+    用途：照會/送/轉指令切「+」後，每段可能有「公司+金額+期數」黏在一起。
+    回傳：(company, amount, period) 全部為字串，無則 ""
+    """
+    if not item:
+        return ("", "", "")
+    item = item.strip()
+    # 1) 整段就是合法公司名 → 直接回
+    if item in COMPANY_ALIAS or item in COMPANY_LIST:
+        return (item, "", "")
+    # 2) 從合法公司名集合找最長前綴（避免「21機」被當「21」+「機」切）
+    all_names = sorted(set(list(COMPANY_LIST) + list(COMPANY_ALIAS.keys())),
+                       key=len, reverse=True)
+    for name in all_names:
+        if item.startswith(name):
+            rest = item[len(name):].strip()
+            if not rest:
+                return (name, "", "")
+            m = re.match(r"^(\d+(?:\.\d+)?)\s*萬?\s*[/／]?\s*(\d+)?\s*期?\s*$", rest)
+            if m:
+                return (name, m.group(1), m.group(2) or "")
+            return (name, "", "")
+    # 3) 沒命中合法公司 → 嘗試「第一個數字前」當公司
+    m = re.search(r"\d", item)
+    if m and m.start() > 0:
+        co = item[:m.start()].strip()
+        rest = item[m.start():].strip()
+        m2 = re.match(r"^(\d+(?:\.\d+)?)\s*萬?\s*[/／]?\s*(\d+)?\s*期?\s*$", rest)
+        if m2:
+            return (co, m2.group(1), m2.group(2) or "")
+        return (co, "", "")
+    return (item, "", "")
+
+
 def _build_plan_info_hint(companies, manual_amount="", manual_period=""):
     """產生「請告知客戶送件金額」提示字串。
     規則：
@@ -3950,6 +4122,10 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
                    f"  地點：{cmd['location']}")
         return
 
+    if t == "help":
+        reply_text(reply_token, _HELP_CARD)
+        return
+
     if t == "history":
         name = cmd["name"]
         target = _resolve_target_strict(cmd, name, group_id, reply_token, "查歷史")
@@ -4239,33 +4415,63 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
         target = same[0] if same else (rows[0] if rows else None)
         if not target:
             reply_text(reply_token, f"❌ 找不到客戶：{name}"); return
-        # 處理同時送件（+ 分隔）
-        concurrent = []
+        # 處理同時送件（+ 分隔）：每個 item 拆公司名和金額
+        concurrent_names = []      # 純公司名（給 concurrent_companies 存）
+        concurrent_with_amt = []   # (公司, 金額, 期數) tuple（給照會訊息顯示）
+        first_amount = first_period = ""
         if "+" in company:
-            concurrent = [c.strip() for c in company.split("+") if c.strip()]
-            company = concurrent[0] if concurrent else company
+            items = [c.strip() for c in company.split("+") if c.strip()]
+            for i, item in enumerate(items):
+                co, amt, per = _split_company_amount(item)
+                co = COMPANY_ALIAS.get(co, co)
+                concurrent_names.append(co)
+                concurrent_with_amt.append((co, amt, per))
+                if i == 0 and amt:  # 第一家的金額 → 記作 notify_amount
+                    first_amount, first_period = amt, per
+            company = concurrent_names[0] if concurrent_names else company
+        else:
+            # 單家也拆（可能「裕融100萬60期」）
+            co, amt, per = _split_company_amount(company)
+            if co:
+                company = COMPANY_ALIAS.get(co, co)
+                if amt:
+                    first_amount, first_period = amt, per
         # 照會時如果在送件區塊，移到公司區塊
         if (target["report_section"] or "") == "送件":
             update_customer(target["case_id"], report_section="",
                             text=f"{name} 照會", from_group_id=group_id)
-        # 存同時送件公司
-        if concurrent:
-            conn2 = get_conn(); cur2 = conn2.cursor()
-            cur2.execute("UPDATE customers SET concurrent_companies=?, updated_at=? WHERE case_id=?",
-                        (",".join(concurrent), now_iso(), target["case_id"]))
-            conn2.commit(); conn2.close()
+        # 存同時送件公司（只存純公司名）+ 記錄第一家金額
+        update_kw = {}
+        if concurrent_names:
+            update_kw["concurrent_companies"] = ",".join(concurrent_names)
+        if first_amount:
+            update_kw["notify_amount"] = first_amount
+            update_kw["notify_period"] = first_period
+        if update_kw:
+            update_customer(target["case_id"],
+                            text=f"{name} 照會 {company}", from_group_id=group_id, **update_kw)
         r = dict(target)
+        # 重新讀更新後的資料（才有最新 notify_amount）
+        conn_re = get_conn(); cur_re = conn_re.cursor()
+        cur_re.execute("SELECT * FROM customers WHERE case_id=?", (target["case_id"],))
+        fresh = cur_re.fetchone(); conn_re.close()
+        if fresh:
+            r = dict(fresh)
         txt = generate_notification_text(r, company)
         reply_text(reply_token, txt)
-        # 第二則：同時送件資訊
-        if concurrent:
+        # 第二則：同時送件資訊（列出各家金額，民間方案跳過）
+        if concurrent_with_amt:
             lines = []
-            for co in concurrent:
-                info = PLAN_INFO.get(co)
-                if info:
-                    lines.append(f"{info[0]} {info[1]}" if info[1] else info[0])
+            for co, amt, per in concurrent_with_amt:
+                if amt:
+                    per_str = f"/{per}期" if per else ""
+                    lines.append(f"{co} {amt}萬{per_str}（指定）")
                 else:
-                    lines.append(co)
+                    info = PLAN_INFO.get(co)
+                    if info and info[1]:
+                        lines.append(f"{info[0]} {info[1]}")
+                    else:
+                        lines.append(co)
             push_text(group_id, "📌 同時送件：\n" + "\n".join(lines))
         return
 
@@ -4288,8 +4494,17 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
             return
         if not _check_active_or_warn(target, reply_token, "加送", name):
             return
-        # 不套 COMPANY_ALIAS（保留業務打的具體名，例如「元大」不要被轉成「銀行」）
-        new_companies_raw = [c.strip() for c in re.split(r"[+＋]", company_raw) if c.strip()]
+        # 切「+」後每個 item 拆公司名和金額（例：「裕融100萬60期」→ 公司=裕融、金額=100、期=60）
+        new_companies_raw = []
+        for item in re.split(r"[+＋]", company_raw):
+            item = item.strip()
+            if not item:
+                continue
+            co, amt, per = _split_company_amount(item)
+            new_companies_raw.append(co)
+            if amt and not notify_amount:
+                notify_amount = amt
+                notify_period = per
         if not new_companies_raw:
             reply_text(reply_token, f"❌ 未辨識公司名：{company_raw}"); return
         if not _validate_companies_or_warn(new_companies_raw, reply_token, name):
@@ -4358,9 +4573,19 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
         route = target["route_plan"] or ""
         current = get_current_company(route)
         if target_co:
-            # 解析目標：可能含「+」多公司同送，套 COMPANY_ALIAS
-            targets = [COMPANY_ALIAS.get(c.strip(), c.strip())
-                       for c in re.split(r"[+＋]", target_co) if c.strip()]
+            # 解析目標：可能含「+」多公司同送，每個 item 拆公司名和金額
+            targets = []
+            for item in re.split(r"[+＋]", target_co):
+                item = item.strip()
+                if not item:
+                    continue
+                co, amt, per = _split_company_amount(item)
+                co = COMPANY_ALIAS.get(co, co)
+                targets.append(co)
+                # 若尾巴沒金額且這裡偵測到 → 記錄第一家金額（給 notify）
+                if amt and not notify_amount:
+                    notify_amount = amt
+                    notify_period = per
             # 防錯：驗證公司名
             if not _validate_companies_or_warn(targets, reply_token, name):
                 return
@@ -5427,9 +5652,9 @@ def _handle_bc_case_block_locked(block_text, source_group_id, reply_token, sourc
     # 【B 方案】無 id_no 一律不建新客戶：找不到就警告，要求業務用「日期-姓名-身分證」格式
     # 避免打錯指令、姓名拼錯、格式亂 → 誤建怪客戶污染日報
     reply_text(reply_token,
-               f"⚠️ 找不到客戶「{name}」\n"
-               f"可能原因：姓名打錯、客戶尚未建立、指令格式錯\n"
-               f"若要新建客戶，請用完整格式：「04/18-{name}-A123456789」（日期-姓名-身分證）")
+               f"⚠️ 找不到客戶「{name}」或指令格式錯誤\n"
+               f"可能原因：姓名打錯、客戶尚未建立、指令格式錯\n\n"
+               f"{_HELP_CARD}")
     return None
 
 

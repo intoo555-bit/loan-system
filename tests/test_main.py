@@ -144,6 +144,23 @@ class TestNotifyAmount:
         assert cmd["type"] == "change_id"
         assert cmd["new_id"] == "Q123456789"
 
+    def test_help_command(self, tmp_db):
+        """『@AI 格式/指令/help』→ type=help 回速查卡"""
+        main, _ = tmp_db
+        for clean in ["格式", "指令", "說明", "幫助", "help", "查 格式"]:
+            cmd = main.parse_special_command(clean, "g1")
+            assert cmd and cmd["type"] == "help", f"{clean!r} 沒命中 help"
+
+    def test_split_company_amount_basic(self, tmp_db):
+        """_split_company_amount 支援多種格式"""
+        main, _ = tmp_db
+        assert main._split_company_amount("裕融100萬60期") == ("裕融", "100", "60")
+        assert main._split_company_amount("裕融 100萬60期") == ("裕融", "100", "60")
+        assert main._split_company_amount("裕融 100/60") == ("裕融", "100", "60")
+        assert main._split_company_amount("第一") == ("第一", "", "")
+        assert main._split_company_amount("第一 30萬/24期") == ("第一", "30", "24")
+        assert main._split_company_amount("21機") == ("21機", "", "")
+
     def test_change_id_with_note(self, tmp_db):
         """指令後接備註也能正確 parse"""
         main, _ = tmp_db
