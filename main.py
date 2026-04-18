@@ -6486,13 +6486,33 @@ def _handle_bc_case_block_locked(block_text, source_group_id, reply_token, sourc
             create_customer_record(name, "", company, source_group_id, block_text)
             return f"🆕 已建立客戶：{name}（{company} {status}）"
         route = target["route_plan"] or ""
-        # 婉拒：業務群不自動推下一家，加提示要業務確認
+        # 婉拒：
+        # - 房地/銀行/C（零卡）是「類別底下多家」→ 不推、加提示要業務確認是否所有方案都無法送
+        # - 其他公司（裕融/亞太/喬美等）→ 自動推下一家
         if status == "婉拒":
-            update_customer(target["case_id"], company=company, text=block_text,
-                            from_group_id=source_group_id)
-            return (f"⚠️ 已記錄 {name} {company}婉拒\n"
-                    f"你是業務（不是A群人員），婉拒是否確認？\n"
-                    f"要推到下一家請打：@AI {name} 婉拒")
+            company_section = normalize_section(company)
+            if company_section in ("房地", "銀行", "零卡"):
+                type_label = {"房地": "房地", "銀行": "銀行", "零卡": "C（零卡）"}[company_section]
+                update_customer(target["case_id"], company=company, text=block_text,
+                                from_group_id=source_group_id)
+                return (f"⚠️ 已記錄 {name} {company}婉拒\n"
+                        f"是 {type_label} 所有方案都無法送嗎？婉拒是否確認？\n"
+                        f"要推到下一家請打：@AI {name} 婉拒")
+            # 其他公司 → 自動推下一家
+            current_co = get_current_company(route) or target["current_company"] or company
+            next_co = get_next_company(route)
+            new_route = advance_route(route, "婉拒")
+            update_kw = {"route_plan": new_route, "current_company": next_co or "",
+                         "company": company, "text": block_text, "from_group_id": source_group_id}
+            if not next_co:
+                update_kw["company"] = ""  # 已無下一家：清 company 避免日報殘留
+            update_customer(target["case_id"], **update_kw)
+            msg = f"✅ {name} {company} 婉拒"
+            if next_co:
+                msg += f"\n➡️ 下一家：{next_co}"
+            else:
+                msg += f"\n⚠️ 已無下一家可推、請手動結案或送新家"
+            return msg
         # 核准：正常處理（移到待撥款）
         if amount:
             route = update_company_amount_in_history(route, company, amount)
