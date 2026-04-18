@@ -195,6 +195,54 @@ class TestNotifyAmount:
         assert cmd["type"] == "add_concurrent"
         assert cmd["company"] == "第一+當舖"
 
+    def test_add_concurrent_with_amount(self, tmp_db):
+        """@AI 姓名 送公司 N萬/M期 → 加送 + 送件金額"""
+        main, _ = tmp_db
+        cmd = main.parse_special_command("王小明 送房地 100萬/120期", "g1")
+        assert cmd["type"] == "add_concurrent"
+        assert cmd["company"] == "房地"
+        assert cmd["notify_amount"] == "100"
+        assert cmd["notify_period"] == "120"
+
+    def test_plan_info_hint_single_default(self, tmp_db):
+        """單家無手動金額 → 用 PLAN_INFO"""
+        main, _ = tmp_db
+        hint = main._build_plan_info_hint(["亞太機"])
+        assert "亞太機" in hint and "15萬/36期" in hint
+
+    def test_plan_info_hint_multi_manual(self, tmp_db):
+        """多家同送有手動金額 → 非民間方案都套用，民間方案 skip"""
+        main, _ = tmp_db
+        hint = main._build_plan_info_hint(["喬美", "第一"], "100", "120")
+        assert "喬美 100萬/120期" in hint
+        assert "第一 100萬/120期" in hint
+
+    def test_normalize_section_alias_fallback(self, tmp_db):
+        """normalize_section 對未在 SECTION_MAP 的名稱 fallback 到 COMPANY_ALIAS"""
+        main, _ = tmp_db
+        # 具體銀行名（元大）→ 銀行
+        assert main.normalize_section("元大") == "銀行"
+        assert main.normalize_section("國泰") == "銀行"
+        # 不在 SECTION_MAP 也不在 ALIAS → 保持原樣
+        assert main.normalize_section("完全未知公司") == "完全未知公司"
+
+    def test_plan_info_hint_private_skipped(self, tmp_db):
+        """民間方案（房地/銀行/當舖）不提金額"""
+        main, _ = tmp_db
+        hint = main._build_plan_info_hint(["房地"])
+        assert hint == ""  # 全民間 → 空字串
+        hint2 = main._build_plan_info_hint(["銀行", "零卡", "當舖"])
+        assert hint2 == ""
+
+    def test_plan_info_hint_multi_no_amount(self, tmp_db):
+        """多家同送無手動 → 每家各自 PLAN_INFO 或「金額未定」（民間方案 skip）"""
+        main, _ = tmp_db
+        hint = main._build_plan_info_hint(["喬美", "第一"])
+        # 第一 PLAN_INFO 有金額
+        assert "第一 30萬/24期" in hint
+        # 喬美無 PLAN_INFO → 金額未定
+        assert "喬美 金額未定" in hint
+
     def test_extract_notify_amount_period_tail(self, tmp_db):
         """送件順序尾巴 @AI 前的 N/M 應被抓到"""
         main, _ = tmp_db
@@ -259,6 +307,16 @@ class TestNotificationBriefing:
 
 # ===== 補件/補申覆 待補 vs 已補 =====
 class TestWaitingVsDone:
+    @pytest.mark.parametrize("text,expected", [
+        ("王陽明 第一 待核准", "待補資料"),
+        ("陳某 待核准 缺聯徵", "待補資料"),
+        ("王某 待核準", "待補資料"),
+    ])
+    def test_pending_approval_is_waiting_supplement(self, tmp_db, text, expected):
+        """『待核准』≠ 核准，應視為『待補資料』"""
+        main, _ = tmp_db
+        assert main.extract_status_summary(text, "王某") == expected
+
     @pytest.mark.parametrize("text,expected", [
         ("陳志昇 21 補申覆", "待補申覆"),
         ("補申覆【1】請提供保證人", "待補申覆"),
