@@ -2489,12 +2489,16 @@ def extract_status_summary(first_line: str, customer_name: str) -> str:
     # 內部動作（@AI 指令產生的記錄文字）不顯示為業務狀態
     if any(kw in first_line for kw in _INTERNAL_ACTION_KEYWORDS):
         return ""
-    # 「待核准/待核準」= 還有缺要補資料，不算核准
+    # 「待核准/待核準」= 還有缺要補（資料/照會都有可能）— 不算核准，先查是否真正核准
     text_wo_pending = first_line.replace("待核准", "").replace("待核準", "")
     if "核准" in text_wo_pending or "核準" in text_wo_pending:
+        # 核准後還需接照會 → 「核准待照會」（排除「已接照會」「照會完」= 真正完成）
+        has_need_contact = any(w in first_line for w in ["接照會", "待照會", "需照會", "等照會", "再照會"])
+        has_done_contact = any(w in first_line for w in ["已接照會", "照會完", "照會過", "接完照會"])
+        if has_need_contact and not has_done_contact:
+            return "核准待照會"
         return "核准"
-    if "待核准" in first_line or "待核準" in first_line:
-        return "待補資料"
+    # 「待核准」下方判斷會處理具體缺項（補照會/補申覆/補件類）；若都沒命中，最後 fallback「待核准」
     # 等保書細分：根據訊息內其他關鍵字決定實際子狀態
     if "等保書" in first_line or "等保人" in first_line:
         # 換保人類：更換/不合格/另找/換一位/換個
@@ -2525,14 +2529,19 @@ def extract_status_summary(first_line: str, customer_name: str) -> str:
         return "已補申覆"
     if "補申覆" in first_line or "申覆" in first_line:
         return "待補申覆"
-    # 補件類：A 群貼「補XX」= 要求補（待補）；業務回「已補XX/補好/補完」= 已補
-    _bu_list = ["補件", "補資料", "補行照", "補聯徵", "補保人", "補薪轉", "補照片", "補時段", "補JCIC", "補jcic", "補在職", "補存摺", "補勞保", "補駕照"]
+    # 補件類：A 群貼「補XX / 缺XX」= 要求補（待補）；業務回「已補XX/補好/補完」= 已補
+    _bu_list = ["補件", "補資料", "補行照", "補聯徵", "補保人", "補薪轉", "補照片", "補時段",
+                "補JCIC", "補jcic", "補在職", "補存摺", "補勞保", "補駕照",
+                "缺聯徵", "缺資料", "缺薪轉", "缺JCIC", "缺jcic", "缺保人", "缺在職", "缺存摺"]
     if "已補" in first_line or "補好" in first_line or "補完" in first_line:
         return "已補資料"
     if any(w in first_line for w in _bu_list):
         return "待補資料"
     if "未接照會" in first_line or first_line.strip().endswith("NA") or " NA" in first_line:
         return "NA"
+    # 「待核准」fallback：沒命中具體補件/照會 → 直接顯示「待核准」
+    if "待核准" in first_line or "待核準" in first_line:
+        return "待核准"
 
     # 去掉客戶姓名
     text = first_line.replace(customer_name, "").strip()

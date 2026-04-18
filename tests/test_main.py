@@ -308,12 +308,27 @@ class TestNotificationBriefing:
 # ===== 補件/補申覆 待補 vs 已補 =====
 class TestWaitingVsDone:
     @pytest.mark.parametrize("text,expected", [
-        ("王陽明 第一 待核准", "待補資料"),
-        ("陳某 待核准 缺聯徵", "待補資料"),
-        ("王某 待核準", "待補資料"),
+        ("王陽明 第一 待核准", "待核准"),           # 無具體缺項 → 待核准
+        ("陳某 待核准 缺聯徵", "待補資料"),         # 缺聯徵 → 待補資料
+        ("王某 待核准 補照會", "待補照會"),         # 補照會 → 待補照會
+        ("王某 待核准 補JCIC", "待補資料"),        # 補 JCIC → 待補資料
+        ("王某 待核準", "待核准"),                 # 異體字也支援
     ])
-    def test_pending_approval_is_waiting_supplement(self, tmp_db, text, expected):
-        """『待核准』≠ 核准，應視為『待補資料』"""
+    def test_pending_approval_by_context(self, tmp_db, text, expected):
+        """『待核准』依後續關鍵字分辨是缺資料/缺照會/純待核准"""
+        main, _ = tmp_db
+        assert main.extract_status_summary(text, "王某") == expected
+
+    @pytest.mark.parametrize("text,expected", [
+        ("王某 第一 核准", "核准"),
+        ("王某 第一 核准 20萬", "核准"),
+        ("王某 第一 核准 接照會", "核准待照會"),
+        ("王某 第一 核准 需照會", "核准待照會"),
+        ("王某 第一 核准 20萬 已接照會", "核准"),
+        ("王某 第一 核准 50萬 照會完", "核准"),
+    ])
+    def test_approved_with_contact_status(self, tmp_db, text, expected):
+        """核准後還需接照會電話 → 『核准待照會』；已接照會完成 → 『核准』"""
         main, _ = tmp_db
         assert main.extract_status_summary(text, "王某") == expected
 
