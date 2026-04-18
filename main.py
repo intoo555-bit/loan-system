@@ -1742,6 +1742,24 @@ def make_quick_reply_item(label: str, text: str):
     return {"type": "action", "action": {"type": "message", "label": label[:20], "text": text}}
 
 
+def push_text_with_buttons(to_group_id: str, text: str, items):
+    """推送訊息 + Quick Reply 按鈕（用於主動通知需要復原等操作的群組）"""
+    if not CHANNEL_ACCESS_TOKEN:
+        return False, "未設定 CHANNEL_ACCESS_TOKEN"
+    if len(items) > 13:
+        items = items[:13]
+    try:
+        req_lib.post(
+            "https://api.line.me/v2/bot/message/push",
+            headers={"Authorization": f"Bearer {CHANNEL_ACCESS_TOKEN}", "Content-Type": "application/json"},
+            json={"to": to_group_id, "messages": [{"type": "text", "text": (text or "")[:4900], "quickReply": {"items": items}}]},
+            timeout=10,
+        )
+        return True, ""
+    except Exception as e:
+        return False, str(e)
+
+
 def reply_quick_reply(reply_token: str, text: str, items):
     if not CHANNEL_ACCESS_TOKEN or reply_token == "TEST":
         return
@@ -5817,9 +5835,30 @@ def handle_command_text(text: str, reply_token: str) -> bool:
         a = get_action(action_id, "confirm_new_case_with_existing_id")
         if not a: return True
         p = a["payload"]; block_text = p.get("block_text", ""); sg = p.get("source_group_id", "")
+        existing_case_id = p.get("existing_case_id", "")
+        # 查既存客戶的原群
+        conn = get_conn(); cur = conn.cursor()
+        cur.execute("SELECT source_group_id FROM customers WHERE case_id=?", (existing_case_id,))
+        existing = cur.fetchone(); conn.close()
+        original_sg = existing["source_group_id"] if existing else ""
         name = extract_name(block_text)
-        create_customer_record(name, extract_id_no(block_text), extract_company(block_text), sg, block_text)
+        new_case_id = create_customer_record(name, extract_id_no(block_text), extract_company(block_text), sg, block_text)
         reply_text(reply_token, f"🆕 已在{get_group_name(sg)}建立新案件：{name}")
+        # 通知原群 + 取消新建按鈕（30 分內有效）
+        if original_sg and original_sg != sg and new_case_id:
+            undo_id = short_id()
+            save_pending_action(undo_id, "dup_use_undo", {
+                "new_case_id": new_case_id, "original_sg": original_sg, "new_sg": sg,
+                "customer_name": name,
+            })
+            buttons = [
+                make_quick_reply_item("❌ 取消新建", f"DUP_USE_UNDO|{undo_id}"),
+                make_quick_reply_item("✅ 知道了", f"DISMISS_NOTIFY|{undo_id}"),
+            ]
+            push_text_with_buttons(original_sg,
+                f"ℹ️ {name} 在 {get_group_name(sg)} 也建了獨立案件（你這邊不變）\n"
+                f"如果是誤按，30 分內可取消那邊的新建：",
+                buttons)
         delete_pending_action(action_id); return True
 
     if text.startswith("USE_EXISTING_CASE|"):
@@ -5842,15 +5881,84 @@ def handle_command_text(text: str, reply_token: str) -> bool:
         cur.execute("SELECT * FROM customers WHERE case_id=?", (p.get("existing_case_id",""),))
         c = cur.fetchone(); conn.close()
         if not c: reply_text(reply_token, "⚠️ 原案件不存在"); delete_pending_action(action_id); return True
+        original_sg = c["source_group_id"] or ""
+        cust_name = c["customer_name"]
         update_customer(c["case_id"], company=extract_company(block_text) or c["company"] or "",
                         text=block_text, from_group_id=sg,
-                        name=extract_name(block_text) or c["customer_name"], source_group_id=sg)
-        reply_text(reply_token, f"✅ 已轉移到{get_group_name(sg)}：{c['customer_name']}")
+                        name=extract_name(block_text) or cust_name, source_group_id=sg)
+        reply_text(reply_token, f"✅ 已轉移到{get_group_name(sg)}:{cust_name}")
+        # 通知原群 + 復原轉移按鈕（30 分內有效）
+        if original_sg and original_sg != sg:
+            undo_id = short_id()
+            save_pending_action(undo_id, "transfer_undo", {
+                "case_id": c["case_id"], "original_sg": original_sg, "new_sg": sg,
+                "customer_name": cust_name,
+            })
+            buttons = [
+                make_quick_reply_item("🔄 復原轉移", f"TRANSFER_UNDO|{undo_id}"),
+                make_quick_reply_item("✅ 知道了", f"DISMISS_NOTIFY|{undo_id}"),
+            ]
+            push_text_with_buttons(original_sg,
+                f"⚠️ {cust_name} 已從本群轉移到 {get_group_name(sg)}\n"
+                f"你這邊日報不會再顯示這客戶。如果是誤按，30 分內可復原：",
+                buttons)
         delete_pending_action(action_id); return True
 
     if text.startswith("CANCEL_NEW_CASE|"):
         _, action_id = text.split("|", 1)
         delete_pending_action(action_id); reply_text(reply_token, "✅ 已取消"); return True
+
+    # ===== 跨群組重複客戶通知的復原按鈕 =====
+    def _check_undo_expired(created_at_iso, minutes=30):
+        """判斷 pending_action 是否超過 N 分鐘"""
+        try:
+            from datetime import datetime as _dt
+            created = _dt.fromisoformat(created_at_iso)
+            return (_dt.now() - created).total_seconds() > minutes * 60
+        except Exception:
+            return False
+
+    if text.startswith("TRANSFER_UNDO|"):
+        _, undo_id = text.split("|", 1)
+        a = get_pending_action(undo_id)
+        if not a or a["action_type"] != "transfer_undo":
+            reply_text(reply_token, "⚠️ 找不到復原資料（可能已超過 30 分）")
+            return True
+        if _check_undo_expired(a.get("created_at", "")):
+            reply_text(reply_token, "⚠️ 超過 30 分、已無法復原\n若仍要轉回、請手動用：@AI 姓名 (相關指令)")
+            delete_pending_action(undo_id); return True
+        p = a["payload"]
+        case_id = p["case_id"]; original_sg = p["original_sg"]; new_sg = p["new_sg"]; name = p["customer_name"]
+        update_customer(case_id, source_group_id=original_sg,
+                        text=f"{name} 轉移復原（從 {get_group_name(new_sg)} 回到本群）",
+                        from_group_id=original_sg)
+        reply_text(reply_token, f"✅ 已復原：{name} 回到本群")
+        push_text(new_sg, f"ℹ️ {name} 的轉移已被原群業務復原，客戶不再屬於 {get_group_name(new_sg)}")
+        delete_pending_action(undo_id); return True
+
+    if text.startswith("DUP_USE_UNDO|"):
+        _, undo_id = text.split("|", 1)
+        a = get_pending_action(undo_id)
+        if not a or a["action_type"] != "dup_use_undo":
+            reply_text(reply_token, "⚠️ 找不到取消資料（可能已超過 30 分）")
+            return True
+        if _check_undo_expired(a.get("created_at", "")):
+            reply_text(reply_token, "⚠️ 超過 30 分、已無法取消\n若仍要刪除該案、請在該群手動結案")
+            delete_pending_action(undo_id); return True
+        p = a["payload"]
+        new_case_id = p["new_case_id"]; new_sg = p["new_sg"]; name = p["customer_name"]
+        update_customer(new_case_id, status="CLOSED",
+                        text=f"{name} 沿用撤銷（原群業務取消新建）",
+                        from_group_id=p["original_sg"])
+        reply_text(reply_token, f"✅ 已取消：{name} 在 {get_group_name(new_sg)} 的新建案已結案")
+        push_text(new_sg, f"ℹ️ {name} 的新建案已被原群業務撤銷（已結案）")
+        delete_pending_action(undo_id); return True
+
+    if text.startswith("DISMISS_NOTIFY|"):
+        _, undo_id = text.split("|", 1)
+        delete_pending_action(undo_id)
+        reply_text(reply_token, "✅ 已關閉提示")
+        return True
 
     # 多筆同名時使用者選了某個 case → 重新執行原指令
     if text.startswith("EXEC_CMD|"):
