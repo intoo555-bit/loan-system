@@ -5106,9 +5106,8 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
         if not is_confirmed and co_norm in ("房地", "銀行", "零卡"):
             type_label = {"房地": "房地", "銀行": "銀行", "零卡": "C（零卡）"}[co_norm]
             reply_text(reply_token,
-                       f"⚠️ 是 {type_label} 所有方案都婉拒嗎？\n"
-                       f"確認請打：@AI {name} {co} 確認婉拒\n"
-                       f"不是的話：@AI {name} [具體方案] 婉拒（例：房地一胎）")
+                       f"⚠️ 是 {type_label} 所有方案都無法送嗎？婉拒是否確認？\n"
+                       f"要確認請打：@AI {name} {co} 確認婉拒")
             return
         current_co = target["current_company"] or ""
         concurrent_list = [c.strip() for c in (target["concurrent_companies"] or "").split(",") if c.strip()]
