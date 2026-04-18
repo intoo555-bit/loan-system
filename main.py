@@ -2734,13 +2734,16 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
             # 前一家公司的狀態摘要（如「亞太婉拒」），不該顯示在當前送件公司的區塊。
             if company_status:
                 return ""
-            # status_short 來自 last_update 第一行，可能是前一家公司的狀態
-            # 只對訊息中提到的公司區塊套用、否則空（避免「喬美 婉拒」狀態套到新 current 麻吉）
+            # status_short 來自 last_update 第一行：
+            # - 訊息有提公司（如「喬美 婉拒」）→ 只套該家區塊（不污染其他）
+            # - 訊息沒提公司（如「呂布 補申覆」）→ 套所有在送的區塊（泛狀態）
             if status_short:
                 mentioned_co = extract_company(first_line) or ""
-                if mentioned_co and normalize_section(mentioned_co) == sec_name:
-                    return status_short
-                return ""
+                if not mentioned_co:
+                    return status_short  # 泛狀態、所有區塊都套
+                if normalize_section(mentioned_co) == sec_name:
+                    return status_short  # 訊息提到這家 → 套
+                return ""  # 訊息提到別家 → 不套
             return status_short
 
         if section == "待撥款":
