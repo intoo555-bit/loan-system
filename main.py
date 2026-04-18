@@ -4891,16 +4891,35 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
         route = target["route_plan"] or ""
         current, next_co = get_current_company(route), get_next_company(route)
         new_route = advance_route(route, "婉拒")
+        concurrent_list = [c.strip() for c in (target["concurrent_companies"] or "").split(",") if c.strip()]
+        # 決定新 current：
+        # 1. route 有下一家 → 用 route 下一家
+        # 2. route 沒下一家、concurrent 有家 → 從 concurrent 第一家升上來（避免婉拒那家殘留）
+        # 3. 都沒有 → current 清空（日報不顯示原那家）
+        if next_co:
+            new_current = next_co
+            new_concurrent = concurrent_list
+            promoted_from_concurrent = ""
+        elif concurrent_list:
+            new_current = concurrent_list[0]
+            new_concurrent = concurrent_list[1:]
+            promoted_from_concurrent = new_current
+        else:
+            new_current = ""
+            new_concurrent = concurrent_list
+            promoted_from_concurrent = ""
         update_customer(target["case_id"], route_plan=new_route,
-                        current_company=next_co or current,
+                        current_company=new_current,
+                        concurrent_companies=",".join(new_concurrent),
                         text=f"{name} {current} 婉拒", from_group_id=group_id)
         # 回貼業務群
         push_msg = f"{name} {current} 婉拒"
-        if next_co:
-            push_msg += f"\n➡️ 下一家：{next_co}"
+        if new_current:
+            push_msg += f"\n➡️ 下一家：{new_current}"
         push_text(target["source_group_id"], push_msg)
-        if next_co:
-            reply_text(reply_token, f"✅ {name} {current} 婉拒\n➡️ 下一家：{next_co}")
+        if new_current:
+            extra = f"（從同送清單升上來）" if promoted_from_concurrent else ""
+            reply_text(reply_token, f"✅ {name} {current} 婉拒\n➡️ 下一家：{new_current}{extra}")
         else:
             reply_text(reply_token,
                        f"✅ {name} {current} 婉拒\n"
@@ -4997,12 +5016,27 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
             current = get_current_company(route) or current_co
             next_co = get_next_company(route)
             new_route = advance_route(route, "婉拒")
-            update_customer(target["case_id"], route_plan=new_route,
-                            current_company=next_co or current,
-                            text=f"{name} {current} 婉拒", from_group_id=group_id)
+            # route 沒下一家時從 concurrent 第一家升上來（避免婉拒那家殘留當 current）
             if next_co:
-                push_text(target["source_group_id"], f"{name} {current} 婉拒\n➡️ 下一家：{next_co}")
-                reply_text(reply_token, f"✅ {name} {current} 婉拒\n➡️ 下一家：{next_co}")
+                new_current = next_co
+                new_concurrent = concurrent_list
+                promoted = ""
+            elif concurrent_list:
+                new_current = concurrent_list[0]
+                new_concurrent = concurrent_list[1:]
+                promoted = new_current
+            else:
+                new_current = ""
+                new_concurrent = concurrent_list
+                promoted = ""
+            update_customer(target["case_id"], route_plan=new_route,
+                            current_company=new_current,
+                            concurrent_companies=",".join(new_concurrent),
+                            text=f"{name} {current} 婉拒", from_group_id=group_id)
+            if new_current:
+                push_text(target["source_group_id"], f"{name} {current} 婉拒\n➡️ 下一家：{new_current}")
+                extra = f"（從同送清單升上來）" if promoted else ""
+                reply_text(reply_token, f"✅ {name} {current} 婉拒\n➡️ 下一家：{new_current}{extra}")
             else:
                 push_text(target["source_group_id"], f"{name} {current} 婉拒")
                 reply_text(reply_token,
@@ -7041,7 +7075,7 @@ def get_auth_group_id(request: Request) -> str:
 
 def make_topnav(role: str, active: str) -> str:
     links = [("📊 日報","/report","report"),("🔍 查詢","/search","search"),
-             ("📁 歷史","/history","history")]
+             ("📁 歷史","/history","history"),("📖 指令速查","/guide","guide")]
     if role in ("admin","adminB","normal") or role.startswith("group_"):
         links.append(("📋 客戶資料庫","/pending-customers","pending"))
         links.append(("➕ 新增客戶","/new-customer","new"))
@@ -7272,7 +7306,14 @@ def guide_page(request: Request):
     role = check_auth(request)
     if not role:
         return RedirectResponse(url="/login?next=/guide", status_code=303)
-    return _render_guide_html()
+    html = _render_guide_html()
+    topnav = make_topnav(role, "guide")
+    # 套共用 topnav CSS + 導航列到 /guide
+    html = html.replace("</style>", f"\n{PAGE_CSS}\n</style>", 1)
+    html = html.replace("<body>", f"<body>\n{topnav}\n", 1)
+    # 移除原本的「回日報頁」連結（topnav 已含）
+    html = html.replace('<a href="/report" class="back-link">← 回日報頁</a>', '')
+    return html
 
 
 @app.get("/login", response_class=HTMLResponse)
