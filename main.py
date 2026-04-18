@@ -3078,9 +3078,15 @@ def parse_special_command(text: str, group_id: str) -> Optional[Dict]:
     if m:
         return {"type": "update_amount", "name": m.group(1), "company": "", "amount": m.group(2).strip()}
 
+    # 撥款：@AI 姓名 撥款 M/D（要先於 missing_verb，否則 4/19 會被誤判為 4萬/19期）
+    m = re.match(r"^([\u4e00-\u9fff]{2,6})\s*撥款\s*(\d{1,2}/\d{1,2})?$", clean)
+    if m:
+        return {"type": "disbursed", "name": m.group(1), "date": m.group(2) or ""}
+
     # 防錯：看起來像「姓名 公司 金額/期數」但缺動詞（轉/送/同送/核准）
     # 例：「周馮鈺婷 喬美+房地 100萬/120期」→ 提示使用者加動詞
-    m = re.match(r"^([\u4e00-\u9fff]{2,6})\s+([^\s@]+?)\s*(\d+(?:\.\d+)?)\s*萬?\s*[/／]\s*(\d+)\s*期?\s*$", clean)
+    # 注意：company 不得為純動詞字（避免「姓名 撥款 4/19」被誤判）
+    m = re.match(r"^([\u4e00-\u9fff]{2,6})\s+(?!撥款|結案|婉拒|核准|重啟|歷史|還原|改名|改身分證|取消核准)([^\s@]+?)\s*(\d+(?:\.\d+)?)\s*萬?\s*[/／]\s*(\d+)\s*期?\s*$", clean)
     if m:
         return {"type": "missing_verb", "name": m.group(1), "companies_raw": m.group(2),
                 "amount": m.group(3), "period": m.group(4)}
@@ -3111,11 +3117,6 @@ def parse_special_command(text: str, group_id: str) -> Optional[Dict]:
     if m:
         return {"type": "bad_id_format", "name": m.group(1), "raw_id": m.group(2).strip()}
 
-    # 撥款：@AI 姓名 撥款（自動用今天日期）
-    m = re.match(r"^([\u4e00-\u9fff]{2,6})\s*撥款\s*(\d{1,2}/\d{1,2})?$", clean)
-    if m:
-        return {"type": "disbursed", "name": m.group(1), "date": m.group(2) or ""}
-
     # 重啟：@AI 姓名 重啟
     m = re.match(r"^([\u4e00-\u9fff]{2,6})\s*重啟$", clean)
     if m:
@@ -3144,6 +3145,13 @@ def parse_special_command(text: str, group_id: str) -> Optional[Dict]:
     m = re.match(r"^([一-鿿]{2,6})\s*(已結案|結案)$", clean)
     if m:
         return {"type": "close", "name": m.group(1)}
+
+    # 【A 方案】姓名 公司 結案 → 客戶已核准時、只從同送清單移除該家（不結案客戶）
+    # 客戶未核准時 → handler 會退回普通結案並提示
+    m = re.match(r"^([一-鿿]{2,6})\s+(.+?)\s*結案$", clean)
+    if m:
+        return {"type": "remove_concurrent_or_close", "name": m.group(1),
+                "company": m.group(2).strip()}
 
     # 婉拒 轉XXX（明確指定要婉拒的公司 + 跳到指定公司）
     # 例：「王陽明 裕融 婉拒 轉亞太」= 婉拒裕融（不管在 current 或 concurrent）+ current 改亞太
@@ -3542,29 +3550,50 @@ _HELP_MENU_TITLE = "📖 指令速查 — 點下方按鈕看該類指令"
 
 _HELP_SEND = """🔹 送件操作
 
-【轉】原本送的取消、改送新的
-  打：@AI 王小明 轉喬美
+【第一次送件】同時送多家 + 產生照會訊息
+  打：@AI 王小明 裕融+第一 照會
+  說明：系統會產生照會訊息給客戶，把兩家設成同送
+
+━━━━━━━━━━
+【轉】原本在送那家不送了、改送別家
+  改一家：@AI 王小明 轉喬美
   帶金額：@AI 王小明 轉喬美 50萬/24期
 
-【一次送兩家（同送）】
+【轉兩家】原本那家不送了、改成同送兩家
   打：@AI 王小明 轉喬美+房地
   帶金額：@AI 王小明 轉喬美+房地 100萬/120期
 
-【加送】原本的保留、再多加一家
-  打：@AI 王小明 送第一
+━━━━━━━━━━
+【加送】原本那家保留、再多加一家
+  加一家：@AI 王小明 送第一
   帶金額：@AI 王小明 送第一 30萬/24期
 
-【照會】送+產生照會訊息給客戶
-  打：@AI 王小明 裕融+第一 照會"""
+【加送兩家】原本保留、再多加兩家一起送
+  打：@AI 王小明 送喬美+房地
+
+━━━━━━━━━━
+【核准後、其他家不送】
+  情境：王小明同送 [裕融/第一/亞太]、裕融核准，其他不送了
+  一家：@AI 王小明 第一 結案
+  多家：@AI 王小明 第一/亞太 結案
+  說明：只把那幾家從同送清單移除，核准那家 + 客戶狀態不動"""
 
 _HELP_APPROVAL = """🔹 審核結果
 
 【核准】自動移到待撥款
   打：@AI 王小明 第一 核准 30萬
 
-【結案】
+【結案】整筆結案（客戶不送了）
   打：@AI 王小明 結案
   加原因：@AI 王小明 結案 已撥款
+
+【只結案不送那幾家（留下核准）】
+  情境：裕融核准，第一/亞太還在送、不送了
+  一家：@AI 王小明 第一 結案
+  多家：@AI 王小明 第一/亞太 結案
+  多家：@AI 王小明 第一+亞太 結案
+  說明：只把那幾家從同送清單移除
+       核准那家 + 客戶狀態不動、日報還在待撥款
 
 【婉拒】
   推下一家：@AI 王小明 婉拒
@@ -3593,10 +3622,60 @@ _HELP_UNDO = """🔹 做錯救急
 
 _HELP_TOOLS = """🔹 其他小工具
 
-改名：@AI 舊名 改名 新名
-改身分證：@AI 王小明 改身分證 A123456789
-查這客戶：@AI 查 王小明
-產日報：@AI 日報"""
+【查詢類】
+  查這客戶：@AI 查 王小明
+  產日報：@AI 日報
+  看統計：@AI 統計（今日/本月 進件、核准、結案數）
+  查群組ID：@AI 群組ID
+
+【修改類】
+  改名：@AI 舊名 改名 新名
+  改身分證：@AI 王小明 改身分證 A123456789
+
+【送件小工具】
+  推送下一家：@AI 王小明 轉下一家
+  （原本有設 A/B/C 送件順序 → 自動跳下一家）
+
+【批次操作】
+  批次結案：
+    @AI 批次結案
+    王小明
+    陳某某
+  批次婉拒：
+    @AI 批次婉拒
+    王小明
+    陳某某"""
+
+
+_HELP_PAIRING = """🔹 對保流程（業務群內部操作，不用 @AI）
+
+【派對保】行政/業務打給對保員
+  範本：
+    辦理方案：裕融
+    核准金額：50萬
+    客戶姓名：王小明
+    對保地區：台北
+
+  說明：
+    系統會紀錄對保地區、客戶標「派對保」狀態
+
+━━━━━━━━━━
+【對保員接單 + 回時間地點】對保員打
+  範本：
+    對保 張三 新光對保
+    時間：4/20 下午2點
+    地點：台北 XX 路
+
+  說明：
+    第一行格式「對保 業務員 公司對保」
+    時間、地點各一行
+    系統自動紀錄
+
+━━━━━━━━━━
+【對保完成】對保員打
+  訊息含以下任一：「對好」、「對保完成」、「不收不簽」
+  例：王小明 對好
+  例：王小明 對保完成"""
 
 _HELP_NEWCASE = """🔹 開新客戶（這個不用加 @AI）
 
@@ -3651,6 +3730,203 @@ _HELP_SYMBOLS = """🔸 符號代表什麼
 ・公司名打錯 → 列合法清單
 ・送件順序重複公司 → 自動去重
 ・本群組多位同名 → 跳按鈕選"""
+
+
+_GUIDE_SHELL = """<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>指令速查 - 貸款系統</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, "Segoe UI", "PingFang TC", "Microsoft JhengHei", sans-serif;
+       background: #f5f5f0; color: #3a3229; line-height: 1.6; }
+.wrap { max-width: 1100px; margin: 0 auto; padding: 20px 16px 60px; }
+h1 { font-size: 22px; color: #4e7055; margin-bottom: 6px; }
+.subtitle { color: #8a7a68; font-size: 13px; margin-bottom: 20px; }
+
+.search-box { position: sticky; top: 0; background: #f5f5f0; padding: 10px 0; z-index: 10; border-bottom: 1px solid #e5ded4; }
+.search-box input { width: 100%; padding: 10px 14px; border: 2px solid #d4c9b8; border-radius: 8px;
+                    font-size: 15px; background: #fff; }
+.search-box input:focus { outline: none; border-color: #4e7055; }
+
+.nav-tabs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 14px 0; }
+.nav-tab { padding: 14px 10px; background: #e5ded4; color: #4a3e30; border-radius: 10px;
+           text-decoration: none; font-size: 14px; font-weight: 600; text-align: center;
+           border: 1px solid transparent; transition: all 0.15s; }
+.nav-tab:hover { background: #4e7055; color: #fff; transform: translateY(-1px); }
+@media (max-width: 600px) {
+  .nav-tabs { grid-template-columns: repeat(2, 1fr); }
+  .nav-tab { padding: 16px 8px; font-size: 15px; }
+}
+
+.section { background: #fff; border-radius: 10px; padding: 20px; margin-bottom: 18px;
+           border: 1px solid #e5ded4; scroll-margin-top: 80px; }
+.section h2 { color: #4e7055; font-size: 18px; margin-bottom: 14px; padding-bottom: 8px;
+              border-bottom: 2px solid #e5ded4; }
+
+.help-raw { background: #fafaf5; border-left: 4px solid #4e7055; padding: 16px 20px;
+            border-radius: 8px; font-family: "Consolas", "Menlo", "PingFang TC", monospace;
+            font-size: 14px; line-height: 1.9; white-space: pre-wrap; color: #3a3229;
+            overflow-x: auto; }
+
+.copyable { background: #fff; padding: 2px 8px; border-radius: 4px;
+            border: 1px solid #d4c9b8; cursor: pointer; color: #2d5016;
+            display: inline-block; transition: all 0.15s; user-select: all; }
+.copyable:hover { background: #4e7055; color: #fff; border-color: #4e7055; }
+.copyable.copied { background: #166534; color: #fff; border-color: #166534; }
+.copyable::after { content: " 📋"; opacity: 0.4; font-size: 11px; }
+.copyable:hover::after, .copyable.copied::after { opacity: 1; }
+.copyable.copied::after { content: " ✓"; }
+
+.copy-block { display: inline-block; background: #fff; padding: 10px 14px;
+              border-radius: 6px; border: 1px solid #d4c9b8; cursor: pointer;
+              color: #2d5016; transition: all 0.15s; white-space: pre;
+              font-family: inherit; margin: 2px 0; }
+.copy-block:hover { border-color: #4e7055; background: #f0f5f0; }
+.copy-block.copied { background: #dcfce7; border-color: #166534; }
+.copy-block::before { content: "📋 點此整段複製 ↓"; display: block; font-size: 11px;
+                      color: #8a7a68; margin-bottom: 6px; font-family: -apple-system, sans-serif; }
+.copy-block.copied::before { content: "✓ 已複製"; color: #166534; font-weight: bold; }
+
+.screenshot { background: #fef9c3; border: 2px dashed #d4c9b8; border-radius: 8px;
+              padding: 20px; text-align: center; color: #854d0e; font-size: 12px; margin: 14px 0 0; }
+
+.section.hidden { display: none; }
+.back-link { color: #4e7055; text-decoration: none; font-size: 13px; }
+.back-link:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <a href="/report" class="back-link">← 回日報頁</a>
+  <h1>📖 指令速查</h1>
+  <p class="subtitle">業務 / 行政 操作 LINE Bot 的所有指令（和 LINE「@AI 說明」同一份內容）<br>
+    <span style="color:#4e7055;">💡 小方框 = 單行指令、點一下複製；大方框 = 多行整段複製（派對保、批次結案...）</span></p>
+
+  <div class="search-box">
+    <input type="text" id="search" placeholder="🔍 搜尋指令或關鍵字（例：轉、核准、還原）">
+  </div>
+
+  <div class="nav-tabs">
+    <a href="#send" class="nav-tab">📨 送件</a>
+    <a href="#approval" class="nav-tab">✅ 核准/結案</a>
+    <a href="#undo" class="nav-tab">🔙 做錯救急</a>
+    <a href="#tools" class="nav-tab">🛠 其他工具</a>
+    <a href="#newcase" class="nav-tab">🆕 開新客戶</a>
+    <a href="#pairing" class="nav-tab">🤝 對保流程</a>
+    <a href="#symbols" class="nav-tab">📝 符號說明</a>
+  </div>
+
+  __SECTIONS__
+</div>
+
+<script>
+function _flash(el){
+  el.classList.add("copied");
+  setTimeout(function(){ el.classList.remove("copied"); }, 1500);
+}
+function copyInline(span){
+  var text = (span.innerText || span.textContent).trim();
+  navigator.clipboard.writeText(text).then(function(){ _flash(span); });
+}
+function copyBlock(el){
+  var text = el.getAttribute("data-copy") || el.innerText;
+  navigator.clipboard.writeText(text).then(function(){ _flash(el); });
+}
+
+var searchInput = document.getElementById("search");
+if (searchInput) {
+  searchInput.addEventListener("input", function(){
+    var q = this.value.trim().toLowerCase();
+    document.querySelectorAll(".section").forEach(function(sec){
+      var text = sec.innerText.toLowerCase();
+      if(!q || text.indexOf(q) >= 0){ sec.classList.remove("hidden"); }
+      else { sec.classList.add("hidden"); }
+    });
+  });
+}
+</script>
+</body>
+</html>"""
+
+
+def _process_help_to_html(text: str) -> str:
+    """把 _HELP_X 原始字串轉成 HTML 片段（自動辨識 @AI 指令、範本區塊並加複製功能）。"""
+    import html as _h
+    import re as _re
+    lines = text.split("\n")
+    out = []
+    i = 0
+    n = len(lines)
+    while i < n:
+        line = lines[i]
+        m_block = _re.match(r'^  (範本|批次結案|批次婉拒)：\s*$', line)
+        if m_block:
+            out.append(_h.escape(line))
+            block_lines = []
+            j = i + 1
+            while j < n and lines[j].startswith("    "):
+                block_lines.append(lines[j][4:])
+                j += 1
+            copy_text = "\n".join(block_lines).rstrip()
+            attr_copy = _h.escape(copy_text, quote=True).replace("\n", "&#10;")
+            out.append(
+                '    <span class="copy-block" data-copy="'
+                + attr_copy
+                + '" onclick="copyBlock(this)">'
+                + _h.escape(copy_text)
+                + '</span>'
+            )
+            i = j
+            continue
+        if "@AI" in line:
+            esc = _h.escape(line)
+            esc = _re.sub(
+                r'(@AI[^\n]+)',
+                r'<span class="copyable" onclick="copyInline(this)">\1</span>',
+                esc,
+            )
+            out.append(esc)
+        else:
+            m_ex = _re.match(r'^(  例：)(.+)$', line)
+            if m_ex:
+                out.append(
+                    _h.escape(m_ex.group(1))
+                    + '<span class="copyable" onclick="copyInline(this)">'
+                    + _h.escape(m_ex.group(2))
+                    + '</span>'
+                )
+            else:
+                out.append(_h.escape(line))
+        i += 1
+    return "\n".join(out)
+
+
+def _render_guide_html() -> str:
+    """從 _HELP_* 動態渲染指令速查頁（和 LINE「@AI 說明」單一來源）。"""
+    sections = [
+        ("send", "📨 送件", _HELP_SEND),
+        ("approval", "✅ 核准 / 結案", _HELP_APPROVAL),
+        ("undo", "🔙 做錯救急", _HELP_UNDO),
+        ("tools", "🛠 其他工具", _HELP_TOOLS),
+        ("newcase", "🆕 開新客戶", _HELP_NEWCASE),
+        ("pairing", "🤝 對保流程", _HELP_PAIRING),
+        ("symbols", "📝 符號說明", _HELP_SYMBOLS),
+    ]
+    parts = []
+    for sid, title, txt in sections:
+        body = txt.split("\n", 1)[1] if "\n" in txt else txt
+        body = body.lstrip("\n")
+        parts.append(
+            f'<section id="{sid}" class="section">\n'
+            f'  <h2>{title}</h2>\n'
+            f'  <pre class="help-raw">{_process_help_to_html(body)}</pre>\n'
+            f'  <div class="screenshot">📸 截圖範例：[待補]</div>\n'
+            f'</section>'
+        )
+    return _GUIDE_SHELL.replace("__SECTIONS__", "\n".join(parts))
 
 
 def _split_company_amount(item: str):
@@ -4111,6 +4387,7 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
             make_quick_reply_item("🔙 做錯救急", "HELP|undo"),
             make_quick_reply_item("🛠 其他工具", "HELP|tools"),
             make_quick_reply_item("🆕 開新客戶", "HELP|newcase"),
+            make_quick_reply_item("🤝 對保流程", "HELP|pairing"),
             make_quick_reply_item("📝 符號說明", "HELP|symbols"),
         ]
         reply_quick_reply(reply_token, _HELP_MENU_TITLE, items)
@@ -4289,6 +4566,18 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
         companies_raw = cmd.get("companies_raw", "")
         amount = cmd.get("amount", "")
         period = cmd.get("period", "")
+        # 先拆公司名驗證
+        cos_list = [c.strip() for c in re.split(r"[/+＋,，]", companies_raw) if c.strip()]
+        cos_canon = [COMPANY_ALIAS.get(c, c) for c in cos_list]
+        valid = _get_valid_company_names()
+        unknown = [c for c in cos_canon if c not in valid]
+        if unknown:
+            reply_text(reply_token,
+                       f"⚠️ 找不到公司：{'、'.join(unknown)}\n"
+                       f"是不是打錯 / 漏寫公司名？\n"
+                       f"常見：亞太、喬美、第一、房地、21、裕融、和裕、麻吉、貸救補、鄉民、銀行、零卡、商品貸、代書、當舖")
+            return
+        # 公司名都合法 → 提示缺動詞
         reply_text(reply_token,
                    f"⚠️ 「{name} {companies_raw} {amount}萬/{period}期」缺少動詞，請指明要做什麼：\n"
                    f"  • 轉：砍掉原 route 改送新的 → 「{name} 轉{companies_raw} {amount}萬/{period}期」\n"
@@ -4309,6 +4598,64 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
                         text=close_text, from_group_id=group_id)
         push_text(target["source_group_id"], close_text)
         reply_text(reply_token, f"✅ {name} 已結案，從日報移除" + (f"\n原因：{reason}" if reason else ""))
+        return
+
+    if t == "remove_concurrent_or_close":
+        # 【A 方案】姓名 公司 結案（支援多家：第一/亞太、第一+亞太 等）
+        # 客戶已核准 → 從同送清單移除這些公司（不動客戶狀態）
+        # 客戶未核准 → 退回普通結案並提示
+        name = cmd["name"]
+        co_raw = cmd["company"]
+        target = _resolve_target_strict(cmd, name, group_id, reply_token, "結案")
+        if not target:
+            return
+        if not _check_active_or_warn(target, reply_token, "結案", name):
+            return
+        cos_list = [c.strip() for c in re.split(r"[/+＋,，]", co_raw) if c.strip()]
+        cos = [COMPANY_ALIAS.get(c, c) for c in cos_list]
+        if not _validate_companies_or_warn(cos, reply_token, name):
+            return
+        approved = (target["approved_amount"] or "").strip()
+        current_co = target["current_company"] or ""
+        concurrent_str = target["concurrent_companies"] or ""
+        concurrent_list = [c.strip() for c in concurrent_str.split(",") if c.strip()]
+        if not approved:
+            close_text = f"{name} 結案"
+            update_customer(target["case_id"], status="CLOSED",
+                            text=close_text, from_group_id=group_id)
+            push_text(target["source_group_id"], close_text)
+            reply_text(reply_token,
+                       f"⚠️ {name} 尚未核准，「{co_raw} 結案」已視為整筆結案\n"
+                       f"若要只取消某家送件，請先該家核准後再打此指令")
+            return
+        removed = []
+        skipped_current = []
+        skipped_not_in = []
+        new_concurrent = list(concurrent_list)
+        for co in cos:
+            if co == current_co:
+                skipped_current.append(co)
+            elif co in new_concurrent:
+                new_concurrent.remove(co)
+                removed.append(co)
+            else:
+                skipped_not_in.append(co)
+        if removed:
+            text_note = f"{name} 不送：{'、'.join(removed)}（留 {current_co} 核准 {approved}）"
+            update_customer(target["case_id"],
+                            concurrent_companies=",".join(new_concurrent),
+                            text=text_note, from_group_id=group_id)
+            push_text(target["source_group_id"], text_note)
+        msgs = []
+        if removed:
+            msgs.append(f"✅ 已從同送清單移除：{'、'.join(removed)}")
+        if skipped_current:
+            msgs.append(f"⚠️ {'、'.join(skipped_current)} 是核准那家，沒處理\n　 （作廢核准用：@AI {name} {skipped_current[0]} 取消核准）")
+        if skipped_not_in:
+            msgs.append(f"⚠️ 同送清單裡沒有：{'、'.join(skipped_not_in)}")
+        msgs.append(f"保留：{current_co} 核准 {approved}")
+        msgs.append(f"其他同送：{','.join(new_concurrent) if new_concurrent else '無'}")
+        reply_text(reply_token, "\n".join(msgs))
         return
 
     if t == "reject":
@@ -5219,6 +5566,7 @@ def handle_command_text(text: str, reply_token: str) -> bool:
             "undo": _HELP_UNDO,
             "tools": _HELP_TOOLS,
             "newcase": _HELP_NEWCASE,
+            "pairing": _HELP_PAIRING,
             "symbols": _HELP_SYMBOLS,
         }
         content = mapping.get(cat, "⚠️ 未知分類，請重打「@AI 格式」查主選單")
@@ -6552,6 +6900,16 @@ def render_seg(section_map: dict, sections: list, shown: set) -> str:
             html += render_cust_rows(section_map[sec])
             shown.add(sec)
     return html
+
+
+@app.get("/guide", response_class=HTMLResponse)
+def guide_page(request: Request):
+    """指令速查頁（業務、行政都能看，需要登入）。內容動態從 _HELP_* 渲染，和 LINE 同步。"""
+    from fastapi.responses import RedirectResponse
+    role = check_auth(request)
+    if not role:
+        return RedirectResponse(url="/login?next=/guide", status_code=303)
+    return _render_guide_html()
 
 
 @app.get("/login", response_class=HTMLResponse)
@@ -8907,8 +9265,9 @@ td {{ background: #fff; }}
 <tr><th>行業</th><td colspan="3">{v("company_industry")}</td></tr>
 <tr class="sec"><td colspan="4">聯絡人</td></tr>
 <tr><th>聯絡人1</th><td>{v("contact1_name")}（{v("contact1_relation")}）</td><th>電話</th><td>{v("contact1_phone")}</td></tr>
-<tr><th>知情</th><td>{v("contact1_known")}</td><th>聯絡人2</th><td>{v("contact2_name")}（{v("contact2_relation")}）</td></tr>
-<tr><th>電話</th><td>{v("contact2_phone")}</td><th>知情</th><td>{v("contact2_known")}</td></tr>
+<tr><th>知情</th><td colspan="3">{v("contact1_known")}</td></tr>
+<tr><th>聯絡人2</th><td>{v("contact2_name")}（{v("contact2_relation")}）</td><th>電話</th><td>{v("contact2_phone")}</td></tr>
+<tr><th>知情</th><td colspan="3">{v("contact2_known")}</td></tr>
 </table>
 <div style="page-break-before:always;margin-top:20px;"></div>
 <table>
@@ -8978,8 +9337,9 @@ def _build_customer_pdf_body(r: dict) -> str:
 <tr><th>行業</th><td colspan="3">{v("company_industry")}</td></tr>
 <tr class="sec"><td colspan="4">聯絡人</td></tr>
 <tr><th>聯絡人1</th><td>{v("contact1_name")}（{v("contact1_relation")}）</td><th>電話</th><td>{v("contact1_phone")}</td></tr>
-<tr><th>知情</th><td>{v("contact1_known")}</td><th>聯絡人2</th><td>{v("contact2_name")}（{v("contact2_relation")}）</td></tr>
-<tr><th>電話</th><td>{v("contact2_phone")}</td><th>知情</th><td>{v("contact2_known")}</td></tr>
+<tr><th>知情</th><td colspan="3">{v("contact1_known")}</td></tr>
+<tr><th>聯絡人2</th><td>{v("contact2_name")}（{v("contact2_relation")}）</td><th>電話</th><td>{v("contact2_phone")}</td></tr>
+<tr><th>知情</th><td colspan="3">{v("contact2_known")}</td></tr>
 </table>
 <div style="page-break-before:always;margin-top:20px;"></div>
 <table>
