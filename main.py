@@ -3185,6 +3185,12 @@ def parse_special_command(text: str, group_id: str) -> Optional[Dict]:
     if m:
         return {"type": "close", "name": m.group(1)}
 
+    # 批次結案/婉拒格式錯：姓名出現在「批次結案/婉拒」前
+    # 例：「黎明 王陽明 批次結案」→ 提示換行格式
+    m = re.match(r"^(.+)\s+批次(結案|婉拒)$", clean)
+    if m:
+        return {"type": "bad_batch_format", "action": m.group(2), "raw": clean}
+
     # 【A 方案】姓名 公司 結案 → 客戶已核准時、只從同送清單移除該家（不結案客戶）
     # 客戶未核准時 → handler 會退回普通結案並提示
     m = re.match(r"^([一-鿿]{2,6})\s+(.+?)\s*結案$", clean)
@@ -3285,6 +3291,48 @@ def parse_special_command(text: str, group_id: str) -> Optional[Dict]:
                 "time": time_str,
                 "location": loc_str,
             }
+
+    # ===== 常見錯誤格式防錯（給正確範例提示）=====
+    # 轉但沒指定公司
+    m = re.match(r"^([\u4e00-\u9fff]{2,6})\s*轉\s*$", clean)
+    if m:
+        return {"type": "format_hint", "hint": f"轉哪家？\n例：@AI {m.group(1)} 轉喬美\n帶金額：@AI {m.group(1)} 轉喬美 50萬/24期"}
+    # 送但沒指定公司
+    m = re.match(r"^([\u4e00-\u9fff]{2,6})\s*送\s*$", clean)
+    if m:
+        return {"type": "format_hint", "hint": f"送哪家？\n例：@AI {m.group(1)} 送第一\n帶金額：@AI {m.group(1)} 送第一 30萬/24期"}
+    # 核准但沒公司沒金額
+    m = re.match(r"^([\u4e00-\u9fff]{2,6})\s*核准\s*$", clean)
+    if m:
+        return {"type": "format_hint", "hint": f"哪家核准？金額多少？\n例：@AI {m.group(1)} 第一 核准 30萬"}
+    # 違約金沒金額
+    m = re.match(r"^([\u4e00-\u9fff]{2,6})\s*違約金[已支付]*\s*$", clean)
+    if m:
+        return {"type": "format_hint", "hint": f"違約金多少？\n例：@AI {m.group(1)} 違約金已支付30000"}
+    # 改名沒新名
+    m = re.match(r"^([\u4e00-\u9fff]{2,6})\s*改名\s*$", clean)
+    if m:
+        return {"type": "format_hint", "hint": f"改成什麼名字？\n例：@AI {m.group(1)} 改名 新名字"}
+    # 改身分證沒 ID
+    m = re.match(r"^([\u4e00-\u9fff]{2,6})\s*改身分證\s*$", clean)
+    if m:
+        return {"type": "format_hint", "hint": f"新身分證？\n例：@AI {m.group(1)} 改身分證 A123456789"}
+    # 取消核准沒指定公司
+    m = re.match(r"^([\u4e00-\u9fff]{2,6})\s*取消核准\s*$", clean)
+    if m:
+        return {"type": "format_hint", "hint": f"要取消哪家的核准？\n例：@AI {m.group(1)} 第一 取消核准"}
+    # 撥款動詞在前（順序錯）
+    m = re.match(r"^撥款\s+([\u4e00-\u9fff]{2,6})", clean)
+    if m:
+        return {"type": "format_hint", "hint": f"撥款指令格式：姓名在前\n例：@AI {m.group(1)} 撥款 4/18\n或：@AI {m.group(1)} 裕融 撥款 4/18"}
+    # 結案動詞在前
+    m = re.match(r"^結案\s+([\u4e00-\u9fff]{2,6})", clean)
+    if m:
+        return {"type": "format_hint", "hint": f"結案指令格式：姓名在前\n例：@AI {m.group(1)} 結案"}
+    # 婉拒動詞在前
+    m = re.match(r"^婉拒\s+([\u4e00-\u9fff]{2,6})", clean)
+    if m:
+        return {"type": "format_hint", "hint": f"婉拒指令格式：姓名在前\n例：@AI {m.group(1)} 婉拒"}
 
     return None
 
@@ -4184,6 +4232,22 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
         reply_text(reply_token, search_customer_info(cmd["name"], group_id))
         return
 
+    if t == "format_hint":
+        # 通用格式提示 handler（給常見錯誤格式友善提示）
+        hint = cmd.get("hint", "指令格式錯，請看 @AI 說明")
+        reply_text(reply_token, f"⚠️ {hint}")
+        return
+
+    if t == "bad_batch_format":
+        action = cmd.get("action", "結案")
+        reply_text(reply_token,
+                   f"⚠️ 批次{action}格式不對\n"
+                   f"要這樣打（每個姓名換一行）：\n"
+                   f"  @AI 批次{action}\n"
+                   f"  黎明\n"
+                   f"  王陽明")
+        return
+
     if t == "batch_close":
         names = cmd["names"]
         results = []
@@ -4598,7 +4662,12 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
 
     if t == "cancel_approval":
         name = cmd["name"]
-        company = cmd["company"]
+        company = cmd["company"].strip()
+        if not company:
+            reply_text(reply_token,
+                       f"⚠️ 要取消哪家的核准？\n"
+                       f"例：@AI {name} 第一 取消核准")
+            return
         target = _resolve_target_strict(cmd, name, group_id, reply_token, "取消核准")
         if not target:
             return
@@ -5061,15 +5130,19 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
             update_customer(target["case_id"], report_section="",
                             text=f"{name} 照會", from_group_id=group_id)
         # 存同時送件公司（只存純公司名）+ 記錄第一家金額
+        # 修：沒帶新金額時清掉舊 notify_amount（避免上次送件的金額污染這次照會）
         update_kw = {}
         if concurrent_names:
             update_kw["concurrent_companies"] = ",".join(concurrent_names)
         if first_amount:
             update_kw["notify_amount"] = first_amount
             update_kw["notify_period"] = first_period
-        if update_kw:
-            update_customer(target["case_id"],
-                            text=f"{name} 照會 {company}", from_group_id=group_id, **update_kw)
+        else:
+            # 沒帶新金額 → 清舊的，照會 fallback 用 PLAN_INFO 預設
+            update_kw["notify_amount"] = ""
+            update_kw["notify_period"] = ""
+        update_customer(target["case_id"],
+                        text=f"{name} 照會 {company}", from_group_id=group_id, **update_kw)
         r = dict(target)
         # 重新讀更新後的資料（才有最新 notify_amount）
         conn_re = get_conn(); cur_re = conn_re.cursor()
