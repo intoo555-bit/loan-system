@@ -3280,6 +3280,11 @@ def parse_special_command(text: str, group_id: str) -> Optional[Dict]:
     if m:
         return {"type": "reject", "name": m.group(1)}
 
+    # 確認婉拒（房地/銀行/C 類別的二次確認指令）：@AI 姓名 公司 確認婉拒
+    m = re.match(r"^([一-鿿]{2,6})\s+(.+?)\s*確[定認]婉拒$", clean)
+    if m:
+        return {"type": "confirm_reject_company", "name": m.group(1), "company": m.group(2).strip()}
+
     # 指定某家婉拒（不跳轉）：@AI 姓名 公司 婉拒
     # 例：林俊杰同送房地+銀行，銀行評估不過 → 「林俊杰 銀行 婉拒」
     m = re.match(r"^([一-鿿]{2,6})\s+(.+?)\s*婉拒$", clean)
@@ -5081,11 +5086,13 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
                    f"  現在在送：{'、'.join(all_active) if all_active else '無'}")
         return
 
-    if t == "reject_company":
+    if t in ("reject_company", "confirm_reject_company"):
         # @AI 姓名 公司 婉拒 ── 指定某家婉拒（不跳轉）
         # 情境：林俊杰同送房地+銀行，銀行評估不過 → 「林俊杰 銀行 婉拒」
+        # confirm_reject_company = 房地/銀行/C 類別的二次確認指令
         name = cmd["name"]
         co_raw = cmd["company"]
+        is_confirmed = (t == "confirm_reject_company")
         target = _resolve_target_strict(cmd, name, group_id, reply_token, "婉拒")
         if not target:
             return
@@ -5095,6 +5102,14 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
         if not _validate_companies_or_warn([co], reply_token, name):
             return
         co_norm = normalize_section(co)
+        # 房地/銀行/C 需二次確認（非 confirm 指令時攔截）
+        if not is_confirmed and co_norm in ("房地", "銀行", "零卡"):
+            type_label = {"房地": "房地", "銀行": "銀行", "零卡": "C（零卡）"}[co_norm]
+            reply_text(reply_token,
+                       f"⚠️ 是 {type_label} 所有方案都婉拒嗎？\n"
+                       f"確認請打：@AI {name} {co} 確認婉拒\n"
+                       f"不是的話：@AI {name} [具體方案] 婉拒（例：房地一胎）")
+            return
         current_co = target["current_company"] or ""
         concurrent_list = [c.strip() for c in (target["concurrent_companies"] or "").split(",") if c.strip()]
         # 情況 1：是 current（含同系列匹配，例：亞太 ↔ 亞太機車15萬、銀行 ↔ 元大）→ 走一般婉拒邏輯
