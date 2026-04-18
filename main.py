@@ -3078,15 +3078,34 @@ def parse_special_command(text: str, group_id: str) -> Optional[Dict]:
     if m:
         return {"type": "update_amount", "name": m.group(1), "company": "", "amount": m.group(2).strip()}
 
-    # 撥款：@AI 姓名 撥款 M/D（要先於 missing_verb，否則 4/19 會被誤判為 4萬/19期）
+    # 撥款（日期在前、有公司）：@AI 姓名 公司 M/D 撥款
+    m = re.match(r"^([\u4e00-\u9fff]{2,6})\s+(\S+)\s+(\d{1,2}/\d{1,2})\s*撥款$", clean)
+    if m:
+        return {"type": "disbursed", "name": m.group(1),
+                "company": m.group(2).strip(), "date": m.group(3)}
+
+    # 撥款（日期在前、無公司）：@AI 姓名 M/D 撥款
+    m = re.match(r"^([\u4e00-\u9fff]{2,6})\s+(\d{1,2}/\d{1,2})\s*撥款$", clean)
+    if m:
+        return {"type": "disbursed", "name": m.group(1),
+                "company": "", "date": m.group(2)}
+
+    # 撥款指定公司（日期在後）：@AI 姓名 公司 撥款 M/D
+    m = re.match(r"^([\u4e00-\u9fff]{2,6})\s+(.+?)\s*撥款\s*(\d{1,2}/\d{1,2})?$", clean)
+    if m:
+        return {"type": "disbursed", "name": m.group(1),
+                "company": m.group(2).strip(), "date": m.group(3) or ""}
+
+    # 撥款（無公司、日期在後或省略）：@AI 姓名 撥款 M/D
+    # 要先於 missing_verb，否則 4/19 會被誤判為 4萬/19期
     m = re.match(r"^([\u4e00-\u9fff]{2,6})\s*撥款\s*(\d{1,2}/\d{1,2})?$", clean)
     if m:
-        return {"type": "disbursed", "name": m.group(1), "date": m.group(2) or ""}
+        return {"type": "disbursed", "name": m.group(1),
+                "company": "", "date": m.group(2) or ""}
 
     # 防錯：看起來像「姓名 公司 金額/期數」但缺動詞（轉/送/同送/核准）
-    # 例：「周馮鈺婷 喬美+房地 100萬/120期」→ 提示使用者加動詞
-    # 注意：company 不得為純動詞字（避免「姓名 撥款 4/19」被誤判）
-    m = re.match(r"^([\u4e00-\u9fff]{2,6})\s+(?!撥款|結案|婉拒|核准|重啟|歷史|還原|改名|改身分證|取消核准)([^\s@]+?)\s*(\d+(?:\.\d+)?)\s*萬?\s*[/／]\s*(\d+)\s*期?\s*$", clean)
+    # handler 內會判斷：動詞字、亂公司、合法公司 三種情境分別提示
+    m = re.match(r"^([\u4e00-\u9fff]{2,6})\s+([^\s@]+?)\s*(\d+(?:\.\d+)?)\s*萬?\s*[/／]\s*(\d+)\s*期?\s*$", clean)
     if m:
         return {"type": "missing_verb", "name": m.group(1), "companies_raw": m.group(2),
                 "amount": m.group(3), "period": m.group(4)}
@@ -3097,6 +3116,15 @@ def parse_special_command(text: str, group_id: str) -> Optional[Dict]:
     if m:
         return {"type": "bad_amount_format", "name": m.group(1), "verb": m.group(2),
                 "target": m.group(3), "n1": m.group(4), "n2": m.group(5)}
+
+    # 缺日期的送件順序：姓名-公司/公司/...（沒前綴日期）
+    # 例：「郭富城-第一/亞太機/21機/銀行」
+    m = re.match(r"^([\u4e00-\u9fff]{2,6})-([^\s]+)$", clean)
+    if m and "/" in m.group(2):
+        cos = [c.strip() for c in m.group(2).split("/") if c.strip()]
+        valid = _get_valid_company_names()
+        if any(COMPANY_ALIAS.get(c, c) in valid for c in cos):
+            return {"type": "missing_date_hint", "name": m.group(1), "tail": m.group(2)}
 
     # 防錯：訊息沒任何空白但含中文 + 數字/ → 可能是「姓名公司黏在一起」
     # 例：「周馮鈺婷喬美+房地100萬/120期」
@@ -3343,8 +3371,8 @@ def _validate_companies_or_warn(companies, reply_token, name):
     unknown = [c for c in companies if c not in valid]
     if unknown:
         reply_text(reply_token,
-                   f"⚠️ {name}：未知公司「{'、'.join(unknown)}」\n"
-                   f"常見合法名：亞太、喬美、第一、房地、21、裕融、和裕、麻吉、貸救補、鄉民、銀行、零卡、商品貸、代書、當舖")
+                   f"⚠️ {name}：找不到公司「{'、'.join(unknown)}」\n"
+                   f"常見公司名：亞太、喬美、第一、房地、21、裕融、和裕、麻吉、貸救補、鄉民、銀行、零卡、商品貸、代書、當舖")
         return False
     return True
 
@@ -3569,72 +3597,82 @@ _HELP_SEND = """🔹 送件操作
   帶金額：@AI 王小明 送第一 30萬/24期
 
 【加送兩家】原本保留、再多加兩家一起送
-  打：@AI 王小明 送喬美+房地
-
-━━━━━━━━━━
-【核准後、其他家不送】
-  情境：王小明同送 [裕融/第一/亞太]、裕融核准，其他不送了
-  一家：@AI 王小明 第一 結案
-  多家：@AI 王小明 第一/亞太 結案
-  說明：只把那幾家從同送清單移除，核准那家 + 客戶狀態不動"""
+  打：@AI 王小明 送喬美+房地"""
 
 _HELP_APPROVAL = """🔹 審核結果
 
-【核准】自動移到待撥款
+【核准】某家核准了，系統自動移到日報「待撥款」區塊
   打：@AI 王小明 第一 核准 30萬
 
-【結案】整筆結案（客戶不送了）
+【結案】客戶整筆不送了（從日報拿掉）
   打：@AI 王小明 結案
   加原因：@AI 王小明 結案 已撥款
 
 【只結案不送那幾家（留下核准）】
-  情境：裕融核准，第一/亞太還在送、不送了
-  一家：@AI 王小明 第一 結案
-  多家：@AI 王小明 第一/亞太 結案
-  多家：@AI 王小明 第一+亞太 結案
-  說明：只把那幾家從同送清單移除
-       核准那家 + 客戶狀態不動、日報還在待撥款
+  情境：已經有一家核准，其他同送的不送了
+  一家不送：@AI 王小明 第一 結案
+  多家不送：@AI 王小明 第一/亞太 結案
+  多家不送：@AI 王小明 第一+亞太 結案
+  說明：只把那幾家從同送清單拿掉
+       核准那家 + 客戶本身不動，日報還在待撥款
 
 【婉拒】
-  推下一家：@AI 王小明 婉拒
-  跳指定家：@AI 王小明 婉拒轉亞太
-  指定哪家：@AI 王小明 裕融 婉拒 轉亞太
+  當前那家被婉拒、自動推下一家：
+    @AI 王小明 婉拒
+  當前那家被婉拒、跳到指定那家：
+    @AI 王小明 婉拒轉亞太
+  同送多家、指定某家被婉拒+跳指定家：
+    @AI 王小明 裕融 婉拒 轉亞太
 
 【撥款】
-  打：@AI 王小明 撥款 4/18
+  有日期：@AI 王小明 裕融 撥款 4/18
+  沒日期（= 今天）：@AI 王小明 裕融 撥款
+  補充：只有一家核准時公司可以省略
+       日期放前後都可以
+       多家核准一定要指定哪家
 
-【取消核准】
+【取消核准】核准打錯、要作廢那筆核准
   打：@AI 王小明 第一 取消核准
+  說明：把那家從待撥款拿掉、核准金額清空
 
-【違約金結案】
-  打：@AI 王小明 違約金已支付3000"""
+【違約金結案】核准後客戶放棄，收到違約金
+  打：@AI 王小明 違約金已支付30000
+  說明：狀態記成「違約金結案」，日報會把這筆移出待撥款"""
 
 _HELP_UNDO = """🔹 做錯救急
 
-【還原】回到前一步
-  打：@AI 王小明 還原 1
-
-【看歷史】最近 10 筆操作
+【看歷史】先看這個確認編號
   打：@AI 王小明 歷史
+  說明：列這客戶最近 10 筆動作、有編號
 
-【重啟】結案的要再送
-  打：@AI 王小明 重啟"""
+【還原】做錯了、回到上一步
+  第一次先打：@AI 王小明 還原 1
+  還不對再打：@AI 王小明 還原 2
+  說明：一次只能退一步，不能直接跳還原 3 或 4
+       還原 1 後如果不夠，再打還原 2 繼續退
+
+【重啟】結案客戶要再送件
+  打：@AI 王小明 重啟
+  說明：客戶狀態從結案改回進行中，回到日報"""
 
 _HELP_TOOLS = """🔹 其他小工具
 
 【查詢類】
   查這客戶：@AI 查 王小明
   產日報：@AI 日報
-  看統計：@AI 統計（今日/本月 進件、核准、結案數）
+  看統計：@AI 統計
+    備註：今日/本月 進件、核准、結案數
+  待撥款名單：@AI 待撥款
   查群組ID：@AI 群組ID
 
 【修改類】
   改名：@AI 舊名 改名 新名
   改身分證：@AI 王小明 改身分證 A123456789
 
-【送件小工具】
-  推送下一家：@AI 王小明 轉下一家
-  （原本有設 A/B/C 送件順序 → 自動跳下一家）
+【送件小工具】推下一家
+  打：@AI 王小明 轉下一家
+  情境：送件順序已經設好（如 [裕融/第一/亞太]）
+       當前那家不送了、自動跳到下一家
 
 【批次操作】
   批次結案：
@@ -4004,12 +4042,12 @@ def _validate_amount_or_warn(amount_str: str, reply_token, name: str, label: str
         return True
     amt = float(m.group(1))
     if amt <= 0:
-        reply_text(reply_token, f"❌ {name}：{label} {amount_str} 不合理（= 0 或負數），已阻擋")
+        reply_text(reply_token, f"❌ {name}：{label} 不能 = 0 或負數（你打的：{amount_str}），已阻擋")
         return False
     if amt > 1000:
         reply_text(reply_token,
-                   f"⚠️ {name}：{label} {amount_str} 超過 1000 萬\n"
-                   f"如確認無誤，請打「@AI {name} {label} {amount_str} 確認」")
+                   f"⚠️ {name}：{label} 超過 1000 萬（你打的：{amount_str}）\n"
+                   f"如果真的是這個數字，請打：@AI {name} {label} {amount_str} 確認")
         return False
     return True
 
@@ -4080,7 +4118,7 @@ def handle_special_command(cmd: Dict, reply_token: str, group_id: str):
     except Exception as e:
         import traceback
         traceback.print_exc()
-        reply_text(reply_token, f"❌ 指令執行失敗：{type(e).__name__}: {e}")
+        reply_text(reply_token, f"❌ 系統處理失敗，請截圖給管理員\n錯誤代碼：{type(e).__name__}")
 
 
 def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
@@ -4100,7 +4138,7 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
         except Exception as e:
             import traceback
             traceback.print_exc()
-            reply_text(reply_token, f"❌ 日報產生失敗：{type(e).__name__}: {e}")
+            reply_text(reply_token, f"❌ 日報產生失敗，請截圖給管理員\n錯誤代碼：{type(e).__name__}")
         return
 
     if t == "search":
@@ -4270,9 +4308,9 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
         name = cmd["name"]
         raw = cmd["raw_id"]
         reply_text(reply_token,
-                   f"⚠️ {name}：身分證「{raw}」格式錯誤\n"
-                   f"應為「1 英文字母 + 1 英數 + 8 位數字」共 10 位\n"
-                   f"例：「@AI {name} 改身分證 A123456789」")
+                   f"⚠️ 身分證「{raw}」格式不對\n"
+                   f"要這樣打：A123456789（1 個英文字母 + 9 個數字 = 共 10 位）\n"
+                   f"例：@AI {name} 改身分證 A123456789")
         return
 
     if t == "change_id":
@@ -4294,12 +4332,41 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
 
     if t == "disbursed":
         name = cmd["name"]
+        co_raw = cmd.get("company", "")
         disb_date = cmd["date"] or datetime.now().strftime("%-m/%-d") if os.name != "nt" else cmd["date"] or datetime.now().strftime("%#m/%#d")
         target = _resolve_target_strict(cmd, name, group_id, reply_token, "撥款")
         if not target:
             return
         if not _check_active_or_warn(target, reply_token, "撥款", name):
             return
+        # 查所有核准家
+        all_approved = get_all_approved(target["route_plan"] or "")
+        approved_cos = [a.get("company", "") for a in all_approved if a.get("company")]
+        # 判斷撥哪家
+        if co_raw:
+            # 有指定公司
+            co = COMPANY_ALIAS.get(co_raw, co_raw)
+            if not _validate_companies_or_warn([co], reply_token, name):
+                return
+            if co not in approved_cos:
+                lst = "、".join([f'{a.get("company","")} {a.get("amount","")}' for a in all_approved]) or "無"
+                reply_text(reply_token,
+                           f"⚠️ {name} 的 {co} 沒核准、不能撥款\n"
+                           f"已核准：{lst}")
+                return
+            company = co
+        else:
+            # 沒指定公司
+            if not approved_cos:
+                reply_text(reply_token, f"⚠️ {name} 還沒核准、不能撥款")
+                return
+            if len(approved_cos) > 1:
+                lst = "、".join([f'{a.get("company","")} {a.get("amount","")}' for a in all_approved])
+                reply_text(reply_token,
+                           f"⚠️ {name} 有多家核准（{lst}），要撥哪家？\n"
+                           f"請打：@AI {name} [公司] 撥款 {disb_date}")
+                return
+            company = approved_cos[0]
         # 撥款日期合理性檢查（未來日期/早於建案日期）
         disb_warnings = []
         try:
@@ -4309,10 +4376,8 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
                 month, day = int(dm.group(1)), int(dm.group(2))
                 try:
                     disb_dt = datetime(now.year, month, day)
-                    # 未來 > 30 天 → 警告
                     if (disb_dt - now).days > 30:
                         disb_warnings.append(f"撥款日 {disb_date} 超過 30 天後，是否打錯月份？")
-                    # 早於建案日
                     if target["created_at"]:
                         try:
                             created_dt = datetime.fromisoformat(str(target["created_at"])[:19])
@@ -4325,7 +4390,6 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
         except Exception:
             pass
         # 更新撥款日期到 route_plan history 和 disbursement_date
-        company = target["current_company"] or target["company"] or ""
         new_route = set_disbursed_in_history(target["route_plan"] or "", company, disb_date)
         update_customer(target["case_id"], disbursement_date=disb_date,
                         route_plan=new_route, report_section="待撥款",
@@ -4333,7 +4397,7 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
                         signing_company="", signing_time="", signing_location="",
                         text=f"{name} {company} 撥款{disb_date}",
                         from_group_id=group_id)
-        msg = f"✅ {name} 已更新撥款日期：{disb_date}"
+        msg = f"✅ {name} {company} 已撥款：{disb_date}"
         if disb_warnings:
             msg += "\n⚠️ " + "；".join(disb_warnings)
         reply_text(reply_token, msg)
@@ -4421,7 +4485,7 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
         name = cmd["name"]
         idx = int(cmd.get("index", 1) or 1)
         if idx < 1:
-            reply_text(reply_token, "❌ 編號須 ≥ 1"); return
+            reply_text(reply_token, "❌ 編號要 1 以上\n例：@AI 王小明 還原 1（回到最近一次動作之前）"); return
         target = _resolve_target_strict(cmd, name, group_id, reply_token, "還原")
         if not target:
             return
@@ -4440,12 +4504,13 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
         snapshot_json = target_log["snapshot_json"]
         if not snapshot_json:
             reply_text(reply_token,
-                       f"❌ 第 {idx} 筆無快照資料（舊紀錄可能沒存，只有本次版本新增後的紀錄才能還原）")
+                       f"❌ 第 {idx} 筆沒有備份資料\n"
+                       f"（舊紀錄沒存備份，只有近期動作才能還原）")
             return
         try:
             snapshot = json.loads(snapshot_json)
         except Exception:
-            reply_text(reply_token, "❌ 快照資料損毀，無法還原")
+            reply_text(reply_token, "❌ 備份資料損毀，無法還原")
             return
         # 套回快照欄位
         ok_v, diffs, cust_name = update_with_verify(
@@ -4540,13 +4605,23 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
         reply_text(reply_token, f"✅ {name} {company} 核准金額已更新為 {amount}，已移到待撥款")
         return
 
+    if t == "missing_date_hint":
+        name = cmd["name"]
+        tail = cmd["tail"]
+        today = datetime.now().strftime("%#m/%#d") if os.name == "nt" else datetime.now().strftime("%-m/%-d")
+        reply_text(reply_token,
+                   f"⚠️ 你是不是忘了日期？\n"
+                   f"送件順序不用 @AI，格式是：M/D-姓名-公司/公司/...\n"
+                   f"直接貼這段就好：\n"
+                   f"  {today}-{name}-{tail}")
+        return
+
     if t == "no_space_hint":
         raw = cmd["raw"]
         reply_text(reply_token,
-                   f"⚠️ 指令看起來沒有用空白分隔，請用空白隔開各部分：\n"
-                   f"  原本：「{raw}」\n"
-                   f"  建議：「姓名 動詞 公司 金額/期數」（各段用空白分開）\n"
-                   f"  例：「周馮鈺婷 轉喬美+房地 100萬/120期」")
+                   f"⚠️ 打太黏看不懂，請加空白分開：\n"
+                   f"  你打的：{raw}\n"
+                   f"  要這樣：王小明 轉喬美 100萬/24期")
         return
 
     if t == "bad_amount_format":
@@ -4556,9 +4631,9 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
         n1 = cmd["n1"]
         n2 = cmd["n2"]
         reply_text(reply_token,
-                   f"⚠️ 金額格式錯誤，請用「/」分隔金額和期數：\n"
-                   f"  正確：「{name} {verb}{target} {n1}萬/{n2}期」\n"
-                   f"  錯誤：「{name} {verb}{target} {n1} {n2}」（缺少 /）")
+                   f"⚠️ 金額和期數中間要加「/」\n"
+                   f"  要這樣：{name} {verb}{target} {n1}萬/{n2}期\n"
+                   f"  你打的：{name} {verb}{target} {n1} {n2}")
         return
 
     if t == "missing_verb":
@@ -4566,8 +4641,26 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
         companies_raw = cmd.get("companies_raw", "")
         amount = cmd.get("amount", "")
         period = cmd.get("period", "")
-        # 先拆公司名驗證
         cos_list = [c.strip() for c in re.split(r"[/+＋,，]", companies_raw) if c.strip()]
+        # 情況 1：第一個字是動詞（例：王小明 撥款 100萬/24期）
+        VERB_HINT = {
+            "撥款": f"@AI {name} 撥款 4/19  ← M/D 日期",
+            "結案": f"@AI {name} 結案",
+            "婉拒": f"@AI {name} 婉拒",
+            "核准": f"@AI {name} 第一 核准 30萬  ← 先打公司再打金額",
+            "重啟": f"@AI {name} 重啟",
+            "歷史": f"@AI {name} 歷史",
+            "還原": f"@AI {name} 還原 1",
+            "改名": f"@AI {name} 改名 新名字",
+            "取消核准": f"@AI {name} 第一 取消核准",
+        }
+        if cos_list and cos_list[0] in VERB_HINT:
+            verb = cos_list[0]
+            reply_text(reply_token,
+                       f"⚠️ 「{verb}」不是公司名、是動作\n"
+                       f"你要的是：{VERB_HINT[verb]}")
+            return
+        # 情況 2：公司名不合法
         cos_canon = [COMPANY_ALIAS.get(c, c) for c in cos_list]
         valid = _get_valid_company_names()
         unknown = [c for c in cos_canon if c not in valid]
@@ -4577,12 +4670,12 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
                        f"是不是打錯 / 漏寫公司名？\n"
                        f"常見：亞太、喬美、第一、房地、21、裕融、和裕、麻吉、貸救補、鄉民、銀行、零卡、商品貸、代書、當舖")
             return
-        # 公司名都合法 → 提示缺動詞
+        # 情況 3：公司名都合法 → 缺動詞
         reply_text(reply_token,
-                   f"⚠️ 「{name} {companies_raw} {amount}萬/{period}期」缺少動詞，請指明要做什麼：\n"
-                   f"  • 轉：砍掉原 route 改送新的 → 「{name} 轉{companies_raw} {amount}萬/{period}期」\n"
-                   f"  • 送：原 route 保留加送 → 「{name} 送{companies_raw}」\n"
-                   f"  • 核准：已核准金額 → 「{name} {companies_raw} 核准 {amount}萬」")
+                   f"⚠️ 你沒說要做什麼，請加動詞：\n"
+                   f"  • 原本在送的不送了、改送這家 → {name} 轉{companies_raw} {amount}萬/{period}期\n"
+                   f"  • 原本那家保留、再加一家 → {name} 送{companies_raw} {amount}萬/{period}期\n"
+                   f"  • 這家已核准 → {name} {companies_raw} 核准 {amount}萬")
         return
 
     if t == "close":
@@ -4679,7 +4772,7 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
         if next_co:
             reply_text(reply_token, f"✅ {name} {current} 婉拒\n➡️ 下一家：{next_co}")
         else:
-            reply_text(reply_token, f"✅ {name} {current} 婉拒\n⚠️ 已無下一家送件方案")
+            reply_text(reply_token, f"✅ {name} {current} 婉拒\n⚠️ 已經是最後一家，沒有下一家可推")
         return
 
     if t == "reject_to":
@@ -4971,7 +5064,7 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
         else:
             next_co = get_next_company(route)
             if not next_co:
-                reply_text(reply_token, f"⚠️ {name} 已無下一家送件方案"); return
+                reply_text(reply_token, f"⚠️ {name} 沒設下一家要送的公司\n若要設送件順序：04/18-{name}-裕融/第一/亞太（不用 @AI）"); return
             new_route = advance_route(route, "轉送")
             update_customer(target["case_id"], route_plan=new_route, current_company=next_co,
                             text=f"{name} 轉下一家→{next_co}", from_group_id=group_id)
@@ -5762,7 +5855,12 @@ def handle_disbursement_list(text: str, reply_token: str):
     """
     parsed = parse_disbursement_list(text)
     if not parsed:
-        reply_text(reply_token, "⚠️ 無法解析撥款名單格式")
+        reply_text(reply_token,
+                   "⚠️ 撥款名單格式看不懂\n"
+                   "範本：\n"
+                   "  04/18 裕融 撥款名單\n"
+                   "  王小明\n"
+                   "  陳某某")
         return
 
     all_push_lines = []
@@ -6006,9 +6104,12 @@ def _handle_bc_case_block_locked(block_text, source_group_id, reply_token, sourc
     # 【B 方案】無 id_no 一律不建新客戶：找不到就警告，要求業務用「日期-姓名-身分證」格式
     # 避免打錯指令、姓名拼錯、格式亂 → 誤建怪客戶污染日報
     reply_text(reply_token,
-               f"⚠️ 找不到客戶「{name}」或指令格式錯誤\n"
-               f"可能原因：姓名打錯、客戶尚未建立、指令格式錯\n\n"
-               f"{_HELP_CARD}")
+               f"⚠️ 找不到客戶「{name}」\n"
+               f"可能原因：\n"
+               f"  • 姓名打錯（2-6 個中文字）\n"
+               f"  • 客戶還沒建立（建客戶格式：04/18-姓名 A123456789）\n"
+               f"  • 想操作結案客戶 → 先打「@AI {name} 重啟」\n"
+               f"不知道怎麼打：@AI 說明")
     return None
 
 
@@ -6029,7 +6130,7 @@ def process_event(event: dict):
         traceback.print_exc()
         reply_token = (event or {}).get("replyToken", "")
         if reply_token:
-            reply_text(reply_token, f"❌ 系統處理失敗：{type(e).__name__}: {e}")
+            reply_text(reply_token, f"❌ 系統處理失敗，請截圖給管理員\n錯誤代碼：{type(e).__name__}")
 
 
 def _process_event_inner(event: dict):
@@ -9244,6 +9345,7 @@ td {{ background: #fff; }}
   <div style="font-size:13px;color:#c8bfb5;font-weight:600;">客戶資料表</div>
 </div>
 <table>
+<colgroup><col class="c-th"><col class="c-td"><col class="c-th"><col class="c-td"></colgroup>
 <tr class="sec"><td colspan="4">基本資料</td></tr>
 <tr><th>姓名</th><td>{v("customer_name")}</td><th>身分證</th><td>{v("id_no")}</td></tr>
 <tr><th>出生日期</th><td>{v("birth_date")}</td><th>行動電話</th><td>{v("phone")}</td></tr>
@@ -9271,6 +9373,7 @@ td {{ background: #fff; }}
 </table>
 <div style="page-break-before:always;margin-top:20px;"></div>
 <table>
+<colgroup><col class="c-th"><col class="c-td"><col class="c-th"><col class="c-td"></colgroup>
 <tr class="sec"><td colspan="4">貸款諮詢</td></tr>
 <tr><th>資金需求</th><td>{v("eval_fund_need")}</td><th>近三月送件</th><td>{v("eval_sent_3m")}</td></tr>
 <tr><th>當鋪私設</th><td>{v("eval_alert")}</td><th>勞保</th><td>{v("eval_labor_ins")}</td></tr>
@@ -9316,6 +9419,7 @@ def _build_customer_pdf_body(r: dict) -> str:
   <div style="font-size:13px;color:#c8bfb5;font-weight:600;">客戶資料表</div>
 </div>
 <table>
+<colgroup><col class="c-th"><col class="c-td"><col class="c-th"><col class="c-td"></colgroup>
 <tr class="sec"><td colspan="4">基本資料</td></tr>
 <tr><th>姓名</th><td>{v("customer_name")}</td><th>身分證</th><td>{v("id_no")}</td></tr>
 <tr><th>出生日期</th><td>{v("birth_date")}</td><th>行動電話</th><td>{v("phone")}</td></tr>
@@ -9343,6 +9447,7 @@ def _build_customer_pdf_body(r: dict) -> str:
 </table>
 <div style="page-break-before:always;margin-top:20px;"></div>
 <table>
+<colgroup><col class="c-th"><col class="c-td"><col class="c-th"><col class="c-td"></colgroup>
 <tr class="sec"><td colspan="4">貸款諮詢</td></tr>
 <tr><th>資金需求</th><td>{v("eval_fund_need")}</td><th>近三月送件</th><td>{v("eval_sent_3m")}</td></tr>
 <tr><th>當鋪私設</th><td>{v("eval_alert")}</td><th>勞保</th><td>{v("eval_labor_ins")}</td></tr>
@@ -9359,18 +9464,20 @@ def _build_customer_pdf_body(r: dict) -> str:
 _PDF_STYLE = """<style>
 @media print { @page { size: A4 portrait; margin: 10mm 12mm; } .no-print { display: none !important; } }
 * { box-sizing: border-box; margin: 0; padding: 0; }
-html, body { width: 210mm; }
-body { font-family: 'Microsoft JhengHei', 'PingFang TC', sans-serif; background: #eee; color: #1a1a1a; font-size: 14px; margin: 0 auto; -webkit-font-smoothing: antialiased; }
-#pdf-content { width: 210mm; min-height: 297mm; padding: 10mm 12mm; margin: 20px auto 0; background: #fff; }
-@media print { html, body { width: auto; } body { background: #fff; } #pdf-content { margin: 0; padding: 0; width: auto; min-height: auto; } }
+body { font-family: 'Microsoft JhengHei', 'PingFang TC', sans-serif; background: #eee; color: #1a1a1a; font-size: 14px; -webkit-font-smoothing: antialiased; }
+#pdf-wrap { display: flex; justify-content: center; padding: 20px 0 0; }
+#pdf-content { width: 210mm; min-height: 297mm; padding: 10mm 12mm; background: #fff; box-sizing: border-box; }
+@media print { body { background: #fff; } #pdf-wrap { padding: 0; display: block; } #pdf-content { padding: 0; width: auto; min-height: auto; } }
 .header { background: #3a3530; color: #fff; padding: 10px 16px; border-radius: 6px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; }
 .header-name { font-size: 18px; font-weight: 700; line-height: 1.3; }
 .header-sub { font-size: 11px; color: #c8bfb5; margin-top: 2px; line-height: 1.3; }
 table { width: 100%; border-collapse: collapse; margin-bottom: 10px; table-layout: fixed; }
-th, td { border: 1px solid #bbb; padding: 6px 9px; font-size: 14px !important; line-height: 1.4; vertical-align: middle; word-break: break-all; }
-th { background: #f0ebe4; color: #3a3020; font-weight: 700; width: 14%; white-space: nowrap; text-align: left; }
-td { background: #fff; width: 36%; }
-.sec td { background: #3a3530 !important; color: #fff !important; font-size: 11px !important; font-weight: 700; padding: 4px 8px; width: auto; }
+col.c-th { width: 15%; }
+col.c-td { width: 35%; }
+th, td { border: 1px solid #bbb; padding: 6px 9px; font-size: 14px; line-height: 1.4; vertical-align: middle; word-break: break-all; }
+th { background: #f0ebe4; color: #3a3020; font-weight: 700; white-space: nowrap; text-align: left; }
+td { background: #fff; }
+.sec td { background: #3a3530; color: #fff; font-size: 11px; font-weight: 700; padding: 4px 8px; }
 </style>"""
 
 
@@ -9416,8 +9523,10 @@ def customer_pdf_batch(request: Request, ids: str = ""):
   <button id="pdf-btn" onclick="downloadPDF()" style="background:#4e7055;color:#fff;border:none;padding:10px 28px;border-radius:6px;font-size:14px;cursor:pointer;font-weight:600;">下載 PDF（共 {len(ordered)} 筆）</button>
   <button onclick="window.close()" style="background:#6a5e4e;color:#fff;border:none;padding:10px 28px;border-radius:6px;font-size:14px;cursor:pointer;font-weight:600;margin-left:8px;">關閉</button>
 </div>
+<div id="pdf-wrap">
 <div id="pdf-content">
 {body_html}
+</div>
 </div>
 <script>
 function downloadPDF() {{
