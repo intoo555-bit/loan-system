@@ -3828,8 +3828,6 @@ h1 { font-size: 22px; color: #4e7055; margin-bottom: 6px; }
                       color: #8a7a68; margin-bottom: 6px; font-family: -apple-system, sans-serif; }
 .copy-block.copied::before { content: "✓ 已複製"; color: #166534; font-weight: bold; }
 
-.screenshot { background: #fef9c3; border: 2px dashed #d4c9b8; border-radius: 8px;
-              padding: 20px; text-align: center; color: #854d0e; font-size: 12px; margin: 14px 0 0; }
 
 .section.hidden { display: none; }
 .back-link { color: #4e7055; text-decoration: none; font-size: 13px; }
@@ -3961,7 +3959,6 @@ def _render_guide_html() -> str:
             f'<section id="{sid}" class="section">\n'
             f'  <h2>{title}</h2>\n'
             f'  <pre class="help-raw">{_process_help_to_html(body)}</pre>\n'
-            f'  <div class="screenshot">📸 截圖範例：[待補]</div>\n'
             f'</section>'
         )
     return _GUIDE_SHELL.replace("__SECTIONS__", "\n".join(parts))
@@ -9545,7 +9542,20 @@ function downloadPDF() {{
     margin: 0,
     filename: {json.dumps(pdf_filename, ensure_ascii=False)},
     image: {{ type: 'jpeg', quality: 0.95 }},
-    html2canvas: {{ scale: 2, useCORS: true, letterRendering: true, backgroundColor: '#ffffff', windowWidth: 794, scrollX: 0, scrollY: 0 }},
+    html2canvas: {{
+      scale: 2, useCORS: true, letterRendering: true, backgroundColor: '#ffffff',
+      windowWidth: 794, scrollX: 0, scrollY: 0,
+      onclone: function(doc) {{
+        // 擷取前把元素重置到左上角 (0,0)，避免父層 flex/margin 造成偏移
+        var wrap = doc.getElementById('pdf-wrap');
+        if (wrap) {{ wrap.style.display = 'block'; wrap.style.padding = '0'; wrap.style.margin = '0'; }}
+        var el = doc.getElementById('pdf-content');
+        if (el) {{ el.style.margin = '0'; el.style.position = 'static'; el.style.left = '0'; }}
+        doc.body.style.padding = '0';
+        doc.body.style.margin = '0';
+        doc.body.style.background = '#fff';
+      }}
+    }},
     jsPDF: {{ unit: 'mm', format: 'a4', orientation: 'portrait' }},
     pagebreak: {{ mode: ['css', 'legacy'] }}
   }};
