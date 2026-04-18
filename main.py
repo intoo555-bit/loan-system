@@ -9260,7 +9260,7 @@ td {{ background: #fff; }}
 <tr class="sec"><td colspan="4">職業資料</td></tr>
 <tr><th>公司名稱</th><td colspan="3">{v("company_name_detail")}</td></tr>
 <tr><th>公司電話</th><td>{v("company_phone_area")}-{v("company_phone_num")}</td><th>職稱</th><td>{v("company_role")}</td></tr>
-<tr><th>年資</th><td>{v("company_years")}年</td><th>月薪</th><td>{v("company_salary")}萬</td></tr>
+<tr><th>年資</th><td>{v("company_years")}年{v("company_months")}月</td><th>月薪</th><td>{v("company_salary")}萬</td></tr>
 <tr><th>公司地址</th><td colspan="3">{company_addr}</td></tr>
 <tr><th>行業</th><td colspan="3">{v("company_industry")}</td></tr>
 <tr class="sec"><td colspan="4">聯絡人</td></tr>
@@ -9332,7 +9332,7 @@ def _build_customer_pdf_body(r: dict) -> str:
 <tr class="sec"><td colspan="4">職業資料</td></tr>
 <tr><th>公司名稱</th><td colspan="3">{v("company_name_detail")}</td></tr>
 <tr><th>公司電話</th><td>{v("company_phone_area")}-{v("company_phone_num")}</td><th>職稱</th><td>{v("company_role")}</td></tr>
-<tr><th>年資</th><td>{v("company_years")}年</td><th>月薪</th><td>{v("company_salary")}萬</td></tr>
+<tr><th>年資</th><td>{v("company_years")}年{v("company_months")}月</td><th>月薪</th><td>{v("company_salary")}萬</td></tr>
 <tr><th>公司地址</th><td colspan="3">{company_addr}</td></tr>
 <tr><th>行業</th><td colspan="3">{v("company_industry")}</td></tr>
 <tr class="sec"><td colspan="4">聯絡人</td></tr>
