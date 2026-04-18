@@ -4425,7 +4425,13 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
             (group_id,))
         target = cur.fetchone(); conn.close()
         if not target:
-            reply_text(reply_token, "❌ 找不到待對保客戶（請先用「辦理方案/客戶姓名/對保地區」派對保）"); return
+            reply_text(reply_token,
+                       "❌ 找不到待對保客戶\n"
+                       "請先派對保（範本）：\n"
+                       "  辦理方案：裕融\n"
+                       "  核准金額：50萬\n"
+                       "  客戶姓名：王小明\n"
+                       "  對保地區：台北"); return
         update_customer(target["case_id"],
                         signing_salesperson=cmd["salesperson"],
                         signing_company=cmd["signing_company"],
@@ -4934,7 +4940,7 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
                 notify_amount = amt
                 notify_period = per
         if not new_companies_raw:
-            reply_text(reply_token, f"❌ 未辨識公司名：{company_raw}"); return
+            reply_text(reply_token, f"❌ 找不到公司名：{company_raw}\n常見：亞太、喬美、第一、房地、裕融、和裕、麻吉、21..."); return
         if not _validate_companies_or_warn(new_companies_raw, reply_token, name):
             return
         current_co = target["current_company"] or ""
@@ -5586,7 +5592,7 @@ def handle_command_text(text: str, reply_token: str) -> bool:
         new_sg = p.get("source_group_id", "")
         block_text = p.get("block_text", "")
         if not new_name or not new_sg:
-            reply_text(reply_token, "⚠️ 缺姓名或群組資訊，無法建立")
+            reply_text(reply_token, "⚠️ 資料不完整，無法建立（請聯絡管理員）")
             delete_pending_action(action_id); return True
         # 建客戶 + 設 report_section 讓日報看得到（民間方案直接對應區塊，其他進「送件」）
         private_keywords = ["銀行", "零卡", "商品貸", "代書", "當舖", "鄉民", "房地", "新鑫"]
@@ -9461,10 +9467,10 @@ def _build_customer_pdf_body(r: dict) -> str:
 _PDF_STYLE = """<style>
 @media print { @page { size: A4 portrait; margin: 10mm 12mm; } .no-print { display: none !important; } }
 * { box-sizing: border-box; margin: 0; padding: 0; }
-body { font-family: 'Microsoft JhengHei', 'PingFang TC', sans-serif; background: #eee; color: #1a1a1a; font-size: 14px; -webkit-font-smoothing: antialiased; }
-#pdf-wrap { display: flex; justify-content: center; padding: 20px 0 0; }
-#pdf-content { width: 210mm; min-height: 297mm; padding: 10mm 12mm; background: #fff; box-sizing: border-box; }
-@media print { body { background: #fff; } #pdf-wrap { padding: 0; display: block; } #pdf-content { padding: 0; width: auto; min-height: auto; } }
+body { font-family: 'Microsoft JhengHei', 'PingFang TC', sans-serif; background: #eee; color: #1a1a1a; font-size: 14px; -webkit-font-smoothing: antialiased; margin: 0; padding: 0; }
+#pdf-wrap { padding: 20px 0 0 0; }
+#pdf-content { width: 210mm; min-height: 297mm; padding: 10mm 12mm; background: #fff; box-sizing: border-box; margin: 0 auto; }
+@media print { body { background: #fff; } #pdf-wrap { padding: 0; } #pdf-content { padding: 0; width: auto; min-height: auto; margin: 0; } }
 .header { background: #3a3530; color: #fff; padding: 10px 16px; border-radius: 6px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; }
 .header-name { font-size: 18px; font-weight: 700; line-height: 1.3; }
 .header-sub { font-size: 11px; color: #c8bfb5; margin-top: 2px; line-height: 1.3; }
