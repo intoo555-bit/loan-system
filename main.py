@@ -5424,6 +5424,17 @@ def _handle_bc_case_block_locked(block_text, source_group_id, reply_token, sourc
     if other_closed:
         send_transfer_case_buttons(reply_token, other_closed[0], source_group_id, block_text, allow_new=True)
         return "QUICK_REPLY_SENT"
+    # 防錯：@AI 觸發但找不到客戶且無身分證，訊息含指令關鍵字 → 可能打錯指令，不建新客戶
+    if has_ai_trigger(raw_for_trigger):
+        cmd_keywords = ["核准", "核準", "轉", "送", "改身分證", "改身份證", "改名",
+                        "結案", "婉拒", "撥款", "補件", "補照會", "照會", "還原",
+                        "歷史", "重啟", "待核准", "待核準", "取消核准", "加送"]
+        if any(kw in block_text for kw in cmd_keywords):
+            reply_text(reply_token,
+                       f"⚠️ 無法辨識指令，且「{name}」在本群組找不到\n"
+                       f"可能原因：指令格式錯、姓名打錯、客戶不存在\n"
+                       f"請檢查後重打；若要新建客戶請用「日期-姓名-身分證」格式")
+            return None
     create_customer_record(name, "", company, source_group_id, block_text)
     msg = f"🆕 已建立客戶：{name}"
     return msg
