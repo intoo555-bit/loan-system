@@ -1760,6 +1760,25 @@ def push_text_with_buttons(to_group_id: str, text: str, items):
         return False, str(e)
 
 
+def reply_text_multi(reply_token: str, texts):
+    """一次 reply 送多則訊息（LINE reply API 支援最多 5 則、不算 push 配額）"""
+    if not CHANNEL_ACCESS_TOKEN or reply_token == "TEST":
+        return
+    texts = [t for t in (texts or []) if t]
+    if not texts:
+        return
+    messages = [{"type": "text", "text": t[:4900]} for t in texts[:5]]
+    try:
+        req_lib.post(
+            "https://api.line.me/v2/bot/message/reply",
+            headers={"Authorization": f"Bearer {CHANNEL_ACCESS_TOKEN}", "Content-Type": "application/json"},
+            json={"replyToken": reply_token, "messages": messages},
+            timeout=10,
+        )
+    except Exception:
+        pass
+
+
 def reply_quick_reply(reply_token: str, text: str, items):
     if not CHANNEL_ACCESS_TOKEN or reply_token == "TEST":
         return
@@ -4296,8 +4315,9 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
     if t == "report":
         try:
             segs = generate_report_lines(group_id)
-            reply_text(reply_token, segs[0])
-            for seg in segs[1:]:
+            # 用 reply 一次送多則（不消耗 push 配額），超過 5 則才 fallback push
+            reply_text_multi(reply_token, segs[:5])
+            for seg in segs[5:]:
                 push_text(group_id, seg)
         except Exception as e:
             import traceback
