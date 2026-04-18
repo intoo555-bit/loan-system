@@ -2525,6 +2525,13 @@ def extract_status_summary(first_line: str, customer_name: str) -> str:
         if has_need_contact and not has_done_contact:
             return "核准待照會"
         return "核准"
+    # 補時段（照會時段）：「補時段 11:00~12:00」或「補時段 11點~12點」
+    # 業務告知客戶能接到照會電話的時段
+    m_notif_time = re.search(r"補時段\s*(\d{1,2}(?:[:：]\d{1,2}|點)?\s*[~～\-至到]\s*\d{1,2}(?:[:：]\d{1,2}|點)?)", first_line)
+    if m_notif_time:
+        time_range = m_notif_time.group(1).replace("~", "~").replace("-", "~").replace("至", "~").replace("到", "~").replace("：", ":")
+        return f"照會時段 {time_range}"
+
     # 「待核准」下方判斷會處理具體缺項（補照會/補申覆/補件類）；若都沒命中，最後 fallback「待核准」
     # 等保書細分：根據訊息內其他關鍵字決定實際子狀態
     if "等保書" in first_line or "等保人" in first_line:
@@ -4745,7 +4752,19 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
                         report_section=new_section,
                         text=f"{name} {company} 取消核准", from_group_id=group_id)
         push_text(target["source_group_id"], f"{name} {company} 取消核准")
-        reply_text(reply_token, f"✅ {name} 已取消 {company} 核准" + ("，仍有其他核准保留" if still_approved else "，已從待撥款移除"))
+        base = f"✅ {name} 已取消 {company} 核准"
+        if still_approved:
+            base += "（仍有其他核准保留）"
+        else:
+            base += "（已從待撥款移除）"
+        reply_text(reply_token,
+                   f"{base}\n\n"
+                   f"⚠️ 但 {company} 還在這客戶的送件清單裡、日報還會顯示\n\n"
+                   f"接下來怎麼選：\n"
+                   f"  【情況 A】{company} 不送了\n"
+                   f"    打 → @AI {name} {company} 結案\n"
+                   f"  【情況 B】{company} 還要繼續送（例如要談新金額）\n"
+                   f"    不用動作、日報繼續顯示、等新核准")
         return
 
     if t == "update_amount":
@@ -4957,10 +4976,13 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
             new_current = ""
             new_concurrent = concurrent_list
             promoted_from_concurrent = ""
-        update_customer(target["case_id"], route_plan=new_route,
-                        current_company=new_current,
-                        concurrent_companies=",".join(new_concurrent),
-                        text=f"{name} {current} 婉拒", from_group_id=group_id)
+        update_kw = {"route_plan": new_route, "current_company": new_current,
+                     "concurrent_companies": ",".join(new_concurrent),
+                     "text": f"{name} {current} 婉拒", "from_group_id": group_id}
+        if not new_current:
+            # 已全數婉拒：清 company 避免日報 fallback 顯示被婉拒那家
+            update_kw["company"] = ""
+        update_customer(target["case_id"], **update_kw)
         # 回貼業務群
         push_msg = f"{name} {current} 婉拒"
         if new_current:
@@ -5078,10 +5100,12 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
                 new_current = ""
                 new_concurrent = concurrent_list
                 promoted = ""
-            update_customer(target["case_id"], route_plan=new_route,
-                            current_company=new_current,
-                            concurrent_companies=",".join(new_concurrent),
-                            text=f"{name} {current} 婉拒", from_group_id=group_id)
+            update_kw = {"route_plan": new_route, "current_company": new_current,
+                         "concurrent_companies": ",".join(new_concurrent),
+                         "text": f"{name} {current} 婉拒", "from_group_id": group_id}
+            if not new_current:
+                update_kw["company"] = ""  # 已全數婉拒：清 company 避免日報 fallback
+            update_customer(target["case_id"], **update_kw)
             if new_current:
                 push_text(target["source_group_id"], f"{name} {current} 婉拒\n➡️ 下一家：{new_current}")
                 extra = f"（從同送清單升上來）" if promoted else ""
@@ -5599,6 +5623,8 @@ def handle_a_case_block(block_text, reply_token) -> Optional[str]:
 
 
 def _handle_a_case_block_locked(block_text, reply_token, id_no, name, forced_case_id: str = "") -> Optional[str]:
+    # 異體字統一：核準→核准、身份證→身分證、全形→半形
+    block_text = normalize_command_text(block_text)
     customer = None
     # 從 SELECT_CASE 按鈕選擇而來：固定用選中的 case，跳過 find 邏輯
     if forced_case_id:
@@ -6384,6 +6410,33 @@ def handle_disbursement_list(text: str, reply_token: str):
     reply_text(reply_token, chr(10).join(msg_lines))
 
 
+def _check_ambiguous_supplement(block_text, target_row, name):
+    """含糊補件偵測：訊息是補件類 + 沒指公司 + 客戶同送多家 → 回提示文字。
+    否則回 None（放行給原流程處理）。
+    """
+    bu_markers = ["補申覆", "補照會", "補薪轉", "補聯徵", "補照片", "補保人",
+                  "補在職", "補存摺", "補勞保", "補駕照", "補行照",
+                  "補JCIC", "補jcic", "補件", "補資料"]
+    first_line = block_text.splitlines()[0] if block_text else ""
+    bu_type = next((m for m in bu_markers if m in first_line), "")
+    if not bu_type:
+        return None
+    # 訊息有指定公司 → 不觸發
+    mentioned = extract_company(first_line) or ""
+    if mentioned:
+        return None
+    # 計算在送家數
+    current_co = target_row["current_company"] or ""
+    concurrent_str = target_row["concurrent_companies"] or ""
+    concurrent_list = [c.strip() for c in concurrent_str.split(",") if c.strip()]
+    all_sending = ([current_co] if current_co else []) + concurrent_list
+    if len(all_sending) < 2:
+        return None
+    return (f"⚠️ {name} 同時送 {len(all_sending)} 家（{'、'.join(all_sending)}）\n"
+            f"「{bu_type}」請指明是哪一家：\n"
+            f"例：{name} {all_sending[0]} {bu_type}")
+
+
 def handle_bc_case_block(block_text, source_group_id, reply_token, source_text="") -> Optional[str]:
     if is_blocked(block_text):
         return "❌ 含禁止關鍵字，已略過"
@@ -6394,6 +6447,8 @@ def handle_bc_case_block(block_text, source_group_id, reply_token, source_text="
 
 
 def _handle_bc_case_block_locked(block_text, source_group_id, reply_token, source_text="") -> Optional[str]:
+    # 異體字統一：核準→核准、身份證→身分證、全形→半形
+    block_text = normalize_command_text(block_text)
     # 照會注意事項（等同已送件，提取欄位資料）
     if is_notification_briefing(block_text):
         result = handle_notification_briefing(block_text, source_group_id, reply_token)
@@ -6415,9 +6470,16 @@ def _handle_bc_case_block_locked(block_text, source_group_id, reply_token, sourc
             create_customer_record(name, "", company, source_group_id, block_text)
             return f"🆕 已建立客戶：{name}（{company} {status}）"
         route = target["route_plan"] or ""
+        # 婉拒：業務群不自動推下一家，加提示要業務確認
+        if status == "婉拒":
+            update_customer(target["case_id"], company=company, text=block_text,
+                            from_group_id=source_group_id)
+            return (f"⚠️ 已記錄 {name} {company}婉拒\n"
+                    f"你是業務（不是A群人員），婉拒是否確認？\n"
+                    f"要推到下一家請打：@AI {name} 婉拒")
+        # 核准：正常處理（移到待撥款）
         if amount:
             route = update_company_amount_in_history(route, company, amount)
-        # 核准 → 一律移到「待撥款」（房地/當鋪/C 等都一致）；婉拒 → 不動 report_section
         section = "待撥款" if status in ("核准", "核準") else None
         update_customer(target["case_id"], company=company, text=block_text,
                         from_group_id=source_group_id, route_plan=route,
@@ -6496,6 +6558,10 @@ def _handle_bc_case_block_locked(block_text, source_group_id, reply_token, sourc
                                                source_group_id, want_push_a)
             return "QUICK_REPLY_SENT"
         c = same_active[0]
+        # 含糊補件（補件訊息 + 沒指公司 + 多家在送）→ 提示業務指定公司
+        amb_hint = _check_ambiguous_supplement(block_text, c, name)
+        if amb_hint:
+            return amb_hint
         new_status = "CLOSED" if is_closed_text(block_text) else None
         update_customer(c["case_id"], company=company or c["company"] or "",
                         text=block_text, from_group_id=source_group_id, status=new_status)
@@ -6514,6 +6580,10 @@ def _handle_bc_case_block_locked(block_text, source_group_id, reply_token, sourc
                                                source_group_id, want_push_a)
             return "QUICK_REPLY_SENT"
         r = same_active[0]
+        # 含糊補件提示
+        amb_hint = _check_ambiguous_supplement(block_text, r, name)
+        if amb_hint:
+            return amb_hint
         update_customer(r["case_id"], company=company or r["company"] or "",
                         text=block_text, from_group_id=source_group_id)
         pushed = False
