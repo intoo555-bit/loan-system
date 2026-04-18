@@ -3098,10 +3098,14 @@ def parse_special_command(text: str, group_id: str) -> Optional[Dict]:
     if m:
         return {"type": "rename", "old_name": m.group(1), "new_name": m.group(2)}
 
-    # 改身分證：@AI 姓名 改身分證 新ID
-    m = re.match(r"^([\u4e00-\u9fff]{2,6})\s*改身分證\s*([A-Z][A-Z0-9]\d{8})$", clean, re.IGNORECASE)
+    # 改身分證：@AI 姓名 改身分證 新ID（尾巴可加備註）
+    m = re.match(r"^([\u4e00-\u9fff]{2,6})\s*改身分證\s*([A-Z][A-Z0-9]\d{8})(?:\s+.*)?$", clean, re.IGNORECASE)
     if m:
         return {"type": "change_id", "name": m.group(1), "new_id": m.group(2).upper()}
+    # 改身分證 + ID 格式錯（例如少一位、打錯字）→ 提示格式，不落到新客戶建立
+    m = re.match(r"^([\u4e00-\u9fff]{2,6})\s*改身分證\s*(.+)$", clean, re.IGNORECASE)
+    if m:
+        return {"type": "bad_id_format", "name": m.group(1), "raw_id": m.group(2).strip()}
 
     # 撥款：@AI 姓名 撥款（自動用今天日期）
     m = re.match(r"^([\u4e00-\u9fff]{2,6})\s*撥款\s*(\d{1,2}/\d{1,2})?$", clean)
@@ -3418,8 +3422,9 @@ def normalize_command_text(text: str) -> str:
     text = "".join(out)
     # 符號統一
     text = text.replace("／", "/").replace("＋", "+")
-    # 異體字統一（台灣業務可能打「核准/核準/核凖」）
+    # 異體字統一（台灣業務可能打「核准/核準/核凖、身份證/身分證」）
     text = text.replace("核準", "核准").replace("核凖", "核准")
+    text = text.replace("身份證", "身分證")
     # 多個空白/Tab → 單一空白
     text = re.sub(r"[ \t]+", " ", text).strip()
     return text
@@ -3829,6 +3834,15 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
                         text=f"{old_name} 改名為 {new_name}",
                         from_group_id=group_id)
         reply_text(reply_token, f"✅ 已將「{old_name}」改名為「{new_name}」")
+        return
+
+    if t == "bad_id_format":
+        name = cmd["name"]
+        raw = cmd["raw_id"]
+        reply_text(reply_token,
+                   f"⚠️ {name}：身分證「{raw}」格式錯誤\n"
+                   f"應為「1 英文字母 + 1 英數 + 8 位數字」共 10 位\n"
+                   f"例：「@AI {name} 改身分證 A123456789」")
         return
 
     if t == "change_id":

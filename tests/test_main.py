@@ -123,6 +123,34 @@ class TestNotifyAmount:
         assert cmd["company"] == ""
         assert cmd["amount"] == "100萬"
 
+    def test_bad_id_format_detected(self, tmp_db):
+        """『改身分證 XXX』格式錯（長度不對）→ bad_id_format，不誤判新案件"""
+        main, _ = tmp_db
+        cmd = main.parse_special_command("羅志祥 改身分證 Q12345678", "g1")
+        assert cmd["type"] == "bad_id_format"
+        assert cmd["name"] == "羅志祥"
+        assert cmd["raw_id"] == "Q12345678"
+
+    def test_change_id_valid(self, tmp_db):
+        """格式正確仍走 change_id"""
+        main, _ = tmp_db
+        cmd = main.parse_special_command("羅志祥 改身分證 Q123456789", "g1")
+        assert cmd["type"] == "change_id"
+
+    def test_change_id_shen_fen_fen(self, tmp_db):
+        """『身份證』異體字（正規化後應認得）"""
+        main, _ = tmp_db
+        cmd = main.parse_special_command("羅志祥 改身份證 Q123456789", "g1")
+        assert cmd["type"] == "change_id"
+        assert cmd["new_id"] == "Q123456789"
+
+    def test_change_id_with_note(self, tmp_db):
+        """指令後接備註也能正確 parse"""
+        main, _ = tmp_db
+        cmd = main.parse_special_command("羅志祥 改身分證 Q123456789 客戶新身分證", "g1")
+        assert cmd["type"] == "change_id"
+        assert cmd["new_id"] == "Q123456789"
+
     def test_missing_verb_detected(self, tmp_db):
         """『姓名 公司 金額/期數』缺動詞 → missing_verb（防錯提示）"""
         main, _ = tmp_db
