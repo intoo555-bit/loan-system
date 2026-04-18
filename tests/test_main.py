@@ -145,11 +145,15 @@ class TestNotifyAmount:
         assert cmd["new_id"] == "Q123456789"
 
     def test_help_command(self, tmp_db):
-        """『@AI 格式/指令/help』→ type=help 回速查卡"""
+        """『@AI 格式』或『@AI 說明』→ type=help 回速查卡"""
         main, _ = tmp_db
-        for clean in ["格式", "指令", "說明", "幫助", "help", "查 格式"]:
+        for clean in ["格式", "說明"]:
             cmd = main.parse_special_command(clean, "g1")
             assert cmd and cmd["type"] == "help", f"{clean!r} 沒命中 help"
+        # 其他寫法不認
+        for clean in ["指令", "help", "幫助"]:
+            cmd = main.parse_special_command(clean, "g1")
+            assert not cmd or cmd.get("type") != "help", f"{clean!r} 不該命中"
 
     def test_split_company_amount_basic(self, tmp_db):
         """_split_company_amount 支援多種格式"""

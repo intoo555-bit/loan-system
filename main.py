@@ -3032,9 +3032,8 @@ def parse_special_command(text: str, group_id: str) -> Optional[Dict]:
     if re.match(r"^日報$", clean):
         return {"type": "report"}
 
-    # 指令速查卡（多種口語寫法都認）
-    if clean in ["格式", "指令", "說明", "幫助", "help", "HELP"] or \
-       clean in ["查 格式", "查格式", "查 指令"]:
+    # 指令速查卡（只留兩個：@AI 格式 / @AI 說明）
+    if clean in ["格式", "說明"]:
         return {"type": "help"}
 
     # 查詢：支援所有格式
@@ -3539,7 +3538,7 @@ def _is_private_loan_company(co: str) -> bool:
     return normalize_section(co) in _PRIVATE_LOAN_SECTIONS
 
 
-_HELP_CARD = """📖 指令怎麼打（忘記打「@AI 格式」就跳出來）
+_HELP_CARD = """📖 指令怎麼打（忘記時打「@AI 格式」或「@AI 說明」就跳出來）
 
 ━━━━━━━━━━━━━
 🔹 送件
