@@ -320,6 +320,17 @@ class TestWaitingVsDone:
         assert main.extract_status_summary(text, "王某") == expected
 
     @pytest.mark.parametrize("text,expected", [
+        ("王陽明 第一 補照會", "待補照會"),
+        ("王陽明 第一 已補照會", "已補照會"),
+        ("王陽明 第一 照會完", "已補照會"),
+        ("王陽明 第一 接完照會", "已補照會"),
+    ])
+    def test_contact_call_status(self, tmp_db, text, expected):
+        """補照會 vs 已補照會的差別"""
+        main, _ = tmp_db
+        assert main.extract_status_summary(text, "王陽明") == expected
+
+    @pytest.mark.parametrize("text,expected", [
         ("王某 第一 核准", "核准"),
         ("王某 第一 核准 20萬", "核准"),
         ("王某 第一 核准 接照會", "核准待照會"),

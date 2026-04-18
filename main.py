@@ -2515,6 +2515,9 @@ def extract_status_summary(first_line: str, customer_name: str) -> str:
             return "保人補件"
         # 什麼特定關鍵字都沒 → 顯示「等保書」
         return "等保書"
+    # 已補照會 / 照會完 / 接完照會 → 已完成（先查，避免命中下面的「補照會」）
+    if "已補照會" in first_line or "照會完" in first_line or "接完照會" in first_line:
+        return "已補照會"
     if "補照會" in first_line:
         # 如果有時段（時間字或數字:數字）→ 顯示時段
         import re as _re
