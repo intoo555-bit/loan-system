@@ -8127,7 +8127,10 @@ def apply_adminb_rules(row: dict) -> dict:
     sal = str(row.get("company_salary","") or "0")
     try:
         sv = float(sal.replace("萬","").replace("元","").replace(",","").strip())
-        if "萬" in sal: sv *= 10000
+        # 小於 1000 的值當「萬」單位（new-customer 欄位 label 是「月薪（萬）」、
+        # 例：7.2 = 7.2萬 = 72000、3.5 = 3.5萬 = 35000）；有「萬」字也轉成元
+        if "萬" in sal or sv < 1000:
+            sv *= 10000
         if sv < 35000:
             result["salary_display"] = f"客戶填：{sal} → 填入：3.5萬"
             result["salary_val"] = "3.5"
@@ -11556,6 +11559,22 @@ def _do_download_excel(request: Request, case_id: str):
             # === 發證地（D11）用短碼 ===
             id_place_code = CITY_TO_CODE.get(id_place, id_place)
 
+            # === 住家/戶籍電話拆區碼+號碼（範本 D15/E15=住家、G15/H15=戶籍）===
+            def _split_phone(raw):
+                """037-123456 → ('037','123456')；09xx → ('0','09xxxxxxxx')；空 → ('','')"""
+                if not raw: return ("", "")
+                s = raw.strip()
+                if "-" in s:
+                    parts = s.split("-", 1)
+                    return (parts[0].strip(), parts[1].strip())
+                # 手機號碼直接放 number，區碼用「0」
+                if s.startswith("09"):
+                    return ("0", s)
+                return ("", s)
+            live_phone_raw = v("live_phone") if not live_same else v("reg_phone")
+            reg_phone_area, reg_phone_num = _split_phone(v("reg_phone"))
+            live_phone_area, live_phone_num = _split_phone(live_phone_raw)
+
             result = {
                 "B5": fund_val if fund_val else None,  # None = 不動
                 "B9": name, "D9": id_no, "F9": birth_ad,
@@ -11567,6 +11586,8 @@ def _do_download_excel(request: Request, case_id: str):
                 "D13": v("live_address") if not live_same else v("reg_address"),
                 "B14": live_status_val, "D14": live_years,
                 "B15": phone,
+                "D15": live_phone_area, "E15": live_phone_num,
+                "G15": reg_phone_area, "H15": reg_phone_num,
                 "B16": email,
                 "B17": company,
                 "B18": co_area, "C18": co_phone_num, "E18": v("company_phone_ext"),
