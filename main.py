@@ -2186,30 +2186,47 @@ def update_customer(case_id, company=None, text=None, from_group_id="", status=N
     UPDATE + INSERT case_logs 包在同一交易內，確保原子性。
     """
     now = now_iso()
-    fields, values = [], []
-    for col, val in [("company", company), ("last_update", text), ("status", status),
-                     ("customer_name", name), ("source_group_id", source_group_id),
-                     ("route_plan", route_plan), ("current_company", current_company),
-                     ("report_section", report_section),
-                     ("approved_amount", approved_amount),
-                     ("disbursement_date", disbursement_date),
-                     ("signing_area", signing_area),
-                     ("signing_salesperson", signing_salesperson),
-                     ("signing_company", signing_company),
-                     ("signing_time", signing_time),
-                     ("signing_location", signing_location),
-                     ("notify_amount", notify_amount),
-                     ("notify_period", notify_period),
-                     ("concurrent_companies", concurrent_companies),
-                     ("id_no", id_no)]:
-        if val is not None:
-            fields.append(f"{col} = ?"); values.append(val)
-    fields.append("updated_at = ?"); values.append(now); values.append(case_id)
     with db_conn(commit=True) as conn:
         cur = conn.cursor()
         # 先讀 before 快照（供還原用）— 只存關鍵欄位避免龐大
         cur.execute("SELECT * FROM customers WHERE case_id=?", (case_id,))
         before_row = cur.fetchone()
+        # 同送清單防呆：移除與 current_company 同公司的項目 + 按公司層級去重
+        # （避免「21機車25萬」同時出現在 current 和 concurrent、或同 concurrent 有重複 21）
+        if concurrent_companies is not None:
+            effective_current = current_company if current_company is not None else (before_row["current_company"] if before_row else "")
+            current_norm = normalize_section(effective_current) if effective_current else ""
+            raw_list = [c.strip() for c in (concurrent_companies or "").split(",") if c.strip()]
+            seen_norms = set()
+            dedup_list = []
+            for c in raw_list:
+                c_norm = normalize_section(c)
+                if current_norm and c_norm == current_norm:
+                    continue  # 跟 current 同公司 → 略過
+                if c_norm in seen_norms:
+                    continue  # 重複公司 → 略過
+                seen_norms.add(c_norm)
+                dedup_list.append(c)
+            concurrent_companies = ",".join(dedup_list)
+        fields, values = [], []
+        for col, val in [("company", company), ("last_update", text), ("status", status),
+                         ("customer_name", name), ("source_group_id", source_group_id),
+                         ("route_plan", route_plan), ("current_company", current_company),
+                         ("report_section", report_section),
+                         ("approved_amount", approved_amount),
+                         ("disbursement_date", disbursement_date),
+                         ("signing_area", signing_area),
+                         ("signing_salesperson", signing_salesperson),
+                         ("signing_company", signing_company),
+                         ("signing_time", signing_time),
+                         ("signing_location", signing_location),
+                         ("notify_amount", notify_amount),
+                         ("notify_period", notify_period),
+                         ("concurrent_companies", concurrent_companies),
+                         ("id_no", id_no)]:
+            if val is not None:
+                fields.append(f"{col} = ?"); values.append(val)
+        fields.append("updated_at = ?"); values.append(now); values.append(case_id)
         snapshot = None
         if before_row:
             snap_fields = ["company", "current_company", "concurrent_companies",
@@ -5040,7 +5057,7 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
         if removed:
             msgs.append(f"✅ 已從同送清單移除：{'、'.join(removed)}")
         if skipped_current:
-            msgs.append(f"⚠️ {'、'.join(skipped_current)} 是核准那家，沒處理\n　 （作廢核准用：@AI {name} {skipped_current[0]} 取消核准）")
+            msgs.append(f"⚠️ {current_co} 是核准那家，沒處理\n　 （作廢核准用：@AI {name} {current_co} 取消核准）")
         if skipped_not_in:
             msgs.append(f"⚠️ 同送清單裡沒有：{'、'.join(skipped_not_in)}")
         msgs.append(f"核准保留：{current_co} {approved}")
