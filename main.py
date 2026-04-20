@@ -11891,6 +11891,11 @@ def _do_download_excel(request: Request, case_id: str):
             co_years_full += f'年{v("company_months")}月'
         elif co_years_full:
             co_years_full += "年"
+        # 分貝近2月備註：按行拆成 5 段，對應 5 個問題；剝掉開頭「1.」「2.」等編號
+        bei_lines = [ln.strip() for ln in (v("adminb_bei_note") or "").splitlines() if ln.strip()]
+        import re as _re_bei
+        bei_lines = [_re_bei.sub(r'^\d+[.\s]*', '', ln).strip() for ln in bei_lines]
+        bei_lines += [""] * (5 - len(bei_lines))
 
         # ===== label 關鍵字 → 值 對應 =====
         # 比對時用 startswith / in 容錯，越長 / 越精確的 key 排前面
@@ -11966,6 +11971,12 @@ def _do_download_excel(request: Request, case_id: str):
             # 雜項
             ("可照會時間", v("adminb_contact_time")),
             ("近2月備註", v("adminb_bei_note")),
+            # 分貝 5 題答案（每題一行對應）
+            ("1.近2個月內有無送過", bei_lines[0]),
+            ("2.如有的話，有無過件", bei_lines[1]),
+            ("3.有無以上的貸款", bei_lines[2]),
+            ("4.如有的話金額多少", bei_lines[3]),
+            ("5.有無遲繳", bei_lines[4]),
             ("資金用途", v("adminb_21car_fund") or v("adminb_fund_use")),
         ]
 
@@ -12008,6 +12019,9 @@ def _do_download_excel(request: Request, case_id: str):
             """處理沒有 : 的標記行，更新 contact_state。"""
             nonlocal contact_state
             s = line.strip()
+            # 含「:」「：」的行 → 由 find_value 處理、不當 state marker（避免分貝 5 題誤觸）
+            if ":" in s or "：" in s:
+                return
             # 1.（...） / 1.姓名 / 親屬聯絡人 / 1聯絡人
             if s.startswith("1.") or "親屬聯絡人" in s or s == "1聯絡人":
                 contact_state["idx"] = 1
