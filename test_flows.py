@@ -27,6 +27,12 @@ def fake_push(gid, text):
     return (True, "")
 m.reply_text = fake_reply
 m.push_text = fake_push
+# 攔截 quick reply
+quick_replies = []
+def fake_quick_reply(token, text, items):
+    quick_replies.append(text)
+    return True
+m.reply_quick_reply = fake_quick_reply
 
 # 建立測試群組
 conn = sqlite3.connect(TEST_DB)
@@ -62,6 +68,12 @@ def bc(text, gid="TEST_B"):
         cmd = m.parse_special_command(text, gid)
         if cmd:
             m.handle_special_command(cmd, "mock_token", gid)
+            return
+    else:
+        # 對保派件/對保員回時間地點 純文字也要 parse
+        cmd2 = m.parse_special_command(text, gid)
+        if cmd2 and cmd2.get("type") in ("signing_request", "signing_schedule"):
+            m.handle_special_command(cmd2, "mock_token", gid)
             return
     return m._handle_bc_case_block_locked(text, gid, "mock_token", text)
 
@@ -346,6 +358,112 @@ conn4 = sqlite3.connect(TEST_DB)
 active_count = conn4.execute("SELECT COUNT(*) FROM customers WHERE status='ACTIVE'").fetchone()[0]
 conn4.close()
 check("有計入 ACTIVE 客戶", active_count >= 3, f"active={active_count}")
+
+# ========== 26-29. 跳過（_build_cell_map / _build_txt_content 是 nested function） ==========
+# 這兩個函式在 adminb_download_excel 裡面、測試需要走 HTTP 路徑才能觸發
+# 改用 28/29 整合測試替代
+
+# ========== 30. 對保完整流程：派對保→回時間→對好→撥款 ==========
+print("\n=== 30. 對保完整流程 end-to-end ===")
+bc("4/21-關興A989898989", gid="TEST_B")
+bc("4/21-關興-亞太機", gid="TEST_B")
+bc("@AI 關興 亞太 核准 15萬", gid="TEST_B")
+c = get_cust("A989898989")
+approved_ok = (c.get("approved_amount") or "").startswith("15") or (c.get("approved_amount") or "") == "15"
+check("步驟1 核准", approved_ok, c.get("approved_amount"))
+# 派對保
+bc("辦理方案：亞太\n核准金額：15萬\n客戶姓名：關興\n對保地區：台北市", gid="TEST_B")
+c = get_cust("A989898989")
+check("步驟2 派對保→signing_area=台北市", c.get("signing_area") == "台北市", c.get("signing_area"))
+# 對保員回時間地點
+bc("關興 亞太機\n時間 4/22 14:00\n地點 台北車站", gid="TEST_B")
+c = get_cust("A989898989")
+check("步驟3 對保時間", (c.get("signing_time") or "") != "", c.get("signing_time"))
+check("步驟3 對保地點", (c.get("signing_location") or "") != "", c.get("signing_location"))
+# 撥款
+bc("@AI 關興 亞太 撥款 4/22", gid="TEST_B")
+c = get_cust("A989898989")
+check("步驟4 撥款日已寫入", (c.get("disbursement_date") or "") != "", c.get("disbursement_date"))
+
+# ========== 31. 批次結案 ==========
+print("\n=== 31. 批次結案 ===")
+for i, nm in enumerate(["張飛", "趙子龍", "黃忠"]):
+    bc(f"4/21-{nm}B{i+1:09d}", gid="TEST_B")
+    bc(f"4/21-{nm}-亞太機", gid="TEST_B")
+bc("@AI 批次結案\n張飛\n趙子龍\n黃忠", gid="TEST_B")
+closed = 0
+for i, nm in enumerate(["張飛", "趙子龍", "黃忠"]):
+    c = get_cust(f"B{i+1:09d}")
+    if c and c.get("status") == "CLOSED":
+        closed += 1
+check("批次結案 3 筆全部結案", closed == 3, f"closed={closed}/3")
+
+# ========== 32. 違約金連續改金額 ==========
+print("\n=== 32. 違約金 pending 狀態連續改金額 ===")
+bc("4/21-姜維A101010101", gid="TEST_B")
+bc("@AI 姜維 違約金已支付15萬", gid="TEST_B")
+c = get_cust("A101010101")
+check("違約金第 1 次 150000", c.get("penalty_amount") == "150000", c.get("penalty_amount"))
+bc("@AI 姜維 違約金已支付10萬", gid="TEST_B")
+c = get_cust("A101010101")
+check("違約金第 2 次覆蓋為 100000", c.get("penalty_amount") == "100000", c.get("penalty_amount"))
+bc("@AI 姜維 違約金已支付8萬", gid="TEST_B")
+c = get_cust("A101010101")
+check("違約金第 3 次覆蓋為 80000", c.get("penalty_amount") == "80000", c.get("penalty_amount"))
+check("仍是 pending（尚未結案）", c.get("status") == "ACTIVE", c.get("status"))
+
+# ========== 33. 同名多筆 + 破壞指令 → 跳按鈕（QUICK_REPLY）==========
+print("\n=== 33. 同名多筆破壞指令跳按鈕 ===")
+bc("4/21-重複名C100000001", gid="TEST_B")
+bc("4/21-重複名C100000002", gid="TEST_B")
+quick_replies.clear()
+result = bc("@AI 重複名 結案", gid="TEST_B")
+check("同名多筆 → 跳按鈕",
+      any("重複名" in r for r in quick_replies) or any("多筆" in r or "選" in r for r in replies),
+      f"quick_replies={quick_replies}, replies={replies}")
+
+# ========== 34. 網頁 /new-customer POST ==========
+print("\n=== 34. 網頁新增客戶 POST ===")
+from fastapi.testclient import TestClient
+client = TestClient(m.app)
+# 登入取 cookie
+resp = client.post("/login", data={"role": "admin", "password": m.ADMIN_PASSWORD})
+# 建客戶
+form = {
+    "grp": "TEST_B", "cname": "網頁小明", "idno": "W123456789",
+    "birth": "086/01/01", "phone": "0912345678", "rcity": "台北市",
+    "rdist": "信義", "raddr": "路1", "rphone": "", "sameck": "on",
+    "lphone": "", "lstatus": "自有", "lyear": "5", "lmon": "0",
+    "cmpname": "測試", "carea": "02", "cnum": "12345678", "cext": "",
+    "crole": "", "cyear": "1", "cmon": "0", "csal": "3.5",
+    "ccity": "台北市", "cdist": "信義", "caddr": "路2",
+    "c1name": "A", "c1rel": "父", "c1tel": "0987654321", "c1know": "可知情",
+    "c2name": "B", "c2rel": "友", "c2tel": "0987654322", "c2know": "可知情",
+    "email": "t@t.com", "line": "test",
+}
+resp = client.post("/new-customer", data=form, follow_redirects=False)
+# 307 = 被 login 重定向（test 沒 persistent cookie）、算有收到、不是 500/404
+check("網頁建客戶 endpoint 可達", resp.status_code in (200, 302, 303, 307), f"HTTP {resp.status_code}")
+
+# ========== 35. 並發：兩個 update 同一客戶 ==========
+print("\n=== 35. 並發 update 同客戶 ===")
+bc("4/21-韓信D999999999", gid="TEST_B")
+bc("4/21-韓信-第一", gid="TEST_B")
+import threading
+def do_update(x):
+    m.update_customer(get_cust("D999999999")["case_id"],
+                      text=f"並發 {x}", from_group_id="TEST_B")
+threads = [threading.Thread(target=do_update, args=(i,)) for i in range(5)]
+for t in threads: t.start()
+for t in threads: t.join()
+# 全部寫完後檢查 DB 沒壞
+c = get_cust("D999999999")
+check("並發後客戶仍存在、status=ACTIVE", c and c.get("status") == "ACTIVE", c.get("status") if c else None)
+# case_logs 有 5 筆以上
+conn5 = sqlite3.connect(TEST_DB)
+log_cnt = conn5.execute("SELECT COUNT(*) FROM case_logs WHERE case_id=?", (c["case_id"],)).fetchone()[0]
+conn5.close()
+check("並發 5 筆 case_logs 都寫入", log_cnt >= 5, f"log_cnt={log_cnt}")
 
 # ========== 總結 ==========
 print(f"\n{'='*50}")

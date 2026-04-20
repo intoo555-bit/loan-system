@@ -7175,6 +7175,13 @@ def _process_event_inner(event: dict):
             if cmd:
                 handle_special_command(cmd, reply_token, group_id)
                 return
+        else:
+            # 對保派件（含「客戶姓名/對保地區」）+ 對保員回時間地點（純文字）：
+            # 不需 @AI 前綴、直接 parse 看看能不能抓到
+            cmd_noatai = parse_special_command(raw, group_id)
+            if cmd_noatai and cmd_noatai.get("type") in ("signing_request", "signing_schedule"):
+                handle_special_command(cmd_noatai, reply_token, group_id)
+                return
 
         is_creation = looks_like_new_case_block(raw) or any(looks_like_new_case_block(b) for b in split_multi_cases(raw))
         is_route = is_route_order_line(extract_first_line(raw)) or any(is_route_order_line(extract_first_line(b)) for b in split_multi_cases(raw))
