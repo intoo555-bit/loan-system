@@ -923,7 +923,7 @@ PLAN_INFO = {
     "和裕機車": ("和裕機車", "15萬/24期"), "和裕機": ("和裕機車", "15萬/24期"),
     "和裕商品": ("和裕商品", "12萬/24期"), "和裕": ("和裕商品", "12萬/24期"),
     "21機車12萬": ("21機車12萬", "12萬/24期"), "21機": ("21機車12萬", "12萬/24期"),
-    "21機車25萬": ("21機車25萬", "25萬/48期"), "21機25": ("21機車25萬", "25萬/48期"),
+    "21機車25萬": ("21機車25萬", "25萬/48期"), "21機25": ("21機車25萬", "25萬/48期"), "21機25萬": ("21機車25萬", "25萬/48期"),
     "21商品": ("21商品", "12萬/24期"), "21": ("21商品", "12萬/24期"),
     "第一": ("第一", "30萬/24期"),
     "貸救補": ("貸救補", "10萬/24期"), "貸10": ("貸救補", "10萬/24期"), "貸就補": ("貸救補", "10萬/24期"),
@@ -4210,6 +4210,10 @@ def _split_company_amount(item: str):
     # 1) 整段就是合法公司名 → 直接回
     if item in COMPANY_ALIAS or item in COMPANY_LIST:
         return (item, "", "")
+    # 1.5) PLAN_INFO 內的 3 段式完整名稱（亞太機25萬 / 21機車25萬 等）
+    if item in PLAN_INFO:
+        canonical = PLAN_INFO[item][0]
+        return (canonical, "", "")
     # 2) 從合法公司名集合找最長前綴（避免「21機」被當「21」+「機」切）
     all_names = sorted(set(list(COMPANY_LIST) + list(COMPANY_ALIAS.keys())),
                        key=len, reverse=True)
@@ -5074,6 +5078,11 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
         update_kw = {"route_plan": new_route, "current_company": new_current,
                      "concurrent_companies": ",".join(new_concurrent),
                      "text": f"{name} {current} 婉拒", "from_group_id": group_id}
+        # 更新日報 section：跟著新 current 走（避免被婉拒那家還留在原日報區）
+        if new_current:
+            update_kw["report_section"] = COMPANY_SECTION_MAP.get(new_current, normalize_section(new_current))
+        else:
+            update_kw["report_section"] = ""
         if not new_current:
             # 已全數婉拒：清 company 避免日報 fallback 顯示被婉拒那家
             update_kw["company"] = ""
@@ -9404,13 +9413,14 @@ def list_groups(request: Request):
             ln = cur2.fetchone(); conn2.close()
             linked_name = ln["group_name"] if ln else r["linked_sales_group_id"]
         edit_btn = f'''<button onclick="openEdit(\'{h(r["group_id"])}\',\'{h(r["group_name"])}\',{1 if r["is_active"] else 0})" class="btn" style="font-size:11px;padding:3px 10px">✏️ 編輯</button>'''
+        del_btn = f'''<button onclick="doDelete(\'{h(r["group_id"])}\',\'{h(r["group_name"])}\')" style="font-size:11px;padding:3px 10px;background:#b91c1c;color:#fff;border:none;border-radius:4px;cursor:pointer;margin-left:4px">🗑 刪除</button>'''
         rows_html += f'''<tr style="border-bottom:1px solid #f3f4f6">
           <td style="padding:8px 12px;font-weight:500">{h(r["group_name"])}</td>
           <td style="padding:8px 12px;color:#6b7280">{h(type_labels.get(r["group_type"],r["group_type"]))}</td>
           <td style="padding:8px 12px;color:#6b7280">{h(linked_name) or "-"}</td>
           <td style="padding:8px 12px">{"✅" if r["is_active"] else "❌"}</td>
           <td style="padding:8px 12px;font-size:11px;color:#9ca3af;font-family:monospace;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="{h(r["group_id"])}" onclick="navigator.clipboard.writeText('{h(r["group_id"])}')">{h(r["group_id"])}</td>
-          <td style="padding:8px 12px">{edit_btn}</td>
+          <td style="padding:8px 12px;white-space:nowrap">{edit_btn}{del_btn}</td>
         </tr>'''
 
     return f"""<!DOCTYPE html><html><head>{PAGE_CSS}<title>群組管理</title></head><body>
@@ -9527,12 +9537,43 @@ def list_groups(request: Request):
       res.style.color=data.status==='ok'?'#15803d':'#dc2626';
       res.innerText=data.message;
     }}
+    async function doDelete(gid, gname){{
+      if(!confirm('確定要刪除群組「'+gname+'」？\\n此操作無法復原！')) return;
+      const r=await fetch('/admin/delete_group',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{group_id:gid}})}});
+      const data=await r.json();
+      if(data.status==='ok') location.reload();
+      else alert(data.message||'刪除失敗');
+    }}
     </script>
     </body></html>"""
 
 # =========================
 # 更新群組 API
 # =========================
+@app.post("/admin/delete_group")
+async def delete_group(request: Request):
+    role = check_auth(request)
+    if role != "admin":
+        return JSONResponse({"status":"error","message":"無權限"}, status_code=403)
+    data = await request.json()
+    gid = (data.get("group_id") or "").strip()
+    if not gid:
+        return JSONResponse({"status":"error","message":"group_id 必填"})
+    try:
+        conn = get_conn(); cur = conn.cursor()
+        # 先檢查是否有客戶使用此群組（提示用、仍允許刪除）
+        cur.execute("SELECT COUNT(*) AS n FROM customers WHERE source_group_id=?", (gid,))
+        cust_cnt = cur.fetchone()["n"]
+        cur.execute("DELETE FROM groups WHERE group_id=?", (gid,))
+        conn.commit(); conn.close()
+        msg = "已刪除"
+        if cust_cnt:
+            msg += f"（注意：仍有 {cust_cnt} 筆客戶資料屬於此群組）"
+        return JSONResponse({"status":"ok","message":msg})
+    except Exception as e:
+        return JSONResponse({"status":"error","message":str(e)})
+
+
 @app.post("/admin/update_group")
 async def update_group(request: Request):
     role = check_auth(request)
