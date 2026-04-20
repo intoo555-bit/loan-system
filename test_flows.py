@@ -190,6 +190,98 @@ c = get_cust("A789012345")
 check("公司不誤判為 21", (c.get("company") or "") != "21商品" and "21" not in (c.get("current_company") or ""),
       f"co={c.get('company')}, current={c.get('current_company')}")
 
+# ========== 11. 防錯：婉拒沒帶公司、2 家在送 ==========
+print("\n=== 11. 婉拒沒帶公司、跳警告 ===")
+bc("4/20-曹操A111222333", gid="TEST_B")
+bc("4/20-曹操-亞太機25萬/第一", gid="TEST_B")
+bc("@AI 曹操 亞太機25萬+第一 照會", gid="TEST_B")  # 同送 2 家
+replies.clear()
+bc("@AI 曹操 婉拒", gid="TEST_B")
+check("婉拒沒帶公司 → 跳警告", any("要婉拒哪家" in r for r in replies),
+      f"replies={replies}")
+
+# ========== 12. 防錯：照會沒帶公司、2 家在送 ==========
+print("\n=== 12. 照會沒帶公司、跳警告 ===")
+replies.clear()
+bc("@AI 曹操 照會", gid="TEST_B")
+check("照會沒帶公司 → 跳警告", any("要照會哪家" in r for r in replies),
+      f"replies={replies}")
+
+# ========== 13. 防錯：補件沒帶公司、2 家在送 ==========
+print("\n=== 13. 補件沒帶公司、跳警告 ===")
+replies.clear()
+result = bc("曹操 補繳息", gid="TEST_B")  # 泛用「補 XX」
+check("補件沒帶公司 → 跳警告",
+      "請指明是哪一家" in (result or "") or any("請指明是哪一家" in r for r in replies),
+      f"result={result}, replies={replies}")
+
+# ========== 14. 防錯：核准沒帶公司、2 家在送 ==========
+print("\n=== 14. 核准沒帶公司、跳警告 ===")
+replies.clear()
+bc("@AI 曹操 核准 20萬", gid="TEST_B")
+check("核准沒帶公司 → 跳警告", any("要核准哪家" in r for r in replies),
+      f"replies={replies}")
+
+# ========== 15. 取消核准 家族比對 ==========
+print("\n=== 15. 取消核准家族比對 ===")
+bc("4/20-劉備A222333444", gid="TEST_B")
+bc("4/20-劉備-21機車25萬", gid="TEST_B")
+bc("@AI 劉備 21機車25萬 核准 25萬", gid="TEST_B")
+c = get_cust("A222333444")
+check("核准記入 21機車25萬", (c.get("approved_amount") or "").startswith("25"),
+      c.get("approved_amount"))
+bc("@AI 劉備 21 取消核准", gid="TEST_B")
+c = get_cust("A222333444")
+check("取消核准成功（打簡稱 21）", not (c.get("approved_amount") or ""),
+      c.get("approved_amount"))
+
+# ========== 16. 時區：新紀錄用台灣時間 ==========
+print("\n=== 16. 時區：now_iso() 回台灣時間 ===")
+from datetime import datetime, timezone, timedelta
+now_tw = datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d %H")
+check("now_iso() 包含當前台灣時間", m.now_iso().startswith(now_tw),
+      f"now_iso={m.now_iso()}, expect starts with {now_tw}")
+
+# ========== 17. 違約金修改（已支付 → 再打新金額會覆蓋）==========
+print("\n=== 17. 違約金覆蓋更新 ===")
+bc("4/21-關羽A333444555", gid="TEST_B")
+bc("@AI 關羽 違約金已支付15萬", gid="TEST_B")
+bc("@AI 關羽 違約金已支付10萬", gid="TEST_B")
+c = get_cust("A333444555")
+check("違約金覆蓋為 10萬=100000", c.get("penalty_amount") == "100000",
+      c.get("penalty_amount"))
+
+# ========== 18. 同送概念：當前+同送都顯示在日報 ==========
+print("\n=== 18. 同送 section_map 日報正確 ===")
+bc("4/21-諸葛亮A444555666", gid="TEST_B")
+bc("4/21-諸葛亮-第一/21機25", gid="TEST_B")
+bc("@AI 諸葛亮 第一+21機25 照會", gid="TEST_B")
+c = get_cust("A444555666")
+concur = c.get("concurrent_companies") or ""
+check("concurrent 含 21", "21" in concur, f"concur={concur}")
+
+# ========== 19. 核准後 current 換、原 current 降到同送 ==========
+print("\n=== 19. 核准自動升級 current ===")
+bc("@AI 諸葛亮 21 核准 20萬", gid="TEST_B")
+c = get_cust("A444555666")
+# 21 應該升到 current (normalize=21)、原 current 第一 降到 concurrent
+check("current 換成 21 家族", m.normalize_section(c.get("current_company") or "") == "21",
+      f"current={c.get('current_company')}")
+check("原 current 第一 在 concurrent", "第一" in (c.get("concurrent_companies") or ""),
+      f"concur={c.get('concurrent_companies')}")
+
+# ========== 20. 多家核准、撥款選一家 ==========
+print("\n=== 20. 多家核准、撥款指定 ===")
+bc("4/21-趙雲A555666777", gid="TEST_B")
+bc("4/21-趙雲-第一/喬美", gid="TEST_B")
+bc("@AI 趙雲 第一+喬美 照會", gid="TEST_B")
+bc("@AI 趙雲 第一 核准 30萬", gid="TEST_B")
+bc("@AI 趙雲 喬美 核准 14萬", gid="TEST_B")
+bc("@AI 趙雲 第一 撥款 4/21", gid="TEST_B")
+c = get_cust("A555666777")
+check("撥款日已寫入", (c.get("disbursement_date") or "") != "",
+      c.get("disbursement_date"))
+
 # ========== 總結 ==========
 print(f"\n{'='*50}")
 print(f"結果：{PASS} 通過、{FAIL} 失敗")

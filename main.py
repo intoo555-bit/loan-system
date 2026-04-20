@@ -848,14 +848,19 @@ COMPANY_ALIAS = {
     "機車動擔設定": "亞太機車",
     "亞太(工會)": "亞太工會",
     "亞太(工)": "亞太工會",
+    "亞太15(工)": "亞太工會",
+    "亞太15(工會)": "亞太工會",
     "亞太工會15萬": "亞太工會",
     # 和裕相關
     "維力商品貸": "和裕商品",
     "維力機車專": "和裕機車",
     "維力機車貸": "和裕機車",
     "維力": "和裕",
-    # 21 全形/異體字
+    # 21 全形/異體字 + 21 小方案
     "廿一": "21",
+    "A專案": "21",
+    "二五專案": "21機車25萬",
+    "25專案": "21機車25萬",
     "二十一世紀": "21",
     "２１": "21",
     # 21 車型縮寫（canonical 對應 PLAN_INFO）
@@ -2600,6 +2605,22 @@ def extract_status_summary(first_line: str, customer_name: str) -> str:
     # 內部動作（@AI 指令產生的記錄文字）不顯示為業務狀態
     if any(kw in first_line for kw in _INTERNAL_ACTION_KEYWORDS):
         return ""
+    # 對保好（不簽不收 / 不收不簽）→ 「對好」
+    if "對好" in first_line or "不簽不收" in first_line or "不收不簽" in first_line:
+        return "對好"
+    # 撥款階段客戶電話未接 → 「撥款未接」提醒要催客戶接電話
+    if "撥款電話未接" in first_line or "撥款未接" in first_line:
+        return "撥款未接"
+    # A 群請業務補時段：「請提供XX可照會時間」「請提供照會時段」→ 待補時段
+    if ("請提供" in first_line or "再麻煩" in first_line) and ("照會" in first_line or "時段" in first_line or "時間" in first_line):
+        return "待補時段"
+    # 婉拒 + 冒號理由保留（例「婉拒: 信用風險戶」→ 「婉拒 信用風險戶」全段保留）
+    if "婉拒" in first_line:
+        # 保留完整婉拒+理由、只砍掉姓名前綴
+        _fl = first_line.strip()
+        if customer_name and _fl.startswith(customer_name):
+            _fl = _fl[len(customer_name):].strip()
+        return _fl[:40]  # 最多 40 字避免太長
     # 「待核准/待核準」= 還有缺要補（資料/照會都有可能）— 不算核准，先查是否真正核准
     text_wo_pending = first_line.replace("待核准", "").replace("待核準", "")
     if "核准" in text_wo_pending or "核準" in text_wo_pending:
@@ -3230,8 +3251,8 @@ def parse_special_command(text: str, group_id: str) -> Optional[Dict]:
     if m:
         return {"type": "search", "name": m.group(1)}
 
-    # 轉下一家
-    m = re.match(r"^([\u4e00-\u9fff]{2,6})\s*轉下一家$", clean)
+    # 轉下一家 / 轉下家（同義）
+    m = re.match(r"^([\u4e00-\u9fff]{2,6})\s*轉下(?:一)?家$", clean)
     if m:
         return {"type": "advance", "name": m.group(1), "target": None}
 
@@ -3475,9 +3496,12 @@ def parse_special_command(text: str, group_id: str) -> Optional[Dict]:
                 "area": fields.get("對保地區", ""),
             }
 
-    # 對保時間地點（B 訊息）：對保 XXX XX對保 / 時間 X / 地點 X
+    # 對保時間地點（B 訊息）：多種格式
+    # 格式 A (舊)：對保 業務員 XX對保 / 時間 X / 地點 X
+    # 格式 B (新)：姓名 公司/方案 / 時間 X / 地點 X  （對保員實際常用）
     lines_b = [ln.strip() for ln in clean.splitlines() if ln.strip()]
-    if lines_b:
+    if lines_b and len(lines_b) >= 2 and ("時間" in clean or "地點" in clean):
+        # 舊格式
         m = re.match(r"^對保\s+([\u4e00-\u9fff]{2,6})\s+(.+?)對保\s*$", lines_b[0])
         if m:
             salesperson = m.group(1)
@@ -3499,6 +3523,29 @@ def parse_special_command(text: str, group_id: str) -> Optional[Dict]:
                 "time": time_str,
                 "location": loc_str,
             }
+        # 新格式：第一行「姓名 公司/方案」、下面有 時間/地點
+        m2 = re.match(r"^([\u4e00-\u9fff]{2,6})\s+([\u4e00-\u9fff0-9A-Z()（）/]+?)(\s+改時間)?\s*$", lines_b[0])
+        if m2 and any(ln.startswith("時間") or ln.startswith("地點") for ln in lines_b[1:]):
+            name = m2.group(1)
+            signing_co = m2.group(2).strip()
+            time_str = ""
+            loc_str = ""
+            for line in lines_b[1:]:
+                mt = re.match(r"^時間\s*[:：]?\s*(.+)$", line)
+                if mt:
+                    time_str = mt.group(1).strip()
+                    continue
+                ml = re.match(r"^地點\s*[:：]?\s*(.+)$", line)
+                if ml:
+                    loc_str = ml.group(1).strip()
+            if signing_co and (time_str or loc_str):
+                return {
+                    "type": "signing_schedule",
+                    "name": name,
+                    "signing_company": signing_co,
+                    "time": time_str,
+                    "location": loc_str,
+                }
 
     # ===== 常見錯誤格式防錯（給正確範例提示）=====
     # 轉但沒指定公司
@@ -4778,14 +4825,21 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
         return
 
     if t == "signing_schedule":
-        conn = get_conn(); cur = conn.cursor()
-        cur.execute(
-            "SELECT * FROM customers WHERE status='ACTIVE' AND source_group_id=? "
-            "AND signing_area IS NOT NULL AND signing_area!='' "
-            "AND (signing_time IS NULL OR signing_time='') "
-            "ORDER BY updated_at DESC LIMIT 1",
-            (group_id,))
-        target = cur.fetchone(); conn.close()
+        # 新格式（對保員直打姓名+公司+時間/地點）先用姓名找
+        target = None
+        if cmd.get("name"):
+            rows = find_active_by_name(cmd["name"])
+            if rows:
+                target = rows[0]  # 多筆取最新
+        # 舊格式 / 新格式姓名找不到 → fallback 用群組裡待對保客戶
+        if not target:
+            conn = get_conn(); cur = conn.cursor()
+            cur.execute(
+                "SELECT * FROM customers WHERE status='ACTIVE' AND source_group_id=? "
+                "AND signing_area IS NOT NULL AND signing_area!='' "
+                "ORDER BY updated_at DESC LIMIT 1",
+                (group_id,))
+            target = cur.fetchone(); conn.close()
         if not target:
             reply_text(reply_token,
                        "❌ 找不到待對保客戶\n"
@@ -4794,16 +4848,17 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
                        "  核准金額：50萬\n"
                        "  客戶姓名：王小明\n"
                        "  對保地區：台北"); return
+        # 覆蓋（改時間會直接更新、而非新增一筆）
+        disp_name = cmd.get("name") or target["customer_name"]
         update_customer(target["case_id"],
-                        signing_salesperson=cmd["salesperson"],
+                        signing_salesperson=cmd.get("salesperson", "") or "",
                         signing_company=cmd["signing_company"],
                         signing_time=cmd["time"],
                         signing_location=cmd["location"],
-                        text=f"{target['customer_name']} 對保 {cmd['salesperson']} {cmd['signing_company']} {cmd['time']} {cmd['location']}",
+                        text=f"{disp_name} 對保 {cmd['signing_company']} {cmd['time']} {cmd['location']}",
                         from_group_id=group_id)
         reply_text(reply_token,
-                   f"✅ {target['customer_name']} 對保已記錄\n"
-                   f"  業務：{cmd['salesperson']}\n"
+                   f"✅ {disp_name} 對保已記錄\n"
                    f"  公司：{cmd['signing_company']}\n"
                    f"  時間：{cmd['time']}\n"
                    f"  地點：{cmd['location']}")
@@ -4954,7 +5009,9 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
             return
         if not _check_active_or_warn(target, reply_token, "取消核准", name):
             return
-        # 從 route_plan history 移除該公司的核准記錄
+        # 從 route_plan history 移除該公司的核准記錄（用 normalize_section 家族比對）
+        company = COMPANY_ALIAS.get(company, company)
+        co_norm = normalize_section(company)
         route = target["route_plan"] or ""
         data = parse_route_json(route) if route else {"order":[], "current_index":0, "history":[]}
         history = data.get("history", [])
@@ -4962,7 +5019,7 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
         removed = False
         for h2 in history:
             hc = h2.get("company", "")
-            if (company in hc or hc in company) and h2.get("status") in ("核准", "待撥款", "撥款"):
+            if normalize_section(hc) == co_norm and h2.get("status") in ("核准", "待撥款", "撥款"):
                 removed = True
                 continue
             new_history.append(h2)
@@ -4973,7 +5030,7 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
         new_section = "待撥款" if still_approved else ""
         new_amount = "" if not still_approved else target["approved_amount"]
         update_customer(target["case_id"], route_plan=new_route,
-                        approved_amount=new_amount or None,
+                        approved_amount=new_amount,  # "" 會真正清空、None 會略過
                         report_section=new_section,
                         text=f"{name} {company} 取消核准", from_group_id=group_id)
         push_text(target["source_group_id"], f"{name} {company} 取消核准")
@@ -5005,6 +5062,16 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
             return
         # 未指定公司 → 用當前 current_company（防錯：使用者常忘了打公司）
         if not company:
+            # 同送 2 家以上時強制要求指定、避免核准錯家
+            _curr0 = (target["current_company"] or "").strip()
+            _concur0 = [c.strip() for c in (target["concurrent_companies"] or "").split(",") if c.strip()]
+            _active0 = ([_curr0] if _curr0 else []) + _concur0
+            if len(_active0) >= 2:
+                reply_text(reply_token,
+                           f"⚠️ {name} 目前同送 {'、'.join(_active0)}\n"
+                           f"要核准哪家？請明確指定：\n"
+                           f"  @AI {name} {_active0[0]} 核准 {amount}")
+                return
             company = target["current_company"] or target["company"] or ""
         if not company:
             reply_text(reply_token, f"❌ {name} 找不到當前送件公司，請明確指定：{name} 公司 核准 {amount}")
@@ -5987,7 +6054,13 @@ def _handle_a_case_block_locked(block_text, reply_token, id_no, name, forced_cas
     is_approved = (any(w in first_line_wo_pending for w in ["核准", "核準", "過件", "通過", "核貸"])
                    or is_c_confirmed) and new_status != "CLOSED"
     # 「撤件」「客戶撤件」「客戶自行撤件」不算婉拒（只記錄，不推進 route）
-    is_reject = not is_approved and any(w in first_line_for_status for w in ["婉拒", "申覆失敗", "建議維持原審", "不予承作", "無法再進件", "無法承作", "30日內有進件", "已建檔", "不提供申覆", "退件", "無法核貸", "無法進件"])
+    is_reject = not is_approved and any(w in first_line_for_status for w in [
+        "婉拒", "申覆失敗", "建議維持原審", "不予承作", "無法再進件", "無法承作",
+        "30日內有進件", "已建檔", "不提供申覆", "退件", "無法核貸", "無法進件",
+        "不符進件", "不符資格", "不符合資格", "不符合進件",
+        "不承做", "不乘做",  # 錯字容錯
+        "這件不行", "不可送", "失聯可刪", "堅持不申辦", "黑名單",
+    ])
     # 若第 1 行沒結論、整段有婉拒也算（備註很多、結論在後的情況）
     if not is_approved and not is_reject and "婉拒" in block_text:
         is_reject = True
@@ -6746,7 +6819,8 @@ def _check_ambiguous_supplement(block_text, target_row, name):
                   "補在職", "補存摺", "補勞保", "補駕照", "補行照",
                   "補JCIC", "補jcic", "補件", "補資料",
                   "補繳息", "補汽車繳息", "補身分證", "補時段",
-                  "補補件", "補上傳", "補對保", "補證件"]
+                  "補補件", "補上傳", "補對保", "補證件",
+                  "重補", "重拍", "需補"]
     first_line = block_text.splitlines()[0] if block_text else ""
     bu_type = next((m for m in bu_markers if m in first_line), "")
     # 泛用 fallback：第一行以 "補" 開頭且不到 10 字 → 當成不明補件類
