@@ -2032,6 +2032,9 @@ def init_db():
         ("signing_company", "TEXT"),
         ("signing_time", "TEXT"),
         ("signing_location", "TEXT"),
+        ("penalty_amount", "TEXT"),
+        ("penalty_date", "TEXT"),
+        ("penalty_pending", "TEXT"),
     ]:
         ensure_column(cur, "customers", col, defn)
     # groups 表新增業務群對應欄位
@@ -2180,7 +2183,7 @@ def update_customer(case_id, company=None, text=None, from_group_id="", status=N
                     signing_area=None, signing_salesperson=None,
                     signing_company=None, signing_time=None, signing_location=None,
                     notify_amount=None, notify_period=None, concurrent_companies=None,
-                    id_no=None):
+                    id_no=None, penalty_amount=None, penalty_date=None, penalty_pending=None):
     """更新客戶（Bug 5/6 修復：context manager + transaction）
 
     UPDATE + INSERT case_logs 包在同一交易內，確保原子性。
@@ -2223,7 +2226,10 @@ def update_customer(case_id, company=None, text=None, from_group_id="", status=N
                          ("notify_amount", notify_amount),
                          ("notify_period", notify_period),
                          ("concurrent_companies", concurrent_companies),
-                         ("id_no", id_no)]:
+                         ("id_no", id_no),
+                         ("penalty_amount", penalty_amount),
+                         ("penalty_date", penalty_date),
+                         ("penalty_pending", penalty_pending)]:
             if val is not None:
                 fields.append(f"{col} = ?"); values.append(val)
         fields.append("updated_at = ?"); values.append(now); values.append(case_id)
@@ -3361,11 +3367,29 @@ def parse_special_command(text: str, group_id: str) -> Optional[Dict]:
     if m:
         return {"type": "reject_company", "name": m.group(1), "company": m.group(2).strip()}
 
-    # 違約金已支付 xxxx（有收到違約金）
+    def _parse_penalty_amt(num_str, is_wan):
+        try:
+            f = float(num_str)
+            if is_wan: return str(int(f * 10000))
+            if f < 1000: return str(int(f * 10000))  # 純數字 <1000 當萬
+            return str(int(f))
+        except Exception:
+            return num_str
+    # 違約金確認支付 — 第二階段正式結案
+    m = re.match(r"^([一-鿿]{2,6})\s*違約金(?:確認支付|支付確認)\s*(\d+(?:\.\d+)?)\s*(萬)?", clean)
+    if m:
+        amt = _parse_penalty_amt(m.group(2), bool(m.group(3)))
+        return {"type": "penalty", "name": m.group(1), "penalty": amt, "confirmed": True}
+    # 違約金已支付 xxxx — 第一階段：標記 pending、等二次確認
+    m = re.match(r"^([一-鿿]{2,6})\s*違約金已支付\s*(\d+(?:\.\d+)?)\s*(萬)?", clean)
+    if m:
+        amt = _parse_penalty_amt(m.group(2), bool(m.group(3)))
+        return {"type": "penalty", "name": m.group(1), "penalty": amt, "confirmed": False}
+    # Fallback：舊格式 含逗號數字
     m = re.match(r"^([一-鿿]{2,6})\s*違約金已支付\s*([\d,，]+)", clean)
     if m:
         amt = m.group(2).replace(",","").replace("，","")
-        return {"type": "penalty", "name": m.group(1), "penalty": amt}
+        return {"type": "penalty", "name": m.group(1), "penalty": amt, "confirmed": False}
 
     # 照會：多種格式都支援
     # 先定義：剝掉 company 字串前導的「送」「轉」「送到」「轉到」，每段 + 前都去（如「送喬美+21」）
@@ -4633,6 +4657,12 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
             co = COMPANY_ALIAS.get(co_raw, co_raw)
             if not _validate_companies_or_warn([co], reply_token, name):
                 return
+            # 精確比對找不到 → 試公司家族模糊比對（21 ↔ 21機車12萬、亞太 ↔ 亞太機車25萬）
+            if co not in approved_cos:
+                _co_norm = normalize_section(co)
+                _fuzzy = [ac for ac in approved_cos if normalize_section(ac) == _co_norm]
+                if _fuzzy:
+                    co = _fuzzy[0]
             if co not in approved_cos:
                 lst = "、".join([f'{a.get("company","")} {a.get("amount","")}' for a in all_approved]) or "無"
                 reply_text(reply_token,
@@ -4902,6 +4932,19 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
             return
         # 套 COMPANY_ALIAS 規範化（例：「貸10」→「貸救補」）
         company = COMPANY_ALIAS.get(company, company)
+        # 若是概略公司名（如「21」→「21商品」）但客戶實際送的是同家族的具體方案
+        # （例如 21機車12萬）→ 用客戶實際在送那家、避免誤核准到別的方案
+        _co_norm = normalize_section(company)
+        _cc_list = [c.strip() for c in (target["concurrent_companies"] or "").split(",") if c.strip()]
+        _curr = (target["current_company"] or "").strip()
+        _candidates = []
+        if _curr and normalize_section(_curr) == _co_norm:
+            _candidates.append(_curr)
+        for _c in _cc_list:
+            if normalize_section(_c) == _co_norm and _c not in _candidates:
+                _candidates.append(_c)
+        if _candidates and company not in _candidates:
+            company = _candidates[0]
         route = target["route_plan"] or ""
         new_route = update_company_amount_in_history(route, company, amount)
         # 核准金額更新：
@@ -5340,6 +5383,7 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
     if t == "penalty":
         name = cmd["name"]
         amt = cmd["penalty"]
+        confirmed = cmd.get("confirmed", False)
         rows = find_active_by_name(name)
         same = [r for r in rows if r["source_group_id"] == group_id]
         target = same[0] if same else (rows[0] if rows else None)
@@ -5347,10 +5391,29 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
             reply_text(reply_token, f"❌ 找不到客戶：{name}"); return
         has_approved = bool(target["approved_amount"])
         reason = "核准後放棄" if has_approved else "辦理中放棄"
+        amt_disp = f"{int(amt):,}" if amt.isdigit() else amt
+        if not confirmed:
+            # 第一階段：記錄 pending、顯示紀錄、要求二次確認
+            update_customer(target["case_id"],
+                            penalty_amount=amt, penalty_pending="1",
+                            report_section="違約金待確認",
+                            text=f"{name} 違約金已支付(待確認) ${amt_disp}（{reason}）",
+                            from_group_id=group_id)
+            reply_text(reply_token,
+                       f"⚠️ {name} 違約金已支付 ${amt_disp}（{reason}）\n"
+                       f"紀錄已存、但尚未結案。\n"
+                       f"確認結案請打：@AI {name} 違約金確認支付 {amt}\n"
+                       f"如需修改金額、重打「違約金已支付 新金額」即可")
+            return
+        # 第二階段：確認、正式結案
+        today = datetime.now().strftime("%Y-%m-%d")
         update_customer(target["case_id"], status="PENALTY",
-                        text=f"{name} 違約金已支付 ${amt}（{reason}）", from_group_id=group_id)
-        push_text(target["source_group_id"], f"{name} 違約金已支付 ${amt}（{reason}）")
-        reply_text(reply_token, "✅ " + name + " 已結案\n原因：" + reason + "\n違約金：$" + amt)
+                        penalty_amount=amt, penalty_date=today, penalty_pending="",
+                        report_section="",
+                        text=f"{name} 違約金確認支付 ${amt_disp}（{reason}）",
+                        from_group_id=group_id)
+        push_text(target["source_group_id"], f"{name} 違約金已支付 ${amt_disp}（{reason}）")
+        reply_text(reply_token, f"✅ {name} 已結案\n原因：{reason}\n違約金：${amt_disp}")
         return
 
     if t == "notification":
