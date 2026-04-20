@@ -123,6 +123,7 @@ FIELD_LABELS = {
     "company_phone_num": "公司電話號碼",
     "company_phone_ext": "公司電話分機",
     "company_full_phone": "公司完整電話（區碼-號碼）",
+    "company_full_phone_no_dash": "公司完整電話（無 dash、例 062227553）",
     "company_years": "工作年資（年）",
     "company_months": "工作年資（月）",
     "company_salary": "月薪",
@@ -271,15 +272,16 @@ DEFAULT_MAPPINGS = {
     },
     "21機車12萬": {
         "工作表1": {
-            "C3": "customer_name", "E3": "id_no", "J3": "phone",
+            "C3": "customer_name", "E3": "id_no", "J3": "phone_no_dash",
             "C4": "birth_date", "E4": "id_issue_date",
             "F4": "id_issue_place", "G4": "id_issue_type",
-            "J4": "live_phone",
+            "J4": "live_phone_no_dash",
             "C6": "reg_city", "D6": "reg_district", "E6": "reg_address",
             "C7": "live_city", "D7": "live_district", "E7": "live_address",
             "C8": "email",
             "C9": "company_name_detail",
             "G9": "company_full_phone_no_dash",
+            "J9": "company_phone_ext",
             "C10": "company_role", "E10": "company_salary",
             "G10": "company_years", "H10": "company_months",
             "C17": "contact1_name", "E17": "contact1_relation",
@@ -380,6 +382,15 @@ def compute_field_value(field_key: str, r: dict, plan_name: str = "",
         if a == "mobile":
             a = ""
         return a + n
+    if field_key == "phone_no_dash":
+        # 手機/行動電話去 dash：0987-675156 → 0987675156
+        return v("phone").replace("-", "").replace(" ", "")
+    if field_key == "live_phone_no_dash":
+        # 現住電話去 dash：02-22058316 → 0222058316
+        return v("live_phone").replace("-", "").replace(" ", "")
+    if field_key == "reg_phone_no_dash":
+        # 戶籍電話去 dash
+        return v("reg_phone").replace("-", "").replace(" ", "")
 
     # plan-aware 處理：從現有 _build_cell_map 取得處理過的值
     # 必須有 processed_cells（_build_cell_map 結果）+ reverse_map
@@ -11569,15 +11580,24 @@ def _do_download_excel(request: Request, case_id: str):
 
             # === 住家/戶籍電話拆區碼+號碼（範本 D15/E15=住家、G15/H15=戶籍）===
             def _split_phone(raw):
-                """037-123456 → ('037','123456')；09xx → ('0','09xxxxxxxx')；空 → ('','')"""
+                """037-123456 → ('037','123456')；087956464 → ('08','7956464')；
+                   09xx → ('0','09xxxxxxxx')；空 → ('','')"""
                 if not raw: return ("", "")
-                s = raw.strip()
+                s = raw.strip().replace(" ", "")
                 if "-" in s:
                     parts = s.split("-", 1)
                     return (parts[0].strip(), parts[1].strip())
-                # 手機號碼直接放 number，區碼用「0」
+                # 手機號碼（09 開頭）→ 區碼寫「0」、number 寫全碼
                 if s.startswith("09"):
                     return ("0", s)
+                # 市話無 dash：按已知區碼前綴長度優先拆（037/049/089 先試、再試 2 碼）
+                if s.startswith("0"):
+                    for prefix in ("037", "049", "089"):
+                        if s.startswith(prefix):
+                            return (prefix, s[len(prefix):])
+                    for prefix in ("02", "03", "04", "05", "06", "07", "08"):
+                        if s.startswith(prefix):
+                            return (prefix, s[len(prefix):])
                 return ("", s)
             live_phone_raw = v("live_phone") if not live_same else v("reg_phone")
             reg_phone_area, reg_phone_num = _split_phone(v("reg_phone"))
@@ -11870,10 +11890,10 @@ def _do_download_excel(request: Request, case_id: str):
                 sal_e10 = co_salary
 
             return {
-                "C3": name, "E3": id_no, "J3": phone,
+                "C3": name, "E3": id_no, "J3": (phone or "").replace("-", "").replace(" ", ""),
                 "C4": birth_roc, "E4": id_date_roc,
                 "F4": id_place_code, "G4": id_type_val,
-                "J4": v("live_phone"),
+                "J4": (v("live_phone") or "").replace("-", "").replace(" ", ""),
                 # 戶籍地址：C6=縣市、D6=鄉鎮區、E6=詳細地址
                 "C6": reg_city_21,
                 "D6": reg_district_21,
@@ -11884,10 +11904,11 @@ def _do_download_excel(request: Request, case_id: str):
                 "E7": v("reg_address") if live_same else v("live_address"),
                 "C8": email,
                 "C9": company, "G9": co_phone_area + co_phone_num,
+                "J9": v("company_phone_ext"),
                 "C10": co_role, "E10": sal_e10,
                 "G10": g10_val, "H10": h10_val,
-                "C17": c1_name, "E17": c1_rel_21, "H17": c1_phone, "K17": "保密" if c1_known == "保密" else "",
-                "C18": c2_name, "E18": c2_rel_21, "H18": c2_phone, "K18": "保密" if c2_known == "保密" else "",
+                "C17": c1_name, "E17": c1_rel_21, "H17": (c1_phone or "").replace("-", "").replace(" ", ""), "K17": "保密" if c1_known == "保密" else "",
+                "C18": c2_name, "E18": c2_rel_21, "H18": (c2_phone or "").replace("-", "").replace(" ", ""), "K18": "保密" if c2_known == "保密" else "",
             }
 
         return {}  # Unknown plan - no data fill
@@ -12132,7 +12153,14 @@ def _do_download_excel(request: Request, case_id: str):
                             continue
                         sheet_cm = {}
                         for cell_ref, field_key in cell_field_map.items():
-                            val = compute_field_value(field_key, r, plan, processed_cells, reverse_map)
+                            # plan 的 _build_cell_map 已為此 cell 計算過（如 21 的 G9=area+num、
+                            # 亞太的 D15/E15 拆區碼）→ 優先用 processed_cells 的值，
+                            # 避免使用者舊的 mapping 選單值（例如 G9=company_phone_num 只有號碼）覆蓋
+                            if cell_ref in processed_cells and processed_cells[cell_ref] is not None:
+                                pv = processed_cells[cell_ref]
+                                val = str(pv) if not isinstance(pv, str) else pv
+                            else:
+                                val = compute_field_value(field_key, r, plan, processed_cells, reverse_map)
                             if val is not None:
                                 sheet_cm[cell_ref] = val
                         if sheet_cm:
@@ -12812,7 +12840,7 @@ def admin_templates_edit(request: Request, plan: str = ""):
         ("身分證", ["id_issue_date","id_issue_place","id_issue_type"]),
         ("戶籍地址", ["reg_city","reg_district","reg_address","reg_phone","reg_full_address"]),
         ("現居地址", ["live_city","live_district","live_address","live_phone","live_same_as_reg","live_full_address","live_status","live_years","live_months"]),
-        ("公司職務", ["company","company_name_detail","company_role","company_phone_area","company_phone_num","company_phone_ext","company_full_phone","company_years","company_months","company_salary","company_city","company_district","company_address","company_full_address"]),
+        ("公司職務", ["company","company_name_detail","company_role","company_phone_area","company_phone_num","company_phone_ext","company_full_phone","company_full_phone_no_dash","company_years","company_months","company_salary","company_city","company_district","company_address","company_full_address"]),
         ("聯絡人", ["contact1_name","contact1_relation","contact1_phone","contact1_known","contact2_name","contact2_relation","contact2_phone","contact2_known"]),
         ("車輛", ["adminb_brand","vehicle_plate","adminb_vehicle_type","adminb_engine_no","adminb_body_no","adminb_mfg_date","adminb_displacement","adminb_color"]),
         ("亞太專用", ["adminb_fund_use","adminb_industry","adminb_role"]),
