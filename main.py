@@ -2775,7 +2775,8 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
         section = normalize_section(section)
         created = row["created_at"] or ""
         date_str = created[5:10].replace("-", "/") if created else ""
-        company_str = current_co
+        # 日報公司名用簡化版（21機車25萬 → 21、亞太機 → 亞太）避免日報太長
+        company_str = normalize_section(current_co) or current_co
 
         # 如果待撥款但還在送其他公司 → 兩個區塊都顯示
         extra_section = None
@@ -2795,6 +2796,27 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
         except Exception:
             company_status = {}
 
+        def _default_sent_for_major(sn):
+            """21/亞太 系列當前在送（未有補件/婉拒等具體狀態）→ 日報顯示「已送件」
+            避免日報只秀「21機車25萬」或「亞太機車15萬」等冗長方案名、狀態欄空白"""
+            return "已送件" if sn in ("21", "亞太") else ""
+
+        def _compress_status(s):
+            """日報狀態壓縮、減少長度（手機看不用捲）：
+            - 待補申覆/待補資料/待補照會 → 待補
+            - 已補申覆/已補資料/已補照會 → 已補
+            - 補時段 HH:MM-HH:MM → 補時段（不帶時間）
+            - 其他保持原樣
+            """
+            if not s: return s
+            if s.startswith("已補") or "已補" == s:
+                return "已補"
+            if s.startswith("待補") or "待補" == s:
+                return "待補"
+            if s.startswith("補時段") or s.startswith("補照會") or s.startswith("照會時段"):
+                return "補時段"
+            return s
+
         def get_section_status(sec_name):
             """取得該區塊對應公司的狀態（各家獨立，沒有就不顯示）"""
             if sec_name in company_status:
@@ -2807,16 +2829,16 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
                     s = extract_status_summary(ln, row["customer_name"])
                     if s:
                         return s
-                return ""
-            # 如果是同時送件的公司但還沒收到A群回貼 → 不顯示狀態
+                return _default_sent_for_major(sec_name)
+            # 如果是同時送件的公司但還沒收到A群回貼 → 顯示「已送件」（21/亞太）
             concurrent_list = [c.strip() for c in (row["concurrent_companies"] or "").split(",") if c.strip()]
             is_concurrent = any(normalize_section(c) == sec_name for c in concurrent_list)
             if is_concurrent:
-                return ""
+                return _default_sent_for_major(sec_name)
             # 如果客戶已有其他公司的狀態紀錄（例如前一家婉拒後推進），status_short 可能是
             # 前一家公司的狀態摘要（如「亞太婉拒」），不該顯示在當前送件公司的區塊。
             if company_status:
-                return ""
+                return _default_sent_for_major(sec_name)
             # status_short 來自 last_update 第一行：
             # - 訊息有提公司（如「喬美 婉拒」）→ 只套該家區塊（不污染其他）
             # - 訊息沒提公司（如「呂布 補申覆」）→ 套所有在送的區塊（泛狀態）
@@ -2843,12 +2865,13 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
                 parts = []
                 for ap in approved_list:
                     co = ap.get('company') or ''
+                    co_short = normalize_section(co) or co  # 簡化：21機車25萬→21
                     amt = ap.get('amount') or ''
                     disb = ap.get('disbursed') or ''
                     if disb:
-                        parts.append(f"{co}{amt}(撥款{disb})")
+                        parts.append(f"{co_short} {amt}(撥款{disb})")
                     else:
-                        parts.append(f"{co}{amt}{pending_tag}")
+                        parts.append(f"{co_short} {amt}{pending_tag}")
                 amount_str = "-核准" + "/".join(parts)
             elif amount:
                 disb_date = row["disbursement_date"] or ""
@@ -2858,7 +2881,7 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
                 amount_str = ""
             line = f"{created_date}-{row['customer_name']}{amount_str}"
         else:
-            sec_status = get_section_status(section)
+            sec_status = _compress_status(get_section_status(section))
             line = f"{date_str}-{row['customer_name']}-{company_str}"
             if sec_status:
                 line += f"-{sec_status}"
@@ -2872,6 +2895,15 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
             if created[:10] == today_str:
                 extra_line = "🆕" + extra_line
             section_map.setdefault(extra_section, []).append(extra_line)
+        # 已核准的公司 section set（避免公司區再重複顯示、已在待撥款區）
+        approved_sections = set()
+        try:
+            for ap in get_all_approved(row["route_plan"] or ""):
+                ap_co = ap.get("company") or ""
+                if ap_co:
+                    approved_sections.add(normalize_section(ap_co))
+        except Exception:
+            pass
         # 同時送件的公司也要顯示
         concurrent_str = row["concurrent_companies"] or ""
         if concurrent_str:
@@ -2880,9 +2912,13 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
                 if not co:
                     continue
                 co_section = normalize_section(co)
+                if co_section in approved_sections:
+                    continue  # 已在待撥款區顯示過、不重複
                 if co_section != section:
-                    co_status = get_section_status(co_section)
-                    co_line = f"{date_str}-{row['customer_name']}-{co}"
+                    co_status = _compress_status(get_section_status(co_section))
+                    # 日報顯示用簡化名（21機車25萬 → 21）
+                    co_short = co_section or co
+                    co_line = f"{date_str}-{row['customer_name']}-{co_short}"
                     if co_status:
                         co_line += f"-{co_status}"
                     if created[:10] == today_str:
