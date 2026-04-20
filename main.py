@@ -5681,8 +5681,12 @@ def is_single_approval_line(line: str) -> bool:
 def handle_new_case_block(block_text, source_group_id, reply_token) -> Optional[str]:
     f = parse_header_fields(block_text)
     first_line = extract_first_line(block_text)
-    # 抓公司前先把身分證移除，避免 U121558670 的「21」被當成公司
+    # 抓公司前先把身分證 + 日期移除，避免：
+    # - U121558670 的「21」被當成公司
+    # - 115/04/21 的「21」被當成 21 公司
     first_line_no_id = re.sub(r"[A-Z][A-Z0-9]\d{8}", "", first_line, flags=re.IGNORECASE)
+    first_line_no_id = re.sub(r"\d{1,3}[-/.]\d{1,2}[-/.]\d{1,2}", "", first_line_no_id)
+    first_line_no_id = re.sub(r"\d{1,2}[-/.]\d{1,2}", "", first_line_no_id)
     name, id_no, company = f.get("name", ""), f.get("id_no", ""), extract_company(first_line_no_id)
     if not name or not id_no:
         return None
@@ -5866,16 +5870,22 @@ def _handle_a_case_block_locked(block_text, reply_token, id_no, name, forced_cas
 
     company = extract_company(block_text) or customer["company"] or ""
     new_status = "CLOSED" if is_closed_text(block_text) else None
+    # 核准/婉拒判斷「只看第一行」— 避免第 2 行起的備註（例「近期銀行核貸兩筆」）
+    # 誤被當成核准關鍵字「核貸」；「婉拒」通常也會在第 1 行明示
+    first_line_for_status = extract_first_line(block_text)
     # 「待核准」= 還有缺、還沒真正核准，不觸發待撥款；先把「待核准/待核準」字串移除再比對
-    text_wo_pending = block_text.replace("待核准", "").replace("待核準", "")
+    first_line_wo_pending = first_line_for_status.replace("待核准", "").replace("待核準", "")
     # C（零卡）特例：「有額度 / 有換 / 可換 / 能換」視同核准直接排撥款（零卡可馬上換現）
     is_c_card = (company == "零卡" or COMPANY_ALIAS.get(company) == "零卡"
                  or normalize_section(company) == "零卡")
-    is_c_confirmed = is_c_card and any(w in text_wo_pending for w in ["有額度", "有換", "可換", "能換"])
-    is_approved = (any(w in text_wo_pending for w in ["核准", "核準", "過件", "通過", "核貸"])
+    is_c_confirmed = is_c_card and any(w in first_line_wo_pending for w in ["有額度", "有換", "可換", "能換"])
+    is_approved = (any(w in first_line_wo_pending for w in ["核准", "核準", "過件", "通過", "核貸"])
                    or is_c_confirmed) and new_status != "CLOSED"
-    # 「撤件」「客戶撤件」「客戶自行撤件」不算婉拒（只記錄，不推進 route；後續若業務明確打「轉XXX」才動）
-    is_reject = not is_approved and any(w in block_text for w in ["婉拒", "申覆失敗", "建議維持原審", "不予承作", "無法再進件", "無法承作", "30日內有進件", "已建檔", "不提供申覆", "退件", "無法核貸", "無法進件"])
+    # 「撤件」「客戶撤件」「客戶自行撤件」不算婉拒（只記錄，不推進 route）
+    is_reject = not is_approved and any(w in first_line_for_status for w in ["婉拒", "申覆失敗", "建議維持原審", "不予承作", "無法再進件", "無法承作", "30日內有進件", "已建檔", "不提供申覆", "退件", "無法核貸", "無法進件"])
+    # 若第 1 行沒結論、整段有婉拒也算（備註很多、結論在後的情況）
+    if not is_approved and not is_reject and "婉拒" in block_text:
+        is_reject = True
     route = customer["route_plan"] or ""
     new_route, next_co = route, ""
     # 檢查公司是否在同時送件清單或 route 裡
@@ -6650,6 +6660,35 @@ def _check_ambiguous_supplement(block_text, target_row, name):
             f"例：{name} {all_sending[0]} {bu_type}")
 
 
+def _update_company_status_for_text(case_id: str, company: str, block_text: str):
+    """把訊息寫入該 customer 的 company_status[company] — 這樣日報每家公司區塊
+    才能用最新文字算狀態摘要（已補/待補/婉拒 等）。
+    company 為空時自動偵測訊息提到的公司。"""
+    try:
+        conn = get_conn(); cur = conn.cursor()
+        cur.execute("SELECT company_status FROM customers WHERE case_id=?", (case_id,))
+        row = cur.fetchone()
+        if not row:
+            conn.close(); return
+        cs_raw = row["company_status"] or "{}"
+        try:
+            cs = json.loads(cs_raw)
+        except Exception:
+            cs = {}
+        co = company or extract_company(block_text)
+        if not co:
+            conn.close(); return
+        co_key = normalize_section(co)
+        if not co_key:
+            conn.close(); return
+        cs[co_key] = block_text
+        cur.execute("UPDATE customers SET company_status=? WHERE case_id=?",
+                    (json.dumps(cs, ensure_ascii=False), case_id))
+        conn.commit(); conn.close()
+    except Exception:
+        pass
+
+
 def handle_bc_case_block(block_text, source_group_id, reply_token, source_text="") -> Optional[str]:
     if is_blocked(block_text):
         return "❌ 含禁止關鍵字，已略過"
@@ -6798,6 +6837,7 @@ def _handle_bc_case_block_locked(block_text, source_group_id, reply_token, sourc
         new_status = "CLOSED" if is_closed_text(block_text) else None
         update_customer(c["case_id"], company=company or c["company"] or "",
                         text=block_text, from_group_id=source_group_id, status=new_status)
+        _update_company_status_for_text(c["case_id"], company, block_text)
         pushed = False
         if want_push_a and new_status != "CLOSED":
             ok, _ = push_text(A_GROUP_ID, block_text); pushed = ok
@@ -6819,6 +6859,7 @@ def _handle_bc_case_block_locked(block_text, source_group_id, reply_token, sourc
             return amb_hint
         update_customer(r["case_id"], company=company or r["company"] or "",
                         text=block_text, from_group_id=source_group_id)
+        _update_company_status_for_text(r["case_id"], company, block_text)
         pushed = False
         if want_push_a:
             ok, _ = push_text(A_GROUP_ID, block_text); pushed = ok
