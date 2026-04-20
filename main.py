@@ -279,6 +279,7 @@ DEFAULT_MAPPINGS = {
             "C7": "live_city", "D7": "live_district", "E7": "live_address",
             "C8": "email",
             "C9": "company_name_detail",
+            "G9": "company_full_phone_no_dash",
             "C10": "company_role", "E10": "company_salary",
             "G10": "company_years", "H10": "company_months",
             "C17": "contact1_name", "E17": "contact1_relation",
@@ -372,6 +373,13 @@ def compute_field_value(field_key: str, r: dict, plan_name: str = "",
         if a == "mobile":
             a = ""
         return (a + "-" + n) if (a and n) else n
+    if field_key == "company_full_phone_no_dash":
+        # 21 系列 G9 用的無 dash 格式：06 + 2227553 → 062227553
+        a = v("company_phone_area")
+        n = v("company_phone_num")
+        if a == "mobile":
+            a = ""
+        return a + n
 
     # plan-aware 處理：從現有 _build_cell_map 取得處理過的值
     # 必須有 processed_cells（_build_cell_map 結果）+ reverse_map
