@@ -8803,14 +8803,15 @@ document.querySelector('form[action="/edit-pending"]').addEventListener('submit'
   function addrHasCity(s){{if(!s)return '';for(var i=0;i<CITIES.length;i++){{if(s.indexOf(CITIES[i])===0)return CITIES[i];}}return '';}}
   var qq=function(n){{var el=document.querySelector('[name="'+n+'"]');return el?(el.value||'').trim():'';}};
   var errs=[];
+  var sck=document.getElementById('sameck'); var sameReg=sck&&sck.checked;
   var ra=qq('raddr'), la=qq('laddr'), ca=qq('caddr');
   var rdist=qq('rdist'), ldist=qq('ldist'), cdist=qq('cdist');
   var raHit=addrHasCity(ra); if(raHit)errs.push('戶籍詳細地址不可含縣市名「'+raHit+'」');
-  var laHit=addrHasCity(la); if(laHit)errs.push('住家詳細地址不可含縣市名「'+laHit+'」');
+  if(!sameReg){{var laHit=addrHasCity(la); if(laHit)errs.push('住家詳細地址不可含縣市名「'+laHit+'」');}}
   var caHit=addrHasCity(ca); if(caHit)errs.push('公司詳細地址不可含縣市名「'+caHit+'」');
   function hasDistWord(s){{return /[區鄉鎮]/.test(s||'');}}
   if(ra&&!rdist&&hasDistWord(ra))errs.push('戶籍詳細地址含區/鄉/鎮，請拆到「區/鄉鎮」欄位');
-  if(la&&!ldist&&hasDistWord(la))errs.push('住家詳細地址含區/鄉/鎮，請拆到「區/鄉鎮」欄位');
+  if(!sameReg&&la&&!ldist&&hasDistWord(la))errs.push('住家詳細地址含區/鄉/鎮，請拆到「區/鄉鎮」欄位');
   if(ca&&!cdist&&hasDistWord(ca))errs.push('公司詳細地址含區/鄉/鎮，請拆到「區/鄉鎮」欄位');
   if(errs.length){{ev.preventDefault();alert('⚠️ 請修正以下錯誤：\\n\\n• '+errs.join('\\n• '));return false;}}
 }});
