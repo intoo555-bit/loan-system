@@ -4904,8 +4904,23 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
         company = COMPANY_ALIAS.get(company, company)
         route = target["route_plan"] or ""
         new_route = update_company_amount_in_history(route, company, amount)
-        # 核准金額更新時，一律移到「待撥款」區塊（房地/當鋪/C 等都一致）
+        # 核准金額更新：
+        # - current_company 換成核准那家（日報的「核准顯示」才對）
+        # - 原 current（如果不同公司）降到 concurrent（仍在送、不影響繼續比價）
+        # - 核准的那家從 concurrent 移除（因為升成 current 了）
+        # - 一律移到「待撥款」區塊
+        concurrent_str = target["concurrent_companies"] or ""
+        concurrent_list = [c.strip() for c in concurrent_str.split(",") if c.strip()]
+        company_norm = normalize_section(company)
+        old_current = (target["current_company"] or "").strip()
+        new_concurrent = [c for c in concurrent_list if normalize_section(c) != company_norm]
+        if old_current and normalize_section(old_current) != company_norm:
+            # 原 current 降到 concurrent（除非已存在同公司）
+            if not any(normalize_section(c) == normalize_section(old_current) for c in new_concurrent):
+                new_concurrent.insert(0, old_current)
         update_customer(target["case_id"], route_plan=new_route,
+                        current_company=company,
+                        concurrent_companies=",".join(new_concurrent),
                         approved_amount=amount,
                         report_section="待撥款",
                         text=f"{name} {company} 核准金額修改為 {amount}",
