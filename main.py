@@ -5291,6 +5291,11 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
             update_kw = {"route_plan": new_route, "current_company": new_current,
                          "concurrent_companies": ",".join(new_concurrent),
                          "text": f"{name} {current} 婉拒", "from_group_id": group_id}
+            # 更新日報 section：跟著新 current 走（避免被婉拒那家殘留在舊區塊）
+            if new_current:
+                update_kw["report_section"] = COMPANY_SECTION_MAP.get(new_current, normalize_section(new_current))
+            else:
+                update_kw["report_section"] = ""
             if not new_current:
                 update_kw["company"] = ""  # 已全數婉拒：清 company 避免日報 fallback
             update_customer(target["case_id"], **update_kw)
