@@ -5246,32 +5246,37 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
 
     if t == "reject_to":
         name = cmd["name"]
-        target_co = cmd["target"]
+        target_raw = cmd["target"]
         reject_company = cmd.get("company", "")  # 可空（舊格式「婉拒轉XX」沒指定）
         target = _resolve_target_strict(cmd, name, group_id, reply_token, "婉拒轉")
         if not target:
             return
-        # 規範化公司名（套 alias）
-        target_co = COMPANY_ALIAS.get(target_co, target_co)
-        # 驗證 target 公司名
-        if not _validate_companies_or_warn([target_co], reply_token, name):
+        # 支援「亞太+21」多家同送：拆 +、套 alias、第一家當 current、其餘 concurrent
+        target_items = [t.strip() for t in re.split(r"[+＋]", target_raw) if t.strip()]
+        target_cos = [COMPANY_ALIAS.get(t, t) for t in target_items]
+        if not _validate_companies_or_warn(target_cos, reply_token, name):
             return
+        target_co = target_cos[0]
+        extra_concurrent = target_cos[1:]
         route = target["route_plan"] or ""
         current = get_current_company(route)
         reject_co = COMPANY_ALIAS.get(reject_company, reject_company) if reject_company else current
         if reject_company and not _validate_companies_or_warn([reject_co], reply_token, name):
             return
-        # 從 concurrent_companies 移除婉拒的公司（不留在同送清單）
+        # 從 concurrent_companies 移除婉拒的公司、重建新同送（target_co 的同伴）
         concurrent_str = target["concurrent_companies"] or ""
         concurrent_list = [c.strip() for c in concurrent_str.split(",") if c.strip()]
         concurrent_list = [c for c in concurrent_list
                            if not (reject_co and (reject_co in c or c in reject_co))]
+        # 加入新同送夥伴（去重）
+        for c in extra_concurrent:
+            if c not in concurrent_list:
+                concurrent_list.append(c)
         new_concurrent = ",".join(concurrent_list)
         # 更新 route_plan：加婉拒歷史 + 把 target_co 設為 current
         data = parse_route_json(route)
         order = data.get("order", []) or []
         history = data.get("history", []) or []
-        # 避免重複寫歷史
         if reject_co and not any(h.get("company") == reject_co and h.get("status") == "婉拒"
                                   for h in history):
             history.append({"company": reject_co, "status": "婉拒", "date": now_iso()[:10]})
@@ -5284,11 +5289,11 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
         update_customer(target["case_id"], route_plan=new_route,
                         current_company=target_co,
                         concurrent_companies=new_concurrent,
-                        text=f"{name} {reject_co} 婉拒，轉送 {target_co}",
+                        text=f"{name} {reject_co} 婉拒，轉送 {'+'.join(target_cos)}",
                         from_group_id=group_id)
-        # 回貼業務群
-        push_text(target["source_group_id"], f"{name} {reject_co} 婉拒\n➡️ 跳轉到：{target_co}")
-        reply_text(reply_token, f"✅ {name} {reject_co} 婉拒\n➡️ 跳轉到：{target_co}")
+        display_target = "+".join(target_cos)
+        push_text(target["source_group_id"], f"{name} {reject_co} 婉拒\n➡️ 跳轉到：{display_target}")
+        reply_text(reply_token, f"✅ {name} {reject_co} 婉拒\n➡️ 跳轉到：{display_target}")
         return
 
     if t == "penalty":
