@@ -282,6 +282,71 @@ c = get_cust("A555666777")
 check("撥款日已寫入", (c.get("disbursement_date") or "") != "",
       c.get("disbursement_date"))
 
+# ========== 21. 跨月統計：本月結案只含 CLOSED/PENALTY/ABANDONED/REJECTED ==========
+print("\n=== 21. 本月結案統計包含正確狀態 ===")
+# 建一筆 PENDING（不該算結案）
+conn = sqlite3.connect(TEST_DB); cur = conn.cursor()
+cur.execute("INSERT INTO customers (case_id,customer_name,id_no,source_group_id,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?)",
+            ("PENDING_001","王小小","P111222333","TEST_B","PENDING",now,now))
+cur.execute("INSERT INTO customers (case_id,customer_name,id_no,source_group_id,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?)",
+            ("CLOSED_001","王大大","P111222334","TEST_B","CLOSED",now,now))
+conn.commit()
+# 本月結案查詢
+month_start = m.now_tw().strftime("%Y-%m-01")
+cur.execute("SELECT COUNT(*) AS n FROM customers WHERE status IN ('CLOSED','PENALTY','ABANDONED','REJECTED') AND updated_at >= ?", (month_start,))
+closed_count = cur.fetchone()[0]
+cur.execute("SELECT COUNT(*) AS n FROM customers WHERE status != 'ACTIVE'")
+not_active_count = cur.fetchone()[0]
+conn.close()
+check("本月結案只數 CLOSED/PENALTY/etc（不含 PENDING）", closed_count >= 1 and closed_count < not_active_count,
+      f"closed={closed_count}, not_active={not_active_count}")
+
+# ========== 22. 時區：created_at 格式正確 ==========
+print("\n=== 22. DB 寫入時間格式 ===")
+bc("4/21-陸遜A666777888", gid="TEST_B")
+c = get_cust("A666777888")
+check("created_at 為台灣時間格式", c["created_at"].startswith(m.now_tw().strftime("%Y-%m-%d %H")),
+      f"created_at={c.get('created_at')}")
+
+# ========== 23. 還原：update_customer 有存 snapshot ==========
+print("\n=== 23. 還原 snapshot 完整性 ===")
+bc("4/21-司馬懿A777888999", gid="TEST_B")
+bc("4/21-司馬懿-第一/喬美", gid="TEST_B")
+before = get_cust("A777888999")
+bc("@AI 司馬懿 第一 核准 30萬", gid="TEST_B")
+# 查 case_logs 看 snapshot
+conn2 = sqlite3.connect(TEST_DB); conn2.row_factory = sqlite3.Row
+log = conn2.execute("SELECT snapshot_json FROM case_logs WHERE case_id=? ORDER BY id DESC LIMIT 1",
+                    (before["case_id"],)).fetchone()
+conn2.close()
+check("核准操作有存 snapshot", log and log["snapshot_json"],
+      f"snapshot={log['snapshot_json'][:50] if log and log['snapshot_json'] else None}")
+# 還原
+bc("@AI 司馬懿 還原 1", gid="TEST_B")
+c = get_cust("A777888999")
+check("還原後 approved_amount 清空（回到核准前）", not (c.get("approved_amount") or ""),
+      f"approved={c.get('approved_amount')}")
+
+# ========== 24. 婉拒理由保留在 case_logs（透過 BC 群補件帶理由）==========
+print("\n=== 24. case_logs 保留訊息完整理由 ===")
+bc("4/21-龐統A888999000", gid="TEST_B")
+bc("4/21-龐統-亞太機", gid="TEST_B")
+bc("龐統 亞太機 婉拒 負債比過高信用評分不足", gid="TEST_B")
+conn3 = sqlite3.connect(TEST_DB); conn3.row_factory = sqlite3.Row
+c = get_cust("A888999000")
+log2 = conn3.execute("SELECT message_text FROM case_logs WHERE case_id=? ORDER BY id DESC LIMIT 1",
+                     (c["case_id"],)).fetchone()
+conn3.close()
+check("case_logs 保留婉拒完整理由", log2 and "負債比" in (log2["message_text"] or ""),
+      f"log={log2['message_text'][:80] if log2 else None}")
+
+# ========== 25. 統計：ACTIVE 數量 ==========
+print("\n=== 25. 進行中客戶計數 ===")
+conn4 = sqlite3.connect(TEST_DB)
+active_count = conn4.execute("SELECT COUNT(*) FROM customers WHERE status='ACTIVE'").fetchone()[0]
+conn4.close()
+check("有計入 ACTIVE 客戶", active_count >= 3, f"active={active_count}")
+
 # ========== 總結 ==========
 print(f"\n{'='*50}")
 print(f"結果：{PASS} 通過、{FAIL} 失敗")

@@ -3757,6 +3757,9 @@ def update_with_verify(case_id: str, changes: Dict, from_group_id: str = "", tex
                     "id_no", "name"}
     filtered = {}
     for k, v in changes.items():
+        # None 一律轉 "" 才能真正清空欄位（update_customer 對 None 的語意是「不動」）
+        if v is None:
+            v = ""
         if k == "customer_name":
             filtered["name"] = v
         elif k in allowed_keys:
