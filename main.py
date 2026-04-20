@@ -5166,6 +5166,16 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
             return
         if not _check_active_or_warn(target, reply_token, "婉拒", name):
             return
+        # 防錯：沒指定公司 + 有 2 家（含）以上在送 → 跳提示要業務明確指定
+        curr = (target["current_company"] or "").strip()
+        concur = [c.strip() for c in (target["concurrent_companies"] or "").split(",") if c.strip()]
+        active_list = ([curr] if curr else []) + concur
+        if len(active_list) >= 2:
+            reply_text(reply_token,
+                       f"⚠️ {name} 目前同送 {'、'.join(active_list)}\n"
+                       f"要婉拒哪家？請明確指定：\n"
+                       f"  @AI {name} {active_list[0]} 婉拒")
+            return
         route = target["route_plan"] or ""
         current, next_co = get_current_company(route), get_next_company(route)
         new_route = advance_route(route, "婉拒")
@@ -5465,6 +5475,17 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
         target = same[0] if same else (rows[0] if rows else None)
         if not target:
             reply_text(reply_token, f"❌ 找不到客戶：{name}"); return
+        # 防錯：沒指定公司 + 有 2 家（含）以上在送 → 跳提示要業務明確指定哪家照會
+        if not company:
+            curr = (target["current_company"] or "").strip()
+            concur = [c.strip() for c in (target["concurrent_companies"] or "").split(",") if c.strip()]
+            active = ([curr] if curr else []) + concur
+            if len(active) >= 2:
+                reply_text(reply_token,
+                           f"⚠️ {name} 目前同送 {'、'.join(active)}\n"
+                           f"要照會哪家？請明確指定：\n"
+                           f"  @AI {name} {active[0]}+{active[1]} 照會")
+                return
         # 處理同時送件（+ 分隔）：每個 item 拆公司名和金額
         concurrent_names = []      # 純公司名（給 concurrent_companies 存）
         concurrent_with_amt = []   # (公司, 金額, 期數) tuple（給照會訊息顯示）
@@ -6680,9 +6701,16 @@ def _check_ambiguous_supplement(block_text, target_row, name):
     """
     bu_markers = ["補申覆", "補照會", "補薪轉", "補聯徵", "補照片", "補保人",
                   "補在職", "補存摺", "補勞保", "補駕照", "補行照",
-                  "補JCIC", "補jcic", "補件", "補資料"]
+                  "補JCIC", "補jcic", "補件", "補資料",
+                  "補繳息", "補汽車繳息", "補身分證", "補時段",
+                  "補補件", "補上傳", "補對保", "補證件"]
     first_line = block_text.splitlines()[0] if block_text else ""
     bu_type = next((m for m in bu_markers if m in first_line), "")
+    # 泛用 fallback：第一行以 "補" 開頭且不到 10 字 → 當成不明補件類
+    if not bu_type:
+        stripped = first_line.strip().replace(name, "").strip()
+        if stripped.startswith("補") and len(stripped) <= 10:
+            bu_type = stripped
     if not bu_type:
         return None
     # 訊息有指定公司 → 不觸發
