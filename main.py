@@ -12148,21 +12148,22 @@ def _do_download_excel(request: Request, case_id: str):
                     reverse_map = _build_reverse_field_map(plan)
                     # 組成多 sheet cell_map
                     sheet_cell_maps = {}
+                    primary_sheet_aliases = set(PRIMARY_SHEET_NAMES.get(plan, []))
                     for sheet_name, cell_field_map in custom_mapping.items():
                         if not isinstance(cell_field_map, dict):
                             continue
                         sheet_cm = {}
                         for cell_ref, field_key in cell_field_map.items():
-                            # plan 的 _build_cell_map 已為此 cell 計算過（如 21 的 G9=area+num、
-                            # 亞太的 D15/E15 拆區碼）→ 優先用 processed_cells 的值，
-                            # 避免使用者舊的 mapping 選單值（例如 G9=company_phone_num 只有號碼）覆蓋
-                            if cell_ref in processed_cells and processed_cells[cell_ref] is not None:
-                                pv = processed_cells[cell_ref]
-                                val = str(pv) if not isinstance(pv, str) else pv
-                            else:
-                                val = compute_field_value(field_key, r, plan, processed_cells, reverse_map)
+                            # admin 指定的 mapping 優先（使用者自訂的欄位對應）
+                            val = compute_field_value(field_key, r, plan, processed_cells, reverse_map)
                             if val is not None:
                                 sheet_cm[cell_ref] = val
+                        # 主表補上 processed_cells 裡 mapping 沒列的 cell（不覆蓋 admin 已指定的）
+                        # 例如亞太 E15/H15 電話 num、21 J9 分機 等
+                        if sheet_name in primary_sheet_aliases:
+                            for pc_cell, pc_val in processed_cells.items():
+                                if pc_cell not in sheet_cm and pc_val is not None:
+                                    sheet_cm[pc_cell] = str(pc_val) if not isinstance(pc_val, str) else pc_val
                         if sheet_cm:
                             sheet_cell_maps[sheet_name] = sheet_cm
                     # 亞太機車：擔保品 B7=年、C7=月，若來源是「YYYY/MM」格式自動拆開
@@ -12181,12 +12182,18 @@ def _do_download_excel(request: Request, case_id: str):
                     if plan in DEFAULT_MAPPINGS and cell_map:
                         dm = DEFAULT_MAPPINGS[plan]
                         sheet_cell_maps = {}
+                        primary_sheet_aliases = set(PRIMARY_SHEET_NAMES.get(plan, []))
                         for sheet_name, field_map in dm.items():
                             sheet_cm = {}
                             for cell_ref, field_key in field_map.items():
                                 val = compute_field_value(field_key, r, plan, cell_map, _build_reverse_field_map(plan))
                                 if val is not None:
                                     sheet_cm[cell_ref] = val
+                            # 主表補上 cell_map 裡 DEFAULT_MAPPINGS 沒列的 cell
+                            if sheet_name in primary_sheet_aliases and cell_map:
+                                for pc_cell, pc_val in cell_map.items():
+                                    if pc_cell not in sheet_cm and pc_val is not None:
+                                        sheet_cm[pc_cell] = str(pc_val) if not isinstance(pc_val, str) else pc_val
                             if sheet_cm:
                                 sheet_cell_maps[sheet_name] = sheet_cm
                         # 亞太機車：擔保品 B7=年、C7=月，拆開「YYYY/MM」格式
