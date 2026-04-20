@@ -186,6 +186,19 @@ PRIMARY_SHEET_NAMES = {
     "21商品": ["工作表1"],
 }
 
+# 這些 cell 在 plan 內有特殊格式處理（拆區碼/去 dash/民國轉換等），
+# admin 自訂 mapping 無法用下拉選單重現 → 一律用 processed_cells 覆寫 admin mapping
+# 避免舊 mapping（例如 G9=company_phone_num 只有號碼）卡死使用者。
+PLAN_AUTHORITATIVE_CELLS = {
+    "21機車12萬": {"G9", "J3", "J4", "J9", "H17", "H18"},
+    "21機車25萬": {"G9", "J3", "J4", "J9", "H17", "H18"},
+    "21商品": {"G9", "J3", "J4", "J9", "H17", "H18"},
+    "亞太商品": {"D15", "E15", "G15", "H15"},
+    "亞太機車15萬": {"D15", "E15", "G15", "H15"},
+    "亞太機車25萬": {"D15", "E15", "G15", "H15"},
+    "亞太工會機車": {"D15", "E15", "G15", "H15"},
+}
+
 # 預設映射模板（使用者首次建立映射時可套用）
 # 結構：{plan: {sheet_name: {cell: field_key}}}
 # 特殊值：_rule: "clear_all" 表示該 sheet 所有對應儲存格清空
@@ -10452,6 +10465,18 @@ def _fill_qiaomei_pdf(r: dict) -> bytes:
         qm_model = v("product_model")
         qm_imei = v("product_imei")
 
+        def _qm_salary_full(s):
+            """喬美 PDF 月薪要完整數字（5.5→55000、45000→45000）"""
+            if not s:
+                return ""
+            try:
+                n = float(str(s).replace("萬", "").replace(",", "").strip())
+                if n < 1000:  # 萬為單位
+                    return str(int(n * 10000))
+                return str(int(n))
+            except Exception:
+                return str(s)
+
         # === 精準座標表（從用戶填好的範本 PDF 提取）===
         # 格式：(x, top, value)
         fields_p1 = [
@@ -10498,8 +10523,8 @@ def _fill_qiaomei_pdf(r: dict) -> bytes:
             # 年資 年 / 月（位置：年=229, 月=267）
             (229, 452, v("company_years")),
             (267, 451, v("company_months")),
-            # 月薪
-            (110, 472, v("company_salary")),
+            # 月薪（喬美 PDF 要完整數字、5.5→55000）
+            (110, 472, _qm_salary_full(v("company_salary"))),
             # 居住時間 年/月
             (119.8, 326, v("live_years")),
             (174.8, 326, v("live_months")),
@@ -12149,17 +12174,23 @@ def _do_download_excel(request: Request, case_id: str):
                     # 組成多 sheet cell_map
                     sheet_cell_maps = {}
                     primary_sheet_aliases = set(PRIMARY_SHEET_NAMES.get(plan, []))
+                    authoritative_cells = PLAN_AUTHORITATIVE_CELLS.get(plan, set())
                     for sheet_name, cell_field_map in custom_mapping.items():
                         if not isinstance(cell_field_map, dict):
                             continue
                         sheet_cm = {}
                         for cell_ref, field_key in cell_field_map.items():
-                            # admin 指定的 mapping 優先（使用者自訂的欄位對應）
-                            val = compute_field_value(field_key, r, plan, processed_cells, reverse_map)
+                            # 系統權威 cell（電話拆區碼/去 dash 等、admin 無法用下拉重現）
+                            # → 一律用 processed_cells 覆寫 admin mapping
+                            if cell_ref in authoritative_cells and cell_ref in processed_cells and processed_cells[cell_ref] is not None:
+                                pv = processed_cells[cell_ref]
+                                val = str(pv) if not isinstance(pv, str) else pv
+                            else:
+                                # admin 指定的 mapping 優先
+                                val = compute_field_value(field_key, r, plan, processed_cells, reverse_map)
                             if val is not None:
                                 sheet_cm[cell_ref] = val
-                        # 主表補上 processed_cells 裡 mapping 沒列的 cell（不覆蓋 admin 已指定的）
-                        # 例如亞太 E15/H15 電話 num、21 J9 分機 等
+                        # 主表補上 processed_cells 裡 mapping 沒列的 cell（例如 E15/H15 電話 num、J9 分機）
                         if sheet_name in primary_sheet_aliases:
                             for pc_cell, pc_val in processed_cells.items():
                                 if pc_cell not in sheet_cm and pc_val is not None:
