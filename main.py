@@ -1162,7 +1162,15 @@ def detect_pairing_substep(text: str) -> str:
 # 基本工具
 # =========================
 def now_iso() -> str:
-    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    # Render 跑在 US/UTC、但業務在台灣用 → 硬轉 UTC+8
+    from datetime import timezone, timedelta
+    tw = timezone(timedelta(hours=8))
+    return datetime.now(tw).strftime("%Y-%m-%d %H:%M:%S")
+
+def now_tw() -> "datetime":
+    """取得台灣當地時間（給其他地方用）"""
+    from datetime import timezone, timedelta
+    return datetime.now(timezone(timedelta(hours=8))).replace(tzinfo=None)
 
 
 def short_id() -> str:
@@ -2463,7 +2471,7 @@ def parse_disbursement_list(text: str) -> Dict:
         re.IGNORECASE
     )
 
-    today_date = datetime.now().strftime("%#m/%#d") if os.name == "nt" else datetime.now().strftime("%-m/%-d")
+    today_date = now_tw().strftime("%#m/%#d") if os.name == "nt" else now_tw().strftime("%-m/%-d")
 
     lines = text.splitlines()
     for line in lines:
@@ -2767,7 +2775,7 @@ def normalize_section(section: str) -> str:
 def build_section_map(all_rows) -> Dict[str, List[str]]:
     """把客戶列表轉成 section_map"""
     section_map: Dict[str, List[str]] = {}
-    today_str = datetime.now().strftime("%Y-%m-%d")
+    today_str = now_tw().strftime("%Y-%m-%d")
     for row in all_rows:
         report_sec = row["report_section"] or ""
         current_co = row["current_company"] or row["company"] or ""
@@ -2948,7 +2956,7 @@ def generate_report_lines(group_id: str) -> List[str]:
     每段都只在有客戶時才顯示，每段超過4500字再自動切割。
     """
     group_name = get_group_name(group_id)
-    today = datetime.now().strftime("%m/%d")
+    today = now_tw().strftime("%m/%d")
     conn = get_conn(); cur = conn.cursor()
     cur.execute("SELECT * FROM customers WHERE source_group_id=? AND status='ACTIVE' ORDER BY updated_at DESC", (group_id,))
     all_rows = cur.fetchall(); conn.close()
@@ -3000,7 +3008,7 @@ def generate_report_lines(group_id: str) -> List[str]:
             created = row["created_at"] or ""
             if created:
                 try:
-                    days = (datetime.now() - datetime.fromisoformat(created.replace("Z",""))).days
+                    days = (now_tw() - datetime.fromisoformat(created.replace("Z",""))).days
                     if days >= 7:
                         signing_time = (row["signing_time"] or "").strip()
                         signing_date = signing_time.split()[0] if signing_time else ""
@@ -4678,7 +4686,7 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
     if t == "disbursed":
         name = cmd["name"]
         co_raw = cmd.get("company", "")
-        disb_date = cmd["date"] or datetime.now().strftime("%-m/%-d") if os.name != "nt" else cmd["date"] or datetime.now().strftime("%#m/%#d")
+        disb_date = cmd["date"] or now_tw().strftime("%-m/%-d") if os.name != "nt" else cmd["date"] or now_tw().strftime("%#m/%#d")
         target = _resolve_target_strict(cmd, name, group_id, reply_token, "撥款")
         if not target:
             return
@@ -4723,7 +4731,7 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
         try:
             dm = re.match(r"(\d{1,2})/(\d{1,2})", disb_date)
             if dm:
-                now = datetime.now()
+                now = now_tw()
                 month, day = int(dm.group(1)), int(dm.group(2))
                 try:
                     disb_dt = datetime(now.year, month, day)
@@ -4880,7 +4888,42 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
         if diffs:
             msg = f"✅ {cust_name} 已還原到 {ts} 之前的狀態\n" + "\n".join(diffs)
         else:
-            msg = f"ℹ️ {cust_name}：還原完成，但狀態無實際變動（可能已經是這個版本）"
+            # 第 N 筆沒改 DB → 往後找第一筆有實際變動的 log、建議使用者還原到那筆
+            conn2 = get_conn(); cur2 = conn2.cursor()
+            cur2.execute("""SELECT id, created_at, snapshot_json, message_text FROM case_logs
+                            WHERE case_id=? ORDER BY id DESC LIMIT 20""", (case_id,))
+            all_logs = cur2.fetchall(); conn2.close()
+            # 找下一個實際有差異的 snapshot
+            suggest_idx = None
+            for check_idx, log in enumerate(all_logs[idx:], start=idx+1):
+                sj = log["snapshot_json"]
+                if not sj: continue
+                try:
+                    snap = json.loads(sj)
+                except Exception:
+                    continue
+                # 比對主要欄位是否跟現在不同
+                conn3 = get_conn(); cur3 = conn3.cursor()
+                cur3.execute("SELECT * FROM customers WHERE case_id=?", (case_id,))
+                cur_row = cur3.fetchone(); conn3.close()
+                if cur_row:
+                    cur_dict = dict(cur_row)
+                    for k, v in snap.items():
+                        if str(cur_dict.get(k) or "") != str(v or ""):
+                            suggest_idx = check_idx
+                            break
+                if suggest_idx:
+                    break
+            if suggest_idx:
+                ts2 = (all_logs[suggest_idx-1]["created_at"] or "")[5:16].replace("T", " ")
+                msg2 = (all_logs[suggest_idx-1]["message_text"] or "")[:40]
+                msg = (f"ℹ️ {cust_name}：第 {idx} 筆沒有改到 DB 欄位、還原無效果\n"
+                       f"要真正回到上個狀態、打：\n"
+                       f"  @AI {name} 還原 {suggest_idx}\n"
+                       f"（對應：{ts2} {msg2}）")
+            else:
+                msg = (f"ℹ️ {cust_name}：還原完成、但最近紀錄都沒改到 DB 欄位。\n"
+                       f"打「@AI {name} 歷史」看完整紀錄、選正確編號")
         reply_text(reply_token, msg)
         return
 
@@ -5010,7 +5053,7 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
     if t == "missing_date_hint":
         name = cmd["name"]
         tail = cmd["tail"]
-        today = datetime.now().strftime("%#m/%#d") if os.name == "nt" else datetime.now().strftime("%-m/%-d")
+        today = now_tw().strftime("%#m/%#d") if os.name == "nt" else now_tw().strftime("%-m/%-d")
         reply_text(reply_token,
                    f"⚠️ 你是不是忘了日期？\n"
                    f"送件順序不用 @AI，格式是：M/D-姓名-公司/公司/...\n"
@@ -5457,7 +5500,7 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
                        f"如需修改金額、重打「違約金已支付 新金額」即可")
             return
         # 第二階段：確認、正式結案
-        today = datetime.now().strftime("%Y-%m-%d")
+        today = now_tw().strftime("%Y-%m-%d")
         update_customer(target["case_id"], status="PENALTY",
                         penalty_amount=amt, penalty_date=today, penalty_pending="",
                         report_section="",
@@ -7315,7 +7358,7 @@ def is_login_locked(identifier: str) -> bool:
         return False
     try:
         lu_dt = datetime.strptime(lu, "%Y-%m-%d %H:%M:%S")
-        return lu_dt > datetime.now()
+        return lu_dt > now_tw()
     except (ValueError, TypeError):
         return False
 
@@ -7328,7 +7371,7 @@ def record_login_fail(identifier: str):
         locked_until = ""
         if attempts >= 5:
             from datetime import timedelta
-            locked_until = (datetime.now() + timedelta(minutes=15)).strftime("%Y-%m-%d %H:%M:%S")
+            locked_until = (now_tw() + timedelta(minutes=15)).strftime("%Y-%m-%d %H:%M:%S")
         cur.execute("UPDATE login_attempts SET attempts=?, locked_until=?, updated_at=? WHERE identifier=?",
             (attempts, locked_until, now_iso(), identifier))
     else:
@@ -7370,7 +7413,7 @@ def _create_session(role: str, group_id: str = "") -> str:
     _ensure_sessions_table()
     token = secrets.token_urlsafe(32)
     now = now_iso()
-    expires = (datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d %H:%M:%S")
+    expires = (now_tw() + timedelta(days=7)).strftime("%Y-%m-%d %H:%M:%S")
     try:
         conn = get_conn(); cur = conn.cursor()
         cur.execute("INSERT INTO sessions (token,role,group_id,created_at,expires_at) VALUES (?,?,?,?,?)",
@@ -7390,7 +7433,7 @@ def _is_session_expired(expires_at_str) -> bool:
         return True
     try:
         expires = datetime.strptime(expires_at_str, "%Y-%m-%d %H:%M:%S")
-        return expires < datetime.now()
+        return expires < now_tw()
     except (ValueError, TypeError):
         return True
 
@@ -8053,7 +8096,7 @@ def report_export(request: Request):
         sec = r["report_section"] or ""
         lines.append(f'{gname},{created},{r["customer_name"]},{r["id_no"] or ""},{co},{amt},{disb},{sec}')
     content = "\ufeff" + "\n".join(lines)  # BOM for Excel
-    today = datetime.now().strftime("%Y%m%d")
+    today = now_tw().strftime("%Y%m%d")
     return StreamingResponse(
         iter([content.encode("utf-8-sig")]),
         media_type="text/csv",
@@ -8070,7 +8113,7 @@ def report_web(request: Request):
     global _report_role
     _report_role = role
 
-    today = datetime.now().strftime("%m/%d")
+    today = now_tw().strftime("%m/%d")
     conn = get_conn(); cur = conn.cursor()
 
     # 業務只看自己群組
@@ -8082,8 +8125,8 @@ def report_web(request: Request):
 
     # 統計
     total_new = 0; total_supp = 0; total_active = 0; total_unverified = 0; total_closed = 0
-    month_start = datetime.now().strftime("%Y-%m-01")
-    today_date = datetime.now().strftime("%Y-%m-%d")
+    month_start = now_tw().strftime("%Y-%m-01")
+    today_date = now_tw().strftime("%Y-%m-%d")
     cur.execute("SELECT COUNT(*) as c FROM customers WHERE status IN ('CLOSED','PENALTY','ABANDONED','REJECTED') AND updated_at>=?", (month_start,))
     total_closed = cur.fetchone()["c"]
     cur.execute("SELECT COUNT(*) as c FROM customers WHERE date(created_at)=?", (today_date,))
@@ -9493,7 +9536,7 @@ def history_page(request: Request, group: str = "", month: str = "", q: str = ""
     from datetime import datetime, timedelta
     month_opts = "<option value=\'\'>全部月份</option>"
     for i in range(6):
-        dt = datetime.now().replace(day=1) - timedelta(days=i*28)
+        dt = now_tw().replace(day=1) - timedelta(days=i*28)
         ym = dt.strftime("%Y-%m")
         label = dt.strftime("%Y年%m月")
         sel = "selected" if month == ym else ""
@@ -10242,7 +10285,7 @@ async def new_customer_post(request: Request):
 ⚠️ 請通知業務：<br>
 1. 將客戶證件/勞保/財力證明上傳到 LINE 群組相簿<br>
 2. 在 LINE 群組打格式建立客戶：<br>
-<strong>{datetime.now().strftime('%y/%m/%d')}-{h(name)}-身分證號/...</strong><br>
+<strong>{now_tw().strftime('%y/%m/%d')}-{h(name)}-身分證號/...</strong><br>
 完成後客戶才會出現在日報！
 </div>
 <a href="/new-customer" class="btn">繼續新增客戶</a>
@@ -12742,7 +12785,7 @@ async def download_db(request: Request):
     import shutil
     backup_path = DB_PATH + ".backup"
     shutil.copy2(DB_PATH, backup_path)
-    today = datetime.now().strftime("%Y%m%d_%H%M")
+    today = now_tw().strftime("%Y%m%d_%H%M")
     return FileResponse(backup_path, filename=f"loan_system_{today}.db",
                         media_type="application/octet-stream")
 
@@ -13460,7 +13503,7 @@ def _prune_gdrive_backups(service) -> dict:
         q=f"'{GOOGLE_DRIVE_FOLDER_ID}' in parents and trashed=false and name contains 'loan-backup-'",
         fields="files(id,name,createdTime)", pageSize=1000
     ).execute().get("files", [])
-    today = datetime.now().date()
+    today = now_tw().date()
     keep_ids = set()
     monthly_candidates = {}
     name_re = re.compile(r"loan-backup-(\d{4}-\d{2}-\d{2})\.db")
@@ -13506,7 +13549,7 @@ def do_backup_now() -> dict:
         _snapshot_db(tmp_path)
         service = _gdrive_service()
         from googleapiclient.http import MediaFileUpload
-        today = datetime.now().strftime("%Y-%m-%d")
+        today = now_tw().strftime("%Y-%m-%d")
         fname = f"loan-backup-{today}.db"
         existing = service.files().list(
             q=f"name='{fname}' and '{GOOGLE_DRIVE_FOLDER_ID}' in parents and trashed=false",
