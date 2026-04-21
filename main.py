@@ -12490,11 +12490,18 @@ def _do_download_excel(request: Request, case_id: str):
             return False, ""
 
         def detect_state_marker(line):
-            """處理沒有 : 的標記行，更新 contact_state。"""
+            """處理標記行，更新 contact_state。"""
             nonlocal contact_state
             s = line.strip()
-            # 含「:」「：」的行 → 由 find_value 處理、不當 state marker（避免分貝 5 題誤觸）
+            # 含「:」「：」的行：
+            # - 含「姓名」→ 仍當 state marker（如麻吉「1.姓名: 關係: 行動電話:」）
+            # - 不含「姓名」→ 由 find_value 處理、不當 state marker（避免分貝 5 題的「1.近2個月...:」誤觸）
             if ":" in s or "：" in s:
+                if "姓名" in s:
+                    if s.startswith("1.") or "親屬聯絡人" in s:
+                        contact_state["idx"] = 1
+                    elif s.startswith("2.") or "朋友聯絡人" in s:
+                        contact_state["idx"] = 2
                 return
             # 1.（...） / 1.姓名 / 親屬聯絡人 / 1聯絡人
             if s.startswith("1.") or "親屬聯絡人" in s or s == "1聯絡人":
