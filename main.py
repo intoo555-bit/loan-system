@@ -8744,6 +8744,7 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
           ("分貝汽車","分貝汽車","改裝填寫表"),("21汽車","21汽車","貸款100% 利率16%"),
         ])}
       </div>
+      <div style="margin-top:8px;padding:8px 12px;background:#fdf2f8;border:1px dashed #9d174d;border-radius:6px;"><label style="display:flex;align-items:center;gap:8px;font-size:13px;color:#9d174d;font-weight:600;cursor:pointer;"><input type="checkbox" name="mj_6w18p" value="1" {"checked" if customer.get('adminb_mj_6w18p','')=='1' else ''} style="width:16px;height:16px;accent-color:#9d174d;"> 麻吉改用 6萬／18期／月付3771元（不勾用預設 10萬／24期）</label></div>
     </div>
     <div class="ab-card">
       <div class="ab-sec">補充資料</div>
@@ -8796,7 +8797,6 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
           <div><div class="ab-lbl">商品廠牌</div><input name="mj_brand" class="ab-inp" placeholder="山葉 / iPhone" value="{h(customer.get('adminb_mj_brand','') or '')}"></div>
           <div><div class="ab-lbl">型號</div><input name="mj_model" class="ab-inp" placeholder="JQ5-063 / 16 Pro" value="{h(customer.get('adminb_mj_model','') or '')}"></div>
         </div>
-        <div style="margin-top:10px;"><label style="display:flex;align-items:center;gap:6px;font-size:13px;color:#9d174d;font-weight:600;cursor:pointer;"><input type="checkbox" name="mj_6w18p" value="1" {"checked" if customer.get('adminb_mj_6w18p','')=='1' else ''} style="width:16px;height:16px;accent-color:#9d174d;"> 6萬／18期／月付3771元（勾選後金額改用此方案，否則用預設 10萬／24期）</label></div>
       </div>
       <div class="ab-block" data-plans="21汽車" style="background:#fef2f2;">
         <div style="font-size:12px;font-weight:700;color:#991b1b;margin-bottom:10px;">21汽車（利率固定 16%）</div>
