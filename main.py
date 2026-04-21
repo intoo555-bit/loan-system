@@ -11925,6 +11925,9 @@ def _do_download_excel(request: Request, case_id: str):
                 # 父母相關
                 for k in ["媽媽","爸爸","母親","父親","媽","爸","母","父"]:
                     if k in raw: return "父母"
+                # 男女朋友提前攔截（避免「女友」「男友」被「女/兒」歸到子女）
+                for k in ["男女朋友","男朋友","女朋友","男友","女友"]:
+                    if k in raw: return "朋友"
                 # 子女
                 for k in ["兒子","女兒","兒","女","子女"]:
                     if k in raw: return "子女"
@@ -12120,6 +12123,9 @@ def _do_download_excel(request: Request, case_id: str):
                 # 父母
                 for k in ["媽媽","爸爸","母親","父親","媽","爸","母","父"]:
                     if k in raw: return "父母"
+                # 男女朋友提前攔截（避免「女友」「男友」被「女/兒」歸到子女）
+                for k in ["男女朋友","男朋友","女朋友","男友","女友"]:
+                    if k in raw: return "朋友"
                 # 子女
                 for k in ["兒子","女兒","兒","女","子女"]:
                     if k in raw: return "子女"
@@ -12244,6 +12250,9 @@ def _do_download_excel(request: Request, case_id: str):
                 # 父母
                 for k in ["媽媽","爸爸","母親","父親","媽","爸","母","父"]:
                     if k in raw: return "父母"
+                # 男女朋友提前攔截（避免「女友」「男友」被「女/兒」歸到子女）
+                for k in ["男女朋友","男朋友","女朋友","男友","女友"]:
+                    if k in raw: return "朋友"
                 # 子女
                 for k in ["兒子","女兒","兒","女","子女"]:
                     if k in raw: return "子女"
