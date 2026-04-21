@@ -2021,6 +2021,7 @@ def init_db():
         ("adminb_21car_hascc", "TEXT"),
         ("adminb_mj_brand", "TEXT"),
         ("adminb_mj_model", "TEXT"),
+        ("adminb_mj_6w18p", "TEXT"),
         ("adminb_ry_amount", "TEXT"),
         ("adminb_ry_period", "TEXT"),
         ("adminb_bei_note", "TEXT"),
@@ -8750,8 +8751,8 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
         <div style="font-size:12px;font-weight:700;color:#0369a1;margin-bottom:10px;">亞太（商品／機車／工會）</div>
         <div class="ab-g3" style="margin-bottom:10px;">
           <div><div class="ab-lbl">資金用途</div><select name="at_fund" class="ab-sel"><option value="">請選擇</option>{"".join(f'<option value="{o}" {"selected" if customer.get("adminb_fund_use","")==o else ""}>{o}</option>' for o in ["I-1教育費","I-2醫藥費","I-3出國旅遊","I-4創業","II-1購買交通工具","II-2購買手機","II-3購買3C產品","III-1交友","III-2健身&醫美","III-3美容課程","IV-1個人理財投資(含不動產、裝修、理財商品)","V-1生活周轉金","V-2整合負債(償還銀行/融資等)"])}</select></div>
-          <div><div class="ab-lbl">行業類別</div><select name="at_industry" class="ab-sel"><option value="">請選擇</option>{"".join(f"<option>{o}</option>" for o in ["餐飲與服務業","製造業","建築與營造","軍警與公教","科技與資訊","運輸與物流","金融與保險業","批發與零售業","醫療與教育","農林漁牧業","自由職業","其他"])}</select></div>
-          <div><div class="ab-lbl">職務</div><select name="at_role" class="ab-sel"><option value="">請選擇</option>{"".join(f"<option>{o}</option>" for o in ["行政與內勤","勞力與現場","銷售與業務","財務與專業","技術與工程","教學與醫護","管理與經營","自營與自由"])}</select></div>
+          <div><div class="ab-lbl">行業類別</div><select name="at_industry" class="ab-sel"><option value="">請選擇</option>{"".join(f'<option {"selected" if customer.get("adminb_industry","")==o else ""}>{o}</option>' for o in ["餐飲與服務業","製造業","建築與營造","軍警與公教","科技與資訊","運輸與物流","金融與保險業","批發與零售業","醫療與教育","農林漁牧業","自由職業","其他"])}</select></div>
+          <div><div class="ab-lbl">職務</div><select name="at_role" class="ab-sel"><option value="">請選擇</option>{"".join(f'<option {"selected" if customer.get("adminb_role","")==o else ""}>{o}</option>' for o in ["行政與內勤","勞力與現場","銷售與業務","財務與專業","技術與工程","教學與醫護","管理與經營","自營與自由"])}</select></div>
         </div>
         <div style="font-size:11px;font-weight:700;color:#0369a1;margin-bottom:8px;">機車額外資料</div>
         <div class="ab-g3">
@@ -8795,6 +8796,7 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
           <div><div class="ab-lbl">商品廠牌</div><input name="mj_brand" class="ab-inp" placeholder="山葉 / iPhone" value="{h(customer.get('adminb_mj_brand','') or '')}"></div>
           <div><div class="ab-lbl">型號</div><input name="mj_model" class="ab-inp" placeholder="JQ5-063 / 16 Pro" value="{h(customer.get('adminb_mj_model','') or '')}"></div>
         </div>
+        <div style="margin-top:10px;"><label style="display:flex;align-items:center;gap:6px;font-size:13px;color:#9d174d;font-weight:600;cursor:pointer;"><input type="checkbox" name="mj_6w18p" value="1" {"checked" if customer.get('adminb_mj_6w18p','')=='1' else ''} style="width:16px;height:16px;accent-color:#9d174d;"> 6萬／18期／月付3771元（勾選後金額改用此方案，否則用預設 10萬／24期）</label></div>
       </div>
       <div class="ab-block" data-plans="21汽車" style="background:#fef2f2;">
         <div style="font-size:12px;font-weight:700;color:#991b1b;margin-bottom:10px;">21汽車（利率固定 16%）</div>
@@ -9002,6 +9004,7 @@ async def adminb_save(request: Request):
         "adminb_21car_hascc": form.get("car_hascc",""),
         "adminb_mj_brand": form.get("mj_brand",""),
         "adminb_mj_model": form.get("mj_model",""),
+        "adminb_mj_6w18p": form.get("mj_6w18p",""),
         "product_model": form.get("qm_model",""),
         "product_imei": form.get("qm_imei",""),
         "adminb_credit_bank": form.get("qm_cbank",""),
@@ -11025,14 +11028,14 @@ def _fill_qiaomei_pdf(r: dict) -> bytes:
         else:
             tick_box(153.5, 183.0)
 
-        # 居住狀況 (y=342.6: 自有=105.9, 父母/配偶=152.4, 親屬=197.8;
+        # 居住狀況 (y=342.6: 本人名下=105.9, 配偶名下=152.4, 親友=197.8;
         #          y=353.3: 租屋=105.9, 宿舍=134.5, 借住=162.8)
         live = v("live_status")
-        if "自有" in live:
+        if "自有" in live or "本人" in live:
             tick_box(105.9, 342.6)
-        elif "父母" in live or "配偶" in live:
+        elif "配偶" in live:
             tick_box(152.4, 342.6)
-        elif "親屬" in live or "親" in live:
+        elif "父母" in live or "親屬" in live or "親" in live:
             tick_box(197.8, 342.6)
         elif "租" in live:
             tick_box(105.9, 353.3)
@@ -11814,8 +11817,8 @@ def _do_download_excel(request: Request, case_id: str):
                 "C12": birth, "F12": (id_date + " " + id_type) if id_date else "",
                 "C13": marriage_val, "F13": id_place_code,
                 "C14": edu_val, "F14": phone_fmt,
-                "C15": reg_addr, "G15": v("reg_phone") or "",
-                "C16": live_addr, "G16": v("live_phone") or "", "H16": "同戶籍" if live_same else "",
+                "C15": reg_addr, "H15": v("reg_phone") or "",
+                "C16": live_addr, "H16": (v("live_phone") or "") if not live_same else "同戶籍",
                 "C17": line_id, "F17": "家用",  # 資金用途固定家用
                 "H17": co_phone_fmt,
                 "C18": company, "G18": co_role, "I18": years_fmt,
@@ -12159,9 +12162,9 @@ def _do_download_excel(request: Request, case_id: str):
             }
 
         elif plan_name in ("21機車12萬", "21機車25萬", "21商品"):
-            # 21 發證地短碼
+            # 21 發證地短碼（下拉含「新北市」全名，其他用短碼）
             CITY_TO_21CODE = {
-                "台北市": "北市", "新北市": "北縣", "桃園市": "桃縣", "台中市": "中縣",
+                "台北市": "北市", "新北市": "新北市", "桃園市": "桃縣", "台中市": "中縣",
                 "台南市": "南縣", "高雄市": "高縣", "基隆市": "基市", "新竹市": "竹市",
                 "新竹縣": "竹縣", "苗栗縣": "苗縣", "彰化縣": "彰縣", "南投縣": "投縣",
                 "雲林縣": "雲縣", "嘉義市": "嘉市", "嘉義縣": "嘉縣", "屏東縣": "屏縣",
@@ -12230,8 +12233,8 @@ def _do_download_excel(request: Request, case_id: str):
             birth_roc = to_roc_slash(birth)
             id_date_roc = to_roc_slash(id_date)
 
-            # 關係智能判別（21 下拉清單）
-            valid_21_rels = ["配偶","父母","子女","兄弟姐妹","祖父母","外祖父母","孫子女","外孫子女","配偶之父母","配偶之兄弟姐妹","其他親屬","負責人"]
+            # 關係智能判別（21 下拉清單：未填/配偶/父母/子女/兄弟姐妹/祖父母/外祖父母/孫子女/外孫子女/配偶之父母/配偶之兄弟姐妹/其他親屬/負責人/股東/同事/朋友）
+            valid_21_rels = ["配偶","父母","子女","兄弟姐妹","祖父母","外祖父母","孫子女","外孫子女","配偶之父母","配偶之兄弟姐妹","其他親屬","負責人","股東","同事","朋友"]
             def map_21_rel(raw):
                 if not raw: return ""
                 if raw in valid_21_rels: return raw
@@ -12256,8 +12259,13 @@ def _do_download_excel(request: Request, case_id: str):
                 # 配偶之父母
                 for k in ["公公","婆婆","岳父","岳母"]:
                     if k in raw: return "配偶之父母"
-                # 其他親屬（含朋友/同事/同學）
-                for k in ["朋友","友","同事","同學","叔","伯","姑","舅","姨","堂","表"]:
+                # 朋友（同學也歸朋友）
+                for k in ["朋友","同學","友"]:
+                    if k in raw: return "朋友"
+                # 同事
+                if "同事" in raw: return "同事"
+                # 其他親屬（血親旁系）
+                for k in ["叔","伯","姑","舅","姨","堂","表"]:
                     if k in raw: return "其他親屬"
                 return ""
             c1_rel_21 = map_21_rel(c1_rel)
@@ -12432,6 +12440,10 @@ def _do_download_excel(request: Request, case_id: str):
             ("5.有無遲繳", bei_lines[4]),
             ("資金用途", v("adminb_21car_fund") or v("adminb_fund_use")),
         ]
+
+        # 麻吉：勾選「6萬18期3771元」→ 覆寫範本預設「10萬/24期」
+        if v("adminb_mj_6w18p") == "1":
+            LABEL_MAP = [("貸款金額", "6萬"), ("分期期數", "18")] + LABEL_MAP
 
         # 聯絡人狀態：當前是否在「親屬/1聯絡人」或「朋友/2聯絡人」段
         contact_state = {"idx": 0}  # 0=未進入, 1=聯絡人1, 2=聯絡人2
