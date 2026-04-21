@@ -1288,6 +1288,21 @@ def extract_first_line(text: str) -> str:
 
 
 
+def fmt_salary(s) -> str:
+    """月薪顯示格式化：統一輸出「N萬」（接受「3.5」「3.5萬」「35000」「35000元」等各種 DB 既存值）。
+    空值 → 空字串。>=1000 視為元、自動轉萬。"""
+    raw = (str(s) if s is not None else "").replace("萬", "").replace("元", "").replace(",", "").strip()
+    if not raw:
+        return ""
+    try:
+        n = float(raw)
+        if n >= 1000:
+            n = n / 10000
+        return f"{int(n)}萬" if n == int(n) else f"{n}萬"
+    except Exception:
+        return raw + "萬"
+
+
 def normalize_ai_text(text: str) -> str:
     """統一化文字：全形轉半形、去空白"""
     text = (text or "")
@@ -7911,7 +7926,7 @@ def render_customer_row(row, role="") -> str:
         '<div><div style="font-size:11px;color:#6a5e4e;font-weight:600">身分證</div><div style="font-size:13px;color:#2c2820;font-weight:500">' + h(id_no or "-") + '</div></div>'
         '<div><div style="font-size:11px;color:#6a5e4e;font-weight:600">電話</div><div style="font-size:13px;color:#2c2820;font-weight:500">' + h(phone or "-") + '</div></div>'
         '<div><div style="font-size:11px;color:#6a5e4e;font-weight:600">公司</div><div style="font-size:13px;color:#2c2820;font-weight:500">' + h(company or "-") + '</div></div>'
-        '<div><div style="font-size:11px;color:#6a5e4e;font-weight:600">月薪</div><div style="font-size:13px;color:#2c2820;font-weight:500">' + (h(salary) + "萬" if salary else "-") + '</div></div>'
+        '<div><div style="font-size:11px;color:#6a5e4e;font-weight:600">月薪</div><div style="font-size:13px;color:#2c2820;font-weight:500">' + (h(fmt_salary(salary)) if salary else "-") + '</div></div>'
         '<div><div style="font-size:11px;color:#6a5e4e;font-weight:600">勞保</div><div style="font-size:13px;color:#2c2820;font-weight:500">' + h(labor or "-") + '</div></div>'
         '<div><div style="font-size:11px;color:#6a5e4e;font-weight:600">資金需求</div><div style="font-size:13px;color:#2c2820;font-weight:500">' + h(fund or "-") + '</div></div>'
         '</div>'
@@ -8670,7 +8685,7 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
     gname = get_group_name(customer.get("source_group_id",""))
     created = (customer.get("created_at","") or "")[:10]
     co = customer.get("company_name_detail","") or customer.get("company","") or "-"
-    salary = (customer.get("company_salary","") + "萬") if customer.get("company_salary") else "-"
+    salary = fmt_salary(customer.get("company_salary","")) or "-"
     labor = customer.get("eval_labor_ins","") or "-"
     sel_plans = customer.get("adminb_selected_plans","") or ""
 
@@ -10460,7 +10475,7 @@ td {{ background: #fff; }}
 <tr class="sec"><td colspan="4">職業資料</td></tr>
 <tr><th>公司名稱</th><td colspan="3">{v("company_name_detail")}</td></tr>
 <tr><th>公司電話</th><td>{v("company_phone_area")}-{v("company_phone_num")}</td><th>職稱</th><td>{v("company_role")}</td></tr>
-<tr><th>年資</th><td>{v("company_years")}年{v("company_months")}月</td><th>月薪</th><td>{v("company_salary")}萬</td></tr>
+<tr><th>年資</th><td>{v("company_years")}年{v("company_months")}月</td><th>月薪</th><td>{fmt_salary(v("company_salary"))}</td></tr>
 <tr><th>公司地址</th><td colspan="3">{company_addr}</td></tr>
 <tr><th>行業</th><td colspan="3">{v("company_industry")}</td></tr>
 <tr class="sec"><td colspan="4">聯絡人</td></tr>
@@ -10535,7 +10550,7 @@ def _build_customer_pdf_body(r: dict) -> str:
 <tr class="sec"><td colspan="4">職業資料</td></tr>
 <tr><th>公司名稱</th><td colspan="3">{v("company_name_detail")}</td></tr>
 <tr><th>公司電話</th><td>{v("company_phone_area")}-{v("company_phone_num")}</td><th>職稱</th><td>{v("company_role")}</td></tr>
-<tr><th>年資</th><td>{v("company_years")}年{v("company_months")}月</td><th>月薪</th><td>{v("company_salary")}萬</td></tr>
+<tr><th>年資</th><td>{v("company_years")}年{v("company_months")}月</td><th>月薪</th><td>{fmt_salary(v("company_salary"))}</td></tr>
 <tr><th>公司地址</th><td colspan="3">{company_addr}</td></tr>
 <tr><th>行業</th><td colspan="3">{v("company_industry")}</td></tr>
 <tr class="sec"><td colspan="4">聯絡人</td></tr>
@@ -12440,8 +12455,8 @@ def _do_download_excel(request: Request, case_id: str):
             ("年資【做多久】", co_years_full),
             ("工作幾年", co_years_full),
             ("年資", co_years_full),
-            ("月薪多少", v("company_salary")),
-            ("月薪", v("company_salary")),
+            ("月薪多少", fmt_salary(v("company_salary"))),
+            ("月薪", fmt_salary(v("company_salary"))),
             ("是否有信用卡", v("adminb_credit_bank")),
             # 商品
             ("商品廠牌/型號", product_brand_model),
