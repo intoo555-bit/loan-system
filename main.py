@@ -12151,6 +12151,12 @@ def _do_download_excel(request: Request, case_id: str):
             c1_rel_dy1 = map_dy1_rel(c1_rel)
             c2_rel_dy1 = map_dy1_rel(c2_rel)
 
+            # 保密欄位（Y13/Y14）：保密或無可知情 → 填「是」；可知情或空 → 清空
+            def _dy1_secret(raw):
+                if not raw: return ""
+                if "保密" in raw or "無可" in raw or "不知" in raw: return "是"
+                return ""
+
             return {
                 "B5": name, "G5": id_no,
                 "B6": id_date_roc, "G6": dy1_place, "J6": id_type_val,
@@ -12164,7 +12170,9 @@ def _do_download_excel(request: Request, case_id: str):
                 "M8": m8_val, "O8": o8_val,
                 "M9": m9_val,
                 "M13": c1_name, "Q13": c1_rel_dy1, "T13": c1_phone,
+                "Y13": _dy1_secret(c1_known),
                 "M14": c2_name, "Q14": c2_rel_dy1, "T14": c2_phone,
+                "Y14": _dy1_secret(c2_known),
             }
 
         elif plan_name in ("21機車12萬", "21機車25萬", "21商品"):
