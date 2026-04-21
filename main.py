@@ -8670,7 +8670,7 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
     gname = get_group_name(customer.get("source_group_id",""))
     created = (customer.get("created_at","") or "")[:10]
     co = customer.get("company_name_detail","") or customer.get("company","") or "-"
-    salary = customer.get("company_salary","") or "-"
+    salary = (customer.get("company_salary","") + "萬") if customer.get("company_salary") else "-"
     labor = customer.get("eval_labor_ins","") or "-"
     sel_plans = customer.get("adminb_selected_plans","") or ""
 
@@ -9127,7 +9127,7 @@ label{{display:block;font-size:12px;font-weight:600;color:#5a4e40;margin-bottom:
   <div><label>公司電話</label><div style="display:flex;gap:6px;align-items:center"><select name="carea" class="ep" style="width:82px"><option value="">區碼</option>{"".join(f'<option {"selected" if v("company_phone_area")==a else ""}>{a}</option>' for a in ["02","03","037","04","049","05","06","07","08","089"])}<option {"selected" if v("company_phone_area")=="mobile" else ""} value="mobile">手機</option></select><input name="cnum" class="ep" value="{h(v("company_phone_num"))}"><input name="cext" class="ep" value="{h(v("company_phone_ext"))}" placeholder="分機" style="width:68px"></div></div>
   <div><label>職稱</label><input name="crole" class="ep" value="{h(v("company_role"))}"></div>
   <div><label>年資</label><div style="display:flex;gap:6px;align-items:center"><input name="cyear" class="ep" value="{h(v("company_years"))}" style="width:60px"><span>年</span><input name="cmon" class="ep" value="{h(v("company_months"))}" style="width:60px"><span>月</span></div></div>
-  <div><label>月薪</label><input name="csal" class="ep" value="{h(v("company_salary"))}"></div>
+  <div><label>月薪（萬）</label><input name="csal" class="ep" value="{h(v("company_salary"))}" placeholder="3.5"></div>
   <div style="grid-column:1/-1"><label>公司地址</label><div class="g3">{csel("ccity",v("company_city"))}<input name="cdist" class="ep" value="{h(v("company_district"))}"><input name="caddr" class="ep" value="{h(v("company_address"))}"></div></div>
 </div></div>
 <div class="card"><div class="sec">聯絡人</div><div class="g2" style="margin-bottom:12px">
