@@ -6087,11 +6087,18 @@ def _handle_a_case_block_locked(block_text, reply_token, id_no, name, forced_cas
     first_line_for_status = extract_first_line(block_text)
     # 「待核准」= 還有缺、還沒真正核准，不觸發待撥款；先把「待核准/待核準」字串移除再比對
     first_line_wo_pending = first_line_for_status.replace("待核准", "").replace("待核準", "")
+    # 先把否定型片語剔除，避免「審核未通過」因含「通過」誤判為核准
+    _neg_terms = ["未通過", "不通過", "沒通過", "無法通過", "未過件", "不過件", "沒過件",
+                  "未核貸", "不核貸", "未核准", "不核准", "未核準", "不核準",
+                  "審核未通過", "案件審核未通過", "審核不通過"]
+    first_line_wo_pending_for_approval = first_line_wo_pending
+    for _nt in _neg_terms:
+        first_line_wo_pending_for_approval = first_line_wo_pending_for_approval.replace(_nt, "")
     # C（零卡）特例：「有額度 / 有換 / 可換 / 能換」視同核准直接排撥款（零卡可馬上換現）
     is_c_card = (company == "零卡" or COMPANY_ALIAS.get(company) == "零卡"
                  or normalize_section(company) == "零卡")
-    is_c_confirmed = is_c_card and any(w in first_line_wo_pending for w in ["有額度", "有換", "可換", "能換"])
-    is_approved = (any(w in first_line_wo_pending for w in ["核准", "核準", "過件", "通過", "核貸"])
+    is_c_confirmed = is_c_card and any(w in first_line_wo_pending_for_approval for w in ["有額度", "有換", "可換", "能換"])
+    is_approved = (any(w in first_line_wo_pending_for_approval for w in ["核准", "核準", "過件", "通過", "核貸"])
                    or is_c_confirmed) and new_status != "CLOSED"
     # 「撤件」「客戶撤件」「客戶自行撤件」不算婉拒（只記錄，不推進 route）
     is_reject = not is_approved and any(w in first_line_for_status for w in [
@@ -6100,6 +6107,7 @@ def _handle_a_case_block_locked(block_text, reply_token, id_no, name, forced_cas
         "不符進件", "不符資格", "不符合資格", "不符合進件",
         "不承做", "不乘做",  # 錯字容錯
         "這件不行", "不可送", "失聯可刪", "堅持不申辦", "黑名單",
+        "審核未通過", "審核不通過", "未通過", "不通過",
     ])
     # 若第 1 行沒結論、整段有婉拒也算（備註很多、結論在後的情況）
     if not is_approved and not is_reject and "婉拒" in block_text:
@@ -6525,6 +6533,10 @@ def handle_command_text(text: str, reply_token: str) -> bool:
         new_status = "CLOSED" if is_closed_text(block_text) else None
         # 偵測核准/金額（normalize 後「核準」已統一為「核准」）
         text_wo_pending = block_text.replace("待核准", "")
+        # 先剔除否定型片語，避免「審核未通過」因含「通過」誤判為核准
+        for _nt in ("未通過", "不通過", "沒通過", "無法通過", "未過件", "不過件", "沒過件",
+                    "未核貸", "不核貸", "未核准", "不核准", "審核未通過", "審核不通過"):
+            text_wo_pending = text_wo_pending.replace(_nt, "")
         is_approved = any(w in text_wo_pending for w in ["核准", "過件", "通過", "核貸"]) and new_status != "CLOSED"
         changes = {"company": company, "status": new_status}
         if is_approved:
