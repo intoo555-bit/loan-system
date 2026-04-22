@@ -7309,6 +7309,26 @@ async def callback(request: Request, background_tasks: BackgroundTasks):
 # =========================
 # 管理 API
 # =========================
+@app.post("/admin/delete-customers")
+async def delete_customers(request: Request):
+    """從 /history 頁勾選刪除客戶（含相關 case_logs / pending_actions）。admin 限定。"""
+    from fastapi.responses import RedirectResponse
+    role = check_auth(request)
+    if role != "admin":
+        return RedirectResponse("/login", status_code=303)
+    form = await request.form()
+    case_ids = form.getlist("case_ids")
+    if not case_ids:
+        return RedirectResponse("/history", status_code=303)
+    with db_conn(commit=True) as conn:
+        cur = conn.cursor()
+        qmarks = ",".join("?" for _ in case_ids)
+        cur.execute(f"DELETE FROM customers WHERE case_id IN ({qmarks})", case_ids)
+        cur.execute(f"DELETE FROM case_logs WHERE case_id IN ({qmarks})", case_ids)
+        cur.execute(f"DELETE FROM pending_actions WHERE case_id IN ({qmarks})", case_ids)
+    return RedirectResponse("/history", status_code=303)
+
+
 @app.post("/admin/reset_data")
 async def reset_data(request: Request):
     """
@@ -9709,6 +9729,9 @@ def history_page(request: Request, group: str = "", month: str = "", q: str = ""
             return '<span style="background:#fee2e2;color:#991b1b;font-size:12px;padding:3px 10px;border-radius:20px;font-weight:600">全數婉拒</span>'
         return '<span style="background:#ece8e2;color:#4a3e30;font-size:12px;padding:3px 10px;border-radius:20px;font-weight:600">結案</span>'
 
+    is_admin = (role == "admin")
+    # grid 欄位：admin 多一欄「選」（checkbox）
+    grid_cols = "40px 1.4fr 1.2fr 1fr 0.7fr 0.8fr" if is_admin else "1.4fr 1.2fr 1fr 0.7fr 0.8fr"
     rows_html = ""
     if not rows:
         rows_html = '<div style="color:#6a5e4e;padding:24px;text-align:center;font-size:14px">沒有結案紀錄</div>'
@@ -9728,8 +9751,10 @@ def history_page(request: Request, group: str = "", month: str = "", q: str = ""
             detail = all_approved[0].get("company","") + " 核准" + all_approved[0].get("amount","")
         else:
             detail = co + (" 核准" + amt if amt else "")
+        ck_html = f'<div><input type="checkbox" name="case_ids" value="{h(row["case_id"])}" class="del-ck" style="width:16px;height:16px;cursor:pointer;accent-color:#b84a35"></div>' if is_admin else ""
         rows_html += (
-            '<div style="display:grid;grid-template-columns:1.4fr 1.2fr 1fr 0.7fr 0.8fr;gap:12px;align-items:center;padding:12px 16px;border-bottom:1px solid #ece8e2">'
+            f'<div style="display:grid;grid-template-columns:{grid_cols};gap:12px;align-items:center;padding:12px 16px;border-bottom:1px solid #ece8e2">'
+            + ck_html
             + '<div style="font-size:14px;font-weight:600;color:#1a1208">' + h(row["customer_name"]) + '</div>'
             + '<div style="font-size:13px;color:#3a3530">' + h(detail) + '</div>'
             + '<div>' + badge + '</div>'
@@ -9756,8 +9781,10 @@ def history_page(request: Request, group: str = "", month: str = "", q: str = ""
           <span style="font-size:13px;color:#6a5e4e;margin-left:auto">共 {len(rows)} 筆</span>
         </div>
       </form>
+      <form method="post" action="/admin/delete-customers" id="delform" onsubmit="return confirmDel()">
       <div style="background:#faf7f4;border:1px solid #ddd5ca;border-radius:10px;overflow:hidden">
-        <div style="display:grid;grid-template-columns:1.4fr 1.2fr 1fr 0.7fr 0.8fr;gap:12px;padding:9px 16px;background:#ece8e2;border-bottom:1px solid #ddd5ca">
+        <div style="display:grid;grid-template-columns:{grid_cols};gap:12px;padding:9px 16px;background:#ece8e2;border-bottom:1px solid #ddd5ca">
+          {'<div><input type="checkbox" id="ckall" onchange="toggleAll(this)" style="width:16px;height:16px;cursor:pointer;accent-color:#b84a35"></div>' if is_admin else ''}
           <div style="font-size:12px;font-weight:700;color:#4a3e30">客戶姓名</div>
           <div style="font-size:12px;font-weight:700;color:#4a3e30">方案/金額</div>
           <div style="font-size:12px;font-weight:700;color:#4a3e30">結案原因</div>
@@ -9766,7 +9793,18 @@ def history_page(request: Request, group: str = "", month: str = "", q: str = ""
         </div>
         {rows_html if rows_html else '<div style="color:#6a5e4e;padding:24px;text-align:center;font-size:14px">沒有結案紀錄</div>'}
       </div>
-    </div></body></html>"""
+      {'<div style="margin-top:12px;display:flex;gap:10px;align-items:center"><button type="submit" class="btn" style="background:#b84a35;color:#fff;border:none;padding:8px 18px;border-radius:7px;font-size:14px;font-weight:600;cursor:pointer">🗑 刪除勾選</button><span style="font-size:12px;color:#6a5e4e">選起來後按這顆會永久刪除</span></div>' if is_admin else ''}
+      </form>
+    </div>
+    <script>
+    function toggleAll(ck){{document.querySelectorAll('.del-ck').forEach(function(c){{c.checked=ck.checked;}});}}
+    function confirmDel(){{
+      var n=document.querySelectorAll('.del-ck:checked').length;
+      if(n===0){{alert('請先勾選要刪除的客戶');return false;}}
+      return confirm('確定要永久刪除勾選的 '+n+' 筆客戶嗎？（此操作無法復原）');
+    }}
+    </script>
+    </body></html>"""
 
 
 @app.get("/admin/groups", response_class=HTMLResponse)
