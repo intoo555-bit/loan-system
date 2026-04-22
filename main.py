@@ -1474,6 +1474,37 @@ def get_admin_group_ids() -> List[str]:
     return [r["group_id"] for r in rows]
 
 
+def get_a_group_ids() -> List[str]:
+    """所有啟用中的 A 群 ID（A_GROUP 類型）"""
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT group_id FROM groups WHERE group_type='A_GROUP' AND is_active=1")
+    rows = cur.fetchall()
+    conn.close()
+    return [r["group_id"] for r in rows]
+
+
+def get_a_group_for_sales(sales_group_id: str) -> str:
+    """決定業務群的案件要推到哪個 A 群。
+    - 業務群有設定 linked_a_group_id → 用設定的
+    - 沒設定 → fallback 到環境變數 A_GROUP_ID
+    """
+    if not sales_group_id:
+        return A_GROUP_ID
+    try:
+        conn = get_conn()
+        cur = conn.cursor()
+        cur.execute("SELECT linked_a_group_id FROM groups WHERE group_id=? AND is_active=1",
+                    (sales_group_id,))
+        row = cur.fetchone()
+        conn.close()
+        if row and row["linked_a_group_id"]:
+            return row["linked_a_group_id"]
+    except Exception:
+        pass
+    return A_GROUP_ID
+
+
 # =========================
 # 送件順序工具
 # =========================
@@ -2117,6 +2148,7 @@ def init_db():
         ensure_column(cur, "customers", col, defn)
     # groups 表新增業務群對應欄位
     ensure_column(cur, "groups", "linked_sales_group_id", "TEXT")
+    ensure_column(cur, "groups", "linked_a_group_id", "TEXT")
     ensure_column(cur, "groups", "password_hash", "TEXT")
     # case_logs 加快照欄位（用於 @AI 姓名 還原）
     ensure_column(cur, "case_logs", "snapshot_json", "TEXT")
@@ -7077,7 +7109,7 @@ def _handle_bc_case_block_locked(block_text, source_group_id, reply_token, sourc
                             text=block_text, from_group_id=source_group_id, status=new_status, name=name)
             pushed = False
             if want_push_a and new_status != "CLOSED":
-                ok, _ = push_text(A_GROUP_ID, block_text); pushed = ok
+                ok, _ = push_text(get_a_group_for_sales(source_group_id), block_text); pushed = ok
             msg = f"已更新客戶：{name}"
             if pushed: msg += f"\n✅ 已回貼A群：{name}"
             return msg
@@ -7091,7 +7123,7 @@ def _handle_bc_case_block_locked(block_text, source_group_id, reply_token, sourc
         create_customer_record(name, id_no, company, source_group_id, block_text)
         pushed = False
         if want_push_a:
-            ok, _ = push_text(A_GROUP_ID, block_text); pushed = ok
+            ok, _ = push_text(get_a_group_for_sales(source_group_id), block_text); pushed = ok
         msg = f"🆕 已建立客戶：{name}"
         if pushed: msg += f"\n✅ 已回貼A群：{name}"
         return msg
@@ -7123,7 +7155,7 @@ def _handle_bc_case_block_locked(block_text, source_group_id, reply_token, sourc
         _update_company_status_for_text(c["case_id"], company, block_text)
         pushed = False
         if want_push_a and new_status != "CLOSED":
-            ok, _ = push_text(A_GROUP_ID, block_text); pushed = ok
+            ok, _ = push_text(get_a_group_for_sales(source_group_id), block_text); pushed = ok
         msg = f"已更新客戶：{name}"
         if pushed: msg += f"\n✅ 已回貼A群：{name}"
         return msg
@@ -7145,7 +7177,7 @@ def _handle_bc_case_block_locked(block_text, source_group_id, reply_token, sourc
         _update_company_status_for_text(r["case_id"], company, block_text)
         pushed = False
         if want_push_a:
-            ok, _ = push_text(A_GROUP_ID, block_text); pushed = ok
+            ok, _ = push_text(get_a_group_for_sales(source_group_id), block_text); pushed = ok
         msg = f"已更新客戶：{name}"
         if pushed: msg += f"\n✅ 已回貼A群：{name}"
         return msg
@@ -7230,7 +7262,9 @@ def _process_event_inner(event: dict):
             return
 
     # A 群優先（避免 A 群同時被註冊為 SALES_GROUP 時走錯邏輯）
-    if group_id == A_GROUP_ID:
+    # 支援多 A 群：查 groups 表 group_type='A_GROUP' 取所有啟用中的，同時保留對環境變數 A_GROUP_ID 的相容
+    a_group_ids_all = set(get_a_group_ids()) | {A_GROUP_ID}
+    if group_id in a_group_ids_all:
         # 撥款名單（不需要@AI觸發，去掉@AI再判斷）
         disb_text = strip_ai_trigger(text).strip() if has_ai_trigger(text) else text
         if is_disbursement_list(disb_text):
@@ -7457,6 +7491,7 @@ async def add_group(request: Request):
         return {"status": "error",
                 "message": f"無效的群組類型：{gtype}（需為 SALES_GROUP/ADMIN_GROUP/A_GROUP）"}
     linked = body.get("linked_sales_group_id", "").strip()
+    linked_a = body.get("linked_a_group_id", "").strip()
     try:
         with db_conn(commit=True) as conn:
             cur = conn.cursor()
@@ -7466,19 +7501,21 @@ async def add_group(request: Request):
             if existing:
                 # 已存在 → UPDATE 不動 password_hash 和 created_at
                 cur.execute("""UPDATE groups
-                    SET group_name=?, group_type=?, is_active=1, linked_sales_group_id=?
+                    SET group_name=?, group_type=?, is_active=1, linked_sales_group_id=?, linked_a_group_id=?
                     WHERE group_id=?""",
-                    (gname, gtype, linked or None, gid))
+                    (gname, gtype, linked or None, linked_a or None, gid))
                 msg = f"已更新群組：{gname}（{gtype}）— 密碼保留不動"
             else:
                 # 新增
                 cur.execute("""INSERT INTO groups
-                    (group_id,group_name,group_type,is_active,linked_sales_group_id,created_at)
-                    VALUES (?,?,?,1,?,?)""",
-                    (gid, gname, gtype, linked or None, now_iso()))
+                    (group_id,group_name,group_type,is_active,linked_sales_group_id,linked_a_group_id,created_at)
+                    VALUES (?,?,?,1,?,?,?)""",
+                    (gid, gname, gtype, linked or None, linked_a or None, now_iso()))
                 msg = f"已新增群組：{gname}（{gtype}）— 請到「密碼管理」設定密碼"
             if linked:
                 msg += f"，對應業務群：{get_group_name(linked)}"
+            if linked_a:
+                msg += f"，對應 A 群：{get_group_name(linked_a)}"
             return {"status": "ok", "message": msg}
     except Exception as e:
         return {"status": "error", "message": str(e)}
@@ -9882,22 +9919,33 @@ def list_groups(request: Request):
     rows = cur.fetchall()
     cur.execute("SELECT group_id, group_name FROM groups WHERE group_type='SALES_GROUP' AND is_active=1")
     sales_groups = cur.fetchall()
+    cur.execute("SELECT group_id, group_name FROM groups WHERE group_type='A_GROUP' AND is_active=1")
+    a_groups = cur.fetchall()
     conn.close()
 
     sales_opts = "<option value=\'\'>（無）</option>"
     for sg in sales_groups:
         sales_opts += f'<option value="{h(sg["group_id"])}">{h(sg["group_name"])}</option>'
+    a_opts = "<option value=\'\'>（未設定，用環境變數預設）</option>"
+    for ag in a_groups:
+        a_opts += f'<option value="{h(ag["group_id"])}">{h(ag["group_name"])}</option>'
 
     type_labels = {"SALES_GROUP":"業務群","ADMIN_GROUP":"行政群","A_GROUP":"A群"}
     rows_html = ""
     for r in rows:
+        # 業務群顯示對應 A 群；行政群顯示對應業務群
         linked_name = ""
-        if r["linked_sales_group_id"]:
+        if r["group_type"] == "SALES_GROUP" and r["linked_a_group_id"]:
+            conn2 = get_conn(); cur2 = conn2.cursor()
+            cur2.execute("SELECT group_name FROM groups WHERE group_id=?", (r["linked_a_group_id"],))
+            ln = cur2.fetchone(); conn2.close()
+            linked_name = "→ A群：" + (ln["group_name"] if ln else r["linked_a_group_id"])
+        elif r["linked_sales_group_id"]:
             conn2 = get_conn(); cur2 = conn2.cursor()
             cur2.execute("SELECT group_name FROM groups WHERE group_id=?", (r["linked_sales_group_id"],))
             ln = cur2.fetchone(); conn2.close()
-            linked_name = ln["group_name"] if ln else r["linked_sales_group_id"]
-        edit_btn = f'''<button onclick="openEdit(\'{h(r["group_id"])}\',\'{h(r["group_name"])}\',{1 if r["is_active"] else 0})" class="btn" style="font-size:11px;padding:3px 10px">✏️ 編輯</button>'''
+            linked_name = "→ 業務群：" + (ln["group_name"] if ln else r["linked_sales_group_id"])
+        edit_btn = f'''<button onclick="openEdit(\'{h(r["group_id"])}\',\'{h(r["group_name"])}\',{1 if r["is_active"] else 0},\'{h(r["group_type"])}\',\'{h(r["linked_a_group_id"] or "")}\')" class="btn" style="font-size:11px;padding:3px 10px">✏️ 編輯</button>'''
         del_btn = f'''<button onclick="doDelete(\'{h(r["group_id"])}\',\'{h(r["group_name"])}\')" style="font-size:11px;padding:3px 10px;background:#b91c1c;color:#fff;border:none;border-radius:4px;cursor:pointer;margin-left:4px">🗑 刪除</button>'''
         rows_html += f'''<tr style="border-bottom:1px solid #f3f4f6">
           <td style="padding:8px 12px;font-weight:500">{h(r["group_name"])}</td>
@@ -9945,13 +9993,14 @@ def list_groups(request: Request):
         <div class="form-row"><label>群組 ID（在群組打 @AI 群組ID 取得）</label><input class="input" id="f_gid" placeholder="Cxxx..."></div>
         <div class="form-row"><label>群組名稱</label><input class="input" id="f_gname" placeholder="例：鉅烽行政群"></div>
         <div class="form-row"><label>群組類型</label>
-          <select class="input" id="f_gtype" onchange="document.getElementById('linked-row').style.display=this.value==='ADMIN_GROUP'?'block':'none'">
+          <select class="input" id="f_gtype" onchange="onTypeChange(this.value,'linked-row','f_linked_arow')">
             <option value="SALES_GROUP">業務群</option>
             <option value="ADMIN_GROUP">行政群</option>
             <option value="A_GROUP">A群/進度群</option>
           </select>
         </div>
         <div class="form-row" id="linked-row" style="display:none"><label>對應業務群（行政群才需要）</label><select class="input" id="f_linked">{sales_opts}</select></div>
+        <div class="form-row" id="f_linked_arow" style="display:block"><label>對應 A 群（業務群打的案件會推到這個 A 群）</label><select class="input" id="f_linked_a">{a_opts}</select></div>
         <button class="btn btn-primary" onclick="addGroup()" style="width:100%;justify-content:center">確認新增</button>
         <div id="add-result" style="margin-top:10px;font-size:12px"></div>
       </div>
@@ -9969,17 +10018,25 @@ def list_groups(request: Request):
             <option value="0">停用</option>
           </select>
         </div>
+        <div class="form-row" id="e_linked_arow" style="display:none"><label>對應 A 群（業務群專用）</label><select class="input" id="e_linked_a">{a_opts}</select></div>
         <button class="btn btn-primary" onclick="saveEdit()" style="width:100%;justify-content:center">儲存</button>
         <div id="edit-result" style="margin-top:10px;font-size:12px"></div>
       </div>
     </div>
 
     <script>
-    function openEdit(gid, gname, isActive){{
+    function onTypeChange(val, linkedRowId, linkedARowId){{
+      // 行政群顯示「對應業務群」；業務群顯示「對應 A 群」；A 群都不顯示
+      document.getElementById(linkedRowId).style.display = (val==='ADMIN_GROUP')?'block':'none';
+      document.getElementById(linkedARowId).style.display = (val==='SALES_GROUP')?'block':'none';
+    }}
+    function openEdit(gid, gname, isActive, gtype, linkedA){{
       document.getElementById('e_gid').value = gid;
       document.getElementById('e_gid_show').value = gid;
       document.getElementById('e_gname').value = gname;
       document.getElementById('e_active').value = isActive;
+      document.getElementById('e_linked_a').value = linkedA || '';
+      document.getElementById('e_linked_arow').style.display = (gtype==='SALES_GROUP')?'block':'none';
       document.getElementById('edit-result').innerText = '';
       document.getElementById('edit-modal').classList.add('show');
     }}
@@ -9987,12 +10044,13 @@ def list_groups(request: Request):
       const gid = document.getElementById('e_gid').value;
       const gname = document.getElementById('e_gname').value.trim();
       const isActive = document.getElementById('e_active').value;
+      const linkedA = document.getElementById('e_linked_a').value;
       const res = document.getElementById('edit-result');
       if(!gname){{res.className='result-err';res.innerText='名稱不可空白';return}}
       const r = await fetch('/admin/update_group', {{
         method:'POST',
         headers:{{'Content-Type':'application/json'}},
-        body:JSON.stringify({{group_id:gid, group_name:gname, is_active:parseInt(isActive)}})
+        body:JSON.stringify({{group_id:gid, group_name:gname, is_active:parseInt(isActive), linked_a_group_id:linkedA}})
       }});
       const data = await r.json();
       res.className = data.status==='ok'?'result-ok':'result-err';
@@ -10004,10 +10062,12 @@ def list_groups(request: Request):
       const gname=document.getElementById('f_gname').value.trim();
       const gtype=document.getElementById('f_gtype').value;
       const linked=document.getElementById('f_linked').value;
+      const linkedA=document.getElementById('f_linked_a').value;
       const res=document.getElementById('add-result');
       if(!gid||!gname){{res.className='result-err';res.innerText='群組ID和名稱必填';return}}
       const body={{group_id:gid,group_name:gname,group_type:gtype}};
       if(gtype==='ADMIN_GROUP'&&linked) body.linked_sales_group_id=linked;
+      if(gtype==='SALES_GROUP'&&linkedA) body.linked_a_group_id=linkedA;
       const r=await fetch('/admin/add_group',{{method:'POST',headers:{{\'Content-Type\':\'application/json\'}},body:JSON.stringify(body)}});
       const data=await r.json();
       res.className=data.status==='ok'?'result-ok':'result-err';
@@ -10068,12 +10128,13 @@ async def update_group(request: Request):
     gid = data.get("group_id","").strip()
     gname = data.get("group_name","").strip()
     is_active = data.get("is_active", 1)
+    linked_a = (data.get("linked_a_group_id","") or "").strip()
     if not gid or not gname:
         return JSONResponse({"status":"error","message":"群組ID和名稱必填"})
     try:
         conn = get_conn(); cur = conn.cursor()
-        cur.execute("UPDATE groups SET group_name=?, is_active=? WHERE group_id=?",
-            (gname, is_active, gid))
+        cur.execute("UPDATE groups SET group_name=?, is_active=?, linked_a_group_id=? WHERE group_id=?",
+            (gname, is_active, linked_a or None, gid))
         conn.commit(); conn.close()
         return JSONResponse({"status":"ok","message":f"已更新：{gname}"})
     except Exception as e:
