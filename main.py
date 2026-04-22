@@ -7325,7 +7325,7 @@ async def delete_customers(request: Request):
         qmarks = ",".join("?" for _ in case_ids)
         cur.execute(f"DELETE FROM customers WHERE case_id IN ({qmarks})", case_ids)
         cur.execute(f"DELETE FROM case_logs WHERE case_id IN ({qmarks})", case_ids)
-        cur.execute(f"DELETE FROM pending_actions WHERE case_id IN ({qmarks})", case_ids)
+        # pending_actions 沒有 case_id 欄位，不用刪；反正過期自動清
     return RedirectResponse("/history", status_code=303)
 
 
