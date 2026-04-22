@@ -12303,21 +12303,25 @@ def _do_download_excel(request: Request, case_id: str):
             c1_rel_21 = map_21_rel(c1_rel)
             c2_rel_21 = map_21_rel(c2_rel)
 
-            # 年資 G10：偵測儲存格類型，數值型填純數字，文字型填「N年」
-            # 月份 H10：固定文字「N月」或「月」
+            # 年資格式差異：
+            # - 21機車25萬：G10=年數字、H10=「年」標籤（不動）、I10=月數字、J10=「月」標籤（不動）
+            # - 21機車12萬/21商品：G10=「N年」、H10=「N月」（無獨立月欄）
             try:
                 yr_int = int(float(co_years)) if co_years else 0
                 co_mos_21 = v("company_months") or "0"
                 mo_int = int(float(co_mos_21)) if co_mos_21 and co_mos_21 != "0" else 0
-                # G10：25萬範本是數值型，其他是文字型
                 if plan_name == "21機車25萬":
                     g10_val = str(yr_int) if yr_int > 0 else "0"
+                    h10_val = None   # 範本「年」標籤，不動
+                    i10_val = str(mo_int) if mo_int > 0 else ""
                 else:
                     g10_val = f"{yr_int}年"
-                h10_val = f"{mo_int}月" if mo_int > 0 else "月"
+                    h10_val = f"{mo_int}月" if mo_int > 0 else "月"
+                    i10_val = None
             except Exception:
                 g10_val = co_years
                 h10_val = "月"
+                i10_val = None
 
             # 月薪 E10：填純數字（4.5萬→45000）
             try:
@@ -12349,7 +12353,7 @@ def _do_download_excel(request: Request, case_id: str):
                 "C9": company, "G9": co_phone_area + co_phone_num,
                 "J9": v("company_phone_ext"),
                 "C10": co_role, "E10": sal_e10,
-                "G10": g10_val, "H10": h10_val,
+                "G10": g10_val, "H10": h10_val, "I10": i10_val,
                 "C17": c1_name, "E17": c1_rel_21, "H17": (c1_phone or "").replace("-", "").replace(" ", ""), "K17": "保密" if c1_known == "保密" else "",
                 "C18": c2_name, "E18": c2_rel_21, "H18": (c2_phone or "").replace("-", "").replace(" ", ""), "K18": "保密" if c2_known == "保密" else "",
             }
