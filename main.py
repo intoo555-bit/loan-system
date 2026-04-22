@@ -1292,6 +1292,51 @@ def extract_first_line(text: str) -> str:
 
 
 
+def render_pagination(page: int, total_pages: int, total_count: int, base_url: str, query_params: dict) -> str:
+    """分頁按鈕列（供 /history /search 等共用）。
+    query_params: 目前頁面的查詢參數（不含 page），用於 hyperlink 保留搜尋條件。"""
+    from urllib.parse import urlencode
+    if total_count == 0:
+        return ""
+    if total_pages <= 1:
+        return f'<div style="font-size:13px;color:#6a5e4e;padding:14px 0;text-align:center">共 {total_count} 筆</div>'
+    def url(p):
+        qp = {k: v for k, v in (query_params or {}).items() if v not in (None, "")}
+        qp["page"] = p
+        return f"{base_url}?{urlencode(qp)}"
+    btns = []
+    btn_style = "padding:6px 12px;border:1px solid #ddd5ca;border-radius:6px;color:#4a3e30;text-decoration:none;font-size:13px;background:#faf7f4"
+    active_style = "padding:6px 12px;border:1px solid #6a5e4e;border-radius:6px;color:#fff;background:#6a5e4e;font-size:13px;font-weight:700"
+    dis_style = "padding:6px 12px;color:#c8bfb5;font-size:13px"
+    if page > 1:
+        btns.append(f'<a href="{url(page-1)}" style="{btn_style}">← 上一頁</a>')
+    else:
+        btns.append(f'<span style="{dis_style}">← 上一頁</span>')
+    start = max(1, page - 2)
+    end = min(total_pages, page + 2)
+    if start > 1:
+        btns.append(f'<a href="{url(1)}" style="{btn_style}">1</a>')
+        if start > 2:
+            btns.append(f'<span style="{dis_style}">...</span>')
+    for p in range(start, end + 1):
+        if p == page:
+            btns.append(f'<span style="{active_style}">{p}</span>')
+        else:
+            btns.append(f'<a href="{url(p)}" style="{btn_style}">{p}</a>')
+    if end < total_pages:
+        if end < total_pages - 1:
+            btns.append(f'<span style="{dis_style}">...</span>')
+        btns.append(f'<a href="{url(total_pages)}" style="{btn_style}">{total_pages}</a>')
+    if page < total_pages:
+        btns.append(f'<a href="{url(page+1)}" style="{btn_style}">下一頁 →</a>')
+    else:
+        btns.append(f'<span style="{dis_style}">下一頁 →</span>')
+    return (f'<div style="display:flex;gap:8px;align-items:center;justify-content:center;padding:18px 0;flex-wrap:wrap">'
+            + "".join(btns)
+            + f'<span style="font-size:12px;color:#6a5e4e;margin-left:12px">第 {page}/{total_pages} 頁，共 {total_count} 筆</span>'
+            + '</div>')
+
+
 def fmt_salary(s) -> str:
     """月薪顯示格式化：統一輸出「N萬」（接受「3.5」「3.5萬」「35000」「35000元」等各種 DB 既存值）。
     空值 → 空字串。>=1000 視為元、自動轉萬。"""
@@ -8443,7 +8488,7 @@ def _build_timeline(case_id: str) -> str:
 
 
 @app.get("/search", response_class=HTMLResponse)
-def search_page(request: Request, q: str = "", grp: str = "", date_from: str = "", date_to: str = ""):
+def search_page(request: Request, q: str = "", grp: str = "", date_from: str = "", date_to: str = "", page: int = 1):
     from fastapi.responses import RedirectResponse
     role = check_auth(request)
     if not role: return RedirectResponse("/login")
@@ -8453,15 +8498,23 @@ def search_page(request: Request, q: str = "", grp: str = "", date_from: str = "
     all_groups2 = cur2.fetchall(); conn2.close()
     grp_opts2 = "<option value=''>全部群組</option>" + "".join(f'<option value="{h(g["group_id"])}" {"selected" if grp==g["group_id"] else ""}>{h(g["group_name"])}</option>' for g in all_groups2)
     results_html = ""
+    total_count_s = 0; total_pages_s = 1
     if q or grp or date_from or date_to:
         conn = get_conn(); cur = conn.cursor()
-        sql2 = "SELECT * FROM customers WHERE 1=1"; params2 = []
-        if q: sql2 += " AND (customer_name LIKE ? OR id_no LIKE ?)"; params2 += [f"%{q}%", f"%{q}%"]
-        if grp: sql2 += " AND source_group_id=?"; params2.append(grp)
-        if date_from: sql2 += " AND DATE(created_at) >= ?"; params2.append(date_from)
-        if date_to: sql2 += " AND DATE(created_at) <= ?"; params2.append(date_to)
-        sql2 += " ORDER BY status ASC, updated_at DESC"
-        cur.execute(sql2, params2)
+        where_sql = " WHERE 1=1"; params2 = []
+        if q: where_sql += " AND (customer_name LIKE ? OR id_no LIKE ?)"; params2 += [f"%{q}%", f"%{q}%"]
+        if grp: where_sql += " AND source_group_id=?"; params2.append(grp)
+        if date_from: where_sql += " AND DATE(created_at) >= ?"; params2.append(date_from)
+        if date_to: where_sql += " AND DATE(created_at) <= ?"; params2.append(date_to)
+        # 先算總數
+        cur.execute("SELECT COUNT(*) as c FROM customers" + where_sql, params2)
+        total_count_s = cur.fetchone()["c"]
+        PAGE_SIZE_S = 50
+        total_pages_s = max(1, (total_count_s + PAGE_SIZE_S - 1) // PAGE_SIZE_S)
+        page = max(1, min(page, total_pages_s))
+        offset_s = (page - 1) * PAGE_SIZE_S
+        sql2 = "SELECT * FROM customers" + where_sql + " ORDER BY status ASC, updated_at DESC LIMIT ? OFFSET ?"
+        cur.execute(sql2, params2 + [PAGE_SIZE_S, offset_s])
         rows = cur.fetchall()
         conn.close()
         if not rows:
@@ -8548,6 +8601,7 @@ def search_page(request: Request, q: str = "", grp: str = "", date_from: str = "
         </div>
       </form>
       {results_html}
+      {render_pagination(page, total_pages_s, total_count_s, "/search", {"q": q, "grp": grp, "date_from": date_from, "date_to": date_to}) if total_count_s else ""}
     </div></body></html>"""
 
 
@@ -9657,7 +9711,7 @@ function deleteCust(caseId) {{
 
 
 @app.get("/history", response_class=HTMLResponse)
-def history_page(request: Request, group: str = "", month: str = "", q: str = ""):
+def history_page(request: Request, group: str = "", month: str = "", q: str = "", page: int = 1):
     from fastapi.responses import RedirectResponse
     role = check_auth(request)
     if not role: return RedirectResponse("/login")
@@ -9671,19 +9725,28 @@ def history_page(request: Request, group: str = "", month: str = "", q: str = ""
     if auth_group and not group:
         group = auth_group
 
-    query = "SELECT * FROM customers WHERE status IN ('CLOSED','PENALTY','ABANDONED','REJECTED')"
+    where_sql = " WHERE status IN ('CLOSED','PENALTY','ABANDONED','REJECTED')"
     params = []
     if group:
-        query += " AND source_group_id=?"
+        where_sql += " AND source_group_id=?"
         params.append(group)
     if month:
-        query += " AND updated_at LIKE ?"
+        where_sql += " AND updated_at LIKE ?"
         params.append(month + "%")
     if q:
-        query += " AND (customer_name LIKE ? OR id_no LIKE ?)"
+        where_sql += " AND (customer_name LIKE ? OR id_no LIKE ?)"
         params.extend([f"%{q}%", f"%{q}%"])
-    query += " ORDER BY updated_at DESC LIMIT 300"
-    cur.execute(query, params)
+
+    # 先算總數用於分頁
+    cur.execute("SELECT COUNT(*) as c FROM customers" + where_sql, params)
+    total_count = cur.fetchone()["c"]
+    PAGE_SIZE = 50
+    total_pages = max(1, (total_count + PAGE_SIZE - 1) // PAGE_SIZE)
+    page = max(1, min(page, total_pages))
+    offset = (page - 1) * PAGE_SIZE
+
+    query = "SELECT * FROM customers" + where_sql + " ORDER BY updated_at DESC LIMIT ? OFFSET ?"
+    cur.execute(query, params + [PAGE_SIZE, offset])
     rows = cur.fetchall()
     conn.close()
 
@@ -9778,7 +9841,7 @@ def history_page(request: Request, group: str = "", month: str = "", q: str = ""
           <select class="input" name="month" onchange="this.form.submit()" style="min-width:140px">{month_opts}</select>
           <input class="input" name="q" value="{h(q)}" placeholder="搜尋客戶姓名..." style="min-width:160px">
           <button type="submit" class="btn btn-primary" style="white-space:nowrap">搜尋</button>
-          <span style="font-size:13px;color:#6a5e4e;margin-left:auto">共 {len(rows)} 筆</span>
+          <span style="font-size:13px;color:#6a5e4e;margin-left:auto">共 {total_count} 筆</span>
         </div>
       </form>
       <form method="post" action="/admin/delete-customers" id="delform" onsubmit="return confirmDel()">
@@ -9795,6 +9858,7 @@ def history_page(request: Request, group: str = "", month: str = "", q: str = ""
       </div>
       {'<div style="margin-top:12px;display:flex;gap:10px;align-items:center"><button type="submit" class="btn" style="background:#b84a35;color:#fff;border:none;padding:8px 18px;border-radius:7px;font-size:14px;font-weight:600;cursor:pointer">🗑 刪除勾選</button><span style="font-size:12px;color:#6a5e4e">選起來後按這顆會永久刪除</span></div>' if is_admin else ''}
       </form>
+      {render_pagination(page, total_pages, total_count, "/history", {"group": group, "month": month, "q": q})}
     </div>
     <script>
     function toggleAll(ck){{document.querySelectorAll('.del-ck').forEach(function(c){{c.checked=ck.checked;}});}}
