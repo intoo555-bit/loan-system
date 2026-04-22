@@ -934,6 +934,7 @@ PLAN_INFO = {
     "貸救補": ("貸救補", "10萬/24期"), "貸10": ("貸救補", "10萬/24期"), "貸就補": ("貸救補", "10萬/24期"),
     "麻吉機車": ("麻吉機車", "10萬/24期"), "麻吉機": ("麻吉機車", "10萬/24期"),
     "麻吉手機": ("麻吉手機", "10萬/24期"), "麻吉手": ("麻吉手機", "10萬/24期"),
+    "麻吉": ("麻吉機車", "10萬/24期"),
     "喬美": ("喬美", "14萬/30期"), "鼎多": ("喬美", "14萬/30期"),
     "分貝機車": ("分貝機車", ""), "分貝機": ("分貝機車", ""),
     "分貝汽車": ("分貝汽車", ""), "分貝汽": ("分貝汽車", ""),
@@ -3662,7 +3663,24 @@ def generate_notification_text(r: dict, company: str = "") -> str:
     elif plan_info and plan_info[1]:
         amount_line = plan_info[1]
     else:
-        amount_line = v("eval_fund_need") or ""
+        # eval_fund_need 純數字（如 200000）自動轉萬
+        raw_fund = v("eval_fund_need") or ""
+        try:
+            fund_num = float(raw_fund.replace("萬","").replace(",","").replace("$","").strip())
+            if fund_num >= 10000:
+                w = fund_num / 10000
+                amount_line = f"{int(w)}萬" if w == int(w) else f"{w}萬"
+            elif fund_num > 0:
+                amount_line = f"{int(fund_num)}萬" if fund_num == int(fund_num) else f"{fund_num}萬"
+            else:
+                amount_line = ""
+        except Exception:
+            amount_line = raw_fund
+
+    # 麻吉系列：adminB 勾「6萬18期3771」→ 覆寫 amount_line（優先於 PLAN_INFO 預設 10萬/24）
+    is_mj = "麻吉" in co or (plan_info and "麻吉" in plan_info[0])
+    if is_mj and v("adminb_mj_6w18p") == "1":
+        amount_line = "6萬/18期"
 
     # 學歷：轉成口語
     edu = v("education")
