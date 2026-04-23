@@ -3761,8 +3761,16 @@ def parse_special_command(text: str, group_id: str) -> Optional[Dict]:
 
 
 def generate_notification_text(r: dict, company: str = "") -> str:
-    """根據客戶 DB 資料自動產生照會注意事項文字"""
+    """根據客戶 DB 資料自動產生照會注意事項文字。
+    套用 adminB 調整規則：月薪<3.5萬→3.5萬、年資<1→1年、居住<5→5年、
+    居住租屋/宿舍→親屬、學歷國中→高中/職（跟 adminB 頁面一致）。"""
     def v(k): return (r.get(k, "") or "").strip()
+
+    # 套用 adminB 規則 → 取調整後的值
+    try:
+        rules = apply_adminb_rules(r)
+    except Exception:
+        rules = {}
 
     name = v("customer_name")
     # 公司：優先用參數，其次 current_company，最後 company
@@ -3770,26 +3778,27 @@ def generate_notification_text(r: dict, company: str = "") -> str:
 
     # 居住地：同戶籍→戶籍，否則→現居地
     live_type = "戶籍" if v("live_same_as_reg") == "1" else "現居地"
-    live_years = v("live_years") or "0"
-    live_status = v("live_status") or "自有"
+    live_years = (rules.get("live_years_val") or v("live_years") or "0")
+    live_status = (rules.get("live_status_val") or v("live_status") or "自有")
 
-    # 年資
-    co_years = v("company_years") or "0"
+    # 年資（套 <1→1 規則）
+    co_years = (rules.get("company_years_val") or v("company_years") or "0")
 
-    # 月薪：轉成「N萬」或「N萬N」格式
+    # 月薪（套 <3.5萬→3.5萬 規則），輸出「N萬」格式
+    salary_raw = rules.get("salary_val") or v("company_salary") or "0"
     salary_str = ""
     try:
-        sal = float(v("company_salary") or "0")
-        if sal >= 10000:
-            wan = int(sal // 10000)
-            remainder = int((sal % 10000) // 1000)
-            salary_str = f"{wan}萬{remainder}" if remainder else f"{wan}萬"
-        elif sal > 0:
-            salary_str = f"{sal}"
+        _raw = str(salary_raw).replace("萬", "").replace(",", "").strip()
+        sal = float(_raw) if _raw else 0
+        # rules 的 salary_val 是萬為單位（如「3.5」），DB 原始可能是「35000」元
+        if sal >= 1000:
+            sal = sal / 10000
+        if sal > 0:
+            salary_str = f"{int(sal)}萬" if sal == int(sal) else f"{sal}萬"
         else:
             salary_str = "0"
     except Exception:
-        salary_str = v("company_salary") or "0"
+        salary_str = str(salary_raw)
 
     # 送件金額/期數（notify_amount ≠ approved_amount）：
     # 優先用手動設定的送件金額 → 沒設則用 PLAN_INFO 方案預設 → 再沒有則用 eval_fund_need
