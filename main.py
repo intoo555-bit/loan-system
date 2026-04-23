@@ -7396,6 +7396,148 @@ async def callback(request: Request, background_tasks: BackgroundTasks):
 # =========================
 # 管理 API
 # =========================
+@app.get("/admin/import-loan", response_class=HTMLResponse)
+def import_loan_preview(request: Request):
+    """從 apr_loan_import.json 讀 40 筆客戶資料，顯示預覽頁（admin 限定）。"""
+    from fastapi.responses import RedirectResponse
+    role = check_auth(request)
+    if role != "admin":
+        return RedirectResponse("/login")
+    _base = os.path.dirname(os.path.abspath(__file__))
+    jpath = os.path.join(_base, "apr_loan_import.json")
+    if not os.path.exists(jpath):
+        return HTMLResponse("<div style='padding:40px'>找不到 apr_loan_import.json</div>")
+    with open(jpath, encoding="utf-8") as f:
+        data = json.load(f)
+    rows_html = ""
+    for d in data:
+        concurrent = "+".join(d.get("concurrent", []))
+        co_str = d.get("current_company", "") + (f"+{concurrent}" if concurrent else "")
+        amt_str = d.get("approved_amount", "") or ""
+        disb_str = d.get("disb_date", "") or ""
+        tag = "💰待撥款" if d.get("report_section") == "待撥款" else ""
+        rows_html += f'''<tr>
+          <td style="padding:6px 10px">{h(tag)}</td>
+          <td style="padding:6px 10px;font-weight:600">{h(d["name"])}</td>
+          <td style="padding:6px 10px;font-family:monospace;font-size:12px">{h(d.get("id_no","") or "❌")}</td>
+          <td style="padding:6px 10px">{h(co_str)}</td>
+          <td style="padding:6px 10px">{h(amt_str)}</td>
+          <td style="padding:6px 10px">{h(disb_str)}</td>
+          <td style="padding:6px 10px;font-size:11px;color:#6b7280">{h(d.get("route_order","-") or "-")}</td>
+        </tr>'''
+    return HTMLResponse(f"""<!DOCTYPE html><html><head>{PAGE_CSS}<title>匯入 4 月勞工案件</title></head><body>
+    {make_topnav(role, "admin")}
+    <div class="page">
+      <h2>匯入 4 月勞工紓困案件（共 {len(data)} 筆）</h2>
+      <div style="font-size:13px;color:#6b7280;margin-bottom:12px">
+        目標業務群：<b>勞工</b>（C7704a978f3556c1efb7f6bf13fbd3eeb）<br>
+        身分證已存在的會自動跳過（不會重複建案）。
+      </div>
+      <div style="background:#fff;border:1px solid #e5e7eb;border-radius:10px;overflow:auto;margin-bottom:16px">
+        <table style="width:100%;border-collapse:collapse;font-size:13px">
+          <thead style="background:#f9fafb;border-bottom:1px solid #e5e7eb;position:sticky;top:0">
+            <tr>
+              <th style="padding:8px;text-align:left">狀態</th>
+              <th style="padding:8px;text-align:left">姓名</th>
+              <th style="padding:8px;text-align:left">身分證</th>
+              <th style="padding:8px;text-align:left">current + concurrent</th>
+              <th style="padding:8px;text-align:left">核准金額</th>
+              <th style="padding:8px;text-align:left">撥款日</th>
+              <th style="padding:8px;text-align:left">送件順序</th>
+            </tr>
+          </thead>
+          <tbody>{rows_html}</tbody>
+        </table>
+      </div>
+      <form method="post" action="/admin/import-loan/confirm" onsubmit="return confirm('確定匯入 {len(data)} 筆到「勞工」業務群嗎？')">
+        <button type="submit" class="btn btn-primary" style="padding:10px 24px;font-size:15px">✅ 確認匯入 {len(data)} 筆</button>
+      </form>
+    </div></body></html>""")
+
+
+@app.post("/admin/import-loan/confirm")
+async def import_loan_confirm(request: Request):
+    """實際執行匯入 admin 限定。"""
+    from fastapi.responses import HTMLResponse
+    role = check_auth(request)
+    if role != "admin":
+        return HTMLResponse("無權限", status_code=403)
+    _base = os.path.dirname(os.path.abspath(__file__))
+    jpath = os.path.join(_base, "apr_loan_import.json")
+    with open(jpath, encoding="utf-8") as f:
+        data = json.load(f)
+    SALES_GROUP_ID = "C7704a978f3556c1efb7f6bf13fbd3eeb"   # 勞工
+    created, skipped, failed = [], [], []
+    for d in data:
+        name = d["name"]
+        id_no = (d.get("id_no") or "").strip()
+        try:
+            # 身分證重複 → 跳過
+            if id_no:
+                existing = find_active_by_id_no(id_no)
+                if existing:
+                    skipped.append(f"{name}（{id_no}，已存在）")
+                    continue
+            co = d.get("current_company", "") or ""
+            route_order = d.get("route_order", "") or ""
+            route_plan = ""
+            if route_order and "/" in route_order:
+                order = [x.strip() for x in route_order.split("/") if x.strip()]
+                # current_company 在 order 裡面找 index
+                idx = 0
+                for i, x in enumerate(order):
+                    if co and (co in x or x in co):
+                        idx = i
+                        break
+                route_plan = make_route_json(order, idx)
+            text = f"匯入 4 月勞工案件：{name}"
+            concurrent_str = ",".join(d.get("concurrent", []))
+            report_sec = d.get("report_section", "") or ""
+            case_id = create_customer_record(
+                name=name, id_no=id_no, company=co,
+                source_group_id=SALES_GROUP_ID, text=text,
+                route_plan=route_plan, current_company=co,
+                report_section=report_sec,
+            )
+            # 補其他欄位
+            approved = (d.get("approved_amount") or "").strip()
+            disb = (d.get("disb_date") or "").strip()
+            update_kwargs = {}
+            if approved:
+                update_kwargs["approved_amount"] = approved
+            if disb:
+                update_kwargs["disbursement_date"] = disb
+            if concurrent_str:
+                update_kwargs["concurrent_companies"] = concurrent_str
+            if update_kwargs:
+                update_customer(case_id, text=None, from_group_id=SALES_GROUP_ID, **update_kwargs)
+            # 直接寫個資（繞過 update_customer，避免重複 UPDATE）
+            extra_fields = {
+                "birth_date": d.get("birth", ""),
+                "phone": d.get("phone", ""),
+                "email": d.get("email", ""),
+                "company_name_detail": d.get("company_name", ""),
+            }
+            extra_fields = {k: v for k, v in extra_fields.items() if v}
+            if extra_fields:
+                with db_conn(commit=True) as conn:
+                    cur = conn.cursor()
+                    set_clause = ", ".join(f"{k}=?" for k in extra_fields)
+                    vals = list(extra_fields.values()) + [case_id]
+                    cur.execute(f"UPDATE customers SET {set_clause} WHERE case_id=?", vals)
+            created.append(name)
+        except Exception as e:
+            failed.append(f"{name}：{e}")
+    summary = f"""<div style="padding:40px;font-family:sans-serif">
+      <h2>匯入完成</h2>
+      <p>✅ 建立：{len(created)} 筆 — {', '.join(created[:20])}{'...' if len(created)>20 else ''}</p>
+      <p>⚠️ 跳過：{len(skipped)} 筆（已存在）— {', '.join(skipped)}</p>
+      <p>❌ 失敗：{len(failed)} 筆 — {'; '.join(failed)}</p>
+      <a href="/admin/groups">返回</a> | <a href="/history">看歷史</a> | <a href="/report">看日報</a>
+    </div>"""
+    return HTMLResponse(summary)
+
+
 @app.post("/admin/delete-customers")
 async def delete_customers(request: Request):
     """從 /history 頁勾選刪除客戶（含相關 case_logs / pending_actions）。admin 限定。"""
