@@ -8394,13 +8394,11 @@ def render_customer_row(row, role="") -> str:
 
     cid = row["case_id"]
     cname = row["customer_name"]
-    q = "'"
-    row_onclick = 'onclick="togD(' + q + h(cid) + q + ')"'
     return (
-        '<div class="cust-row" data-name="' + h(cname) + '" style="border-bottom:1px solid #ddd5ca">'
+        '<div class="cust-row" data-name="' + h(cname) + '" data-cid="' + h(cid) + '" style="border-bottom:1px solid #ddd5ca">'
         + '<div style="display:grid;grid-template-columns:24px 1fr auto;gap:6px;align-items:center;padding:10px 16px">'
         + '<input type="checkbox" class="batch-cb" value="' + h(cid) + '" onclick="event.stopPropagation()" style="width:16px;height:16px;cursor:pointer">'
-        + '<div ' + row_onclick + ' style="cursor:pointer">'
+        + '<div class="cust-header" style="cursor:pointer">'
         + '<div style="font-size:15px;font-weight:600;color:#1a1208">' + h(cname) + '</div>'
         + '<div style="font-size:13px;color:#4a3e30;margin-top:2px">' + h(sub) + '</div>'
         + '</div>'
@@ -8838,6 +8836,18 @@ def report_web(request: Request):
         el.style.display = (!q || n.indexOf(q) !== -1) ? '' : 'none';
       }});
     }}
+    // 客戶姓名點擊 → 展開/收合詳細資料（用事件委派、不怕 cache/quote 問題）
+    document.addEventListener('click', function(e){{
+      var hdr = e.target.closest('.cust-header');
+      if(!hdr) return;
+      var row = hdr.closest('.cust-row');
+      if(!row) return;
+      var cid = row.dataset.cid;
+      if(!cid) return;
+      var dd = document.getElementById('dd-'+cid);
+      if(!dd) return;
+      dd.style.display = (dd.style.display === 'block') ? 'none' : 'block';
+    }});
     function deleteFromReport(caseId){{
       var f=document.createElement('form');
       f.method='POST';f.action='/delete-customer';
