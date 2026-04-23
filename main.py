@@ -4222,6 +4222,11 @@ _HELP_APPROVAL = """🔹 審核結果
        日期放前後都可以
        多家核准一定要指定哪家
 
+【一步到位：核准+撥款】零卡/慢點付/商品貸常用
+  沒日期（= 今天）：@AI 王小明 零卡 6萬 撥款
+  有日期：@AI 王小明 零卡 6萬 撥款 4/20
+  說明：自動核准 + 撥款一次完成，不用先核准再撥款
+
 【取消核准】核准打錯、要作廢那筆核准
   打：@AI 王小明 第一 取消核准
   說明：把那家從待撥款拿掉、核准金額清空
@@ -4250,6 +4255,9 @@ _HELP_TOOLS = """🔹 其他小工具
 
 【查詢類】
   查這客戶：@AI 查 王小明
+    顯示：身分證、所屬群組、目前送件、同送、核准/撥款
+         送件順序（整條 route）✓=已過、👈=目前、沒標記=尚未送
+         送件歷程（最近 3 筆）、各家狀態
   產日報：@AI 日報
   看統計：@AI 統計
     備註：今日/本月 進件、核准、結案數
@@ -4259,6 +4267,17 @@ _HELP_TOOLS = """🔹 其他小工具
 【修改類】
   改名：@AI 舊名 改名 新名
   改身分證：@AI 王小明 改身分證 A123456789
+  改送件順序：@AI 王小明 改順序 和裕/貸救補/21
+    說明：覆寫當前那家「之後」的順序，已送過的歷史不動
+         用於原本排[亞太/和裕]、現在要改成[亞太/第一/21]
+
+【缺件清單】日報顯示「⚠️缺:身分證/薪轉」
+  記缺件：@AI 王小明 缺 身分證+薪轉+帳單
+  補一項：@AI 王小明 已補 身分證
+  全補完：@AI 王小明 已補 全部
+  說明：多項用「+」分開、補完後日報警告消失
+       業務群、A 群都能打（都要 @AI）
+       A 群打會自動回貼客戶所屬的業務群
 
 【送件小工具】推下一家
   打：@AI 王小明 轉下一家
@@ -6017,6 +6036,10 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
         pending = ",".join(docs_list)
         update_customer(target["case_id"], pending_docs=pending,
                         text=f"{name} 缺件：{'/'.join(docs_list)}", from_group_id=group_id)
+        # A 群打→回貼客戶所屬業務群（來源不同群才推、避免業務群打自己時重複）
+        if target["source_group_id"] and target["source_group_id"] != group_id:
+            push_text(target["source_group_id"],
+                      f"📋 {name} 已記缺件：{' / '.join(docs_list)}")
         reply_text(reply_token, f"📋 {name} 已記缺件：{' / '.join(docs_list)}\n補完後打：@AI {name} 已補 {docs_list[0]}")
         return
 
@@ -6035,9 +6058,13 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
         update_customer(target["case_id"], pending_docs=new_pending,
                         text=f"{name} 已補：{doc}", from_group_id=group_id)
         if new_list:
-            reply_text(reply_token, f"✅ {name} 已補 {doc}\n還缺：{' / '.join(new_list)}")
+            push_msg = f"✅ {name} 已補 {doc}\n還缺：{' / '.join(new_list)}"
         else:
-            reply_text(reply_token, f"✅ {name} 已補 {doc}\n🎉 缺件全部補完！")
+            push_msg = f"✅ {name} 已補 {doc}\n🎉 缺件全部補完！"
+        # A 群打→回貼業務群
+        if target["source_group_id"] and target["source_group_id"] != group_id:
+            push_text(target["source_group_id"], push_msg)
+        reply_text(reply_token, push_msg)
         return
 
     if t == "clear_missing_docs":
@@ -6049,7 +6076,11 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
             return
         update_customer(target["case_id"], pending_docs="",
                         text=f"{name} 缺件已全部補完", from_group_id=group_id)
-        reply_text(reply_token, f"✅ {name} 缺件已全部清除")
+        push_msg = f"✅ {name} 缺件已全部清除"
+        # A 群打→回貼業務群
+        if target["source_group_id"] and target["source_group_id"] != group_id:
+            push_text(target["source_group_id"], push_msg)
+        reply_text(reply_token, push_msg)
         return
 
     if t == "reorder_route":
