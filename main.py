@@ -2153,6 +2153,7 @@ def init_db():
         ("penalty_date", "TEXT"),
         ("penalty_pending", "TEXT"),
         ("approved_at", "TEXT"),   # 核准時間（用於「待撥款超過 N 天」計算）
+        ("pending_docs", "TEXT"),  # 缺件清單（逗號分隔：身分證,薪轉,帳單）
     ]:
         ensure_column(cur, "customers", col, defn)
     # groups 表新增業務群對應欄位
@@ -2302,7 +2303,8 @@ def update_customer(case_id, company=None, text=None, from_group_id="", status=N
                     signing_area=None, signing_salesperson=None,
                     signing_company=None, signing_time=None, signing_location=None,
                     notify_amount=None, notify_period=None, concurrent_companies=None,
-                    id_no=None, penalty_amount=None, penalty_date=None, penalty_pending=None):
+                    id_no=None, penalty_amount=None, penalty_date=None, penalty_pending=None,
+                    pending_docs=None):
     """更新客戶（Bug 5/6 修復：context manager + transaction）
 
     UPDATE + INSERT case_logs 包在同一交易內，確保原子性。
@@ -2348,7 +2350,8 @@ def update_customer(case_id, company=None, text=None, from_group_id="", status=N
                          ("id_no", id_no),
                          ("penalty_amount", penalty_amount),
                          ("penalty_date", penalty_date),
-                         ("penalty_pending", penalty_pending)]:
+                         ("penalty_pending", penalty_pending),
+                         ("pending_docs", pending_docs)]:
             if val is not None:
                 fields.append(f"{col} = ?"); values.append(val)
         # 核准金額從空→有值 → 記 approved_at（用於待撥款超過 N 天計算）
@@ -3424,6 +3427,20 @@ def parse_special_command(text: str, group_id: str) -> Optional[Dict]:
     if m:
         return {"type": "reorder_route", "name": m.group(1), "new_order": m.group(2).strip()}
 
+    # 缺件清單：@AI 姓名 缺 身分證+薪轉+帳單
+    m = re.match(r"^([\u4e00-\u9fff]{2,6})\s*缺\s+(.+)$", clean)
+    if m:
+        return {"type": "set_missing_docs", "name": m.group(1), "docs": m.group(2).strip()}
+
+    # 已補單項/全清：@AI 姓名 已補 身分證 / @AI 姓名 已補 全部
+    m = re.match(r"^([\u4e00-\u9fff]{2,6})\s*已補\s*(.*)$", clean)
+    if m and m.group(2).strip() not in ("時段", "申覆", "資料", "照會"):
+        # 排除「已補時段/申覆/資料/照會」這種狀態描述（那是業務 last_update 用，不是缺件移除）
+        docs = m.group(2).strip()
+        if docs in ("", "全部", "完畢", "都好", "好了"):
+            return {"type": "clear_missing_docs", "name": m.group(1)}
+        return {"type": "mark_doc_completed", "name": m.group(1), "doc": docs}
+
     # 加送：@AI 姓名 送公司[+公司] [金額/期數] → 加入同時送件清單，不換掉原本的
     m = re.match(r"^([\u4e00-\u9fff]{2,6})\s*送\s*([^\s]+)(?:\s+(\d+(?:\.\d+)?)\s*萬?\s*[/／]\s*(\d+)\s*期?)?\s*$", clean)
     if m and "下一家" not in m.group(2) and "轉" not in m.group(2):
@@ -3779,7 +3796,8 @@ def generate_notification_text(r: dict, company: str = "") -> str:
     # 居住地：同戶籍→戶籍，否則→現居地
     live_type = "戶籍" if v("live_same_as_reg") == "1" else "現居地"
     live_years = (rules.get("live_years_val") or v("live_years") or "0")
-    live_status = (rules.get("live_status_val") or v("live_status") or "自有")
+    # 居住狀況：照會話術照 DB 原值（宿舍就說宿舍、父母就說父母，不套 adminB 規則的轉親屬）
+    live_status = v("live_status") or "自有"
 
     # 年資（套 <1→1 規則）
     co_years = (rules.get("company_years_val") or v("company_years") or "0")
@@ -5941,6 +5959,56 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
         if hint:
             msg += "\n" + hint
         reply_text(reply_token, msg)
+        return
+
+    if t == "set_missing_docs":
+        name = cmd["name"]
+        docs_str = cmd.get("docs", "")
+        target = _resolve_target_strict(cmd, name, group_id, reply_token, "缺件")
+        if not target:
+            return
+        if not _check_active_or_warn(target, reply_token, "缺件", name):
+            return
+        docs_list = [d.strip() for d in re.split(r"[+＋、，,/／]", docs_str) if d.strip()]
+        if not docs_list:
+            reply_text(reply_token, f"❌ 請給缺件，例：@AI {name} 缺 身分證+薪轉+帳單")
+            return
+        pending = ",".join(docs_list)
+        update_customer(target["case_id"], pending_docs=pending,
+                        text=f"{name} 缺件：{'/'.join(docs_list)}", from_group_id=group_id)
+        reply_text(reply_token, f"📋 {name} 已記缺件：{' / '.join(docs_list)}\n補完後打：@AI {name} 已補 {docs_list[0]}")
+        return
+
+    if t == "mark_doc_completed":
+        name = cmd["name"]
+        doc = cmd.get("doc", "").strip()
+        target = _resolve_target_strict(cmd, name, group_id, reply_token, "已補")
+        if not target:
+            return
+        if not _check_active_or_warn(target, reply_token, "已補", name):
+            return
+        old = (target["pending_docs"] or "").strip()
+        old_list = [d.strip() for d in old.split(",") if d.strip()]
+        new_list = [d for d in old_list if d != doc]
+        new_pending = ",".join(new_list)
+        update_customer(target["case_id"], pending_docs=new_pending,
+                        text=f"{name} 已補：{doc}", from_group_id=group_id)
+        if new_list:
+            reply_text(reply_token, f"✅ {name} 已補 {doc}\n還缺：{' / '.join(new_list)}")
+        else:
+            reply_text(reply_token, f"✅ {name} 已補 {doc}\n🎉 缺件全部補完！")
+        return
+
+    if t == "clear_missing_docs":
+        name = cmd["name"]
+        target = _resolve_target_strict(cmd, name, group_id, reply_token, "已補")
+        if not target:
+            return
+        if not _check_active_or_warn(target, reply_token, "已補", name):
+            return
+        update_customer(target["case_id"], pending_docs="",
+                        text=f"{name} 缺件已全部補完", from_group_id=group_id)
+        reply_text(reply_token, f"✅ {name} 缺件已全部清除")
         return
 
     if t == "reorder_route":
@@ -8407,6 +8475,13 @@ def render_customer_row(row, role="") -> str:
             sub += "　" + " / ".join(progress_parts[-2:])
     else:
         sub = co + (f" · {status_summary}" if status_summary else "")
+
+    # 缺件清單（跟在 sub 後）
+    _pending = (row.get("pending_docs", "") or "").strip()
+    if _pending:
+        _docs = [d.strip() for d in _pending.split(",") if d.strip()]
+        if _docs:
+            sub += f'　<span style="color:#b91c1c;font-weight:600">⚠️缺:{"/".join(_docs)}</span>'
 
     # 詳細資料展開內容
     phone = row.get("phone","") or ""
