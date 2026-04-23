@@ -7527,8 +7527,9 @@ async def import_loan_confirm(request: Request):
                         idx = i
                         break
                 route_plan = make_route_json(order, idx)
-            # 建案訊息用簡短格式（避免日報出現「匯入...」字樣）
-            text = f"{name} {co}" if co else name
+            # 建案訊息用日報備註（讓日報狀態欄顯示「已補申覆資料」「補時段」等）
+            note = (d.get("report_note") or "").strip()
+            text = note if note else (f"{name} {co}" if co else name)
             concurrent_str = ",".join(d.get("concurrent", []))
             report_sec = d.get("report_section", "") or ""
             case_id = create_customer_record(
