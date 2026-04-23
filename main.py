@@ -7467,16 +7467,28 @@ async def import_loan_confirm(request: Request):
     with open(jpath, encoding="utf-8") as f:
         data = json.load(f)
     SALES_GROUP_ID = "C7704a978f3556c1efb7f6bf13fbd3eeb"   # 勞工
-    created, skipped, failed = [], [], []
+    created, transferred, skipped, failed = [], [], [], []
     for d in data:
         name = d["name"]
         id_no = (d.get("id_no") or "").strip()
         try:
-            # 身分證重複 → 跳過
+            # 身分證已存在
             if id_no:
                 existing = find_active_by_id_no(id_no)
                 if existing:
-                    skipped.append(f"{name}（{id_no}，已存在）")
+                    old_gid = existing["source_group_id"]
+                    if old_gid == SALES_GROUP_ID:
+                        skipped.append(f"{name}（已在勞工群）")
+                        continue
+                    # 搬群組 → 勞工，保留業務已填的其他欄位
+                    old_gname = get_group_name(old_gid) or old_gid[:8]
+                    update_customer(
+                        existing["case_id"],
+                        source_group_id=SALES_GROUP_ID,
+                        text=f"已從【{old_gname}】搬到【勞工】（匯入 4 月資料）",
+                        from_group_id=SALES_GROUP_ID,
+                    )
+                    transferred.append(f"{name}（從 {old_gname}）")
                     continue
             co = d.get("current_company", "") or ""
             route_order = d.get("route_order", "") or ""
@@ -7530,8 +7542,9 @@ async def import_loan_confirm(request: Request):
             failed.append(f"{name}：{e}")
     summary = f"""<div style="padding:40px;font-family:sans-serif">
       <h2>匯入完成</h2>
-      <p>✅ 建立：{len(created)} 筆 — {', '.join(created[:20])}{'...' if len(created)>20 else ''}</p>
-      <p>⚠️ 跳過：{len(skipped)} 筆（已存在）— {', '.join(skipped)}</p>
+      <p>✅ 新建：{len(created)} 筆 — {', '.join(created[:20])}{'...' if len(created)>20 else ''}</p>
+      <p>🔀 搬到勞工群：{len(transferred)} 筆 — {', '.join(transferred)}</p>
+      <p>⚠️ 跳過：{len(skipped)} 筆 — {', '.join(skipped)}</p>
       <p>❌ 失敗：{len(failed)} 筆 — {'; '.join(failed)}</p>
       <a href="/admin/groups">返回</a> | <a href="/history">看歷史</a> | <a href="/report">看日報</a>
     </div>"""
