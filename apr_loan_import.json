@@ -18,7 +18,8 @@
     "report_section": "",
     "signings": [],
     "report_note": "已補申覆資料",
-    "extra_approved": []
+    "extra_approved": [],
+    "company_notes": {}
   },
   {
     "name": "趙書明",
@@ -39,7 +40,8 @@
     "report_section": "",
     "signings": [],
     "report_note": "申覆:已更換知聯",
-    "extra_approved": []
+    "extra_approved": [],
+    "company_notes": {}
   },
   {
     "name": "趙慧羚",
@@ -60,7 +62,8 @@
     "report_section": "",
     "signings": [],
     "report_note": "申覆:更換兩聯+1知聯其一需二等",
-    "extra_approved": []
+    "extra_approved": [],
+    "company_notes": {}
   },
   {
     "name": "林志鴻",
@@ -81,7 +84,8 @@
     "report_section": "",
     "signings": [],
     "report_note": "婉拒/申覆:已取消前案",
-    "extra_approved": []
+    "extra_approved": [],
+    "company_notes": {}
   },
   {
     "name": "張心悅",
@@ -102,7 +106,8 @@
     "report_section": "",
     "signings": [],
     "report_note": "申覆:已補職電時段+1二等知情補足3聯",
-    "extra_approved": []
+    "extra_approved": [],
+    "company_notes": {}
   },
   {
     "name": "蔡建林",
@@ -117,7 +122,9 @@
     "build_date": "04/20",
     "route_order": "喬美/亞太/和裕/21/貸10/鄉/銀/C/商/代",
     "current_company": "和裕",
-    "concurrent": [],
+    "concurrent": [
+      "21"
+    ],
     "approved_amount": "5萬",
     "disb_date": null,
     "report_section": "待撥款",
@@ -128,7 +135,10 @@
       }
     ],
     "report_note": "核准5萬",
-    "extra_approved": []
+    "extra_approved": [],
+    "company_notes": {
+      "21": "補1知聯補足3聯"
+    }
   },
   {
     "name": "翁慧娟",
@@ -148,8 +158,9 @@
     "disb_date": "",
     "report_section": "",
     "signings": [],
-    "report_note": "轉21",
-    "extra_approved": []
+    "report_note": "補申覆資料",
+    "extra_approved": [],
+    "company_notes": {}
   },
   {
     "name": "楊秋緣",
@@ -169,8 +180,9 @@
     "disb_date": "",
     "report_section": "",
     "signings": [],
-    "report_note": "21",
-    "extra_approved": []
+    "report_note": "已補時段",
+    "extra_approved": [],
+    "company_notes": {}
   },
   {
     "name": "許詩雅",
@@ -190,8 +202,9 @@
     "disb_date": "",
     "report_section": "",
     "signings": [],
-    "report_note": "轉21",
-    "extra_approved": []
+    "report_note": "已補申覆資料",
+    "extra_approved": [],
+    "company_notes": {}
   },
   {
     "name": "陳裕仁",
@@ -211,8 +224,9 @@
     "disb_date": "",
     "report_section": "",
     "signings": [],
-    "report_note": "轉21",
-    "extra_approved": []
+    "report_note": "",
+    "extra_approved": [],
+    "company_notes": {}
   },
   {
     "name": "曾陳銓",
@@ -232,8 +246,9 @@
     "disb_date": "",
     "report_section": "",
     "signings": [],
-    "report_note": "轉21",
-    "extra_approved": []
+    "report_note": "補時段",
+    "extra_approved": [],
+    "company_notes": {}
   },
   {
     "name": "田福賓",
@@ -254,7 +269,8 @@
     "report_section": "",
     "signings": [],
     "report_note": "4/27續審",
-    "extra_approved": []
+    "extra_approved": [],
+    "company_notes": {}
   },
   {
     "name": "楊家榮",
@@ -274,8 +290,9 @@
     "disb_date": "",
     "report_section": "",
     "signings": [],
-    "report_note": "21機25(缺車合照)",
-    "extra_approved": []
+    "report_note": "",
+    "extra_approved": [],
+    "company_notes": {}
   },
   {
     "name": "邱張菁",
@@ -295,8 +312,9 @@
     "disb_date": "",
     "report_section": "",
     "signings": [],
-    "report_note": "亞太",
-    "extra_approved": []
+    "report_note": "",
+    "extra_approved": [],
+    "company_notes": {}
   },
   {
     "name": "洪慧瑜",
@@ -317,7 +335,15 @@
     "report_section": "待撥款",
     "signings": [],
     "report_note": "核准25萬",
-    "extra_approved": []
+    "extra_approved": [
+      [
+        "第一",
+        "20"
+      ]
+    ],
+    "company_notes": {
+      "第一": "核准20萬-已補母時段"
+    }
   },
   {
     "name": "賴詩婷",
@@ -329,16 +355,21 @@
     "company_phone": "",
     "addr_reg": "",
     "addr_live": "",
-    "build_date": "",
+    "build_date": "03/30",
     "route_order": "",
     "current_company": "21",
-    "concurrent": [],
+    "concurrent": [
+      "和裕"
+    ],
     "approved_amount": "8萬",
     "disb_date": null,
     "report_section": "待撥款",
     "signings": [],
     "report_note": "核准8萬",
-    "extra_approved": []
+    "extra_approved": [],
+    "company_notes": {
+      "和裕": "補JCIC"
+    }
   },
   {
     "name": "陳信全",
@@ -350,7 +381,7 @@
     "company_phone": "",
     "addr_reg": "",
     "addr_live": "",
-    "build_date": "",
+    "build_date": "03/30",
     "route_order": "",
     "current_company": "貸救補",
     "concurrent": [
@@ -361,7 +392,11 @@
     "report_section": "",
     "signings": [],
     "report_note": "核准4萬-待轉核",
-    "extra_approved": []
+    "extra_approved": [],
+    "company_notes": {
+      "和裕": "補JCIC",
+      "貸救補": "核准4萬-待轉核"
+    }
   },
   {
     "name": "李淑樺",
@@ -383,8 +418,12 @@
     "disb_date": "",
     "report_section": "",
     "signings": [],
-    "report_note": "補時段+確認",
-    "extra_approved": []
+    "report_note": "已補時段+確認",
+    "extra_approved": [],
+    "company_notes": {
+      "和裕": "已補時段",
+      "喬美": "已補時段+確認"
+    }
   },
   {
     "name": "羅坤芃",
@@ -404,8 +443,9 @@
     "disb_date": "",
     "report_section": "",
     "signings": [],
-    "report_note": "已補母+友時段",
-    "extra_approved": []
+    "report_note": "缺資料+確認",
+    "extra_approved": [],
+    "company_notes": {}
   },
   {
     "name": "謝美芃",
@@ -428,7 +468,10 @@
     "report_section": "待撥款",
     "signings": [],
     "report_note": "補時段",
-    "extra_approved": []
+    "extra_approved": [],
+    "company_notes": {
+      "喬美": "已補時段"
+    }
   },
   {
     "name": "風傳龍",
@@ -448,8 +491,9 @@
     "disb_date": "",
     "report_section": "",
     "signings": [],
-    "report_note": "轉喬美(缺合照)",
-    "extra_approved": []
+    "report_note": "缺合照",
+    "extra_approved": [],
+    "company_notes": {}
   },
   {
     "name": "朱志明",
@@ -469,8 +513,9 @@
     "disb_date": "",
     "report_section": "",
     "signings": [],
-    "report_note": "轉分貝汽",
-    "extra_approved": []
+    "report_note": "",
+    "extra_approved": [],
+    "company_notes": {}
   },
   {
     "name": "許志成",
@@ -490,8 +535,9 @@
     "disb_date": "",
     "report_section": "",
     "signings": [],
-    "report_note": "已補申覆資料",
-    "extra_approved": []
+    "report_note": "補收據+保人",
+    "extra_approved": [],
+    "company_notes": {}
   },
   {
     "name": "葉玥樂",
@@ -511,8 +557,9 @@
     "disb_date": "",
     "report_section": "",
     "signings": [],
-    "report_note": "轉21",
-    "extra_approved": []
+    "report_note": "",
+    "extra_approved": [],
+    "company_notes": {}
   },
   {
     "name": "柯忻恩",
@@ -533,7 +580,8 @@
     "report_section": "",
     "signings": [],
     "report_note": "補時段+確認電話",
-    "extra_approved": []
+    "extra_approved": [],
+    "company_notes": {}
   },
   {
     "name": "劉娟伶",
@@ -553,8 +601,9 @@
     "disb_date": "",
     "report_section": "",
     "signings": [],
-    "report_note": "手機分期(缺帳單)",
-    "extra_approved": []
+    "report_note": "缺帳單",
+    "extra_approved": [],
+    "company_notes": {}
   },
   {
     "name": "曾月英",
@@ -575,7 +624,8 @@
     "report_section": "",
     "signings": [],
     "report_note": "",
-    "extra_approved": []
+    "extra_approved": [],
+    "company_notes": {}
   },
   {
     "name": "邱子勛",
@@ -605,7 +655,8 @@
       }
     ],
     "report_note": "核准10萬(4/21)",
-    "extra_approved": []
+    "extra_approved": [],
+    "company_notes": {}
   },
   {
     "name": "陳渃玹",
@@ -631,7 +682,8 @@
       }
     ],
     "report_note": "核准2萬(4/20)",
-    "extra_approved": []
+    "extra_approved": [],
+    "company_notes": {}
   },
   {
     "name": "楊創富",
@@ -662,7 +714,8 @@
         "亞太",
         "12"
       ]
-    ]
+    ],
+    "company_notes": {}
   },
   {
     "name": "陳美旺",
@@ -683,7 +736,8 @@
     "report_section": "待撥款",
     "signings": [],
     "report_note": "核准7萬(4/20)",
-    "extra_approved": []
+    "extra_approved": [],
+    "company_notes": {}
   },
   {
     "name": "劉祐騰",
@@ -704,7 +758,8 @@
     "report_section": "待撥款",
     "signings": [],
     "report_note": "核准7萬(4/20)",
-    "extra_approved": []
+    "extra_approved": [],
+    "company_notes": {}
   },
   {
     "name": "鄭佳怡",
@@ -716,7 +771,7 @@
     "company_phone": "",
     "addr_reg": "",
     "addr_live": "",
-    "build_date": "",
+    "build_date": "03/23",
     "route_order": "",
     "current_company": "21",
     "concurrent": [],
@@ -725,7 +780,8 @@
     "report_section": "待撥款",
     "signings": [],
     "report_note": "核准7萬(4/22)",
-    "extra_approved": []
+    "extra_approved": [],
+    "company_notes": {}
   },
   {
     "name": "謝緯達",
@@ -751,7 +807,8 @@
       }
     ],
     "report_note": "核准12萬(4/21)",
-    "extra_approved": []
+    "extra_approved": [],
+    "company_notes": {}
   },
   {
     "name": "郭曉芸",
@@ -772,7 +829,8 @@
     "report_section": "待撥款",
     "signings": [],
     "report_note": "核准7萬",
-    "extra_approved": []
+    "extra_approved": [],
+    "company_notes": {}
   },
   {
     "name": "蕭傳義",
@@ -798,7 +856,8 @@
       }
     ],
     "report_note": "核准12萬",
-    "extra_approved": []
+    "extra_approved": [],
+    "company_notes": {}
   },
   {
     "name": "張庚輝",
@@ -819,7 +878,8 @@
     "report_section": "待撥款",
     "signings": [],
     "report_note": "核准7萬",
-    "extra_approved": []
+    "extra_approved": [],
+    "company_notes": {}
   },
   {
     "name": "吳麗貞",
@@ -845,7 +905,8 @@
       }
     ],
     "report_note": "核准10萬",
-    "extra_approved": []
+    "extra_approved": [],
+    "company_notes": {}
   },
   {
     "name": "盧姿樺",
@@ -871,7 +932,8 @@
       }
     ],
     "report_note": "核准30萬-待轉核",
-    "extra_approved": []
+    "extra_approved": [],
+    "company_notes": {}
   },
   {
     "name": "熊高玲",
@@ -892,7 +954,8 @@
     "report_section": "",
     "signings": [],
     "report_note": "",
-    "extra_approved": []
+    "extra_approved": [],
+    "company_notes": {}
   },
   {
     "name": "王家齊",
@@ -913,7 +976,8 @@
     "report_section": "",
     "signings": [],
     "report_note": "",
-    "extra_approved": []
+    "extra_approved": [],
+    "company_notes": {}
   },
   {
     "name": "江淑芳",
@@ -934,7 +998,8 @@
     "report_section": "",
     "signings": [],
     "report_note": "",
-    "extra_approved": []
+    "extra_approved": [],
+    "company_notes": {}
   },
   {
     "name": "高峰瑛",
@@ -955,7 +1020,8 @@
     "report_section": "",
     "signings": [],
     "report_note": "",
-    "extra_approved": []
+    "extra_approved": [],
+    "company_notes": {}
   },
   {
     "name": "王思婷",
@@ -976,7 +1042,8 @@
     "report_section": "",
     "signings": [],
     "report_note": "",
-    "extra_approved": []
+    "extra_approved": [],
+    "company_notes": {}
   },
   {
     "name": "李宜芳",
@@ -997,7 +1064,8 @@
     "report_section": "",
     "signings": [],
     "report_note": "",
-    "extra_approved": []
+    "extra_approved": [],
+    "company_notes": {}
   },
   {
     "name": "黃晏柔",
@@ -1018,7 +1086,8 @@
     "report_section": "",
     "signings": [],
     "report_note": "",
-    "extra_approved": []
+    "extra_approved": [],
+    "company_notes": {}
   },
   {
     "name": "陳玥汝",
@@ -1039,7 +1108,8 @@
     "report_section": "",
     "signings": [],
     "report_note": "",
-    "extra_approved": []
+    "extra_approved": [],
+    "company_notes": {}
   },
   {
     "name": "陳弈叡",
@@ -1060,7 +1130,8 @@
     "report_section": "",
     "signings": [],
     "report_note": "",
-    "extra_approved": []
+    "extra_approved": [],
+    "company_notes": {}
   },
   {
     "name": "呂昶宗",
@@ -1081,7 +1152,8 @@
     "report_section": "",
     "signings": [],
     "report_note": "",
-    "extra_approved": []
+    "extra_approved": [],
+    "company_notes": {}
   },
   {
     "name": "吳宗燁",
@@ -1102,7 +1174,8 @@
     "report_section": "",
     "signings": [],
     "report_note": "",
-    "extra_approved": []
+    "extra_approved": [],
+    "company_notes": {}
   },
   {
     "name": "黃文忠",
@@ -1123,7 +1196,8 @@
     "report_section": "",
     "signings": [],
     "report_note": "",
-    "extra_approved": []
+    "extra_approved": [],
+    "company_notes": {}
   },
   {
     "name": "張維鋼",
@@ -1143,8 +1217,9 @@
     "disb_date": "",
     "report_section": "",
     "signings": [],
-    "report_note": "轉鄉民(缺資料+確認)",
-    "extra_approved": []
+    "report_note": "",
+    "extra_approved": [],
+    "company_notes": {}
   },
   {
     "name": "黎俊志",
@@ -1164,7 +1239,8 @@
     "disb_date": "",
     "report_section": "",
     "signings": [],
-    "report_note": "已補申覆資料",
-    "extra_approved": []
+    "report_note": "",
+    "extra_approved": [],
+    "company_notes": {}
   }
 ]

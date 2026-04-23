@@ -7573,6 +7573,16 @@ async def import_loan_confirm(request: Request):
                         cur.execute("UPDATE customers SET created_at=? WHERE case_id=?", (iso_date, case_id))
                 except Exception:
                     pass
+            # 塞 company_status（每家公司獨立備註，日報公司區塊才能顯示對應狀態）
+            company_notes = d.get("company_notes") or {}
+            if company_notes:
+                try:
+                    cs_json = json.dumps(company_notes, ensure_ascii=False)
+                    with db_conn(commit=True) as conn:
+                        cur = conn.cursor()
+                        cur.execute("UPDATE customers SET company_status=? WHERE case_id=?", (cs_json, case_id))
+                except Exception:
+                    pass
             # 補其他欄位
             update_kwargs = {}
             if approved:

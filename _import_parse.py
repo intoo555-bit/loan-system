@@ -196,13 +196,61 @@ ID_OVERRIDE = {
     "賴詩婷": "B222030953",
 }
 
-# 日報 4/23 版「待撥款」區的正確狀態（姓名→[公司, 金額(萬), 撥款日期 or None]）
-# 從使用者貼的日報人工整理：待撥款的 current=該公司、report_section=待撥款
+# 建案日期手動補（parser 只讀 4 月訊息，建案在更早月份的要手動補）
+BUILD_DATE_OVERRIDE = {
+    "賴詩婷": "03/30",
+    "陳信全": "03/30",
+    "鄭佳怡": "03/23",
+    "熊高玲": "04/20",
+    "曾月英": "04/23",
+}
+
+# 備註依 4/23 最新日報逐筆對齊
+REPORT_NOTE_OVERRIDE = {
+    # 21 區
+    "鍾明玉": "已補申覆資料",
+    "趙書明": "申覆:已更換知聯",
+    "趙慧羚": "申覆:更換兩聯+1知聯其一需二等",
+    "林志鴻": "婉拒/申覆:已取消前案",
+    "張心悅": "申覆:已補職電時段+1二等知情補足3聯",
+    "翁慧娟": "補申覆資料",
+    "楊秋緣": "已補時段",
+    "許詩雅": "已補申覆資料",
+    "陳裕仁": "",
+    "曾陳銓": "補時段",
+    "田福賓": "4/27續審",
+    "楊家榮": "",
+    "邱張菁": "",
+    # 和裕/喬美（李淑樺在兩區，主 current 和裕）
+    "李淑樺": "已補時段+確認",
+    "風傳龍": "缺合照",
+    # 鄉民
+    "羅坤芃": "缺資料+確認",
+    # 分貝汽車/機車
+    "朱志明": "",
+    "許志成": "補收據+保人",
+    # 貸救補（陳信全主 current=貸救補、和裕 concurrent）
+    "陳信全": "核准4萬-待轉核",
+    "葉玥樂": "",
+    # 手機分期
+    "柯忻恩": "補時段+確認電話",
+    "劉娟伶": "缺帳單",
+    "曾月英": "",
+    # 零卡（全部沒備註）
+    "王家齊": "", "江淑芳": "", "高峰瑛": "", "王思婷": "", "李宜芳": "",
+    "黃晏柔": "", "陳玥汝": "", "陳弈叡": "", "呂昶宗": "", "吳宗燁": "",
+    "黃文忠": "", "張維鋼": "", "黎俊志": "",
+    # 房地
+    "熊高玲": "",
+    # 待撥款區的 note 不重要（日報從 approved_amount 生成）
+}
+
+# 日報 4/23 最新版「待撥款」區的狀態（姓名→[公司, 金額(萬), 撥款日期 or None]）
 PENDING_DISB = {
     "賴詩婷":  ("21", "8", None),
     "邱子勛":  ("喬美", "10", "4/21"),
     "陳渃玹":  ("手機分期", "2", "4/20"),
-    "楊創富":  ("第一", "28", "4/20"),   # 撥款的是第一 28萬；亞太 12萬也有核准但未撥
+    "楊創富":  ("第一", "28", "4/20"),
     "陳美旺":  ("21", "7", "4/20"),
     "劉祐騰":  ("21", "7", "4/20"),
     "鄭佳怡":  ("21", "7", "4/22"),
@@ -215,6 +263,7 @@ PENDING_DISB = {
     "吳麗貞":  ("喬美", "10", None),
     "謝美芃":  ("和裕", "6", None),
     "盧姿樺":  ("第一", "30", None),
+    # 陳信全：待核准（待轉核）、不算已核准，不放 PENDING_DISB
 }
 
 # 日報目前 current_company（未核准、送件中）
@@ -241,15 +290,28 @@ ACTIVE_CO = {
 
 # 同送公司（concurrent）— 日報顯示在多個區塊的姓名
 CONCURRENT_CO = {
-    "李淑樺": ["喬美"],     # current 和裕、同送喬美
-    "謝美芃": ["喬美"],     # current 和裕(核准6萬)、同送喬美
-    "陳信全": ["和裕"],     # current 貸救補、同送和裕
+    "李淑樺": ["喬美"],     # 和裕+喬美都在送件中
+    "謝美芃": ["喬美"],     # 和裕核准6萬、喬美還在送
+    "陳信全": ["和裕"],     # 貸救補核准4萬、和裕還在送(補JCIC)
+    "蔡建林": ["21"],       # 和裕核准5萬、21還在送(補1知聯)
+    "賴詩婷": ["和裕"],     # 21核准8萬、和裕還在送(補JCIC)
 }
 
 # 額外已核准但未撥款的公司（除了 current/PENDING_DISB 記的那家外）
-# 日報會顯示：{current}-核准{amt}(撥款{日期})/{extra_co}-核准{amt}(待撥款)
 EXTRA_APPROVED = {
     "楊創富": [("亞太", "12")],   # 除了第一 28萬（撥款）外，亞太 12萬也有核准
+    "洪慧瑜": [("第一", "20")],   # 除了 21 25萬，第一 20萬也有核准（已補母時段）
+}
+
+# 每家公司獨立備註（塞到 company_status）
+# 讓日報每家公司區塊顯示對應狀態
+COMPANY_NOTES = {
+    "蔡建林": {"21": "補1知聯補足3聯"},
+    "賴詩婷": {"和裕": "補JCIC"},
+    "李淑樺": {"和裕": "已補時段", "喬美": "已補時段+確認"},
+    "陳信全": {"和裕": "補JCIC", "貸救補": "核准4萬-待轉核"},
+    "謝美芃": {"喬美": "已補時段"},
+    "洪慧瑜": {"第一": "核准20萬-已補母時段"},
 }
 
 
@@ -298,8 +360,13 @@ def main():
         # 套用身分證 override
         if name in ID_OVERRIDE:
             c["id_no"] = ID_OVERRIDE[name]
+        # 建案日期 override（補 parser 抓不到的）
+        if name in BUILD_DATE_OVERRIDE:
+            c["build_date"] = BUILD_DATE_OVERRIDE[name]
         # 日報備註
         c["report_note"] = status_map.get(name, "")
+        if name in REPORT_NOTE_OVERRIDE:
+            c["report_note"] = REPORT_NOTE_OVERRIDE[name]
         # 決定 current_company / report_section / approved
         if name in PENDING_DISB:
             co, amt, dd = PENDING_DISB[name]
@@ -319,6 +386,7 @@ def main():
             c["final_report_section"] = ""
         c["final_concurrent"] = CONCURRENT_CO.get(name, [])
         c["extra_approved"] = EXTRA_APPROVED.get(name, [])
+        c["company_notes"] = COMPANY_NOTES.get(name, {})
         customers.append(c)
 
     # 印給使用者看
@@ -354,6 +422,7 @@ def main():
             "signings": c["signings"],
             "report_note": c.get("report_note", ""),
             "extra_approved": c.get("extra_approved", []),
+            "company_notes": c.get("company_notes", {}),
         })
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(export, f, ensure_ascii=False, indent=2)
