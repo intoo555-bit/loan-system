@@ -8404,7 +8404,7 @@ def render_customer_row(row, role="") -> str:
             'style="background:#b91c1c;color:#fff;border:none;padding:6px 12px;border-radius:6px;font-size:13px;cursor:pointer;font-weight:700;margin-left:10px;box-shadow:0 1px 2px rgba(0,0,0,0.15)">🗑 刪除</button>'
         )
     return (
-        '<div style="border-bottom:1px solid #ddd5ca">'
+        '<div class="cust-row" data-name="' + h(cname) + '" style="border-bottom:1px solid #ddd5ca">'
         + '<div style="display:grid;grid-template-columns:24px 1fr auto;gap:6px;align-items:center;padding:10px 16px">'
         + '<input type="checkbox" class="batch-cb" value="' + h(cid) + '" onclick="event.stopPropagation()" style="width:16px;height:16px;cursor:pointer">'
         + '<div ' + row_onclick + ' style="cursor:pointer">'
@@ -8779,9 +8779,16 @@ def report_web(request: Request):
         <div class="stat-card"><div class="stat-num" style="color:#7c3aed">{today_new}</div><div class="stat-lbl">📅 今日進件</div></div>
         <div class="stat-card"><div class="stat-num" style="color:#ea580c">{total_pending_disb}</div><div class="stat-lbl">⏳ 待撥款</div></div>
       </div>
-      <div style="margin-bottom:14px;text-align:right;display:flex;gap:8px;justify-content:flex-end;align-items:center">
-        <a href="/report/export" class="btn" style="background:#e8e2da;color:#4a3e30;font-size:12px;text-decoration:none">📥 匯出 CSV</a>
-        <button onclick="batchClose()" class="btn btn-primary" style="font-size:12px;padding:7px 14px">批次結案</button>
+      <div style="margin-bottom:14px;display:flex;gap:8px;justify-content:space-between;align-items:center;flex-wrap:wrap">
+        <div style="display:flex;gap:6px;align-items:center;flex:1;min-width:220px;max-width:420px">
+          <input type="text" id="searchName" placeholder="🔍 搜尋姓名（即時過濾）" oninput="filterByName(this.value)"
+                 style="flex:1;padding:7px 11px;border:1px solid #d1d5db;border-radius:7px;font-size:13px">
+          <button onclick="document.getElementById('searchName').value='';filterByName('')" class="btn" style="font-size:12px;padding:7px 10px;background:#e8e2da;color:#4a3e30">清除</button>
+        </div>
+        <div style="display:flex;gap:8px">
+          <a href="/report/export" class="btn" style="background:#e8e2da;color:#4a3e30;font-size:12px;text-decoration:none">📥 匯出 CSV</a>
+          <button onclick="batchClose()" class="btn btn-primary" style="font-size:12px;padding:7px 14px">批次結案</button>
+        </div>
       </div>
       {groups_html}
     </div>
@@ -8819,6 +8826,13 @@ def report_web(request: Request):
       const ids=[...cbs].map(c=>c.value);
       fetch('/report/batch-close',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{case_ids:ids}})}})
       .then(r=>r.json()).then(d=>{{alert(d.message);location.reload();}});
+    }}
+    function filterByName(q){{
+      q = (q||'').trim().toLowerCase();
+      document.querySelectorAll('.cust-row').forEach(function(el){{
+        var n = (el.dataset.name||'').toLowerCase();
+        el.style.display = (!q || n.indexOf(q) !== -1) ? '' : 'none';
+      }});
     }}
     function deleteFromReport(caseId){{
       var f=document.createElement('form');
