@@ -3238,6 +3238,16 @@ def search_customer_info(name: str, group_id: str) -> str:
         disb = r["disbursement_date"] or ""
         lines.append(f"核准：{r['approved_amount']}" + (f"（撥款{disb}）" if disb else "（待撥款）"))
     if order:
+        # 完整送件順序：已送過 ✓、目前 👈、未送留白
+        order_parts = []
+        for i, co in enumerate(order):
+            if i < idx:
+                order_parts.append(f"{co}✓")
+            elif i == idx:
+                order_parts.append(f"{co}👈")
+            else:
+                order_parts.append(co)
+        lines.append(f"送件順序：{' → '.join(order_parts)}")
         if idx + 1 < len(order):
             lines.append(f"下一家：{order[idx+1]}")
         if history:
