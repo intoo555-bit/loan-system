@@ -2152,6 +2152,7 @@ def init_db():
         ("penalty_amount", "TEXT"),
         ("penalty_date", "TEXT"),
         ("penalty_pending", "TEXT"),
+        ("approved_at", "TEXT"),   # 核准時間（用於「待撥款超過 N 天」計算）
     ]:
         ensure_column(cur, "customers", col, defn)
     # groups 表新增業務群對應欄位
@@ -2350,6 +2351,12 @@ def update_customer(case_id, company=None, text=None, from_group_id="", status=N
                          ("penalty_pending", penalty_pending)]:
             if val is not None:
                 fields.append(f"{col} = ?"); values.append(val)
+        # 核准金額從空→有值 → 記 approved_at（用於待撥款超過 N 天計算）
+        if approved_amount is not None and before_row is not None:
+            old_amt = (before_row["approved_amount"] or "").strip()
+            new_amt = (approved_amount or "").strip()
+            if new_amt and not old_amt:
+                fields.append("approved_at = ?"); values.append(now)
         fields.append("updated_at = ?"); values.append(now); values.append(case_id)
         snapshot = None
         if before_row:
@@ -3138,19 +3145,21 @@ def generate_report_lines(group_id: str) -> List[str]:
     if seg4:
         segments.append(seg4)
 
-    # 待撥款超過7天提醒（獨立一段）
+    # 待撥款超過7天提醒（從核准日算、不是建案日）
     overdue_lines = []
     for row in all_rows:
         if (row["report_section"] or "") == "待撥款" and not (row["disbursement_date"] or ""):
-            created = row["created_at"] or ""
-            if created:
+            # 優先用 approved_at（核准時間）、fallback 到 created_at（建案時間）
+            anchor = row["approved_at"] if "approved_at" in row.keys() else None
+            anchor = anchor or row["created_at"] or ""
+            if anchor:
                 try:
-                    days = (now_tw() - datetime.fromisoformat(created.replace("Z",""))).days
+                    days = (now_tw() - datetime.fromisoformat(anchor.replace("Z",""))).days
                     if days >= 7:
                         signing_time = (row["signing_time"] or "").strip()
                         signing_date = signing_time.split()[0] if signing_time else ""
                         extra = f"，對保{signing_date}" if signing_date else ""
-                        overdue_lines.append(f"  {row['customer_name']}（{days}天{extra}）")
+                        overdue_lines.append(f"  {row['customer_name']}（核准{days}天{extra}）")
                 except Exception:
                     pass
     if overdue_lines:
@@ -7599,6 +7608,16 @@ async def import_loan_confirm(request: Request):
                     with db_conn(commit=True) as conn:
                         cur = conn.cursor()
                         cur.execute("UPDATE customers SET created_at=? WHERE case_id=?", (iso_date, case_id))
+                except Exception:
+                    pass
+            # 核准時間（approved_at）：匯入已核准的客戶、approved_at 設成建案日（沒準確核准日）
+            if approved and build_date and "/" in build_date:
+                try:
+                    mm, dd = build_date.split("/")
+                    ap_iso = f"2026-{mm.zfill(2)}-{dd.zfill(2)}T00:00:00"
+                    with db_conn(commit=True) as conn:
+                        cur = conn.cursor()
+                        cur.execute("UPDATE customers SET approved_at=? WHERE case_id=?", (ap_iso, case_id))
                 except Exception:
                     pass
             # 塞 company_status（每家公司獨立備註，日報公司區塊才能顯示對應狀態）

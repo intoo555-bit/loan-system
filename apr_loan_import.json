@@ -329,20 +329,17 @@
     "build_date": "04/21",
     "route_order": "第一/21機25/亞太25/和裕/喬美/貸10/分貝機/鄉/銀/C/商/代",
     "current_company": "21",
-    "concurrent": [],
+    "concurrent": [
+      "第一"
+    ],
     "approved_amount": "25萬",
     "disb_date": null,
     "report_section": "待撥款",
     "signings": [],
     "report_note": "核准25萬",
-    "extra_approved": [
-      [
-        "第一",
-        "20"
-      ]
-    ],
+    "extra_approved": [],
     "company_notes": {
-      "第一": "核准20萬-已補母時段"
+      "第一": "待核准20萬-已補母時段"
     }
   },
   {
@@ -617,7 +614,7 @@
     "addr_live": "",
     "build_date": "04/23",
     "route_order": "",
-    "current_company": "分貝機車",
+    "current_company": "",
     "concurrent": [],
     "approved_amount": "",
     "disb_date": "",
