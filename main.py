@@ -2735,7 +2735,14 @@ def extract_status_summary(first_line: str, customer_name: str) -> str:
         if customer_name and _fl.startswith(customer_name):
             _fl = _fl[len(customer_name):].strip()
         return _fl[:40]  # 最多 40 字避免太長
-    # 「待核准/待核準」= 還有缺要補（資料/照會都有可能）— 不算核准，先查是否真正核准
+    # 「待核准/待核準」：明確還沒核准 → 保留完整備註（含金額/補件資訊），不要繼續往下誤判成「已補」
+    if "待核准" in first_line or "待核準" in first_line:
+        import re as _re
+        m = _re.search(r"待核[准準]\s*(\d+(?:\.\d+)?\s*萬?)", first_line)
+        if m:
+            return f"待核准{m.group(1).strip()}"
+        return "待核准"
+    # 先查是否真正核准
     text_wo_pending = first_line.replace("待核准", "").replace("待核準", "")
     if "核准" in text_wo_pending or "核準" in text_wo_pending:
         # 核准後還需接照會 → 「核准待照會」（排除「已接照會」「照會完」= 真正完成）
@@ -2831,6 +2838,9 @@ def extract_status_summary(first_line: str, customer_name: str) -> str:
     # 去掉開頭的日期前綴（要後面接 dash 或空白才算日期前綴；像「4/27續審」保留）
     text = re.sub(r"^\d{1,4}/\d{1,2}(/\d{1,2})?[-－\s]+", "", text).strip()
 
+    # 送件順序格式（多家公司以 / 分隔）→ 直接保留原文，不剝公司名
+    if "/" in text and re.search(r"[\u4e00-\u9fff0-9]+/[\u4e00-\u9fff0-9]+", text):
+        return text[:40]
     # 去掉公司名稱（COMPANY_LIST + COMPANY_ALIAS 別名）
     all_companies = list(COMPANY_LIST) + list(COMPANY_ALIAS.keys())
     for c in sorted(all_companies, key=len, reverse=True):
