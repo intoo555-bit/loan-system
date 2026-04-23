@@ -2691,6 +2691,8 @@ _INTERNAL_ACTION_KEYWORDS = [
     "還原到",            # 還原動作
     "不送：",            # A 方案移除同送
     "婉拒（從同送",      # reject_company 移除同送
+    "匯入",              # 匯入動作（/admin/import-loan 等）
+    "搬到【",            # 群組搬移動作
 ]
 
 
@@ -7502,7 +7504,8 @@ async def import_loan_confirm(request: Request):
                         idx = i
                         break
                 route_plan = make_route_json(order, idx)
-            text = f"匯入 4 月勞工案件：{name}"
+            # 建案訊息用簡短格式（避免日報出現「匯入...」字樣）
+            text = f"{name} {co}" if co else name
             concurrent_str = ",".join(d.get("concurrent", []))
             report_sec = d.get("report_section", "") or ""
             case_id = create_customer_record(
