@@ -317,7 +317,15 @@ DEFAULT_MAPPINGS["和裕商品"] = {
     "和裕維力貸": dict(DEFAULT_MAPPINGS["和裕機車"]["和裕維力貸"]),
     # 和裕商品沒有擔保品資訊需求
 }
-DEFAULT_MAPPINGS["21機車25萬"] = DEFAULT_MAPPINGS["21機車12萬"]
+DEFAULT_MAPPINGS["21機車25萬"] = {
+    # 25 萬範本年資欄位佈局不同：F10=「年資」、G10=年數字、H10=「年」標籤（不動）、
+    # I10=月數字、J10=「月」標籤（不動）。複製 12 萬映射但改年資欄位
+    "工作表1": {**DEFAULT_MAPPINGS["21機車12萬"]["工作表1"]},
+    "擔保品資訊": dict(DEFAULT_MAPPINGS["21機車12萬"]["擔保品資訊"]),
+}
+# 25 萬專用：年數字→G10、月數字→I10（H10/J10 是標籤）
+DEFAULT_MAPPINGS["21機車25萬"]["工作表1"].pop("H10", None)
+DEFAULT_MAPPINGS["21機車25萬"]["工作表1"]["I10"] = "company_months"
 DEFAULT_MAPPINGS["21商品"] = {
     "工作表1": dict(DEFAULT_MAPPINGS["21機車12萬"]["工作表1"])
     # 21商品無擔保品
@@ -8650,8 +8658,10 @@ def apply_adminb_rules(row: dict) -> dict:
     try:
         y = float(yr.split()[0]) if yr else 0
         if y < 1:
+            # 年資 < 1 → 強制填 1 年，月份同步歸 0（避免「0 年 10 月」→「1 年 10 月」變超過 1 年）
             result["company_years_display"] = f"客戶填：{yr}年 → 填入：1年"
             result["company_years_val"] = "1"
+            result["company_months_val"] = "0"
             result["company_years_adj"] = True
         else:
             result["company_years_display"] = f"填入：{yr}年"
@@ -8660,6 +8670,7 @@ def apply_adminb_rules(row: dict) -> dict:
     except Exception:
         result["company_years_display"] = f"填入：1年（原值：{yr}）"
         result["company_years_val"] = "1"
+        result["company_months_val"] = "0"
         result["company_years_adj"] = True
     # 月薪
     sal = str(row.get("company_salary","") or "0")
@@ -9187,6 +9198,9 @@ async def adminb_save(request: Request):
     if row:
         rules = apply_adminb_rules(dict(row))
         fields["company_years"] = rules.get("company_years_val", "")
+        # 年資 < 1 強制填 1 → 月份同步歸 0（apply_adminb_rules 會回 company_months_val="0"）
+        if "company_months_val" in rules:
+            fields["company_months"] = rules["company_months_val"]
         fields["company_salary"] = rules.get("salary_val", "")
         fields["live_years"] = rules.get("live_years_val", "")
         fields["live_status"] = rules.get("live_status_val", "")
