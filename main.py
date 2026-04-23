@@ -2700,6 +2700,7 @@ _INTERNAL_ACTION_KEYWORDS = [
     "婉拒（從同送",      # reject_company 移除同送
     "匯入",              # 匯入動作（/admin/import-loan 等）
     "搬到【",            # 群組搬移動作
+    "改順序：",          # 改送件順序動作
 ]
 
 
@@ -3417,6 +3418,11 @@ def parse_special_command(text: str, group_id: str) -> Optional[Dict]:
     m = re.match(r"^([\u4e00-\u9fff]{2,6})\s*轉下(?:一)?家$", clean)
     if m:
         return {"type": "advance", "name": m.group(1), "target": None}
+
+    # 改順序：@AI 姓名 改順序 A/B/C/D → 覆寫 current 之後的 route，保留 history/current
+    m = re.match(r"^([\u4e00-\u9fff]{2,6})\s*改順序\s+(.+)$", clean)
+    if m:
+        return {"type": "reorder_route", "name": m.group(1), "new_order": m.group(2).strip()}
 
     # 加送：@AI 姓名 送公司[+公司] [金額/期數] → 加入同時送件清單，不換掉原本的
     m = re.match(r"^([\u4e00-\u9fff]{2,6})\s*送\s*([^\s]+)(?:\s+(\d+(?:\.\d+)?)\s*萬?\s*[/／]\s*(\d+)\s*期?)?\s*$", clean)
@@ -5928,6 +5934,43 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
         reply_text(reply_token, msg)
         return
 
+    if t == "reorder_route":
+        name = cmd["name"]
+        new_order_str = cmd.get("new_order", "")
+        target = _resolve_target_strict(cmd, name, group_id, reply_token, "改順序")
+        if not target:
+            return
+        if not _check_active_or_warn(target, reply_token, "改順序", name):
+            return
+        new_companies = [c.strip() for c in re.split(r"[/／、，,]", new_order_str) if c.strip()]
+        new_companies = [COMPANY_ALIAS.get(c, c) for c in new_companies]
+        if not new_companies:
+            reply_text(reply_token, f"❌ 請給新順序，例：@AI {name} 改順序 和裕/貸救補/21")
+            return
+        if not _validate_companies_or_warn(new_companies, reply_token, name):
+            return
+        route = target["route_plan"] or ""
+        route_data = parse_route_json(route)
+        order = route_data.get("order", [])
+        idx = route_data.get("current_index", 0)
+        history = route_data.get("history", [])
+        current_co = target["current_company"] or (order[idx] if 0 <= idx < len(order) else "")
+        kept = order[:idx] if idx > 0 else []
+        if current_co and current_co not in kept:
+            kept.append(current_co)
+        new_route_order = kept + new_companies
+        new_route_plan = make_route_json(new_route_order, len(kept) - 1 if kept else 0, history)
+        update_customer(target["case_id"],
+                        route_plan=new_route_plan,
+                        text=f"{name} 改順序：{'/'.join(new_companies)}",
+                        from_group_id=group_id)
+        msg = f"✅ {name} 送件順序已更新"
+        if current_co:
+            msg += f"\n目前：{current_co}"
+        msg += f"\n接下來：{' → '.join(new_companies)}"
+        reply_text(reply_token, msg)
+        return
+
     if t == "advance":
         name, target_co = cmd["name"], cmd.get("target")
         notify_amount = cmd.get("notify_amount", "")
@@ -8377,6 +8420,32 @@ def render_customer_row(row, role="") -> str:
         )
     else:
         edit_progress_html = ""
+    # 送件順序編輯（admin / adminB 才顯示）
+    reorder_html = ""
+    if role in ("admin", "adminB"):
+        _rd = parse_route_json(row.get("route_plan", "") or "")
+        _order = _rd.get("order", [])
+        _idx = _rd.get("current_index", 0)
+        _history = _rd.get("history", [])
+        _done_cos = [h.get("company","") for h in _history]
+        done_str = " → ".join(f'<span style="color:#8a7a68">{h(c)}</span>' for c in _order[:_idx]) if _idx > 0 else ""
+        curr_str = f'<b style="color:#b84a35">{h(_order[_idx])}</b>' if 0 <= _idx < len(_order) else ""
+        rest_str = " → ".join(h(c) for c in _order[_idx+1:]) if _idx+1 < len(_order) else "-"
+        rest_default = "/".join(_order[_idx+1:]) if _idx+1 < len(_order) else ""
+        reorder_html = (
+            '<div style="margin-top:10px;padding-top:10px;border-top:1px solid #ddd5ca">'
+            '<div style="font-size:11px;color:#6a5e4e;font-weight:600;margin-bottom:6px">送件順序（目前家紅色、已送灰色）</div>'
+            + '<div style="font-size:12px;color:#4a3e30;margin-bottom:6px">'
+            + (done_str + (" → " if done_str else "") if done_str else "")
+            + (curr_str if curr_str else "")
+            + '</div>'
+            '<div style="font-size:11px;color:#6a5e4e;font-weight:600;margin-bottom:4px">接下來（用 / 分隔）</div>'
+            '<div style="display:flex;gap:6px">'
+            '<input id="route-' + h(cid) + '" value="' + h(rest_default) + '" placeholder="和裕/貸救補/21" style="flex:1;padding:5px 8px;border:1px solid #c8bfb5;border-radius:5px;font-size:12px">'
+            '<button onclick="saveRoute(\'' + h(cid) + '\')" style="background:#6a5e4e;color:#fff;border:none;padding:5px 12px;border-radius:5px;font-size:11px;cursor:pointer;white-space:nowrap">儲存順序</button>'
+            '</div>'
+            '</div>'
+        )
     detail_html = (
         '<div style="background:#f0ebe4;padding:12px 16px;border-top:1px solid #ddd5ca;">'
         '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:6px">'
@@ -8389,6 +8458,7 @@ def render_customer_row(row, role="") -> str:
         '</div>'
         + progress_html
         + edit_progress_html
+        + reorder_html
         + '</div>'
     )
 
@@ -8599,6 +8669,42 @@ async def report_update_progress(request: Request):
     cur.execute("UPDATE customers SET last_update=?, updated_at=? WHERE case_id=?", (progress, now_iso(), case_id))
     conn.commit(); conn.close()
     return JSONResponse({"ok": True, "message": "進度已更新" if progress else "進度已清空"})
+
+
+@app.post("/report/reorder-route")
+async def report_reorder_route(request: Request):
+    """改送件順序：保留 history/current、覆寫剩餘 route（admin/adminB 限定）。"""
+    role = check_auth(request)
+    if role not in ("admin", "adminB"):
+        return JSONResponse({"ok": False, "message": "需要管理員權限"}, status_code=403)
+    data = await request.json()
+    case_id = data.get("case_id", "")
+    new_order_str = (data.get("new_order", "") or "").strip()
+    if not case_id or not new_order_str:
+        return JSONResponse({"ok": False, "message": "資料不完整"})
+    conn = get_conn(); cur = conn.cursor()
+    cur.execute("SELECT * FROM customers WHERE case_id=?", (case_id,))
+    row = cur.fetchone(); conn.close()
+    if not row:
+        return JSONResponse({"ok": False, "message": "找不到客戶"})
+    new_companies = [c.strip() for c in re.split(r"[/／、，,]", new_order_str) if c.strip()]
+    new_companies = [COMPANY_ALIAS.get(c, c) for c in new_companies]
+    if not new_companies:
+        return JSONResponse({"ok": False, "message": "請給新順序，例：和裕/貸救補/21"})
+    route_data = parse_route_json(row["route_plan"] or "")
+    order = route_data.get("order", [])
+    idx = route_data.get("current_index", 0)
+    history = route_data.get("history", [])
+    current_co = row["current_company"] or (order[idx] if 0 <= idx < len(order) else "")
+    kept = order[:idx] if idx > 0 else []
+    if current_co and current_co not in kept:
+        kept.append(current_co)
+    new_route_order = kept + new_companies
+    new_route_plan = make_route_json(new_route_order, len(kept) - 1 if kept else 0, history)
+    update_customer(case_id, route_plan=new_route_plan,
+                    text=f"{row['customer_name']} 改順序：{'/'.join(new_companies)}",
+                    from_group_id="WEB")
+    return JSONResponse({"ok": True, "message": f"✅ 順序已更新：{' → '.join(new_companies)}"})
 
 
 @app.post("/report/batch-close")
@@ -8819,6 +8925,14 @@ def report_web(request: Request):
       const ids=[...cbs].map(c=>c.value);
       fetch('/report/batch-close',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{case_ids:ids}})}})
       .then(r=>r.json()).then(d=>{{alert(d.message);location.reload();}});
+    }}
+    function saveRoute(cid){{
+      const el=document.getElementById('route-'+cid);
+      if(!el)return;
+      const val=el.value.trim();
+      if(!val){{alert('請輸入新順序，用 / 分隔');return;}}
+      fetch('/report/reorder-route',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{case_id:cid,new_order:val}})}})
+        .then(r=>r.json()).then(d=>{{alert(d.message);if(d.ok)location.reload();}});
     }}
     function batchDelete(){{
       const cbs=document.querySelectorAll('.batch-cb:checked');
