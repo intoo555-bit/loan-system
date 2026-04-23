@@ -3190,9 +3190,18 @@ def search_customer_info(name: str, group_id: str) -> str:
     if r["id_no"]:
         lines.append(f"身分證：{r['id_no']}")
     lines.append(f"所屬群組：{get_group_name(r['source_group_id'])}")
+    current_co = r["current_company"] or r["company"] or ""
+    if current_co:
+        lines.append(f"目前送件：{current_co}")
+    # 同送其他家 concurrent
+    concurrent_list = [c.strip() for c in (r["concurrent_companies"] or "").split(",") if c.strip()]
+    if concurrent_list:
+        lines.append(f"同送其他家：{', '.join(concurrent_list)}")
+    # 核准金額 / 撥款
+    if r["approved_amount"]:
+        disb = r["disbursement_date"] or ""
+        lines.append(f"核准：{r['approved_amount']}" + (f"（撥款{disb}）" if disb else "（待撥款）"))
     if order:
-        current = order[idx] if idx < len(order) else "（已完成）"
-        lines.append(f"目前送件：{current}（第{idx+1}/{len(order)}家）")
         if idx + 1 < len(order):
             lines.append(f"下一家：{order[idx+1]}")
         if history:
@@ -3206,6 +3215,18 @@ def search_customer_info(name: str, group_id: str) -> str:
             lines.append(f"最新進度：{last_lines[0][:80]}")
             for extra in last_lines[1:4]:
                 lines.append(f"  {extra[:80]}")
+    # 各公司獨立狀態（company_status）— 待補細項
+    try:
+        cs = json.loads(r["company_status"] or "{}")
+        if cs:
+            lines.append("各家狀態：")
+            for co, note in cs.items():
+                # note 可能多行或含訊息全文，只顯示前 60 字
+                note_short = (note or "").replace("\n", " ")[:60]
+                if note_short:
+                    lines.append(f"  {co}：{note_short}")
+    except Exception:
+        pass
     return "\n".join(lines)
 
 
