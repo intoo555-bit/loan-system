@@ -8396,7 +8396,7 @@ def render_customer_row(row, role="") -> str:
     cname = row["customer_name"]
     expand_js = "var e=document.getElementById('dd-" + h(cid) + "');e.style.display=e.style.display==='block'?'none':'block';"
     return (
-        '<div class="cust-row" data-name="' + h(cname) + '" data-cid="' + h(cid) + '" onclick="' + expand_js + '" style="border-bottom:1px solid #ddd5ca;cursor:pointer">'
+        '<div class="cust-wrap" data-name="' + h(cname) + '" data-cid="' + h(cid) + '" onclick="' + expand_js + '" style="border-bottom:1px solid #ddd5ca;cursor:pointer">'
         + '<div style="display:grid;grid-template-columns:24px 1fr auto;gap:6px;align-items:center;padding:10px 16px">'
         + '<input type="checkbox" class="batch-cb" value="' + h(cid) + '" onclick="event.stopPropagation()" style="width:16px;height:16px;cursor:pointer">'
         + '<div>'
@@ -8832,7 +8832,7 @@ def report_web(request: Request):
     }}
     function filterByName(q){{
       q = (q||'').trim().toLowerCase();
-      document.querySelectorAll('.cust-row').forEach(function(el){{
+      document.querySelectorAll('.cust-wrap').forEach(function(el){{
         var n = (el.dataset.name||'').toLowerCase();
         el.style.display = (!q || n.indexOf(q) !== -1) ? '' : 'none';
       }});
