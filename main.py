@@ -8394,19 +8394,18 @@ def render_customer_row(row, role="") -> str:
 
     cid = row["case_id"]
     cname = row["customer_name"]
-    # inline 展開 onclick：點擊 → 切換 dd-{cid} 的 display。不用 togD 函式，最穩
     expand_js = "var e=document.getElementById('dd-" + h(cid) + "');e.style.display=e.style.display==='block'?'none':'block';"
     return (
-        '<div class="cust-row" data-name="' + h(cname) + '" data-cid="' + h(cid) + '" style="border-bottom:1px solid #ddd5ca">'
+        '<div class="cust-row" data-name="' + h(cname) + '" data-cid="' + h(cid) + '" onclick="' + expand_js + '" style="border-bottom:1px solid #ddd5ca;cursor:pointer">'
         + '<div style="display:grid;grid-template-columns:24px 1fr auto;gap:6px;align-items:center;padding:10px 16px">'
         + '<input type="checkbox" class="batch-cb" value="' + h(cid) + '" onclick="event.stopPropagation()" style="width:16px;height:16px;cursor:pointer">'
-        + '<div class="cust-header" onclick="' + expand_js + '" style="cursor:pointer">'
+        + '<div>'
         + '<div style="font-size:15px;font-weight:600;color:#1a1208">' + h(cname) + '</div>'
         + '<div style="font-size:13px;color:#4a3e30;margin-top:2px">' + h(sub) + '</div>'
         + '</div>'
         + '<div style="font-size:12px;color:#6a5e4e;white-space:nowrap">' + h(date_str) + '</div>'
         + '</div>'
-        + '<div id="dd-' + h(cid) + '" style="display:none">' + detail_html + '</div>'
+        + '<div id="dd-' + h(cid) + '" onclick="event.stopPropagation()" style="display:none">' + detail_html + '</div>'
         + '</div>'
     )
 
