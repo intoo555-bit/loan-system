@@ -2784,8 +2784,10 @@ def extract_status_summary(first_line: str, customer_name: str) -> str:
 
     # 申覆類
     if "申覆" in first_line:
-        # 明確已補：「已補 XX 申覆」或「申覆完/通過/好」
-        if "已補" in first_line or "申覆完" in first_line or "申覆通過" in first_line or "申覆好" in first_line or "補完申覆" in first_line or "補好申覆" in first_line:
+        # 明確已補：「已補 XX 申覆」「申覆完/通過/好」「已更換 / 已提供 / 補足」等已處理關鍵字
+        if ("已補" in first_line or "申覆完" in first_line or "申覆通過" in first_line
+            or "申覆好" in first_line or "補完申覆" in first_line or "補好申覆" in first_line
+            or "已更換" in first_line or "已提供" in first_line or "補足" in first_line):
             return "已補申覆"
         # 明確待補：「待補/請補/要補/缺」等
         if any(m in first_line for m in _explicit_pending_markers):
