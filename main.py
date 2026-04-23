@@ -7562,6 +7562,17 @@ async def import_loan_confirm(request: Request):
                 route_plan=route_plan, current_company=co,
                 report_section=report_sec,
             )
+            # 用日報 build_date 覆寫 created_at（日報顯示的日期 = 原建案日、不是匯入日）
+            build_date = (d.get("build_date") or "").strip()  # "04/20"
+            if build_date and "/" in build_date:
+                try:
+                    mm, dd = build_date.split("/")
+                    iso_date = f"2026-{mm.zfill(2)}-{dd.zfill(2)}T00:00:00"
+                    with db_conn(commit=True) as conn:
+                        cur = conn.cursor()
+                        cur.execute("UPDATE customers SET created_at=? WHERE case_id=?", (iso_date, case_id))
+                except Exception:
+                    pass
             # 補其他欄位
             update_kwargs = {}
             if approved:
