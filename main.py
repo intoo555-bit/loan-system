@@ -7482,14 +7482,29 @@ async def import_loan_confirm(request: Request):
                     if old_gid == SALES_GROUP_ID:
                         skipped.append(f"{name}（已在勞工群）")
                         continue
-                    # 搬群組 → 勞工，保留業務已填的其他欄位
+                    # 搬群組 → 勞工，順便補核准/撥款/待撥款/concurrent（業務已填的覆蓋除外）
                     old_gname = get_group_name(old_gid) or old_gid[:8]
-                    update_customer(
-                        existing["case_id"],
-                        source_group_id=SALES_GROUP_ID,
-                        text=f"已從【{old_gname}】搬到【勞工】（匯入 4 月資料）",
-                        from_group_id=SALES_GROUP_ID,
-                    )
+                    approved = (d.get("approved_amount") or "").strip()
+                    disb = (d.get("disb_date") or "").strip()
+                    report_sec = d.get("report_section", "") or ""
+                    concurrent_str = ",".join(d.get("concurrent", []))
+                    merge_kwargs = {"source_group_id": SALES_GROUP_ID,
+                                    "text": f"已從【{old_gname}】搬到【勞工】",
+                                    "from_group_id": SALES_GROUP_ID}
+                    # 只在既有欄位空值時才補，避免覆蓋業務手打的正確值
+                    if approved and not (existing["approved_amount"] or "").strip():
+                        merge_kwargs["approved_amount"] = approved
+                    if disb and not (existing["disbursement_date"] or "").strip():
+                        merge_kwargs["disbursement_date"] = disb
+                    if report_sec and not (existing["report_section"] or "").strip():
+                        merge_kwargs["report_section"] = report_sec
+                    if concurrent_str and not (existing["concurrent_companies"] or "").strip():
+                        merge_kwargs["concurrent_companies"] = concurrent_str
+                    # current_company 對不上就補（原本空 or 不是勞工的 current 公司）
+                    co_import = d.get("current_company", "") or ""
+                    if co_import and not (existing["current_company"] or "").strip():
+                        merge_kwargs["current_company"] = co_import
+                    update_customer(existing["case_id"], **merge_kwargs)
                     transferred.append(f"{name}（從 {old_gname}）")
                     continue
             co = d.get("current_company", "") or ""
