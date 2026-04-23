@@ -2941,12 +2941,17 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
 
         def _compress_status(s):
             """日報狀態壓縮、減少長度（手機看不用捲）：
-            - 待補申覆/待補資料/待補照會 → 待補
-            - 已補申覆/已補資料/已補照會 → 已補
+            - 已補申覆/已補資料/已補照會 保留完整（分辨申覆 vs 資料 vs 照會）
+            - 待補申覆/待補資料/待補照會 保留完整
             - 補時段 HH:MM-HH:MM → 補時段（不帶時間）
             - 其他保持原樣
             """
             if not s: return s
+            # 已補/待補：申覆/資料/照會 三種區分保留
+            for prefix in ("已補申覆", "已補資料", "已補照會",
+                           "待補申覆", "待補資料", "待補照會"):
+                if s.startswith(prefix):
+                    return prefix
             if s.startswith("已補") or "已補" == s:
                 return "已補"
             if s.startswith("待補") or "待補" == s:
