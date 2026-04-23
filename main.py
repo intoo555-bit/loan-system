@@ -8396,13 +8396,6 @@ def render_customer_row(row, role="") -> str:
     cname = row["customer_name"]
     q = "'"
     row_onclick = 'onclick="togD(' + q + h(cid) + q + ')"'
-    # admin 才顯示刪除按鈕
-    delete_btn = ''
-    if role == "admin":
-        delete_btn = (
-            '<button onclick="event.stopPropagation();if(confirm(' + q + '確定刪除 ' + h(cname) + '？' + q + '))deleteFromReport(' + q + h(cid) + q + ')" '
-            'style="background:#b91c1c;color:#fff;border:none;padding:6px 12px;border-radius:6px;font-size:13px;cursor:pointer;font-weight:700;margin-left:10px">🗑 刪除</button>'
-        )
     return (
         '<div class="cust-row" data-name="' + h(cname) + '" style="border-bottom:1px solid #ddd5ca">'
         + '<div style="display:grid;grid-template-columns:24px 1fr auto;gap:6px;align-items:center;padding:10px 16px">'
@@ -8411,7 +8404,7 @@ def render_customer_row(row, role="") -> str:
         + '<div style="font-size:15px;font-weight:600;color:#1a1208">' + h(cname) + '</div>'
         + '<div style="font-size:13px;color:#4a3e30;margin-top:2px">' + h(sub) + '</div>'
         + '</div>'
-        + '<div style="font-size:12px;color:#6a5e4e;white-space:nowrap">' + h(date_str) + delete_btn + '</div>'
+        + '<div style="font-size:12px;color:#6a5e4e;white-space:nowrap">' + h(date_str) + '</div>'
         + '</div>'
         + '<div id="dd-' + h(cid) + '" style="display:none">' + detail_html + '</div>'
         + '</div>'
