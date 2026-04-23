@@ -8396,13 +8396,6 @@ def render_customer_row(row, role="") -> str:
     cname = row["customer_name"]
     q = "'"
     row_onclick = 'onclick="togD(' + q + h(cid) + q + ')"'
-    # admin 才顯示刪除按鈕
-    delete_btn = ''
-    if role == "admin":
-        delete_btn = (
-            '<button onclick="event.stopPropagation();if(confirm(' + q + '確定刪除 ' + h(cname) + '？（軟刪除、可還原）' + q + '))deleteFromReport(' + q + h(cid) + q + ')" '
-            'style="background:#b91c1c;color:#fff;border:none;padding:6px 12px;border-radius:6px;font-size:13px;cursor:pointer;font-weight:700;margin-left:10px;box-shadow:0 1px 2px rgba(0,0,0,0.15)">🗑 刪除</button>'
-        )
     return (
         '<div class="cust-row" data-name="' + h(cname) + '" style="border-bottom:1px solid #ddd5ca">'
         + '<div style="display:grid;grid-template-columns:24px 1fr auto;gap:6px;align-items:center;padding:10px 16px">'
@@ -8411,7 +8404,7 @@ def render_customer_row(row, role="") -> str:
         + '<div style="font-size:15px;font-weight:600;color:#1a1208">' + h(cname) + '</div>'
         + '<div style="font-size:13px;color:#4a3e30;margin-top:2px">' + h(sub) + '</div>'
         + '</div>'
-        + '<div style="font-size:12px;color:#6a5e4e;white-space:nowrap">' + h(date_str) + delete_btn + '</div>'
+        + '<div style="font-size:12px;color:#6a5e4e;white-space:nowrap">' + h(date_str) + '</div>'
         + '</div>'
         + '<div id="dd-' + h(cid) + '" style="display:none">' + detail_html + '</div>'
         + '</div>'
@@ -8788,6 +8781,7 @@ def report_web(request: Request):
         <div style="display:flex;gap:8px">
           <a href="/report/export" class="btn" style="background:#e8e2da;color:#4a3e30;font-size:12px;text-decoration:none">📥 匯出 CSV</a>
           <button onclick="batchClose()" class="btn btn-primary" style="font-size:12px;padding:7px 14px">批次結案</button>
+          <button onclick="batchDelete()" style="background:#b91c1c;color:#fff;border:none;padding:7px 14px;border-radius:7px;font-size:12px;cursor:pointer;font-weight:600">🗑 批次刪除</button>
         </div>
       </div>
       {groups_html}
@@ -8826,6 +8820,16 @@ def report_web(request: Request):
       const ids=[...cbs].map(c=>c.value);
       fetch('/report/batch-close',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{case_ids:ids}})}})
       .then(r=>r.json()).then(d=>{{alert(d.message);location.reload();}});
+    }}
+    function batchDelete(){{
+      const cbs=document.querySelectorAll('.batch-cb:checked');
+      if(!cbs.length){{alert('請先勾選要刪除的客戶');return;}}
+      if(!confirm('確定要永久刪除勾選的 '+cbs.length+' 位客戶嗎？（無法復原）'))return;
+      const ids=[...cbs].map(c=>c.value);
+      const fd=new FormData();
+      ids.forEach(id=>fd.append('case_ids', id));
+      fetch('/admin/delete-customers',{{method:'POST',body:fd}})
+        .then(r=>{{location.reload();}});
     }}
     function filterByName(q){{
       q = (q||'').trim().toLowerCase();
