@@ -2751,8 +2751,14 @@ def extract_status_summary(first_line: str, customer_name: str) -> str:
         if has_need_contact and not has_done_contact:
             return "核准待照會"
         return "核准"
-    # 補時段（照會時段）：「補時段 11:00~12:00」或「補時段 11點~12點」
-    # 業務告知客戶能接到照會電話的時段
+    # 已補時段（業務已經提供照會時間）→ 明確「已補」，優先識別
+    if "已補時段" in first_line:
+        tm = re.search(r"(\d{1,2}[:：點]\d{0,2}(?:\s*[-~～至到]\s*\d{1,2}[:：點]?\d{0,2})?)", first_line)
+        if tm:
+            tr = tm.group(1).replace("~", "~").replace("-", "~").replace("至", "~").replace("到", "~").replace("：", ":")
+            return f"已補時段 {tr}"
+        return "已補時段"
+    # 補時段（照會時段）：「補時段 11:00~12:00」或「補時段 11點~12點」= 待補
     m_notif_time = re.search(r"補時段\s*(\d{1,2}(?:[:：]\d{1,2}|點)?\s*[~～\-至到]\s*\d{1,2}(?:[:：]\d{1,2}|點)?)", first_line)
     if m_notif_time:
         time_range = m_notif_time.group(1).replace("~", "~").replace("-", "~").replace("至", "~").replace("到", "~").replace("：", ":")
@@ -2964,8 +2970,8 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
             - 其他保持原樣
             """
             if not s: return s
-            # 已補/待補：申覆/資料/照會 三種區分保留
-            for prefix in ("已補申覆", "已補資料", "已補照會",
+            # 已補/待補：申覆/資料/照會/時段 區分保留
+            for prefix in ("已補申覆", "已補資料", "已補照會", "已補時段",
                            "待補申覆", "待補資料", "待補照會"):
                 if s.startswith(prefix):
                     return prefix
