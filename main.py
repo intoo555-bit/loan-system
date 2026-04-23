@@ -9070,6 +9070,7 @@ def search_page(request: Request, q: str = "", grp: str = "", date_from: str = "
                 <div style="display:flex;align-items:center;gap:8px">
                   <div style="font-size:11px;color:#9ca3af">{h(get_group_name(row["source_group_id"]))}</div>
                   <a href="/edit-pending?case_id={h(row['case_id'])}" style="font-size:11px;color:#0369a1;text-decoration:none">✏️ 編輯</a>
+                  <a href="/customer-pdf?case_id={h(row['case_id'])}" target="_blank" style="font-size:11px;color:#fff;background:#4e7055;padding:4px 10px;border-radius:5px;text-decoration:none;font-weight:600">📄 匯出 PDF</a>
                 </div>
               </div>
               <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:12px;color:#6b7280;margin-bottom:10px">
