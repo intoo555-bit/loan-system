@@ -8395,7 +8395,8 @@ def render_customer_row(row, role="") -> str:
     cid = row["case_id"]
     cname = row["customer_name"]
     q = "'"
-    row_onclick = 'onclick="togD(' + q + h(cid) + q + ')"'
+    # 點姓名 → 開新分頁到「編輯個資」頁（一次看完整資料+修改）
+    row_onclick = 'onclick="window.open(' + q + '/edit-pending?case_id=' + h(cid) + q + ',' + q + '_blank' + q + ')"'
     return (
         '<div class="cust-row" data-name="' + h(cname) + '" style="border-bottom:1px solid #ddd5ca">'
         + '<div style="display:grid;grid-template-columns:24px 1fr auto;gap:6px;align-items:center;padding:10px 16px">'
