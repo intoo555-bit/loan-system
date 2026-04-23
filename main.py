@@ -2821,8 +2821,8 @@ def extract_status_summary(first_line: str, customer_name: str) -> str:
     # 去掉身分證/居留證（避免身分證末碼被當狀態文字）
     text = re.sub(r"[A-Z][A-Z0-9]\d{8}", "", text, flags=re.IGNORECASE).strip()
 
-    # 去掉日期
-    text = re.sub(r"^\d{1,4}/\d{1,2}(/\d{1,2})?[-－]?\s*", "", text).strip()
+    # 去掉開頭的日期前綴（要後面接 dash 或空白才算日期前綴；像「4/27續審」保留）
+    text = re.sub(r"^\d{1,4}/\d{1,2}(/\d{1,2})?[-－\s]+", "", text).strip()
 
     # 去掉公司名稱（COMPANY_LIST + COMPANY_ALIAS 別名）
     all_companies = list(COMPANY_LIST) + list(COMPANY_ALIAS.keys())
