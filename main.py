@@ -7536,18 +7536,17 @@ async def import_loan_confirm(request: Request):
             disb = (d.get("disb_date") or "").strip()
             extra_approved = d.get("extra_approved", [])  # [[co, amt], ...] 除了主 current 還有的核准家
 
-            # 若有 extra_approved（多家核准）→ 在 route_plan 建 history 讓日報顯示「第一-核准28萬/亞太-核准12萬」
-            if extra_approved and approved and co:
+            # 待撥款的客戶都要建 route_plan history（主公司+extra），
+            # 否則 build_section_map 的 extra_section 邏輯會誤判「current 還在送」、把客戶丟回公司區再顯示一次
+            if approved and co and report_sec == "待撥款":
                 order = [x.strip() for x in route_order.split("/") if x.strip()] if route_order and "/" in route_order else [co]
                 if co not in order:
                     order = [co] + order
                 history = []
-                # 主 current 核准
                 main_h = {"company": co, "amount": approved, "status": "待撥款" if disb else "核准"}
                 if disb:
                     main_h["disbursed"] = disb
                 history.append(main_h)
-                # 其他家
                 for ea in extra_approved:
                     if len(ea) >= 2:
                         history.append({"company": ea[0], "amount": f"{ea[1]}萬", "status": "核准"})
