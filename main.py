@@ -3476,6 +3476,14 @@ def parse_special_command(text: str, group_id: str) -> Optional[Dict]:
         return {"type": "disbursed", "name": m.group(1),
                 "company": m.group(2).strip(), "date": m.group(3)}
 
+    # 撥款（公司+金額、沒日期）：@AI 姓名 公司 N萬 撥款 [M/D]
+    # 例：江淑芳 慢點付 2萬 撥款
+    m = re.match(r"^([\u4e00-\u9fff]{2,6})\s+(?!結案|違約金|取消核准)(\S+)\s+(\d+(?:\.\d+)?)\s*萬\s*撥款\s*(\d{1,2}/\d{1,2})?$", clean)
+    if m:
+        return {"type": "disbursed", "name": m.group(1),
+                "company": m.group(2).strip(), "date": m.group(4) or "",
+                "amount": m.group(3).strip()}
+
     # 撥款（日期在前、無公司）：@AI 姓名 M/D 撥款
     m = re.match(r"^([\u4e00-\u9fff]{2,6})\s+(\d{1,2}/\d{1,2})\s*撥款$", clean)
     if m:
@@ -4970,10 +4978,33 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
                 if _fuzzy:
                     co = _fuzzy[0]
             if co not in approved_cos:
+                # 撥款指令帶金額 → 自動先記核准再撥款（零卡/慢點付/商品貸 常見一步到位）
+                if cmd.get("amount"):
+                    amt = cmd["amount"]
+                    route_data = parse_route_json(target["route_plan"] or "")
+                    order = route_data.get("order", [])
+                    history = route_data.get("history", [])
+                    history.append({"company": co, "status": "撥款",
+                                    "amount": f"{amt}萬",
+                                    "date": now_iso()[:10],
+                                    "disbursed": disb_date})
+                    new_route_plan = make_route_json(order, route_data.get("current_index", 0), history)
+                    update_customer(target["case_id"],
+                                    route_plan=new_route_plan,
+                                    approved_amount=f"{amt}萬",
+                                    disbursement_date=disb_date,
+                                    report_section="待撥款",
+                                    current_company=co,
+                                    text=f"{name} {co} 核准{amt}萬 撥款{disb_date}",
+                                    from_group_id=group_id)
+                    reply_text(reply_token,
+                               f"✅ {name} {co} 已核准 {amt}萬 + 撥款 {disb_date}")
+                    return
                 lst = "、".join([f'{a.get("company","")} {a.get("amount","")}' for a in all_approved]) or "無"
                 reply_text(reply_token,
                            f"⚠️ {name} 的 {co} 沒核准、不能撥款\n"
-                           f"已核准：{lst}")
+                           f"已核准：{lst}\n"
+                           f"或補金額：@AI {name} {co} N萬 撥款 {disb_date}")
                 return
             company = co
         else:
