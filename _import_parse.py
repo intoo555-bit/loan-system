@@ -202,7 +202,7 @@ PENDING_DISB = {
     "賴詩婷":  ("21", "8", None),
     "邱子勛":  ("喬美", "10", "4/21"),
     "陳渃玹":  ("手機分期", "2", "4/20"),
-    "楊創富":  ("亞太", "12", "4/20"),   # 另有第一核准 28萬
+    "楊創富":  ("第一", "28", "4/20"),   # 撥款的是第一 28萬；亞太 12萬也有核准但未撥
     "陳美旺":  ("21", "7", "4/20"),
     "劉祐騰":  ("21", "7", "4/20"),
     "鄭佳怡":  ("21", "7", "4/22"),
@@ -244,6 +244,12 @@ CONCURRENT_CO = {
     "李淑樺": ["喬美"],     # current 和裕、同送喬美
     "謝美芃": ["喬美"],     # current 和裕(核准6萬)、同送喬美
     "陳信全": ["和裕"],     # current 貸救補、同送和裕
+}
+
+# 額外已核准但未撥款的公司（除了 current/PENDING_DISB 記的那家外）
+# 日報會顯示：{current}-核准{amt}(撥款{日期})/{extra_co}-核准{amt}(待撥款)
+EXTRA_APPROVED = {
+    "楊創富": [("亞太", "12")],   # 除了第一 28萬（撥款）外，亞太 12萬也有核准
 }
 
 
@@ -312,6 +318,7 @@ def main():
             c["final_disb_date"] = ""
             c["final_report_section"] = ""
         c["final_concurrent"] = CONCURRENT_CO.get(name, [])
+        c["extra_approved"] = EXTRA_APPROVED.get(name, [])
         customers.append(c)
 
     # 印給使用者看
@@ -346,6 +353,7 @@ def main():
             "report_section": c["final_report_section"],
             "signings": c["signings"],
             "report_note": c.get("report_note", ""),
+            "extra_approved": c.get("extra_approved", []),
         })
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(export, f, ensure_ascii=False, indent=2)
