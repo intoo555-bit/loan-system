@@ -3438,7 +3438,7 @@ def parse_special_command(text: str, group_id: str) -> Optional[Dict]:
         return {"type": "reorder_route", "name": m.group(1), "new_order": m.group(2).strip()}
 
     # 缺件清單：@AI 姓名 缺 身分證+薪轉+帳單
-    m = re.match(r"^([\u4e00-\u9fff]{2,6})\s*缺\s+(.+)$", clean)
+    m = re.match(r"^([\u4e00-\u9fff]{2,6})\s*缺\s*(.+)$", clean)
     if m:
         return {"type": "set_missing_docs", "name": m.group(1), "docs": m.group(2).strip()}
 
