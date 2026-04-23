@@ -7451,9 +7451,15 @@ def import_loan_preview(request: Request):
           <tbody>{rows_html}</tbody>
         </table>
       </div>
-      <form method="post" action="/admin/import-loan/confirm" onsubmit="return confirm('確定匯入 {len(data)} 筆到「勞工」業務群嗎？')">
-        <button type="submit" class="btn btn-primary" style="padding:10px 24px;font-size:15px">✅ 確認匯入 {len(data)} 筆</button>
-      </form>
+      <div style="display:flex;gap:12px;align-items:center">
+        <form method="post" action="/admin/import-loan/confirm" onsubmit="return confirm('確定匯入 {len(data)} 筆到「勞工」業務群嗎？')">
+          <button type="submit" class="btn btn-primary" style="padding:10px 24px;font-size:15px">✅ 確認匯入 {len(data)} 筆</button>
+        </form>
+        <form method="post" action="/admin/clear-group" onsubmit="return confirm('確定要清空「勞工」群的所有客戶嗎？（匯入失誤時重來用）')">
+          <input type="hidden" name="group_id" value="C7704a978f3556c1efb7f6bf13fbd3eeb">
+          <button type="submit" style="padding:10px 18px;font-size:14px;background:#b91c1c;color:#fff;border:none;border-radius:7px;cursor:pointer">🗑 先清空勞工群</button>
+        </form>
+      </div>
     </div></body></html>""")
 
 
@@ -7567,6 +7573,32 @@ async def import_loan_confirm(request: Request):
       <a href="/admin/groups">返回</a> | <a href="/history">看歷史</a> | <a href="/report">看日報</a>
     </div>"""
     return HTMLResponse(summary)
+
+
+@app.post("/admin/clear-group")
+async def clear_group_customers(request: Request):
+    """清空指定群組的所有客戶（admin 限定）。用於匯入失誤重來。"""
+    from fastapi.responses import HTMLResponse
+    role = check_auth(request)
+    if role != "admin":
+        return HTMLResponse("無權限", status_code=403)
+    form = await request.form()
+    gid = (form.get("group_id") or "").strip()
+    if not gid:
+        return HTMLResponse("缺 group_id", status_code=400)
+    gname = get_group_name(gid) or gid[:8]
+    with db_conn(commit=True) as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT case_id FROM customers WHERE source_group_id=?", (gid,))
+        case_ids = [r["case_id"] for r in cur.fetchall()]
+        if case_ids:
+            qmarks = ",".join("?" for _ in case_ids)
+            cur.execute(f"DELETE FROM customers WHERE case_id IN ({qmarks})", case_ids)
+            cur.execute(f"DELETE FROM case_logs WHERE case_id IN ({qmarks})", case_ids)
+    return HTMLResponse(f"""<div style="padding:40px;font-family:sans-serif">
+      <h2>已清空【{h(gname)}】的 {len(case_ids)} 筆客戶</h2>
+      <a href="/admin/import-loan">去重新匯入</a> | <a href="/admin/groups">回群組管理</a>
+    </div>""")
 
 
 @app.post("/admin/delete-customers")
