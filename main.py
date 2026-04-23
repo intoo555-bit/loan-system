@@ -3012,7 +3012,9 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
             elif amount:
                 disb_date = row["disbursement_date"] or ""
                 disb_str = f"(撥款{disb_date})" if disb_date else pending_tag
-                amount_str = f"-核准{amount}{disb_str}"
+                co_short = normalize_section(current_co) or current_co
+                co_prefix = f"-{co_short}" if co_short else ""
+                amount_str = f"{co_prefix}-核准{amount}{disb_str}"
             else:
                 amount_str = ""
             line = f"{created_date}-{row['customer_name']}{amount_str}"
