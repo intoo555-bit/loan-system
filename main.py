@@ -2872,6 +2872,13 @@ def extract_status_summary(first_line: str, customer_name: str) -> str:
     # 去掉多餘標點
     text = re.sub(r"^[-－/\s()（）]+|[-－/\s()（）]+$", "", text).strip()
 
+    # 純「缺XX」文字（不是 待補/已補/補件/補資料 等業務狀態）→ 不當狀態顯示
+    # 因為 pending_docs 欄位才是 canonical 缺件來源、日報會另外用「(缺XX)」標記
+    if text and text.startswith("缺") and not any(
+        text.startswith(p) for p in ["缺資料", "缺聯徵", "缺JCIC", "缺jcic", "缺薪轉", "缺保人", "缺在職", "缺存摺"]
+    ):
+        return ""
+
     # 只取前20字
     return text[:20] if text else ""
 
