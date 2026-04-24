@@ -7741,6 +7741,62 @@ def _process_event_inner(event: dict):
 
         blocks = split_multi_cases(process_text) or [process_text]
         results, conflicts, qr_sent = [], [], False
+        # 多行 @AI 指令：每個 block 若是 docs 指令（已補/缺 XX）→ 逐筆直接處理 DB
+        # 避免多次 reply_token 衝突，最後只 reply 一次總結
+        _docs_cmd_types = {"mark_doc_completed", "clear_missing_docs", "set_missing_docs"}
+        if has_ai_trigger(raw) and len(blocks) > 1:
+            docs_cmds = []
+            for block in blocks:
+                sub_cmd = parse_special_command(block + " @AI", group_id)
+                if sub_cmd and sub_cmd.get("type") in _docs_cmd_types:
+                    docs_cmds.append(sub_cmd)
+            if docs_cmds and len(docs_cmds) == len(blocks):
+                # 所有 block 都是 docs 指令 → 逐筆直接更新 DB、最後總結 reply
+                summary_lines = []
+                for sub_cmd in docs_cmds:
+                    nm = sub_cmd.get("name", "")
+                    rows = find_active_by_name(nm)
+                    same = [r for r in rows if r["source_group_id"] == group_id]
+                    t2 = same[0] if same else (rows[0] if rows else None)
+                    if not t2:
+                        summary_lines.append(f"❌ {nm} 找不到客戶")
+                        continue
+                    ct = sub_cmd["type"]
+                    if ct == "set_missing_docs":
+                        ds = [d.strip() for d in re.split(r"[+＋、，,/／]", sub_cmd.get("docs","")) if d.strip()]
+                        if ds:
+                            new_text = f"{nm} 缺件：{'/'.join(ds)}"
+                            update_customer(t2["case_id"], pending_docs=",".join(ds),
+                                            text=new_text, from_group_id=group_id)
+                            _refresh_company_status_after_docs(t2["case_id"], new_text)
+                            summary_lines.append(f"📋 {nm} 已記缺件：{' / '.join(ds)}")
+                    elif ct == "mark_doc_completed":
+                        d = sub_cmd.get("doc","").strip()
+                        old = (t2["pending_docs"] or "").strip()
+                        old_list = [x.strip() for x in old.split(",") if x.strip()]
+                        was_p = d in old_list
+                        new_list = [x for x in old_list if x != d]
+                        new_text = f"{nm} 缺件補完:{d}" if was_p else f"{nm} 已補{d}"
+                        update_customer(t2["case_id"], pending_docs=",".join(new_list),
+                                        text=new_text, from_group_id=group_id)
+                        _refresh_company_status_after_docs(t2["case_id"], new_text)
+                        if new_list:
+                            summary_lines.append(f"✅ {nm} 已補 {d}（還缺：{' / '.join(new_list)}）")
+                        else:
+                            summary_lines.append(f"✅ {nm} 已補 {d}（缺件全補完）")
+                    elif ct == "clear_missing_docs":
+                        new_text = f"{nm} 缺件已全部補完"
+                        update_customer(t2["case_id"], pending_docs="",
+                                        text=new_text, from_group_id=group_id)
+                        _refresh_company_status_after_docs(t2["case_id"], new_text)
+                        summary_lines.append(f"✅ {nm} 缺件已全部清除")
+                # 推 A 群（業務群打時）
+                _push_tgt = _resolve_push_target_for_docs(group_id, "")
+                reply_body = "\n".join(summary_lines)
+                if _push_tgt and _push_tgt != group_id:
+                    push_text(_push_tgt, reply_body)
+                reply_text(reply_token, reply_body)
+                return
 
         for idx, block in enumerate(blocks, 1):
             result = handle_bc_case_block(block, group_id, reply_token, source_text=raw)
