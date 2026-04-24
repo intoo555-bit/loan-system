@@ -3827,7 +3827,11 @@ def generate_notification_text(r: dict, company: str = "") -> str:
     co = company or v("current_company") or v("company") or ""
 
     # 居住地：同戶籍→戶籍，否則→現居地
-    live_type = "戶籍" if v("live_same_as_reg") == "1" else "現居地"
+    # 除了 live_same_as_reg 旗標，也實際比對兩個地址（使用者有時只打一邊、忘記勾旗標）
+    _reg_full = (v("reg_city") + v("reg_district") + v("reg_address")).replace(" ", "")
+    _live_full = (v("live_city") + v("live_district") + v("live_address")).replace(" ", "")
+    _addr_match = bool(_reg_full) and _reg_full == _live_full
+    live_type = "戶籍" if (v("live_same_as_reg") == "1" or _addr_match) else "現居地"
     live_years = (rules.get("live_years_val") or v("live_years") or "0")
     # 居住狀況：照會話術照 DB 原值（宿舍就說宿舍、父母就說父母，不套 adminB 規則的轉親屬）
     live_status = v("live_status") or "自有"
@@ -3899,8 +3903,8 @@ def generate_notification_text(r: dict, company: str = "") -> str:
                "高中職": "高中", "研究所以上": "研究所", "其他": "高中"}
     edu_spoken = EDU_MAP.get(edu, edu) if edu else "高中"
 
-    # 資金用途
-    fund = v("adminb_fund_use") or "家用"
+    # 資金用途：照會話術一律固定「家用」（adminb_fund_use 只給申請書下拉用）
+    fund = "家用"
 
     # 名下車貸狀況：檢查 debt_list
     car_loan_status = "名下無貸款"
