@@ -2711,6 +2711,7 @@ _INTERNAL_ACTION_KEYWORDS = [
     # 注意：「已補：」不可加入、會誤殺正常「已補時段/已補照會/已補資料」狀態
     "缺件：",            # @AI 姓名 缺 XX
     "缺件已全部補完",    # @AI 姓名 已補 全部
+    "缺件補完:",         # mark_doc_completed 針對 pending_docs 項目的內部紀錄
 ]
 
 
@@ -3498,10 +3499,10 @@ def parse_special_command(text: str, group_id: str) -> Optional[Dict]:
     if m:
         return {"type": "set_missing_docs", "name": m.group(1), "docs": m.group(2).strip()}
 
-    # 已補單項/全清：@AI 姓名 已補 身分證 / @AI 姓名 已補 全部
+    # 已補單項/全清：@AI 姓名 已補 身分證 / @AI 姓名 已補 全部 / @AI 姓名 已補時段 等
+    # 時段/申覆/資料/照會 狀態描述 一律走 mark_doc_completed 讓 company_status 刷新
     m = re.match(r"^([\u4e00-\u9fff]{2,6})\s*已補\s*(.*)$", clean)
-    if m and m.group(2).strip() not in ("時段", "申覆", "資料", "照會"):
-        # 排除「已補時段/申覆/資料/照會」這種狀態描述（那是業務 last_update 用，不是缺件移除）
+    if m:
         docs = m.group(2).strip()
         if docs in ("", "全部", "完畢", "都好", "好了"):
             return {"type": "clear_missing_docs", "name": m.group(1)}
@@ -4759,6 +4760,41 @@ def is_duplicate_message(group_id: str, content: str) -> bool:
         return True
     _recent_msgs[key] = now
     return False
+
+
+def _refresh_company_status_after_docs(case_id: str, new_text: str):
+    """缺件/已補 指令完成後、把 company_status 裡有「NA / 缺 / 待補」的 stale section
+    覆寫成 new_text。保留其他重要狀態（核准 / 婉拒 / 已補資料 等）不動。
+    避免 A 群舊訊息殘留、讓日報反映最新動作。
+    """
+    try:
+        conn = get_conn(); cur = conn.cursor()
+        cur.execute("SELECT company_status FROM customers WHERE case_id=?", (case_id,))
+        row = cur.fetchone()
+        if not row:
+            conn.close(); return
+        cs_raw = row["company_status"] or "{}"
+        try:
+            cs = json.loads(cs_raw)
+        except Exception:
+            cs = {}
+        if not cs:
+            conn.close(); return
+        # 只動「stale」的 section（含 NA / 未接 / 缺 / 待補 / 請補）
+        stale_markers = ["NA", "未接", "缺", "待補", "請補"]
+        changed = False
+        for sec in list(cs.keys()):
+            old = cs[sec] or ""
+            if any(m in old for m in stale_markers):
+                cs[sec] = new_text
+                changed = True
+        if changed:
+            cur.execute("UPDATE customers SET company_status=? WHERE case_id=?",
+                        (json.dumps(cs, ensure_ascii=False), case_id))
+            conn.commit()
+        conn.close()
+    except Exception:
+        pass
 
 
 def _resolve_push_target_for_docs(current_group_id: str, source_group_id: str) -> str:
@@ -6119,8 +6155,10 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
             reply_text(reply_token, f"❌ 請給缺件，例：@AI {name} 缺 身分證+薪轉+帳單")
             return
         pending = ",".join(docs_list)
+        new_text = f"{name} 缺件：{'/'.join(docs_list)}"
         update_customer(target["case_id"], pending_docs=pending,
-                        text=f"{name} 缺件：{'/'.join(docs_list)}", from_group_id=group_id)
+                        text=new_text, from_group_id=group_id)
+        _refresh_company_status_after_docs(target["case_id"], new_text)
         # 記缺件推送：只有 A 群打才回貼業務群；業務群自己打只紀錄不推送
         _a_group_ids = set(get_a_group_ids()) | {A_GROUP_ID}
         if group_id in _a_group_ids and target["source_group_id"] and target["source_group_id"] != group_id:
@@ -6139,10 +6177,21 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
             return
         old = (target["pending_docs"] or "").strip()
         old_list = [d.strip() for d in old.split(",") if d.strip()]
+        was_pending = doc in old_list
         new_list = [d for d in old_list if d != doc]
         new_pending = ",".join(new_list)
+        # 分兩種情況：
+        # (1) doc 是 pending_docs 項目（合照/身分證 等）→ 補完後狀態欄要「清空」
+        #     用內部紀錄文字「缺件補完:XX」，extract_status_summary 會回空
+        # (2) doc 不是 pending_docs 項目（時段/照會/申覆 等狀態更新）→ 狀態欄要「顯示已補XX」
+        #     用「已補XX」文字，extract_status_summary 正確識別
+        if was_pending:
+            new_text = f"{name} 缺件補完:{doc}"
+        else:
+            new_text = f"{name} 已補{doc}"
         update_customer(target["case_id"], pending_docs=new_pending,
-                        text=f"{name} 已補{doc}", from_group_id=group_id)
+                        text=new_text, from_group_id=group_id)
+        _refresh_company_status_after_docs(target["case_id"], new_text)
         if new_list:
             push_msg = f"✅ {name} 已補 {doc}\n還缺：{' / '.join(new_list)}"
         else:
@@ -6161,8 +6210,10 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
             return
         if not _check_active_or_warn(target, reply_token, "已補", name):
             return
+        new_text = f"{name} 缺件已全部補完"
         update_customer(target["case_id"], pending_docs="",
-                        text=f"{name} 缺件已全部補完", from_group_id=group_id)
+                        text=new_text, from_group_id=group_id)
+        _refresh_company_status_after_docs(target["case_id"], new_text)
         push_msg = f"✅ {name} 缺件已全部清除"
         # 已補推送：業務群打→推 A 群；A 群打→推客戶所屬業務群
         _push_target = _resolve_push_target_for_docs(group_id, target["source_group_id"])
