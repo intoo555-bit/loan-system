@@ -908,6 +908,7 @@ COMPANY_ALIAS = {
     "EGO": "第一",
     # 融資房地
     "新鑫": "房地",
+    "估房": "房地", "估土地": "房地",
     # 銀行類 → 統一歸到「銀行」
     "中信": "銀行", "中國信託": "銀行",
     "台新": "銀行", "國泰": "銀行", "富邦": "銀行", "玉山": "銀行",
@@ -2907,6 +2908,7 @@ COMPANY_SECTION_MAP = {
     "預付手機": "預付手機分期",
     # 新鑫/土地 → 房地
     "新鑫": "房地", "土地": "房地",
+    "估房": "房地", "估土地": "房地",
     # 向下相容舊字
     "貸就補": "貸救補",
     # 民間方案簡稱
@@ -3021,6 +3023,17 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
                 return ""  # 訊息提到別家 → 不套
             return status_short
 
+        # 缺件清單（pending_docs）→ 顯示為「-缺身分證/薪轉」
+        try:
+            _pend = (row["pending_docs"] or "").strip()
+        except (IndexError, KeyError):
+            _pend = ""
+        pending_str = ""
+        if _pend:
+            _docs = [d.strip() for d in _pend.split(",") if d.strip()]
+            if _docs:
+                pending_str = "-缺" + "/".join(_docs)
+
         if section == "待撥款":
             created = row["created_at"] or ""
             created_date = created[5:10].replace("-", "/") if created else date_str
@@ -3051,19 +3064,20 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
                 amount_str = f"{co_prefix}-核准{amount}{disb_str}"
             else:
                 amount_str = ""
-            line = f"{created_date}-{row['customer_name']}{amount_str}"
+            line = f"{created_date}-{row['customer_name']}{amount_str}{pending_str}"
         else:
             sec_status = _compress_status(get_section_status(section))
             line = f"{date_str}-{row['customer_name']}-{company_str}"
             if sec_status:
                 line += f"-{sec_status}"
+            line += pending_str
         # 今日新進件標記
         if created[:10] == today_str:
             line = "🆕" + line
         section_map.setdefault(section, []).append(line)
         # 還在送其他公司 → 也加到該公司區塊（不帶撥款資訊）
         if extra_section and extra_section != section:
-            extra_line = f"{date_str}-{row['customer_name']}-{company_str}"
+            extra_line = f"{date_str}-{row['customer_name']}-{company_str}{pending_str}"
             if created[:10] == today_str:
                 extra_line = "🆕" + extra_line
             section_map.setdefault(extra_section, []).append(extra_line)
@@ -3093,6 +3107,7 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
                     co_line = f"{date_str}-{row['customer_name']}-{co_short}"
                     if co_status:
                         co_line += f"-{co_status}"
+                    co_line += pending_str
                     if created[:10] == today_str:
                         co_line = "🆕" + co_line
                     section_map.setdefault(co_section, []).append(co_line)
