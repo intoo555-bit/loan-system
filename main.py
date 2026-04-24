@@ -2940,10 +2940,13 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
         report_sec = row["report_section"] or ""
         current_co = row["current_company"] or row["company"] or ""
         section = report_sec or current_co or "送件"
-        # 「送件」只是 fallback、當 current_company 是明確公司時（房地/銀行/零卡/貸款方案）
-        # 優先用 current_company 的區塊，避免客戶被擺在「送件」而不是對應公司區塊
+        # 「送件」= 貸款方案剛建案還沒被 A 群回貼過 → 保留「送件」區塊
+        # 但民間方案（房地/銀行/零卡 等）不應卡在送件區塊、直接歸對應公司區塊
         if section == "送件" and current_co:
-            section = current_co
+            _cur_norm = normalize_section(current_co)
+            _private_secs = {"房地", "銀行", "零卡", "商品貸", "代書", "當舖", "鄉民"}
+            if _cur_norm in _private_secs:
+                section = current_co
         section = normalize_section(section)
         created = row["created_at"] or ""
         date_str = created[5:10].replace("-", "/") if created else ""
@@ -3037,7 +3040,7 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
                 return ""  # 訊息提到別家 → 不套
             return status_short
 
-        # 缺件清單（pending_docs）→ 顯示為「-缺身分證/薪轉」
+        # 缺件清單（pending_docs）→ 顯示為「 (缺身分證/薪轉)」
         try:
             _pend = (row["pending_docs"] or "").strip()
         except (IndexError, KeyError):
@@ -3046,7 +3049,7 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
         if _pend:
             _docs = [d.strip() for d in _pend.split(",") if d.strip()]
             if _docs:
-                pending_str = "-缺" + "/".join(_docs)
+                pending_str = " (缺" + "/".join(_docs) + ")"
 
         if section == "待撥款":
             created = row["created_at"] or ""
@@ -3082,7 +3085,9 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
         else:
             sec_status = _compress_status(get_section_status(section))
             line = f"{date_str}-{row['customer_name']}-{company_str}"
-            if sec_status:
+            # 有缺件時不顯示 sec_status（例：「已送件」被「(缺合照)」取代，
+            # 業務補完後下一次會顯示回 sec_status）
+            if sec_status and not pending_str:
                 line += f"-{sec_status}"
             line += pending_str
         # 今日新進件標記
@@ -4734,6 +4739,21 @@ def is_duplicate_message(group_id: str, content: str) -> bool:
     return False
 
 
+def _resolve_push_target_for_docs(current_group_id: str, source_group_id: str) -> str:
+    """缺件/已補 指令的推送目標決策：
+    - 業務群打 → 推對應的 A 群
+    - A 群打 → 推客戶所屬業務群
+    - 其他（不認識的群）→ 不推
+    """
+    _a_group_ids = set(get_a_group_ids()) | {A_GROUP_ID}
+    _sales_ids = set(get_sales_group_ids())
+    if current_group_id in _sales_ids:
+        return get_a_group_for_sales(current_group_id)
+    if current_group_id in _a_group_ids:
+        return source_group_id or ""
+    return ""
+
+
 def _resolve_target_strict(cmd: Dict, name: str, group_id: str, reply_token: str, action_label: str):
     """破壞性指令用：多筆同名跳按鈕讓使用者選。
     - cmd 若含 _forced_case_id（來自按鈕 callback），直接取該 case
@@ -6079,8 +6099,9 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
         pending = ",".join(docs_list)
         update_customer(target["case_id"], pending_docs=pending,
                         text=f"{name} 缺件：{'/'.join(docs_list)}", from_group_id=group_id)
-        # A 群打→回貼客戶所屬業務群（來源不同群才推、避免業務群打自己時重複）
-        if target["source_group_id"] and target["source_group_id"] != group_id:
+        # 記缺件推送：只有 A 群打才回貼業務群；業務群自己打只紀錄不推送
+        _a_group_ids = set(get_a_group_ids()) | {A_GROUP_ID}
+        if group_id in _a_group_ids and target["source_group_id"] and target["source_group_id"] != group_id:
             push_text(target["source_group_id"],
                       f"📋 {name} 已記缺件：{' / '.join(docs_list)}")
         reply_text(reply_token, f"📋 {name} 已記缺件：{' / '.join(docs_list)}\n補完後打：@AI {name} 已補 {docs_list[0]}")
@@ -6104,9 +6125,10 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
             push_msg = f"✅ {name} 已補 {doc}\n還缺：{' / '.join(new_list)}"
         else:
             push_msg = f"✅ {name} 已補 {doc}\n🎉 缺件全部補完！"
-        # A 群打→回貼業務群
-        if target["source_group_id"] and target["source_group_id"] != group_id:
-            push_text(target["source_group_id"], push_msg)
+        # 已補推送：業務群打→推 A 群；A 群打→推客戶所屬業務群
+        _push_target = _resolve_push_target_for_docs(group_id, target["source_group_id"])
+        if _push_target and _push_target != group_id:
+            push_text(_push_target, push_msg)
         reply_text(reply_token, push_msg)
         return
 
@@ -6120,9 +6142,10 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
         update_customer(target["case_id"], pending_docs="",
                         text=f"{name} 缺件已全部補完", from_group_id=group_id)
         push_msg = f"✅ {name} 缺件已全部清除"
-        # A 群打→回貼業務群
-        if target["source_group_id"] and target["source_group_id"] != group_id:
-            push_text(target["source_group_id"], push_msg)
+        # 已補推送：業務群打→推 A 群；A 群打→推客戶所屬業務群
+        _push_target = _resolve_push_target_for_docs(group_id, target["source_group_id"])
+        if _push_target and _push_target != group_id:
+            push_text(_push_target, push_msg)
         reply_text(reply_token, push_msg)
         return
 
