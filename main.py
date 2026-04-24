@@ -3841,17 +3841,27 @@ def generate_notification_text(r: dict, company: str = "") -> str:
     co = company or v("current_company") or v("company") or ""
 
     # 居住地：同戶籍→戶籍，否則→現居地
-    # 除了 live_same_as_reg 旗標，也實際比對兩個地址（使用者有時只打一邊、忘記勾旗標）
+    # 三種情況都算同戶籍：
+    # (1) live_same_as_reg 旗標 = "1"
+    # (2) 住家地址整串為空（表示沒分開填、預設同戶籍）
+    # (3) 住家地址與戶籍地址字串相等（使用者兩邊都填了但內容一樣）
     _reg_full = (v("reg_city") + v("reg_district") + v("reg_address")).replace(" ", "")
     _live_full = (v("live_city") + v("live_district") + v("live_address")).replace(" ", "")
+    _live_empty = not _live_full.strip()
     _addr_match = bool(_reg_full) and _reg_full == _live_full
-    live_type = "戶籍" if (v("live_same_as_reg") == "1" or _addr_match) else "現居地"
+    live_type = "戶籍" if (v("live_same_as_reg") == "1" or _live_empty or _addr_match) else "現居地"
     live_years = (rules.get("live_years_val") or v("live_years") or "0")
     # 居住狀況：照會話術照 DB 原值（宿舍就說宿舍、父母就說父母，不套 adminB 規則的轉親屬）
     live_status = v("live_status") or "自有"
 
-    # 年資（套 <1→1 規則）
+    # 年資（套 <1→1 規則）+ 月份
     co_years = (rules.get("company_years_val") or v("company_years") or "0")
+    co_months = (rules.get("company_months_val") or v("company_months") or "0")
+    try:
+        _m_int = int(float(str(co_months).replace("月","").strip())) if co_months else 0
+        co_years_str = f"{co_years}年{_m_int}月" if _m_int > 0 else f"{co_years}年"
+    except Exception:
+        co_years_str = f"{co_years}年"
 
     # 月薪（套 <3.5萬→3.5萬 規則），輸出「N萬」格式
     salary_raw = rules.get("salary_val") or v("company_salary") or "0"
@@ -3920,16 +3930,16 @@ def generate_notification_text(r: dict, company: str = "") -> str:
     # 資金用途：照會話術一律固定「家用」（adminb_fund_use 只給申請書下拉用）
     fund = "家用"
 
-    # 名下車貸狀況：檢查 debt_list
+    # 名下車貸狀況：檢查 debt_list 裡的動保／公路欄位
+    # 規則：只要任一筆負債的動保欄位是「公路/動保/公路+動保」→ 名下車貸正常繳
+    # （不管貸款商家名稱，動保欄位就是車貸的明確標記）
     car_loan_status = "名下無貸款"
     try:
         debt_list = json.loads(v("debt_list")) if v("debt_list") else []
         for d in debt_list:
-            co_name = (d.get("co", "") or "").lower()
             dy = d.get("dy", "") or ""
-            if any(w in co_name for w in ["車", "機車", "汽車"]):
-                if "公路" in dy or "動保" in dy:
-                    car_loan_status = "名下車貸正常繳"
+            if "公路" in dy or "動保" in dy:
+                car_loan_status = "名下車貸正常繳"
                 break
     except Exception:
         pass
@@ -3938,7 +3948,7 @@ def generate_notification_text(r: dict, company: str = "") -> str:
     lines = [
         name,
         "照會注意事項",
-        f"✅現居住{live_type}地址 居住{live_years}年 {live_status} 工作年資{co_years}年 月薪{salary_str}",
+        f"✅現居住{live_type}地址 居住{live_years}年 {live_status} 工作年資{co_years_str} 月薪{salary_str}",
     ]
     if amount_line:
         lines.append(f"✅{amount_line}")
