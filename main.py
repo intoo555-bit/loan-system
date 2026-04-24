@@ -3145,7 +3145,8 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
                     # 日報顯示用簡化名（貸款方案簡化、民間方案保留原名）
                     co_short = _display_co(co) or co
                     co_line = f"{date_str}-{row['customer_name']}-{co_short}"
-                    if co_status:
+                    # 有缺件時不顯示 co_status（和主分支一致邏輯）
+                    if co_status and not pending_str:
                         co_line += f"-{co_status}"
                     co_line += pending_str
                     if created[:10] == today_str:
