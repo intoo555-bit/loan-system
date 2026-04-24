@@ -12782,14 +12782,16 @@ def _do_download_excel(request: Request, case_id: str):
             def map_live_status(raw):
                 if not raw: return ""
                 if raw in valid_live: return raw
+                # 宿舍（優先，避免被後面的親屬規則吃掉）
+                if "宿舍" in raw: return "宿舍"
                 # 自有相關
                 for k in ["自有","本人","名下","自宅","自有房屋"]:
                     if k in raw: return "自有"
                 # 配偶相關
                 for k in ["配偶","老公","老婆","太太","先生","夫","妻"]:
                     if k in raw: return "配偶"
-                # 親屬（含父母/兄弟姊妹/家人/父母名下/租屋/宿舍）
-                for k in ["父母","媽媽","爸爸","母親","父親","親屬","親戚","家人","兄","弟","姊","妹","祖","外公","外婆","租","宿舍","借住","寄住"]:
+                # 親屬（含父母/兄弟姊妹/家人/父母名下/租屋/借住）— 不含宿舍
+                for k in ["父母","媽媽","爸爸","母親","父親","親屬","親戚","家人","兄","弟","姊","妹","祖","外公","外婆","租","借住","寄住"]:
                     if k in raw: return "親屬"
                 return ""
             live_status_val = map_live_status(live_status)
