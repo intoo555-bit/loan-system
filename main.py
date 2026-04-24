@@ -6463,41 +6463,57 @@ def _handle_a_case_block_locked(block_text, reply_token, id_no, name, forced_cas
         is_reject = True
     route = customer["route_plan"] or ""
     new_route, next_co = route, ""
-    # 檢查公司是否在同時送件清單或 route 裡
+    # 檢查公司是否在同時送件清單或 route 裡（用 normalize_section 兩邊正規化
+    # 例：route 存「貸10」、訊息解成「貸救補」→ 兩邊 normalize 都歸「貸救補」可比對）
     concurrent_list = [c.strip() for c in (customer["concurrent_companies"] or "").split(",") if c.strip()]
-    is_in_concurrent = any(company in c or c in company for c in concurrent_list if company)
     route_companies = parse_route_json(route).get("order", []) if route else []
     current_co = customer["current_company"] or customer["company"] or ""
-    is_in_route = any(company and (company in rc or rc in company) for rc in route_companies)
-    is_current = company and (company in current_co or current_co in company)
-    # 如果公司不在路線、不是 current、不在同送清單 → 跳按鈕詢問
-    if company and not is_in_concurrent and not is_in_route and not is_current:
+    company_norm = normalize_section(company) if company else ""
+    is_in_concurrent = bool(company_norm) and any(
+        normalize_section(c) == company_norm or company in c or c in company
+        for c in concurrent_list)
+    is_in_route = bool(company_norm) and any(
+        normalize_section(rc) == company_norm or company in rc or rc in company
+        for rc in route_companies)
+    is_current = bool(company_norm) and (
+        normalize_section(current_co) == company_norm
+        or (company in current_co or current_co in company))
+    # 如果公司不在路線、不是 current、不在同送清單：
+    #   - 婉拒（非補件恢復）→ 直接記錄 + 回貼業務群（不跳按鈕、不動 current/route）
+    #   - 其他（核准/補件等）→ 跳按鈕讓使用者確認處理方式
+    is_unknown_company = company and not is_in_concurrent and not is_in_route and not is_current
+    if is_unknown_company:
         # 偵測任何「補X」關鍵字（婉拒後恢復類：補保人/補JCIC/補聯徵/補信用/補件/補薪轉...）
         is_supplement_recovery = any(kw in block_text for kw in [
             "補保人", "補JCIC", "補jcic", "補申覆", "補聯徵", "補信用",
             "補件", "補資料", "補薪轉", "補照片", "補時段", "補照會",
             "補行照", "補在職", "補存摺", "補勞保", "補駕照", "補身分證"
         ])
-        action_id = short_id()
-        save_pending_action(action_id, "unknown_company", {
-            "case_id": customer["case_id"], "block_text": block_text,
-            "company": company, "name": customer["customer_name"],
-            "is_supplement": is_supplement_recovery
-        })
-        items = [
-            make_quick_reply_item(f"再送{company}", f"UNKNOWN_CO_REROUTE|{action_id}"),
-            make_quick_reply_item(f"同送{company}", f"UNKNOWN_CO_CONCURRENT|{action_id}"),
-        ]
-        if is_supplement_recovery:
-            items.insert(0, make_quick_reply_item("補件恢復", f"UNKNOWN_CO_SUPPLEMENT|{action_id}"))
-        items.append(make_quick_reply_item("取消", f"UNKNOWN_CO_CANCEL|{action_id}"))
-        prompt = f"⚠️ {company} 不在 {customer['customer_name']} 的路線裡，請選擇："
-        if is_supplement_recovery:
-            prompt = f"⚠️ {customer['customer_name']} 的 {company} 已婉拒/不在路線，收到補件訊息，請選擇："
-        reply_quick_reply(reply_token, prompt, items)
-        return "QUICK_REPLY_SENT"
-    if is_reject and route and not is_in_concurrent:
-        # 不在同時送件清單 → 正常推進 route
+        if is_reject and not is_supplement_recovery:
+            # 婉拒 + 非補件恢復 → 不跳按鈕、往下走正常 push/update
+            # 但不能動 current/route（下面的 advance_route 會檢查 is_current）
+            pass
+        else:
+            action_id = short_id()
+            save_pending_action(action_id, "unknown_company", {
+                "case_id": customer["case_id"], "block_text": block_text,
+                "company": company, "name": customer["customer_name"],
+                "is_supplement": is_supplement_recovery
+            })
+            items = [
+                make_quick_reply_item(f"再送{company}", f"UNKNOWN_CO_REROUTE|{action_id}"),
+                make_quick_reply_item(f"同送{company}", f"UNKNOWN_CO_CONCURRENT|{action_id}"),
+            ]
+            if is_supplement_recovery:
+                items.insert(0, make_quick_reply_item("補件恢復", f"UNKNOWN_CO_SUPPLEMENT|{action_id}"))
+            items.append(make_quick_reply_item("取消", f"UNKNOWN_CO_CANCEL|{action_id}"))
+            prompt = f"⚠️ {company} 不在 {customer['customer_name']} 的路線裡，請選擇："
+            if is_supplement_recovery:
+                prompt = f"⚠️ {customer['customer_name']} 的 {company} 已婉拒/不在路線，收到補件訊息，請選擇："
+            reply_quick_reply(reply_token, prompt, items)
+            return "QUICK_REPLY_SENT"
+    if is_reject and route and not is_in_concurrent and not is_unknown_company:
+        # 不在同送、也非「額外公司婉拒」→ 正常推進 route
         next_co = get_next_company(route)
         new_route = advance_route(route, "婉拒")
 
@@ -6549,7 +6565,10 @@ def _handle_a_case_block_locked(block_text, reply_token, id_no, name, forced_cas
                         report_section=new_report_section)
     else:
         # 婉拒/其他：正常更新 company + current_company（推進送件順序）
-        update_customer(customer["case_id"], company=company, text=block_text,
+        # 但 is_unknown_company（額外公司婉拒）不能動 company/current_company、避免覆蓋真正在送那家
+        update_customer(customer["case_id"],
+                        company=(None if is_unknown_company else company),
+                        text=block_text,
                         from_group_id=A_GROUP_ID, status=new_status,
                         route_plan=new_route,
                         current_company=next_co if next_co else None,
@@ -6563,7 +6582,10 @@ def _handle_a_case_block_locked(block_text, reply_token, id_no, name, forced_cas
     gname = get_group_name(customer["source_group_id"])
     msg = f"✅ 已結案並回貼到{gname}：{customer['customer_name']}" if new_status == "CLOSED" else f"✅ 已回貼到{gname}：{customer['customer_name']}"
     if is_reject:
-        if is_in_concurrent:
+        if is_unknown_company:
+            # 額外公司婉拒（不在許詩雅的路線）→ 只記錄、不動 route/current
+            msg += f"\n📝 {company} 婉拒已記錄（非當前送件家、route 不變動）"
+        elif is_in_concurrent:
             # 同時送件婉拒 → 從清單移除，剩下的還在送
             remaining = [c for c in concurrent_list if company not in c and c not in company]
             if remaining:
@@ -9339,13 +9361,18 @@ def apply_adminb_rules(row: dict) -> dict:
         result["live_years_adj"] = True
     # 居住狀況
     ls = str(row.get("live_status","") or "")
-    rent_kw = ["租","宿舍"]
+    rent_kw = ["租"]  # 只有「租」→ 轉親屬；宿舍保留原值
     own_kw = ["自有","本人名下","配偶名下"]
     warnings = []
     if any(k in ls for k in rent_kw):
         result["live_status_display"] = f"客戶填：{ls} → 填入：親屬（父母或親友）"
         result["live_status_val"] = "親屬"
         result["live_status_adj"] = True
+    elif "宿舍" in ls:
+        # 宿舍照原值填入
+        result["live_status_display"] = f"填入：{ls}"
+        result["live_status_val"] = "宿舍"
+        result["live_status_adj"] = False
     elif any(k in ls for k in own_kw):
         result["live_status_display"] = f"填入：{ls}"
         result["live_status_val"] = ls
@@ -13151,7 +13178,7 @@ def _do_download_excel(request: Request, case_id: str):
                 mo_int = int(float(co_mos_21)) if co_mos_21 and co_mos_21 != "0" else 0
                 if plan_name == "21機車25萬":
                     g10_val = str(yr_int) if yr_int > 0 else "0"
-                    h10_val = None   # 範本「年」標籤，不動
+                    h10_val = "年"   # 明寫「年」避免範本標籤飄掉
                     i10_val = str(mo_int) if mo_int > 0 else ""
                 else:
                     g10_val = f"{yr_int}年"
