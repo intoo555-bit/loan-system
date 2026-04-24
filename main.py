@@ -191,7 +191,8 @@ PRIMARY_SHEET_NAMES = {
 # 避免舊 mapping（例如 G9=company_phone_num 只有號碼）卡死使用者。
 PLAN_AUTHORITATIVE_CELLS = {
     "21機車12萬": {"G9", "J3", "J4", "J9", "H17", "H18"},
-    "21機車25萬": {"G9", "J3", "J4", "J9", "H17", "H18"},
+    # 25萬範本 H10/J10 是「年/月」標籤 → 鎖死直接寫
+    "21機車25萬": {"G9", "J3", "J4", "J9", "H10", "J10", "H17", "H18"},
     "21商品": {"G9", "J3", "J4", "J9", "H17", "H18"},
     "亞太商品": {"D15", "E15", "G15", "H15"},
     "亞太機車15萬": {"D15", "E15", "G15", "H15"},
@@ -13184,14 +13185,17 @@ def _do_download_excel(request: Request, case_id: str):
                     g10_val = str(yr_int) if yr_int > 0 else "0"
                     h10_val = "年"   # 明寫「年」避免範本標籤飄掉
                     i10_val = str(mo_int) if mo_int > 0 else ""
+                    j10_val = "月"   # J10 也明寫、避免飄掉
                 else:
                     g10_val = f"{yr_int}年"
                     h10_val = f"{mo_int}月" if mo_int > 0 else "月"
                     i10_val = None
+                    j10_val = None
             except Exception:
                 g10_val = co_years
                 h10_val = "月"
                 i10_val = None
+                j10_val = None
 
             # 月薪 E10：填純數字（4.5萬→45000）
             try:
@@ -13223,7 +13227,7 @@ def _do_download_excel(request: Request, case_id: str):
                 "C9": company, "G9": co_phone_area + co_phone_num,
                 "J9": v("company_phone_ext"),
                 "C10": co_role, "E10": sal_e10,
-                "G10": g10_val, "H10": h10_val, "I10": i10_val,
+                "G10": g10_val, "H10": h10_val, "I10": i10_val, "J10": j10_val,
                 "C17": c1_name, "E17": c1_rel_21, "H17": (c1_phone or "").replace("-", "").replace(" ", ""), "K17": "保密" if c1_known == "保密" else "",
                 "C18": c2_name, "E18": c2_rel_21, "H18": (c2_phone or "").replace("-", "").replace(" ", ""), "K18": "保密" if c2_known == "保密" else "",
             }
