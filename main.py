@@ -7571,6 +7571,10 @@ def _handle_bc_case_block_locked(block_text, source_group_id, reply_token, sourc
         update_customer(c["case_id"], company=company or c["company"] or "",
                         text=block_text, from_group_id=source_group_id, status=new_status)
         _update_company_status_for_text(c["case_id"], company, block_text)
+        # 若訊息是「已補 / 補好 / 補完」之類，刷新 company_status 的 stale section
+        # （例：業務打「已補時段」→ 清掉 A 群舊的「NA」「待補」殘留）
+        if any(m in block_text for m in ["已補", "補好了", "補完了", "補過了"]):
+            _refresh_company_status_after_docs(c["case_id"], block_text)
         pushed = False
         if want_push_a and new_status != "CLOSED":
             ok, _ = push_text(get_a_group_for_sales(source_group_id), block_text); pushed = ok
@@ -7593,6 +7597,9 @@ def _handle_bc_case_block_locked(block_text, source_group_id, reply_token, sourc
         update_customer(r["case_id"], company=company or r["company"] or "",
                         text=block_text, from_group_id=source_group_id)
         _update_company_status_for_text(r["case_id"], company, block_text)
+        # 同上：已補 / 補好 / 補完 → 刷新 stale company_status
+        if any(m in block_text for m in ["已補", "補好了", "補完了", "補過了"]):
+            _refresh_company_status_after_docs(r["case_id"], block_text)
         pushed = False
         if want_push_a:
             ok, _ = push_text(get_a_group_for_sales(source_group_id), block_text); pushed = ok
@@ -9041,6 +9048,9 @@ async def report_update_progress(request: Request):
     conn = get_conn(); cur = conn.cursor()
     cur.execute("UPDATE customers SET last_update=?, updated_at=? WHERE case_id=?", (progress, now_iso(), case_id))
     conn.commit(); conn.close()
+    # 同步刷新 company_status 的 stale section、避免日報仍顯示 A 群舊訊息（NA/缺X/待補）
+    if progress:
+        _refresh_company_status_after_docs(case_id, progress)
     return JSONResponse({"ok": True, "message": "進度已更新" if progress else "進度已清空"})
 
 
