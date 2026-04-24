@@ -2947,8 +2947,17 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
         section = normalize_section(section)
         created = row["created_at"] or ""
         date_str = created[5:10].replace("-", "/") if created else ""
-        # 日報公司名用簡化版（21機車25萬 → 21、亞太機 → 亞太）避免日報太長
-        company_str = normalize_section(current_co) or current_co
+        # 日報公司名簡化：貸款方案（21/亞太/和裕/麻吉/分貝/興達/合信）才簡化
+        # 民間方案（慢點付/大哥付/元大/新鑫 等）保留原名避免失去辨識度
+        _shorten_sections = {"21", "亞太", "和裕", "麻吉", "分貝", "興達", "合信"}
+        def _display_co(co_raw):
+            if not co_raw:
+                return co_raw
+            norm = normalize_section(co_raw)
+            if norm in _shorten_sections and co_raw != norm:
+                return norm
+            return co_raw
+        company_str = _display_co(current_co) or current_co
 
         # 如果待撥款但還在送其他公司 → 兩個區塊都顯示
         extra_section = None
@@ -3053,7 +3062,7 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
                 parts = []
                 for ap in approved_list:
                     co = ap.get('company') or ''
-                    co_short = normalize_section(co) or co  # 簡化：21機車25萬→21
+                    co_short = _display_co(co) or co
                     amt = ap.get('amount') or ''
                     disb = ap.get('disbursed') or ''
                     if disb:
@@ -3064,7 +3073,7 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
             elif amount:
                 disb_date = row["disbursement_date"] or ""
                 disb_str = f"(撥款{disb_date})" if disb_date else pending_tag
-                co_short = normalize_section(current_co) or current_co
+                co_short = _display_co(current_co) or current_co
                 co_prefix = f"-{co_short}" if co_short else ""
                 amount_str = f"{co_prefix}-核准{amount}{disb_str}"
             else:
@@ -3107,8 +3116,8 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
                     continue  # 已在待撥款區顯示過、不重複
                 if co_section != section:
                     co_status = _compress_status(get_section_status(co_section))
-                    # 日報顯示用簡化名（21機車25萬 → 21）
-                    co_short = co_section or co
+                    # 日報顯示用簡化名（貸款方案簡化、民間方案保留原名）
+                    co_short = _display_co(co) or co
                     co_line = f"{date_str}-{row['customer_name']}-{co_short}"
                     if co_status:
                         co_line += f"-{co_status}"
