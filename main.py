@@ -2953,9 +2953,18 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
         # 日報公司名簡化：貸款方案（21/亞太/和裕/麻吉/分貝/興達/合信）才簡化
         # 民間方案（慢點付/大哥付/元大/新鑫 等）保留原名避免失去辨識度
         _shorten_sections = {"21", "亞太", "和裕", "麻吉", "分貝", "興達", "合信"}
+        # 民間 section 名本身縮成短代號（零卡→C、銀行→銀、商品貸→商 等）
+        # 特定產品（慢點付、元大、新鑫）不受影響、保留原名
+        _section_short_code = {
+            "零卡": "C", "銀行": "銀", "商品貸": "商",
+            "代書": "代", "當舖": "當", "鄉民": "鄉",
+        }
         def _display_co(co_raw):
             if not co_raw:
                 return co_raw
+            # section 名本身 → 縮成短代號
+            if co_raw in _section_short_code:
+                return _section_short_code[co_raw]
             norm = normalize_section(co_raw)
             if norm in _shorten_sections and co_raw != norm:
                 return norm
