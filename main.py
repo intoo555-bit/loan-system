@@ -2706,6 +2706,11 @@ _INTERNAL_ACTION_KEYWORDS = [
     "匯入",              # 匯入動作（/admin/import-loan 等）
     "搬到【",            # 群組搬移動作
     "改順序：",          # 改送件順序動作
+    # 缺件指令的內部紀錄文字（pending_docs 欄位另外顯示為「(缺XX)」、
+    # 不要讓 last_update 的這些文字被 extract_status_summary 當狀態抓出來）
+    # 注意：「已補：」不可加入、會誤殺正常「已補時段/已補照會/已補資料」狀態
+    "缺件：",            # @AI 姓名 缺 XX
+    "缺件已全部補完",    # @AI 姓名 已補 全部
 ]
 
 
@@ -6129,7 +6134,7 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
         new_list = [d for d in old_list if d != doc]
         new_pending = ",".join(new_list)
         update_customer(target["case_id"], pending_docs=new_pending,
-                        text=f"{name} 已補：{doc}", from_group_id=group_id)
+                        text=f"{name} 已補{doc}", from_group_id=group_id)
         if new_list:
             push_msg = f"✅ {name} 已補 {doc}\n還缺：{' / '.join(new_list)}"
         else:
