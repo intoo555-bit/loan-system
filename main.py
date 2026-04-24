@@ -2940,6 +2940,10 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
         report_sec = row["report_section"] or ""
         current_co = row["current_company"] or row["company"] or ""
         section = report_sec or current_co or "送件"
+        # 「送件」只是 fallback、當 current_company 是明確公司時（房地/銀行/零卡/貸款方案）
+        # 優先用 current_company 的區塊，避免客戶被擺在「送件」而不是對應公司區塊
+        if section == "送件" and current_co:
+            section = current_co
         section = normalize_section(section)
         created = row["created_at"] or ""
         date_str = created[5:10].replace("-", "/") if created else ""
