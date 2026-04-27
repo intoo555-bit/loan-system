@@ -7703,8 +7703,38 @@ def _handle_bc_case_block_locked(block_text, source_group_id, reply_token, sourc
                 return (f"⚠️ 已記錄 {name} {company}婉拒\n"
                         f"是 {type_label} 所有方案都無法送嗎？婉拒是否確認？\n"
                         f"要推到下一家請打：@AI {name} 婉拒")
-            # 其他公司 → 自動推下一家
-            current_co = get_current_company(route) or target["current_company"] or company
+            # 先判斷是 current 還是 concurrent 還是 unknown
+            current_co = get_current_company(route) or target["current_company"] or ""
+            concurrent_list = [c.strip() for c in (target["concurrent_companies"] or "").split(",") if c.strip()]
+            co_norm = normalize_section(company)
+            is_current = bool(current_co) and normalize_section(current_co) == co_norm
+            is_in_concurrent = any(normalize_section(c) == co_norm for c in concurrent_list)
+
+            # 情況 A：是 concurrent 那家被婉拒 → 從同送清單移除、不動 current/route
+            # 同時清掉 company_status[那家] 避免日報該家還顯示這客戶
+            if is_in_concurrent and not is_current:
+                new_concurrent = [c for c in concurrent_list if normalize_section(c) != co_norm]
+                update_customer(target["case_id"],
+                                concurrent_companies=",".join(new_concurrent),
+                                text=f"{name} {company} 婉拒（從同送清單移除）",
+                                from_group_id=source_group_id)
+                # 清掉 company_status 避免日報殘留
+                try:
+                    cs_raw = target["company_status"] or "{}"
+                    cs = json.loads(cs_raw)
+                    if co_norm in cs:
+                        del cs[co_norm]
+                        with db_conn(commit=True) as _cn:
+                            _cn.cursor().execute("UPDATE customers SET company_status=? WHERE case_id=?",
+                                                 (json.dumps(cs, ensure_ascii=False), target["case_id"]))
+                except Exception:
+                    pass
+                msg = f"✅ {name} {company} 婉拒（從同送移除）"
+                if new_concurrent or current_co:
+                    msg += f"\n➡️ 剩下：{('、'.join([current_co]+new_concurrent) if current_co else '、'.join(new_concurrent))}"
+                return msg
+
+            # 情況 B：是 current 那家被婉拒 → 推下一家（原邏輯）
             next_co = get_next_company(route)
             new_route = advance_route(route, "婉拒")
             update_kw = {"route_plan": new_route, "current_company": next_co or "",
