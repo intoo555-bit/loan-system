@@ -5002,14 +5002,19 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
     if t == "follow_up_list":
         # 列出該群（A 群則全部）需要跟進的客戶
         # 三類：(1) 缺件超過 3 天 (2) 待撥款超過 7 天 (3) current 卡同家超過 5 天
-        from datetime import datetime as _dt, timedelta as _td
-        now_dt = _dt.fromisoformat(now_iso().split(".")[0]) if "." in now_iso() else _dt.fromisoformat(now_iso())
+        # 起算錨點：
+        # - 缺件：從 case_logs 最後一筆「缺件：」訊息日（= 通知日）；無紀錄 fallback updated_at
+        # - 待撥款：從 approved_at（核准日）；無 fallback created_at
+        # - 卡關：從 route_plan.history 最後一筆 date（= current 開始送件日）；無 fallback created_at
+        from datetime import datetime as _dt
+        _now_iso = now_iso()
+        now_dt = _dt.fromisoformat(_now_iso.split(".")[0]) if "." in _now_iso else _dt.fromisoformat(_now_iso)
         conn = get_conn(); cur = conn.cursor()
         if group_id in (set(get_a_group_ids()) | {A_GROUP_ID}):
             cur.execute("SELECT * FROM customers WHERE status='ACTIVE'")
         else:
             cur.execute("SELECT * FROM customers WHERE status='ACTIVE' AND source_group_id=?", (group_id,))
-        rows = cur.fetchall(); conn.close()
+        rows = cur.fetchall()
 
         DOC_DAYS = 3      # 缺件超過 N 天視為待跟進
         DISB_DAYS = 7     # 待撥款超過 N 天視為待跟進
@@ -5019,11 +5024,39 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
             if not iso_str:
                 return 0
             try:
-                t = iso_str.split(".")[0]
+                t = iso_str.split(".")[0] if "." in iso_str else iso_str
+                # 只取 YYYY-MM-DDTHH:MM:SS 部分
+                t = t[:19] if len(t) >= 19 else t
                 d = _dt.fromisoformat(t)
                 return (now_dt - d).days
             except Exception:
                 return 0
+
+        def _last_pending_set_date(case_id):
+            """回傳 case_logs 中最後一筆「缺件：」訊息的 created_at，沒有回 None"""
+            try:
+                cur.execute(
+                    "SELECT created_at FROM case_logs WHERE case_id=? "
+                    "AND message_text LIKE '%缺件：%' "
+                    "ORDER BY created_at DESC LIMIT 1", (case_id,))
+                row = cur.fetchone()
+                return row["created_at"] if row else None
+            except Exception:
+                return None
+
+        def _current_send_start_date(route_plan_str, fallback_created_at):
+            """current 開始送件的日期：route_plan.history 最後一筆 date；無則 created_at"""
+            try:
+                rd = parse_route_json(route_plan_str or "")
+                hist = rd.get("history", []) or []
+                if hist:
+                    last = hist[-1]
+                    d = last.get("date", "")
+                    if d:
+                        return d
+            except Exception:
+                pass
+            return fallback_created_at
 
         doc_overdue = []     # 缺件超過 3 天
         disb_overdue = []    # 待撥款超過 7 天
@@ -5032,15 +5065,17 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
         for r in rows:
             name = r["customer_name"]
             cur_co = r["current_company"] or r["company"] or ""
-            updated_days = _days_since(r["updated_at"])
 
-            # (1) 缺件
+            # (1) 缺件 → 從 case_logs 找最後一次「缺件：」設定日（通知日）
             pend = (r["pending_docs"] or "").strip()
-            if pend and updated_days >= DOC_DAYS:
-                docs_str = "/".join(d.strip() for d in pend.split(",") if d.strip())
-                doc_overdue.append((updated_days, name, cur_co, docs_str))
+            if pend:
+                anchor = _last_pending_set_date(r["case_id"]) or r["updated_at"]
+                d1 = _days_since(anchor)
+                if d1 >= DOC_DAYS:
+                    docs_str = "/".join(x.strip() for x in pend.split(",") if x.strip())
+                    doc_overdue.append((d1, name, cur_co, docs_str))
 
-            # (2) 待撥款超過 N 天
+            # (2) 待撥款 → 從 approved_at（核准日）
             if (r["report_section"] or "") == "待撥款":
                 anchor = r["approved_at"] or r["created_at"]
                 d2 = _days_since(anchor)
@@ -5048,9 +5083,14 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
                     amt = r["approved_amount"] or ""
                     disb_overdue.append((d2, name, cur_co, amt))
 
-            # (3) current 卡關 (route 還在送、updated_at 沒動)
-            if cur_co and (r["report_section"] or "") not in ("待撥款", "送件") and updated_days >= STUCK_DAYS and not pend:
-                stuck_cases.append((updated_days, name, cur_co))
+            # (3) 卡關 → 從 current 開始送件日（route_plan.history 最後 date）
+            if cur_co and (r["report_section"] or "") not in ("待撥款", "送件") and not pend:
+                anchor = _current_send_start_date(r["route_plan"], r["created_at"])
+                d3 = _days_since(anchor)
+                if d3 >= STUCK_DAYS:
+                    stuck_cases.append((d3, name, cur_co))
+
+        conn.close()
 
         # 排序（天數倒序、最久的最上）
         doc_overdue.sort(key=lambda x: -x[0])
