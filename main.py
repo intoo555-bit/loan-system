@@ -8615,6 +8615,7 @@ async def import_juofeng_confirm(request: Request):
         except Exception as e:
             failed.append(f"{name}：{e}")
 
+    # 寫 case_logs 紀錄哪些被搬（救援用）
     summary = f"""<div style="padding:40px;font-family:sans-serif">
       <h2>鉅烽匯入完成</h2>
       <p>✅ 新建：{len(created)} 筆 — {', '.join(created[:20])}{'...' if len(created)>20 else ''}</p>
@@ -8624,6 +8625,88 @@ async def import_juofeng_confirm(request: Request):
       <a href="/admin/groups">回群組管理</a> | <a href="/history">看歷史</a> | <a href="/report">看日報</a>
     </div>"""
     return HTMLResponse(summary)
+
+
+@app.get("/admin/inspect-customer", response_class=HTMLResponse)
+def inspect_customer(request: Request, names: str = ""):
+    """查指定客戶現在在哪個群組（救援用）。
+    用法：/admin/inspect-customer?names=鍾明玉,林志鴻,許詩雅 ..."""
+    role = check_auth(request)
+    if role != "admin":
+        from fastapi.responses import RedirectResponse
+        return RedirectResponse("/login")
+    name_list = [n.strip() for n in names.split(",") if n.strip()]
+    if not name_list:
+        return HTMLResponse("<div style='padding:40px'>參數 names 不可空。例：/admin/inspect-customer?names=鍾明玉,林志鴻</div>")
+    rows_html = ""
+    with db_conn(commit=False) as conn:
+        cur = conn.cursor()
+        for name in name_list:
+            cur.execute("SELECT case_id, customer_name, id_no, source_group_id, status, current_company, updated_at FROM customers WHERE customer_name=? ORDER BY updated_at DESC", (name,))
+            recs = cur.fetchall()
+            if not recs:
+                rows_html += f'<tr><td>{h(name)}</td><td colspan="5" style="color:#b91c1c">❌ 找不到</td></tr>'
+                continue
+            for r in recs:
+                gname = get_group_name(r["source_group_id"]) or r["source_group_id"][:10]
+                rows_html += f'''<tr>
+                  <td style="padding:6px 10px;font-weight:600">{h(name)}</td>
+                  <td style="padding:6px 10px;font-family:monospace;font-size:11px">{h(r["id_no"] or "-")}</td>
+                  <td style="padding:6px 10px">{h(gname)}</td>
+                  <td style="padding:6px 10px">{h(r["status"])}</td>
+                  <td style="padding:6px 10px">{h(r["current_company"] or "-")}</td>
+                  <td style="padding:6px 10px;font-size:11px">{h(r["updated_at"])}</td>
+                  <td style="padding:6px 10px;font-family:monospace;font-size:10px">{h(r["case_id"])}</td>
+                </tr>'''
+    return HTMLResponse(f"""<!DOCTYPE html><html><head>{PAGE_CSS}<title>客戶診斷</title></head><body>
+    {make_topnav(role, "admin")}
+    <div class="page">
+      <h2>客戶診斷</h2>
+      <p style="color:#6b7280;font-size:13px">查詢：{h(', '.join(name_list))}</p>
+      <table style="width:100%;border-collapse:collapse;background:#fff;border:1px solid #e5e7eb;font-size:13px">
+        <thead style="background:#f9fafb"><tr>
+          <th style="padding:8px;text-align:left">姓名</th>
+          <th style="padding:8px;text-align:left">身分證</th>
+          <th style="padding:8px;text-align:left">所屬群組</th>
+          <th style="padding:8px;text-align:left">狀態</th>
+          <th style="padding:8px;text-align:left">current</th>
+          <th style="padding:8px;text-align:left">最後更新</th>
+          <th style="padding:8px;text-align:left">case_id</th>
+        </tr></thead>
+        <tbody>{rows_html}</tbody>
+      </table>
+      <p style="margin-top:20px;font-size:13px;color:#6b7280">
+      要搬回勞工群、用 POST /admin/move-customer：<br>
+      <code>case_id, target_group_id=C7704a978f3556c1efb7f6bf13fbd3eeb</code>
+      </p>
+    </div></body></html>""")
+
+
+@app.post("/admin/move-customer")
+async def move_customer_to_group(request: Request):
+    """把指定 case_id 搬到目標 group（救援用）。"""
+    role = check_auth(request)
+    if role != "admin":
+        return JSONResponse({"ok": False, "error": "無權限"}, status_code=403)
+    form = await request.form()
+    case_id = (form.get("case_id") or "").strip()
+    target_group_id = (form.get("target_group_id") or "").strip()
+    if not case_id or not target_group_id:
+        return JSONResponse({"ok": False, "error": "缺 case_id 或 target_group_id"})
+    with db_conn(commit=True) as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT customer_name, source_group_id FROM customers WHERE case_id=?", (case_id,))
+        row = cur.fetchone()
+        if not row:
+            return JSONResponse({"ok": False, "error": "找不到 case"})
+        old_gid = row["source_group_id"]
+        old_gname = get_group_name(old_gid) or old_gid[:8]
+        new_gname = get_group_name(target_group_id) or target_group_id[:8]
+        cur.execute("UPDATE customers SET source_group_id=?, updated_at=? WHERE case_id=?",
+                    (target_group_id, now_iso(), case_id))
+        cur.execute("INSERT INTO case_logs (case_id, customer_name, id_no, company, message_text, from_group_id, created_at, snapshot_json) VALUES (?, ?, '', '', ?, ?, ?, '')",
+                    (case_id, row["customer_name"], f"已從【{old_gname}】搬到【{new_gname}】（救援）", target_group_id, now_iso()))
+    return JSONResponse({"ok": True, "message": f"{row['customer_name']} 已從 {old_gname} 搬到 {new_gname}"})
 
 
 @app.post("/admin/clear-group")
