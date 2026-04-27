@@ -3459,6 +3459,10 @@ def parse_special_command(text: str, group_id: str) -> Optional[Dict]:
     if re.match(r"^待撥款$", clean):
         return {"type": "pending_disbursement"}
 
+    # 待跟進清單：@AI 待跟進 / @AI 跟進
+    if re.match(r"^待?跟進$", clean):
+        return {"type": "follow_up_list"}
+
     # 統計：@AI 統計
     if re.match(r"^統計$", clean):
         return {"type": "stats"}
@@ -4333,6 +4337,9 @@ _HELP_TOOLS = """🔹 其他小工具
   看統計：@AI 統計
     備註：今日/本月 進件、核准、結案數
   待撥款名單：@AI 待撥款
+  待跟進清單：@AI 待跟進
+    顯示：缺件超過 3 天 / 待撥款超過 7 天 / 卡關超過 5 天
+         專門列「該動沒動」的客戶、業務每天打一次掃漏
   查群組ID：@AI 群組ID
 
 【修改類】
@@ -4989,6 +4996,93 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
             gname = get_group_name(r["source_group_id"]) if group_id == A_GROUP_ID else ""
             grp_tag = f"({gname})" if gname else ""
             lines.append(f"{created}-{name}{grp_tag}-核准{amt_str}")
+        reply_text(reply_token, "\n".join(lines))
+        return
+
+    if t == "follow_up_list":
+        # 列出該群（A 群則全部）需要跟進的客戶
+        # 三類：(1) 缺件超過 3 天 (2) 待撥款超過 7 天 (3) current 卡同家超過 5 天
+        from datetime import datetime as _dt, timedelta as _td
+        now_dt = _dt.fromisoformat(now_iso().split(".")[0]) if "." in now_iso() else _dt.fromisoformat(now_iso())
+        conn = get_conn(); cur = conn.cursor()
+        if group_id in (set(get_a_group_ids()) | {A_GROUP_ID}):
+            cur.execute("SELECT * FROM customers WHERE status='ACTIVE'")
+        else:
+            cur.execute("SELECT * FROM customers WHERE status='ACTIVE' AND source_group_id=?", (group_id,))
+        rows = cur.fetchall(); conn.close()
+
+        DOC_DAYS = 3      # 缺件超過 N 天視為待跟進
+        DISB_DAYS = 7     # 待撥款超過 N 天視為待跟進
+        STUCK_DAYS = 5    # current 公司沒推進超過 N 天
+
+        def _days_since(iso_str):
+            if not iso_str:
+                return 0
+            try:
+                t = iso_str.split(".")[0]
+                d = _dt.fromisoformat(t)
+                return (now_dt - d).days
+            except Exception:
+                return 0
+
+        doc_overdue = []     # 缺件超過 3 天
+        disb_overdue = []    # 待撥款超過 7 天
+        stuck_cases = []     # current 卡關超過 5 天
+
+        for r in rows:
+            name = r["customer_name"]
+            cur_co = r["current_company"] or r["company"] or ""
+            updated_days = _days_since(r["updated_at"])
+
+            # (1) 缺件
+            pend = (r["pending_docs"] or "").strip()
+            if pend and updated_days >= DOC_DAYS:
+                docs_str = "/".join(d.strip() for d in pend.split(",") if d.strip())
+                doc_overdue.append((updated_days, name, cur_co, docs_str))
+
+            # (2) 待撥款超過 N 天
+            if (r["report_section"] or "") == "待撥款":
+                anchor = r["approved_at"] or r["created_at"]
+                d2 = _days_since(anchor)
+                if d2 >= DISB_DAYS:
+                    amt = r["approved_amount"] or ""
+                    disb_overdue.append((d2, name, cur_co, amt))
+
+            # (3) current 卡關 (route 還在送、updated_at 沒動)
+            if cur_co and (r["report_section"] or "") not in ("待撥款", "送件") and updated_days >= STUCK_DAYS and not pend:
+                stuck_cases.append((updated_days, name, cur_co))
+
+        # 排序（天數倒序、最久的最上）
+        doc_overdue.sort(key=lambda x: -x[0])
+        disb_overdue.sort(key=lambda x: -x[0])
+        stuck_cases.sort(key=lambda x: -x[0])
+
+        if not (doc_overdue or disb_overdue or stuck_cases):
+            reply_text(reply_token, "✅ 目前沒有待跟進的客戶")
+            return
+
+        gname = get_group_name(group_id) if group_id not in (set(get_a_group_ids()) | {A_GROUP_ID}) else "全部"
+        lines = [f"⚠️ 待跟進清單（{gname}）"]
+
+        if doc_overdue:
+            lines.append(f"\n📋 缺件超過 {DOC_DAYS} 天 ({len(doc_overdue)})")
+            for days, name, co, docs in doc_overdue[:15]:
+                co_short = normalize_section(co) or co
+                lines.append(f"  • {name}-{co_short} 缺{docs}（已 {days} 天）")
+
+        if disb_overdue:
+            lines.append(f"\n💰 待撥款超過 {DISB_DAYS} 天 ({len(disb_overdue)})")
+            for days, name, co, amt in disb_overdue[:15]:
+                co_short = normalize_section(co) or co
+                lines.append(f"  • {name}-{co_short} 核准{amt}（已 {days} 天）")
+
+        if stuck_cases:
+            lines.append(f"\n🐌 卡關超過 {STUCK_DAYS} 天 ({len(stuck_cases)})")
+            for days, name, co in stuck_cases[:15]:
+                co_short = normalize_section(co) or co
+                lines.append(f"  • {name}-{co_short}（已 {days} 天沒動）")
+
+        lines.append(f"\n💡 處理：補件補完打「@AI 姓名 已補XX」、卡關打「@AI 姓名 轉下一家」")
         reply_text(reply_token, "\n".join(lines))
         return
 
