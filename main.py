@@ -8488,35 +8488,49 @@ async def import_juofeng_confirm(request: Request):
         name = d["name"]
         id_no = (d.get("id_no") or "").strip()
         try:
+            # 嘗試找既有客戶：先用身分證、找不到再用姓名（測試群可能沒打身分證）
+            existing = None
             if id_no:
                 existing = find_active_by_id_no(id_no)
-                if existing:
-                    old_gid = existing["source_group_id"]
-                    if old_gid == SALES_GROUP_ID:
-                        skipped.append(f"{name}（已在鉅烽群）")
-                        continue
-                    old_gname = get_group_name(old_gid) or old_gid[:8]
-                    approved = (d.get("approved_amount") or "").strip()
-                    disb = (d.get("disb_date") or "").strip()
-                    report_sec = d.get("report_section", "") or ""
-                    concurrent_str = ",".join(d.get("concurrent", []))
-                    merge_kwargs = {"source_group_id": SALES_GROUP_ID,
-                                    "text": f"已從【{old_gname}】搬到【{JUOFENG_GROUP_NAME}】",
-                                    "from_group_id": SALES_GROUP_ID}
-                    if approved and not (existing["approved_amount"] or "").strip():
-                        merge_kwargs["approved_amount"] = approved
-                    if disb and not (existing["disbursement_date"] or "").strip():
-                        merge_kwargs["disbursement_date"] = disb
-                    if report_sec and not (existing["report_section"] or "").strip():
-                        merge_kwargs["report_section"] = report_sec
-                    if concurrent_str and not (existing["concurrent_companies"] or "").strip():
-                        merge_kwargs["concurrent_companies"] = concurrent_str
-                    co_import = d.get("current_company", "") or ""
-                    if co_import and not (existing["current_company"] or "").strip():
-                        merge_kwargs["current_company"] = co_import
-                    update_customer(existing["case_id"], **merge_kwargs)
-                    transferred.append(f"{name}（從 {old_gname}）")
+            if not existing:
+                rows = find_active_by_name(name)
+                # 排除已在鉅烽群的；只搬其他群（含測試群）的同名 ACTIVE
+                non_target = [r for r in rows if r["source_group_id"] != SALES_GROUP_ID]
+                if len(non_target) == 1:
+                    existing = non_target[0]
+                elif len(non_target) > 1:
+                    failed.append(f"{name}：跨群有 {len(non_target)} 筆同名、人工確認")
                     continue
+            if existing:
+                old_gid = existing["source_group_id"]
+                if old_gid == SALES_GROUP_ID:
+                    skipped.append(f"{name}（已在鉅烽群）")
+                    continue
+                old_gname = get_group_name(old_gid) or old_gid[:8]
+                approved = (d.get("approved_amount") or "").strip()
+                disb = (d.get("disb_date") or "").strip()
+                report_sec = d.get("report_section", "") or ""
+                concurrent_str = ",".join(d.get("concurrent", []))
+                merge_kwargs = {"source_group_id": SALES_GROUP_ID,
+                                "text": f"已從【{old_gname}】搬到【{JUOFENG_GROUP_NAME}】",
+                                "from_group_id": SALES_GROUP_ID}
+                # 既有身分證為空、用 import 的補上
+                if id_no and not (existing["id_no"] or "").strip():
+                    merge_kwargs["id_no"] = id_no
+                if approved and not (existing["approved_amount"] or "").strip():
+                    merge_kwargs["approved_amount"] = approved
+                if disb and not (existing["disbursement_date"] or "").strip():
+                    merge_kwargs["disbursement_date"] = disb
+                if report_sec and not (existing["report_section"] or "").strip():
+                    merge_kwargs["report_section"] = report_sec
+                if concurrent_str and not (existing["concurrent_companies"] or "").strip():
+                    merge_kwargs["concurrent_companies"] = concurrent_str
+                co_import = d.get("current_company", "") or ""
+                if co_import and not (existing["current_company"] or "").strip():
+                    merge_kwargs["current_company"] = co_import
+                update_customer(existing["case_id"], **merge_kwargs)
+                transferred.append(f"{name}（從 {old_gname}）")
+                continue
             co = d.get("current_company", "") or ""
             route_order = d.get("route_order", "") or ""
             route_plan = ""
