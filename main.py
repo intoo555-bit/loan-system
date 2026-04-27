@@ -2831,17 +2831,31 @@ def extract_status_summary(first_line: str, customer_name: str) -> str:
         # 含糊「補 X 申覆」→ 預設待補
         return "待補申覆"
 
-    # 補件類
-    _bu_list = ["補件", "補資料", "補行照", "補聯徵", "補保人", "補薪轉", "補照片", "補時段",
-                "補JCIC", "補jcic", "補在職", "補存摺", "補勞保", "補駕照",
-                "缺聯徵", "缺資料", "缺薪轉", "缺JCIC", "缺jcic", "缺保人", "缺在職", "缺存摺"]
-    if "已補" in first_line or "補好" in first_line or "補完" in first_line:
-        return "已補資料"
-    if any(w in first_line for w in _bu_list):
-        # 業務主動語氣 → 已補
-        if any(m in first_line for m in _business_done_markers):
-            return "已補資料"
-        return "待補資料"
+    # 補件類：先比對具體項目（保人/聯徵/薪轉 等）→ 顯示具體狀態；
+    # 沒命中具體項目才 fallback 到「待補資料 / 已補資料」泛狀態
+    # 順序：保人 / 聯徵 / 薪轉 ... → 越特定越前面、避免被「補件」泛字蓋掉
+    _specific_supp = [
+        ("補保人", "保人"), ("缺保人", "保人"),
+        ("補聯徵", "聯徵"), ("缺聯徵", "聯徵"),
+        ("補JCIC", "JCIC"), ("補jcic", "JCIC"), ("缺JCIC", "JCIC"), ("缺jcic", "JCIC"),
+        ("補薪轉", "薪轉"), ("缺薪轉", "薪轉"),
+        ("補在職", "在職"), ("缺在職", "在職"),
+        ("補存摺", "存摺"), ("缺存摺", "存摺"),
+        ("補勞保", "勞保"),
+        ("補駕照", "駕照"),
+        ("補身分證", "身分證"),
+        ("補行照", "行照"),
+        ("補時段", "時段"),
+        ("補照片", "照片"),
+    ]
+    _bu_generic = ["補件", "補資料", "缺資料"]
+    _has_done = ("已補" in first_line or "補好" in first_line or "補完" in first_line
+                 or any(m in first_line for m in _business_done_markers))
+    for kw, item in _specific_supp:
+        if kw in first_line:
+            return f"已補{item}" if _has_done else f"待補{item}"
+    if any(w in first_line for w in _bu_generic):
+        return "已補資料" if _has_done else "待補資料"
     if "未接照會" in first_line or first_line.strip().endswith("NA") or " NA" in first_line:
         return "NA"
     # 「待核准」fallback：沒命中具體補件/照會 → 直接顯示「待核准」
@@ -3012,15 +3026,18 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
             """日報狀態壓縮、減少長度（手機看不用捲）：
             - 已補申覆/已補資料/已補照會 保留完整（分辨申覆 vs 資料 vs 照會）
             - 待補申覆/待補資料/待補照會 保留完整
+            - 待補保人/已補保人/待補聯徵 等具體項目也保留
             - 補時段 HH:MM-HH:MM → 補時段（不帶時間）
             - 其他保持原樣
             """
             if not s: return s
-            # 已補/待補：申覆/資料/照會/時段 區分保留
-            for prefix in ("已補申覆", "已補資料", "已補照會", "已補時段",
-                           "待補申覆", "待補資料", "待補照會"):
-                if s.startswith(prefix):
-                    return prefix
+            # 已補/待補：申覆/資料/照會/時段 + 具體補件項目（保人/聯徵/薪轉等）保留
+            _specific_items = ("申覆", "資料", "照會", "時段", "保人", "聯徵", "JCIC",
+                              "薪轉", "在職", "存摺", "勞保", "駕照", "身分證", "行照", "照片")
+            for stage in ("已補", "待補"):
+                for item in _specific_items:
+                    if s.startswith(stage + item):
+                        return stage + item
             if s.startswith("已補") or "已補" == s:
                 return "已補"
             if s.startswith("待補") or "待補" == s:
