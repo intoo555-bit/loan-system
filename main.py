@@ -8390,6 +8390,228 @@ async def import_loan_confirm(request: Request):
     return HTMLResponse(summary)
 
 
+# ========== 鉅烽 4 月匯入（共用 import_loan 流程、改 group_id 跟 JSON 檔） ==========
+JUOFENG_GROUP_ID = "C0aae01dffc0f26f1befee07afc2679f6"
+JUOFENG_GROUP_NAME = "鉅烽"
+
+
+@app.get("/admin/import-juofeng", response_class=HTMLResponse)
+def import_juofeng_preview(request: Request):
+    """從 juofeng_apr_import.json 讀客戶資料、預覽匯入頁（admin 限定）。"""
+    from fastapi.responses import RedirectResponse
+    role = check_auth(request)
+    if role != "admin":
+        return RedirectResponse("/login")
+    _base = os.path.dirname(os.path.abspath(__file__))
+    jpath = os.path.join(_base, "juofeng_apr_import.json")
+    if not os.path.exists(jpath):
+        return HTMLResponse("<div style='padding:40px'>找不到 juofeng_apr_import.json</div>")
+    with open(jpath, encoding="utf-8") as f:
+        data = json.load(f)
+    rows_html = ""
+    for d in data:
+        concurrent = "+".join(d.get("concurrent", []))
+        co_str = d.get("current_company", "") + (f"+{concurrent}" if concurrent else "")
+        amt_str = d.get("approved_amount", "") or ""
+        disb_str = d.get("disb_date", "") or ""
+        tag = "💰待撥款" if d.get("report_section") == "待撥款" else ""
+        rows_html += f'''<tr>
+          <td style="padding:6px 10px">{h(tag)}</td>
+          <td style="padding:6px 10px;font-weight:600">{h(d["name"])}</td>
+          <td style="padding:6px 10px;font-family:monospace;font-size:12px">{h(d.get("id_no","") or "❌")}</td>
+          <td style="padding:6px 10px">{h(co_str)}</td>
+          <td style="padding:6px 10px">{h(amt_str)}</td>
+          <td style="padding:6px 10px">{h(disb_str)}</td>
+          <td style="padding:6px 10px;font-size:11px;color:#6b7280">{h(d.get("route_order","-") or "-")}</td>
+        </tr>'''
+    return HTMLResponse(f"""<!DOCTYPE html><html><head>{PAGE_CSS}<title>匯入 4 月鉅烽案件</title></head><body>
+    {make_topnav(role, "admin")}
+    <div class="page">
+      <h2>匯入 4 月鉅烽案件（共 {len(data)} 筆）</h2>
+      <div style="font-size:13px;color:#6b7280;margin-bottom:12px">
+        目標業務群：<b>鉅烽</b>（{JUOFENG_GROUP_ID}）<br>
+        身分證已存在的會自動跳過、不會重複建案。<br>
+        群組未存在會自動建立為 SALES_GROUP。
+      </div>
+      <div style="background:#fff;border:1px solid #e5e7eb;border-radius:10px;overflow:auto;margin-bottom:16px">
+        <table style="width:100%;border-collapse:collapse;font-size:13px">
+          <thead style="background:#f9fafb;border-bottom:1px solid #e5e7eb;position:sticky;top:0">
+            <tr>
+              <th style="padding:8px;text-align:left">狀態</th>
+              <th style="padding:8px;text-align:left">姓名</th>
+              <th style="padding:8px;text-align:left">身分證</th>
+              <th style="padding:8px;text-align:left">current + concurrent</th>
+              <th style="padding:8px;text-align:left">核准金額</th>
+              <th style="padding:8px;text-align:left">撥款日</th>
+              <th style="padding:8px;text-align:left">送件順序</th>
+            </tr>
+          </thead>
+          <tbody>{rows_html}</tbody>
+        </table>
+      </div>
+      <div style="display:flex;gap:12px;align-items:center">
+        <form method="post" action="/admin/import-juofeng/confirm" onsubmit="return confirm('確定匯入 {len(data)} 筆到「鉅烽」業務群嗎？')">
+          <button type="submit" class="btn btn-primary" style="padding:10px 24px;font-size:15px">✅ 確認匯入 {len(data)} 筆</button>
+        </form>
+        <form method="post" action="/admin/clear-group" onsubmit="return confirm('確定要清空「鉅烽」群的所有客戶嗎？（匯入失誤時重來用）')">
+          <input type="hidden" name="group_id" value="{JUOFENG_GROUP_ID}">
+          <button type="submit" style="padding:10px 18px;font-size:14px;background:#b91c1c;color:#fff;border:none;border-radius:7px;cursor:pointer">🗑 先清空鉅烽群</button>
+        </form>
+      </div>
+    </div></body></html>""")
+
+
+@app.post("/admin/import-juofeng/confirm")
+async def import_juofeng_confirm(request: Request):
+    """執行匯入到鉅烽群、admin 限定。"""
+    role = check_auth(request)
+    if role != "admin":
+        return HTMLResponse("無權限", status_code=403)
+    _base = os.path.dirname(os.path.abspath(__file__))
+    jpath = os.path.join(_base, "juofeng_apr_import.json")
+    with open(jpath, encoding="utf-8") as f:
+        data = json.load(f)
+
+    SALES_GROUP_ID = JUOFENG_GROUP_ID
+    # 先確保群組已註冊（不存在就建立為 SALES_GROUP）
+    with db_conn(commit=True) as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT 1 FROM groups WHERE group_id=?", (SALES_GROUP_ID,))
+        if not cur.fetchone():
+            cur.execute(
+                "INSERT INTO groups (group_id, group_name, group_type, is_active) VALUES (?, ?, ?, 1)",
+                (SALES_GROUP_ID, JUOFENG_GROUP_NAME, "SALES_GROUP"),
+            )
+
+    created, transferred, skipped, failed = [], [], [], []
+    for d in data:
+        name = d["name"]
+        id_no = (d.get("id_no") or "").strip()
+        try:
+            if id_no:
+                existing = find_active_by_id_no(id_no)
+                if existing:
+                    old_gid = existing["source_group_id"]
+                    if old_gid == SALES_GROUP_ID:
+                        skipped.append(f"{name}（已在鉅烽群）")
+                        continue
+                    old_gname = get_group_name(old_gid) or old_gid[:8]
+                    approved = (d.get("approved_amount") or "").strip()
+                    disb = (d.get("disb_date") or "").strip()
+                    report_sec = d.get("report_section", "") or ""
+                    concurrent_str = ",".join(d.get("concurrent", []))
+                    merge_kwargs = {"source_group_id": SALES_GROUP_ID,
+                                    "text": f"已從【{old_gname}】搬到【{JUOFENG_GROUP_NAME}】",
+                                    "from_group_id": SALES_GROUP_ID}
+                    if approved and not (existing["approved_amount"] or "").strip():
+                        merge_kwargs["approved_amount"] = approved
+                    if disb and not (existing["disbursement_date"] or "").strip():
+                        merge_kwargs["disbursement_date"] = disb
+                    if report_sec and not (existing["report_section"] or "").strip():
+                        merge_kwargs["report_section"] = report_sec
+                    if concurrent_str and not (existing["concurrent_companies"] or "").strip():
+                        merge_kwargs["concurrent_companies"] = concurrent_str
+                    co_import = d.get("current_company", "") or ""
+                    if co_import and not (existing["current_company"] or "").strip():
+                        merge_kwargs["current_company"] = co_import
+                    update_customer(existing["case_id"], **merge_kwargs)
+                    transferred.append(f"{name}（從 {old_gname}）")
+                    continue
+            co = d.get("current_company", "") or ""
+            route_order = d.get("route_order", "") or ""
+            route_plan = ""
+            if route_order and "/" in route_order:
+                order = [x.strip() for x in route_order.split("/") if x.strip()]
+                idx = 0
+                for i, x in enumerate(order):
+                    if co and (co in x or x in co):
+                        idx = i
+                        break
+                route_plan = make_route_json(order, idx)
+            note = (d.get("report_note") or "").strip()
+            text = note if note else (f"{name} {co}" if co else name)
+            concurrent_str = ",".join(d.get("concurrent", []))
+            report_sec = d.get("report_section", "") or ""
+            approved = (d.get("approved_amount") or "").strip()
+            disb = (d.get("disb_date") or "").strip()
+
+            if approved and co and report_sec == "待撥款":
+                order = [x.strip() for x in route_order.split("/") if x.strip()] if route_order and "/" in route_order else [co]
+                if co not in order:
+                    order = [co] + order
+                history = []
+                main_h = {"company": co, "amount": approved, "status": "待撥款" if disb else "核准"}
+                if disb:
+                    main_h["disbursed"] = disb
+                history.append(main_h)
+                idx = 0
+                for i, x in enumerate(order):
+                    if co in x or x in co:
+                        idx = i; break
+                route_plan = make_route_json(order, idx, history)
+
+            case_id = create_customer_record(
+                name=name, id_no=id_no, company=co,
+                source_group_id=SALES_GROUP_ID, text=text,
+                route_plan=route_plan, current_company=co,
+                report_section=report_sec,
+            )
+            build_date = (d.get("build_date") or "").strip()
+            if build_date and "/" in build_date:
+                try:
+                    mm, dd = build_date.split("/")
+                    iso_date = f"2026-{mm.zfill(2)}-{dd.zfill(2)}T00:00:00"
+                    with db_conn(commit=True) as conn:
+                        cur = conn.cursor()
+                        cur.execute("UPDATE customers SET created_at=? WHERE case_id=?", (iso_date, case_id))
+                except Exception:
+                    pass
+            if approved and build_date and "/" in build_date:
+                try:
+                    mm, dd = build_date.split("/")
+                    ap_iso = f"2026-{mm.zfill(2)}-{dd.zfill(2)}T00:00:00"
+                    with db_conn(commit=True) as conn:
+                        cur = conn.cursor()
+                        cur.execute("UPDATE customers SET approved_at=? WHERE case_id=?", (ap_iso, case_id))
+                except Exception:
+                    pass
+            update_kwargs = {}
+            if approved:
+                update_kwargs["approved_amount"] = approved
+            if disb:
+                update_kwargs["disbursement_date"] = disb
+            if concurrent_str:
+                update_kwargs["concurrent_companies"] = concurrent_str
+            if update_kwargs:
+                update_customer(case_id, text=None, from_group_id=SALES_GROUP_ID, **update_kwargs)
+            extra_fields = {
+                "birth_date": d.get("birth", ""),
+                "phone": d.get("phone", ""),
+                "email": d.get("email", ""),
+                "company_name_detail": d.get("company_name", ""),
+            }
+            extra_fields = {k: v for k, v in extra_fields.items() if v}
+            if extra_fields:
+                with db_conn(commit=True) as conn:
+                    cur = conn.cursor()
+                    set_clause = ", ".join(f"{k}=?" for k in extra_fields)
+                    vals = list(extra_fields.values()) + [case_id]
+                    cur.execute(f"UPDATE customers SET {set_clause} WHERE case_id=?", vals)
+            created.append(name)
+        except Exception as e:
+            failed.append(f"{name}：{e}")
+
+    summary = f"""<div style="padding:40px;font-family:sans-serif">
+      <h2>鉅烽匯入完成</h2>
+      <p>✅ 新建：{len(created)} 筆 — {', '.join(created[:20])}{'...' if len(created)>20 else ''}</p>
+      <p>🔀 搬到鉅烽群：{len(transferred)} 筆 — {', '.join(transferred)}</p>
+      <p>⚠️ 跳過：{len(skipped)} 筆 — {', '.join(skipped)}</p>
+      <p>❌ 失敗：{len(failed)} 筆 — {'; '.join(failed)}</p>
+      <a href="/admin/groups">回群組管理</a> | <a href="/history">看歷史</a> | <a href="/report">看日報</a>
+    </div>"""
+    return HTMLResponse(summary)
+
+
 @app.post("/admin/clear-group")
 async def clear_group_customers(request: Request):
     """清空指定群組的所有客戶（admin 限定）。用於匯入失誤重來。"""
