@@ -6061,6 +6061,17 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
             update_customer(target["case_id"],
                             concurrent_companies=",".join(new_concurrent),
                             text=text_note, from_group_id=group_id)
+            # 清 company_status[那家] 避免日報該公司區塊還顯示這客戶
+            try:
+                cs_raw = target["company_status"] or "{}"
+                cs = json.loads(cs_raw)
+                if co_norm in cs:
+                    del cs[co_norm]
+                    with db_conn(commit=True) as _cn:
+                        _cn.cursor().execute("UPDATE customers SET company_status=? WHERE case_id=?",
+                                             (json.dumps(cs, ensure_ascii=False), target["case_id"]))
+            except Exception:
+                pass
             push_text(target["source_group_id"], text_note)
             remain = ",".join(new_concurrent) if new_concurrent else "無"
             all_active = ([current_co] if current_co else []) + new_concurrent
