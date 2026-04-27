@@ -3154,6 +3154,44 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
                     if created[:10] == today_str:
                         co_line = "🆕" + co_line
                     section_map.setdefault(co_section, []).append(co_line)
+
+        # 婉拒'd 公司若 company_status 有「補件」類紀錄 → 也顯示在那家區塊
+        # （業務後來補保人/補申覆，雖然推進到下一家但原家還在等申覆）
+        try:
+            _route_data = parse_route_json(row["route_plan"] or "")
+            _history = _route_data.get("history", []) or []
+            _shown_secs = {section}
+            if concurrent_str:
+                for _c in concurrent_str.split(","):
+                    if _c.strip():
+                        _shown_secs.add(normalize_section(_c.strip()))
+            _shown_secs |= approved_sections
+            _supp_kw = ["補保人", "補申覆", "補聯徵", "補件", "補資料", "補薪轉",
+                        "補照片", "補時段", "補照會", "補行照", "補在職", "補存摺"]
+            for _h in _history:
+                if _h.get("status") != "婉拒":
+                    continue
+                _rej_co = _h.get("company") or ""
+                if not _rej_co:
+                    continue
+                _rej_sec = normalize_section(_rej_co)
+                if _rej_sec in _shown_secs:
+                    continue
+                _cs_text = company_status.get(_rej_sec, "")
+                if not _cs_text or not any(k in _cs_text for k in _supp_kw):
+                    continue
+                _rej_status = _compress_status(extract_status_summary(_cs_text.splitlines()[0] if _cs_text else "", row["customer_name"]))
+                _rej_short = _display_co(_rej_co) or _rej_co
+                _rej_line = f"{date_str}-{row['customer_name']}-{_rej_short}"
+                if _rej_status and not pending_str:
+                    _rej_line += f"-{_rej_status}"
+                _rej_line += pending_str
+                if created[:10] == today_str:
+                    _rej_line = "🆕" + _rej_line
+                section_map.setdefault(_rej_sec, []).append(_rej_line)
+                _shown_secs.add(_rej_sec)
+        except Exception:
+            pass
     return section_map
 
 
@@ -7560,6 +7598,49 @@ def _update_company_status_for_text(case_id: str, company: str, block_text: str)
         pass
 
 
+_SUPPLEMENT_KEYWORDS_FOR_REJECTED = [
+    "補保人", "補申覆", "補聯徵", "補信用",
+    "補件", "補資料", "補薪轉", "補照片",
+    "補行照", "補在職", "補存摺", "補勞保", "補駕照", "補身分證",
+    "補JCIC", "補jcic",
+]
+
+
+def _mark_supplement_for_last_rejected(case_id: str, block_text: str):
+    """訊息含「補保人/補申覆/補資料」等補件關鍵字、無指定公司時：
+    把 route_plan.history 最後一家婉拒'd 公司的 company_status 設為此訊息文字。
+    這樣日報該家公司區塊就會顯示「補保人」狀態（即使該家已婉拒推進到下一家）。
+    """
+    if not any(k in block_text for k in _SUPPLEMENT_KEYWORDS_FOR_REJECTED):
+        return
+    try:
+        conn = get_conn(); cur = conn.cursor()
+        cur.execute("SELECT route_plan, company_status FROM customers WHERE case_id=?", (case_id,))
+        row = cur.fetchone()
+        if not row:
+            conn.close(); return
+        rd = parse_route_json(row["route_plan"] or "")
+        history = rd.get("history", []) or []
+        rejected = [h.get("company") for h in history if h.get("status") == "婉拒" and h.get("company")]
+        if not rejected:
+            conn.close(); return
+        last_rejected = rejected[-1]
+        co_key = normalize_section(last_rejected)
+        if not co_key:
+            conn.close(); return
+        cs_raw = row["company_status"] or "{}"
+        try:
+            cs = json.loads(cs_raw)
+        except Exception:
+            cs = {}
+        cs[co_key] = block_text
+        cur.execute("UPDATE customers SET company_status=? WHERE case_id=?",
+                    (json.dumps(cs, ensure_ascii=False), case_id))
+        conn.commit(); conn.close()
+    except Exception:
+        pass
+
+
 def handle_bc_case_block(block_text, source_group_id, reply_token, source_text="") -> Optional[str]:
     if is_blocked(block_text):
         return "❌ 含禁止關鍵字，已略過"
@@ -7713,6 +7794,10 @@ def _handle_bc_case_block_locked(block_text, source_group_id, reply_token, sourc
         # （例：業務打「已補時段」→ 清掉 A 群舊的「NA」「待補」殘留）
         if any(m in block_text for m in ["已補", "補好了", "補完了", "補過了"]):
             _refresh_company_status_after_docs(c["case_id"], block_text)
+        # 訊息含「補保人/補申覆」等補件關鍵字、沒指公司 → 自動歸給最近婉拒那家
+        # 讓日報該家公司區塊顯示「補保人」狀態
+        if not company:
+            _mark_supplement_for_last_rejected(c["case_id"], block_text)
         pushed = False
         if want_push_a and new_status != "CLOSED":
             ok, _ = push_text(get_a_group_for_sales(source_group_id), block_text); pushed = ok
@@ -7738,6 +7823,9 @@ def _handle_bc_case_block_locked(block_text, source_group_id, reply_token, sourc
         # 同上：已補 / 補好 / 補完 → 刷新 stale company_status
         if any(m in block_text for m in ["已補", "補好了", "補完了", "補過了"]):
             _refresh_company_status_after_docs(r["case_id"], block_text)
+        # 補件關鍵字 + 無指定公司 → 歸給最近婉拒那家
+        if not company:
+            _mark_supplement_for_last_rejected(r["case_id"], block_text)
         pushed = False
         if want_push_a:
             ok, _ = push_text(get_a_group_for_sales(source_group_id), block_text); pushed = ok
