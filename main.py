@@ -385,9 +385,10 @@ def compute_field_value(field_key: str, r: dict, plan_name: str = "",
     if field_key == "live_full_address":
         if v("live_same_as_reg") == "1":
             return (v("reg_city") + v("reg_district") + v("reg_address")).strip()
-        # 縣市+區相同 → 當成同戶籍，用戶籍地
-        if v("live_city") and v("live_city") == v("reg_city") and v("live_district") == v("reg_district"):
+        # 住家詳細地址為空 → 用戶籍地（避免空白）
+        if not v("live_address").strip():
             return (v("reg_city") + v("reg_district") + v("reg_address")).strip()
+        # 否則使用住家地址（即使縣市+區與戶籍相同、只要門牌詳細地址不同就是不同地址）
         return (v("live_city") + v("live_district") + v("live_address")).strip()
     if field_key == "company_full_address":
         return (v("company_city") + v("company_district") + v("company_address")).strip()
@@ -12017,9 +12018,15 @@ def _fill_qiaomei_pdf(r: dict) -> bytes:
         else:
             co_phone = (co_area + "-" + co_num) if co_area and co_num else co_num
 
-        live_same = v("live_same_as_reg") == "1"
+        # 同戶籍判定（喬美）：旗標 "1" 或 兩邊地址字串完全相同；否則視為不同地址、兩行都要印
+        # 同縣市同區但門牌不同 → 不算同戶籍、要印兩行
         reg_addr = v("reg_city") + v("reg_district") + v("reg_address")
-        live_addr = reg_addr if live_same else (v("live_city") + v("live_district") + v("live_address"))
+        live_addr_raw = v("live_city") + v("live_district") + v("live_address")
+        _flag_same = v("live_same_as_reg") == "1"
+        _addr_equal = bool(reg_addr) and reg_addr.replace(" ", "") == live_addr_raw.replace(" ", "")
+        _live_empty = not live_addr_raw.strip()
+        live_same = _flag_same or _addr_equal or _live_empty
+        live_addr = reg_addr if live_same else live_addr_raw
 
         # 欄位座標表（PDF 點坐標，原點左下，y 反轉）
         # PDF page1 size: 612 x 859
