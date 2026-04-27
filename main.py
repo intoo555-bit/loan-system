@@ -2968,13 +2968,10 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
         report_sec = row["report_section"] or ""
         current_co = row["current_company"] or row["company"] or ""
         section = report_sec or current_co or "送件"
-        # 「送件」= 貸款方案剛建案還沒被 A 群回貼過 → 保留「送件」區塊
-        # 但民間方案（房地/銀行/零卡 等）不應卡在送件區塊、直接歸對應公司區塊
+        # 「送件」= fallback；只要有 current_company 就直接歸該公司區塊
+        # （行政後給送件順序、客戶之前在送件區的情況 → 自動移到對應公司）
         if section == "送件" and current_co:
-            _cur_norm = normalize_section(current_co)
-            _private_secs = {"房地", "銀行", "零卡", "商品貸", "代書", "當舖", "鄉民"}
-            if _cur_norm in _private_secs:
-                section = current_co
+            section = current_co
         section = normalize_section(section)
         created = row["created_at"] or ""
         date_str = created[5:10].replace("-", "/") if created else ""
@@ -6619,9 +6616,18 @@ def handle_route_order_block(block_text, source_group_id, reply_token) -> Option
     same = [r for r in rows if r["source_group_id"] == source_group_id]
     dupe_suffix = f"（已去除重複 {dupe_count} 家）" if dupe_count > 0 else ""
     if same:
-        update_customer(same[0]["case_id"], route_plan=route_json, current_company=current_co,
-                        report_section=init_section,
-                        text=block_text, from_group_id=source_group_id, **notify_kw)
+        # 更新既有客戶（行政後給順序的情境）：不強設 report_section
+        # 讓 build_section_map 用 current_company 算對應區塊、避免被覆蓋回「送件」
+        update_kw = {"route_plan": route_json, "current_company": current_co,
+                     "text": block_text, "from_group_id": source_group_id}
+        update_kw.update(notify_kw)
+        # 民間方案（房地/銀行/零卡）→ 設對應 section，避免卡在送件區
+        if is_private:
+            update_kw["report_section"] = ""
+        # 既有 report_section=送件 → 清空讓 current_company 接管
+        if (same[0]["report_section"] or "") == "送件":
+            update_kw["report_section"] = ""
+        update_customer(same[0]["case_id"], **update_kw)
         return f"📋 已更新 {name} 送件順序：{'/'.join(companies)}{dupe_suffix}"
     other = [r for r in rows if r["source_group_id"] != source_group_id]
     if other:
