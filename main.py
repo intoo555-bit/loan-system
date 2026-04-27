@@ -5084,10 +5084,13 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
                     disb_overdue.append((d2, name, cur_co, amt))
 
             # (3) 卡關 → 從 current 開始送件日（route_plan.history 最後 date）
+            # 同時要 updated_at 也超過 N 天（沒在更新狀態）才算真正卡關
+            # 避免「14 天沒推進但天天有補件回報、A 群有照會」的活案被誤標
             if cur_co and (r["report_section"] or "") not in ("待撥款", "送件") and not pend:
                 anchor = _current_send_start_date(r["route_plan"], r["created_at"])
                 d3 = _days_since(anchor)
-                if d3 >= STUCK_DAYS:
+                updated_d = _days_since(r["updated_at"])
+                if d3 >= STUCK_DAYS and updated_d >= STUCK_DAYS:
                     stuck_cases.append((d3, name, cur_co))
 
         conn.close()
