@@ -836,6 +836,8 @@ ACTION_KEYWORDS = [
     "派對保", "委對收", "對好", "對保完成", "不收不簽",
     "已撥款", "今日撥款", "今日已撥款", "已加撥", "核准已撥",
     "預計排撥", "排撥",
+    # 缺件類（缺合照/缺PDF/缺繳息/缺存摺 等業務常用簡寫）
+    "缺", "申覆",
 ]
 
 DELETE_KEYWORDS = [
@@ -7841,7 +7843,8 @@ def _handle_bc_case_block_locked(block_text, source_group_id, reply_token, sourc
     # 這樣「彭駿為 補案件@AI」也能正確判斷
     raw_for_trigger = source_text or block_text
     has_bu_keyword = any(w in block_text for w in [
-        "補", "照會", "缺資料", "補件", "補資料", "補照片",
+        "補", "照會", "缺", "申覆",
+        "補件", "補資料", "補照片",
         "補時段", "補聯徵", "補保人", "補行照", "補照會",
     ])
     # 民間方案（銀行/零卡/商品貸/代書/當舖/鄉民/房地）不推 A 群，只記錄
