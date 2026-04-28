@@ -6479,8 +6479,19 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
             new_text = f"{name} 缺件補完:{doc}"
         else:
             new_text = f"{name} 已補{doc}"
-        update_customer(target["case_id"], pending_docs=new_pending,
-                        text=new_text, from_group_id=group_id)
+        # 缺件補完後仍應留在「送件」區塊（業務通知行政可以送、照會還沒回）
+        # 規則：原本是 缺件 case（pending 有值）+ 補完到空（new_list 空）+ 公司還沒回貼（company_status 空）
+        # → 強制 report_section="送件" 直到 A 群實際回貼
+        update_kw = {"pending_docs": new_pending}
+        if was_pending and not new_list:
+            try:
+                _cs_now = json.loads(target["company_status"] or "{}")
+            except Exception:
+                _cs_now = {}
+            _rsec_now = (target["report_section"] or "")
+            if not _cs_now and _rsec_now != "待撥款":
+                update_kw["report_section"] = "送件"
+        update_customer(target["case_id"], text=new_text, from_group_id=group_id, **update_kw)
         _refresh_company_status_after_docs(target["case_id"], new_text)
         if new_list:
             push_msg = f"✅ {name} 已補 {doc}\n還缺：{' / '.join(new_list)}"
@@ -6501,8 +6512,16 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
         if not _check_active_or_warn(target, reply_token, "已補", name):
             return
         new_text = f"{name} 缺件已全部補完"
-        update_customer(target["case_id"], pending_docs="",
-                        text=new_text, from_group_id=group_id)
+        # 缺件全清也保留在送件區塊（直到 A 群實際回貼）
+        update_kw = {"pending_docs": ""}
+        try:
+            _cs_now = json.loads(target["company_status"] or "{}")
+        except Exception:
+            _cs_now = {}
+        _rsec_now = (target["report_section"] or "")
+        if not _cs_now and _rsec_now != "待撥款":
+            update_kw["report_section"] = "送件"
+        update_customer(target["case_id"], text=new_text, from_group_id=group_id, **update_kw)
         _refresh_company_status_after_docs(target["case_id"], new_text)
         push_msg = f"✅ {name} 缺件已全部清除"
         # 已補推送：業務群打→推 A 群；A 群打→推客戶所屬業務群
