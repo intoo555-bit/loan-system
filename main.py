@@ -9274,42 +9274,73 @@ async def restore_from_report_post(request: Request):
     SECTION_NAMES = set(REPORT_SECTION_1 + REPORT_SECTION_2 + REPORT_SECTION_3 + ["送件", "待撥款", "21汽車"])
     parsed = []  # [(name, current_co, status_note, approved_amt, disb_date, report_section)]
     cur_section = ""
+    debug_unparsed = []  # 收集前 8 行「應該是客戶但沒被解析」的行（給使用者看）
+    debug_ignored = []  # 收集 8 行非客戶/非 section 的行（divider/header）
     for raw_line in text.splitlines():
-        line = raw_line.strip()
+        # 移除 BOM、零寬字、首尾空白
+        line = raw_line.replace("﻿", "").replace("​", "").strip()
         if not line:
             continue
         # 區塊標題（一行一個 section 名）
+        matched_section = False
         if line in SECTION_NAMES:
             cur_section = line
+            matched_section = True
+        else:
+            # 也可能標題前後有 emoji / 多餘字
+            for s in SECTION_NAMES:
+                if line == s or line.startswith(s + " ") or line == "🆕" + s or line == s + "區":
+                    cur_section = s
+                    matched_section = True
+                    break
+        if matched_section:
             continue
-        # 也可能標題後面接其他文字 / 表情符
-        for s in SECTION_NAMES:
-            if line == s or line.startswith(s + " ") or line == "🆕" + s:
-                cur_section = s
-                break
-        # 客戶行：開頭含日期 MM/DD- 或 🆕MM/DD-
-        m = re.match(r"^[🆕\s]*(\d{1,2}/\d{1,2})-([一-鿿]{2,6})-(.+)$", line)
+        # 客戶行：開頭含日期 MM/DD- 或 🆕MM/DD-（姓名 2-8 字、容錯 emoji）
+        m = re.match(r"^[🆕💰⏰\s]*(\d{1,2}/\d{1,2})-([一-鿿]{2,8})-(.+)$", line)
         if not m:
+            # debug 用：看 parser 漏了什麼
+            if re.search(r"\d{1,2}/\d{1,2}", line) and "-" in line and len(debug_unparsed) < 8:
+                debug_unparsed.append(line[:80])
+            elif (len(debug_ignored) < 8 and not line.startswith("📊")
+                  and not line.startswith("━") and not line.startswith("—")
+                  and not line.startswith("⏰") and not line.startswith("(")):
+                debug_ignored.append(line[:50])
             continue
         date_str = m.group(1)
         name = m.group(2)
         rest = m.group(3).strip()
 
-        # 待撥款區塊：解析「核准 公司 N萬(撥款日)」
+        # 待撥款區塊：解析「核准 公司 N萬(撥款日)」、可能 dual-approve「.../亞太 12萬(對保4/27)」
         if cur_section == "待撥款":
-            am = re.search(r"核准\s*([一-鿿0-9]+?)\s*(\d+(?:\.\d+)?)萬", rest)
-            if am:
-                co = am.group(1).strip()
-                amt = am.group(2) + "萬"
-                # 撥款日：(撥款4/27) / (對保4/27) / (待撥款)
-                disb = ""
-                dm = re.search(r"\(撥款(\d{1,2}/\d{1,2})\)", rest)
-                if dm:
-                    disb = dm.group(1)
+            approvals = []  # [(co, amt, disb_date)]
+            am_full = re.search(r"核准\s*(.+)$", rest)
+            if am_full:
+                tail = am_full.group(1)
+                # 直接抓所有「公司 amt萬(...)」段落（不依賴 / 分隔、避免被括號內 4/20 誤切）
+                for sm in re.finditer(r"([一-鿿0-9]+?)\s*(\d+(?:\.\d+)?)萬\s*\(([^)]+)\)", tail):
+                    co_s = sm.group(1).strip().lstrip("/").strip()
+                    amt_s = sm.group(2) + "萬"
+                    paren = sm.group(3)
+                    disb_s = ""
+                    dm = re.search(r"撥款(\d{1,2}/\d{1,2})", paren)
+                    if dm:
+                        disb_s = dm.group(1)
+                    approvals.append((co_s, amt_s, disb_s))
+                # 沒帶括號的 fallback
+                if not approvals:
+                    sm2 = re.match(r"([一-鿿0-9]+?)\s*(\d+(?:\.\d+)?)萬", tail)
+                    if sm2:
+                        approvals.append((sm2.group(1).strip(), sm2.group(2) + "萬", ""))
+            if approvals:
+                co, amt, disb = approvals[0]
+                extra_approved = []
+                for ec, ea, ed in approvals[1:]:
+                    extra_approved.append({"company": ec, "amount": ea, "disb_date": ed})
                 parsed.append({
                     "name": name, "current_company": co, "status_note": "",
                     "approved_amount": amt, "disb_date": disb,
                     "report_section": "待撥款", "build_date": date_str,
+                    "extra_approved": extra_approved,
                 })
                 continue
 
@@ -9361,9 +9392,14 @@ async def restore_from_report_post(request: Request):
                 "report_section": p["report_section"],
                 "company_notes": {},
                 "pending_docs": p.get("pending_docs", ""),
+                "extra_approved": p.get("extra_approved", []),
             }
             if p["status_note"] and p["current_company"]:
                 by_name[nm]["company_notes"][p["current_company"]] = p["status_note"]
+            # 待撥款 dual-approve：第二家也加入 concurrent
+            for ea in p.get("extra_approved", []):
+                if ea.get("company") and ea["company"] != p["current_company"]:
+                    by_name[nm]["concurrent"].append(ea["company"])
         else:
             # 累積 pending_docs
             if p.get("pending_docs") and not by_name[nm]["pending_docs"]:
@@ -9378,9 +9414,15 @@ async def restore_from_report_post(request: Request):
                 by_name[nm]["approved_amount"] = p["approved_amount"]
                 by_name[nm]["disb_date"] = p["disb_date"]
                 by_name[nm]["report_section"] = "待撥款"
+                by_name[nm]["extra_approved"] = p.get("extra_approved", [])
+                for ea in p.get("extra_approved", []):
+                    if ea.get("company") and ea["company"] != p["current_company"]:
+                        if ea["company"] not in by_name[nm]["concurrent"]:
+                            by_name[nm]["concurrent"].append(ea["company"])
             else:
                 if p["current_company"] and p["current_company"] != by_name[nm]["current_company"]:
-                    by_name[nm]["concurrent"].append(p["current_company"])
+                    if p["current_company"] not in by_name[nm]["concurrent"]:
+                        by_name[nm]["concurrent"].append(p["current_company"])
             if p["status_note"] and p["current_company"]:
                 by_name[nm]["company_notes"][p["current_company"]] = p["status_note"]
 
@@ -9413,20 +9455,57 @@ async def restore_from_report_post(request: Request):
         </tr>'''
         updated += 1
         if not is_dry:
+            # 待撥款 dual-approve → 重建 route_plan history（這樣日報用 get_all_approved 能正確顯示兩家）
+            new_route_plan = target.get("route_plan") or ""
+            extras = data.get("extra_approved") or []
+            if sec == "待撥款" and (extras or amt):
+                history = []
+                # current 公司也算一筆核准
+                if cco and amt:
+                    history.append({"company": cco, "status": "核准", "amount": amt, "disbursed": disb})
+                for ea in extras:
+                    history.append({
+                        "company": ea.get("company", ""),
+                        "status": "核准",
+                        "amount": ea.get("amount", ""),
+                        "disbursed": ea.get("disb_date", ""),
+                    })
+                # 保留原 order/current_index、只覆寫 history
+                try:
+                    rp = parse_route_json(new_route_plan)
+                except Exception:
+                    rp = {"order": [], "current_index": 0, "history": []}
+                rp["history"] = history
+                new_route_plan = json.dumps(rp, ensure_ascii=False)
             with db_conn(commit=True) as conn:
                 cur = conn.cursor()
                 cur.execute("""UPDATE customers SET
                     current_company=?, concurrent_companies=?, approved_amount=?,
                     disbursement_date=?, report_section=?, company_status=?,
-                    last_update=?, pending_docs=?, updated_at=?
+                    last_update=?, pending_docs=?, route_plan=?, updated_at=?
                     WHERE case_id=?""",
                     (cco, conc, amt, disb, sec, notes_json,
                      last_update_text, data.get("pending_docs", ""),
-                     now_iso(), target["case_id"]))
+                     new_route_plan, now_iso(), target["case_id"]))
 
     nf_html = ""
     if not_found:
         nf_html = f'<p style="color:#b91c1c;margin-top:14px">⚠️ {len(not_found)} 位日報有但 DB 找不到：{", ".join(not_found[:20])}{"..." if len(not_found)>20 else ""}</p>'
+
+    debug_html = ""
+    if debug_unparsed or debug_ignored:
+        items = ""
+        if debug_unparsed:
+            items += "<p style='font-weight:600;color:#dc2626;margin:8px 0 4px'>⚠️ 看起來像客戶但被跳過的行（前 8 行）：</p><ul style='margin:0;padding-left:20px;font-family:monospace;font-size:12px'>"
+            for u in debug_unparsed:
+                items += f"<li>{h(u)}</li>"
+            items += "</ul>"
+        if debug_ignored:
+            items += "<p style='font-weight:600;color:#6b7280;margin:8px 0 4px'>非客戶/非 section 的行（前 8 行）：</p><ul style='margin:0;padding-left:20px;font-family:monospace;font-size:12px;color:#6b7280'>"
+            for u in debug_ignored:
+                items += f"<li>{h(u)}</li>"
+            items += "</ul>"
+        debug_html = f"<details style='margin-top:14px;background:#fef3c7;padding:10px;border-radius:6px'><summary style='cursor:pointer;font-weight:600'>🔍 解析 debug</summary>{items}</details>"
 
     if is_dry:
         action = f'''<form method="post" action="/admin/restore-from-report" style="margin-top:20px">
@@ -9459,6 +9538,7 @@ async def restore_from_report_post(request: Request):
         <tbody>{rows_html}</tbody>
       </table>
       {nf_html}
+      {debug_html}
       {action}
       <p style="margin-top:14px"><a href="/admin/restore-from-report">回貼新日報</a></p>
     </div></body></html>""")
