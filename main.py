@@ -9314,17 +9314,21 @@ async def restore_from_report_post(request: Request):
                 continue
 
         # 一般 section 行：rest = "公司" 或 "公司-狀態" 或 "公司 (缺X)"
-        # 拆 "-" 取第一段當公司、後面當狀態
-        co_part = rest
+        # 先把括號(缺X)抽出來、不算公司也不算狀態
+        pending_inline = ""
+        rest_no_paren = re.sub(r"\s*\([^)]*\)\s*", "", rest).strip()
+        pm = re.search(r"\(缺([^)]+)\)", rest)
+        if pm:
+            pending_inline = pm.group(1).strip()
+        # 拆 "-" 取第一段當公司、後面當狀態（用清掉括號的字串）
+        co_part = rest_no_paren
         status_note = ""
-        if "-" in rest:
-            parts = rest.split("-", 1)
+        if "-" in rest_no_paren:
+            parts = rest_no_paren.split("-", 1)
             co_part = parts[0].strip()
             status_note = parts[1].strip()
-        # 處理括號（缺X）
-        pend_match = re.search(r"\(缺([^)]+)\)", co_part + " " + status_note)
-        # 公司可能是「亞太」「21」「房地」等、和裕/喬美/第一 等
-        co = co_part
+        # 公司前去掉空白、不要含 "(...)" 殘留
+        co = co_part.split()[0] if co_part else ""
         # 排除「待撥款」「送件」這種特殊區塊名當作公司
         if cur_section in ("送件",) and not co:
             co = ""
@@ -9332,7 +9336,7 @@ async def restore_from_report_post(request: Request):
             "name": name, "current_company": co, "status_note": status_note,
             "approved_amount": "", "disb_date": "",
             "report_section": cur_section if cur_section in ("待撥款", "送件") else "",
-            "build_date": date_str,
+            "build_date": date_str, "pending_docs": pending_inline,
         })
 
     # 找此群所有 ACTIVE 客戶、按姓名 map
@@ -9356,10 +9360,14 @@ async def restore_from_report_post(request: Request):
                 "disb_date": p["disb_date"],
                 "report_section": p["report_section"],
                 "company_notes": {},
+                "pending_docs": p.get("pending_docs", ""),
             }
             if p["status_note"] and p["current_company"]:
                 by_name[nm]["company_notes"][p["current_company"]] = p["status_note"]
         else:
+            # 累積 pending_docs
+            if p.get("pending_docs") and not by_name[nm]["pending_docs"]:
+                by_name[nm]["pending_docs"] = p["pending_docs"]
             # 後續出現的 → 加到 concurrent + company_notes
             if p["report_section"] == "待撥款":
                 # 待撥款優先當 main current
@@ -9410,10 +9418,11 @@ async def restore_from_report_post(request: Request):
                 cur.execute("""UPDATE customers SET
                     current_company=?, concurrent_companies=?, approved_amount=?,
                     disbursement_date=?, report_section=?, company_status=?,
-                    last_update=?, updated_at=?
+                    last_update=?, pending_docs=?, updated_at=?
                     WHERE case_id=?""",
                     (cco, conc, amt, disb, sec, notes_json,
-                     last_update_text, now_iso(), target["case_id"]))
+                     last_update_text, data.get("pending_docs", ""),
+                     now_iso(), target["case_id"]))
 
     nf_html = ""
     if not_found:
