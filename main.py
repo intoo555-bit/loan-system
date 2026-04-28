@@ -2995,22 +2995,21 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
             _row_cs_check = json.loads(row["company_status"] or "{}")
         except Exception:
             _row_cs_check = {}
-        # 「送件」= fallback：
-        # 規則 1：有缺件（pending_docs）+ company_status 空（沒被 A 群處理）
-        #         → 保留送件區塊（潘建宇情境：要送和裕、還缺 PDF、還沒給照會）
-        # 規則 2：民間方案（房地/銀行/零卡 等）→ 跳對應公司區塊（熊高玲情境）
-        # 規則 3：其他（貸款方案 + 沒缺件 + 已有狀態）→ 跳對應公司區塊
-        if section == "送件" and current_co:
+        # 「還沒送件」判定：有缺件 + company_status 空 + 不是待撥款
+        # 此情境（如潘建宇）要強制歸送件區塊、不分 current_company 或 concurrent 都不顯示
+        _is_pre_send = (bool(_row_pend_check) and not _row_cs_check
+                        and report_sec != "待撥款")
+        if _is_pre_send:
+            section = "送件"
+        elif section == "送件" and current_co:
+            # 「送件」fallback：
+            # 規則 1：民間方案（房地/銀行/零卡 等）→ 跳對應公司區塊（熊高玲情境）
+            # 規則 2：其他 → 跳對應公司區塊
             _cur_norm_pre = normalize_section(current_co)
             _private_secs = {"房地", "銀行", "零卡", "商品貸", "代書", "當舖", "鄉民"}
             if _cur_norm_pre in _private_secs:
-                # 民間方案 → 一律跳對應
                 section = current_co
-            elif _row_pend_check and not _row_cs_check:
-                # 有缺件 + 沒被處理過 → 保留送件區塊
-                pass
             else:
-                # 其他 → 跳對應公司區塊
                 section = current_co
         section = normalize_section(section)
         created = row["created_at"] or ""
@@ -3158,7 +3157,8 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
                 amount_str = f"{co_prefix}-核准{amount}{disb_str}"
             else:
                 amount_str = ""
-            line = f"{created_date}-{row['customer_name']}{amount_str}{pending_str}"
+            # 待撥款行不附 pending_str（核准資訊已夠、缺件給其他公司區塊顯示）
+            line = f"{created_date}-{row['customer_name']}{amount_str}"
         else:
             sec_status = _compress_status(get_section_status(section))
             line = f"{date_str}-{row['customer_name']}-{company_str}"
