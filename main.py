@@ -9221,6 +9221,240 @@ async def import_juofeng_confirm(request: Request):
     return HTMLResponse(summary)
 
 
+@app.get("/admin/restore-from-report", response_class=HTMLResponse)
+def restore_from_report_get(request: Request):
+    """以「貼日報文字」為來源、把該群客戶資料調成跟日報一致（admin 限定）"""
+    role = check_auth(request)
+    if role != "admin":
+        from fastapi.responses import RedirectResponse
+        return RedirectResponse("/login")
+    # 取所有 SALES_GROUP 給下拉
+    conn = get_conn(); cur = conn.cursor()
+    cur.execute("SELECT group_id, group_name FROM groups WHERE group_type='SALES_GROUP' AND is_active=1 ORDER BY group_name")
+    groups = cur.fetchall(); conn.close()
+    grp_opts = "".join(f'<option value="{h(g["group_id"])}">{h(g["group_name"])}</option>' for g in groups)
+    return HTMLResponse(f"""<!DOCTYPE html><html><head>{PAGE_CSS}<title>日報還原</title></head><body>
+    {make_topnav(role, "admin")}
+    <div class="page" style="max-width:920px">
+      <h2>📋 用日報還原客戶資料</h2>
+      <p style="font-size:13px;color:#6b7280">把「對的版本」日報整段貼進來、選群、按預覽 → 系統會列出每位客戶會被改成什麼。確認後按執行。</p>
+      <form method="post" action="/admin/restore-from-report">
+        <div style="margin-bottom:14px">
+          <label style="font-size:13px;font-weight:600">目標群</label>
+          <select name="group_id" style="padding:8px 12px;border:1px solid #d1d5db;border-radius:6px;width:300px;font-size:14px">
+            {grp_opts}
+          </select>
+        </div>
+        <div style="margin-bottom:14px">
+          <label style="font-size:13px;font-weight:600">貼日報文字</label>
+          <textarea name="report_text" rows="20" style="width:100%;padding:10px;border:1px solid #d1d5db;border-radius:6px;font-family:monospace;font-size:13px" placeholder="📊 勞工 日報 04/28&#10;裕融&#10;04/27-李文隆-裕融 (缺手機合照)&#10;━━━━━━━━━━&#10;..."></textarea>
+        </div>
+        <div style="display:flex;gap:10px">
+          <button type="submit" name="dry" value="1" class="btn btn-primary" style="padding:10px 24px;font-size:15px">🔍 預覽（不動 DB）</button>
+          <button type="submit" name="dry" value="0" onclick="return confirm('確定執行？會覆蓋客戶現況')" style="padding:10px 24px;font-size:15px;background:#b91c1c;color:#fff;border:none;border-radius:7px;cursor:pointer">⚠️ 直接執行</button>
+        </div>
+      </form>
+    </div></body></html>""")
+
+
+@app.post("/admin/restore-from-report", response_class=HTMLResponse)
+async def restore_from_report_post(request: Request):
+    role = check_auth(request)
+    if role != "admin":
+        return HTMLResponse("無權限", status_code=403)
+    form = await request.form()
+    group_id = (form.get("group_id") or "").strip()
+    text = (form.get("report_text") or "").strip()
+    is_dry = (form.get("dry") or "1") != "0"
+    if not group_id or not text:
+        return HTMLResponse("缺 group_id 或 report_text", status_code=400)
+
+    # 解析日報
+    # 支援的 section 標題（一行單獨）
+    SECTION_NAMES = set(REPORT_SECTION_1 + REPORT_SECTION_2 + REPORT_SECTION_3 + ["送件", "待撥款", "21汽車"])
+    parsed = []  # [(name, current_co, status_note, approved_amt, disb_date, report_section)]
+    cur_section = ""
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        # 區塊標題（一行一個 section 名）
+        if line in SECTION_NAMES:
+            cur_section = line
+            continue
+        # 也可能標題後面接其他文字 / 表情符
+        for s in SECTION_NAMES:
+            if line == s or line.startswith(s + " ") or line == "🆕" + s:
+                cur_section = s
+                break
+        # 客戶行：開頭含日期 MM/DD- 或 🆕MM/DD-
+        m = re.match(r"^[🆕\s]*(\d{1,2}/\d{1,2})-([一-鿿]{2,6})-(.+)$", line)
+        if not m:
+            continue
+        date_str = m.group(1)
+        name = m.group(2)
+        rest = m.group(3).strip()
+
+        # 待撥款區塊：解析「核准 公司 N萬(撥款日)」
+        if cur_section == "待撥款":
+            am = re.search(r"核准\s*([一-鿿0-9]+?)\s*(\d+(?:\.\d+)?)萬", rest)
+            if am:
+                co = am.group(1).strip()
+                amt = am.group(2) + "萬"
+                # 撥款日：(撥款4/27) / (對保4/27) / (待撥款)
+                disb = ""
+                dm = re.search(r"\(撥款(\d{1,2}/\d{1,2})\)", rest)
+                if dm:
+                    disb = dm.group(1)
+                parsed.append({
+                    "name": name, "current_company": co, "status_note": "",
+                    "approved_amount": amt, "disb_date": disb,
+                    "report_section": "待撥款", "build_date": date_str,
+                })
+                continue
+
+        # 一般 section 行：rest = "公司" 或 "公司-狀態" 或 "公司 (缺X)"
+        # 拆 "-" 取第一段當公司、後面當狀態
+        co_part = rest
+        status_note = ""
+        if "-" in rest:
+            parts = rest.split("-", 1)
+            co_part = parts[0].strip()
+            status_note = parts[1].strip()
+        # 處理括號（缺X）
+        pend_match = re.search(r"\(缺([^)]+)\)", co_part + " " + status_note)
+        # 公司可能是「亞太」「21」「房地」等、和裕/喬美/第一 等
+        co = co_part
+        # 排除「待撥款」「送件」這種特殊區塊名當作公司
+        if cur_section in ("送件",) and not co:
+            co = ""
+        parsed.append({
+            "name": name, "current_company": co, "status_note": status_note,
+            "approved_amount": "", "disb_date": "",
+            "report_section": cur_section if cur_section in ("待撥款", "送件") else "",
+            "build_date": date_str,
+        })
+
+    # 找此群所有 ACTIVE 客戶、按姓名 map
+    conn = get_conn(); cur = conn.cursor()
+    cur.execute("SELECT * FROM customers WHERE source_group_id=? AND status='ACTIVE'", (group_id,))
+    customers_in_group = cur.fetchall(); conn.close()
+    name_to_case = {}
+    for c in customers_in_group:
+        name_to_case.setdefault(c["customer_name"], []).append(dict(c))
+
+    # 整理：同一客戶可能在多個 section 出現（同送）→ 第一個當 current、其他當 concurrent
+    by_name = {}
+    for p in parsed:
+        nm = p["name"]
+        if nm not in by_name:
+            by_name[nm] = {
+                "current_company": p["current_company"],
+                "concurrent": [],
+                "status_note": p["status_note"],
+                "approved_amount": p["approved_amount"],
+                "disb_date": p["disb_date"],
+                "report_section": p["report_section"],
+                "company_notes": {},
+            }
+            if p["status_note"] and p["current_company"]:
+                by_name[nm]["company_notes"][p["current_company"]] = p["status_note"]
+        else:
+            # 後續出現的 → 加到 concurrent + company_notes
+            if p["report_section"] == "待撥款":
+                # 待撥款優先當 main current
+                old_co = by_name[nm]["current_company"]
+                if old_co and old_co != p["current_company"]:
+                    by_name[nm]["concurrent"].append(old_co)
+                by_name[nm]["current_company"] = p["current_company"]
+                by_name[nm]["approved_amount"] = p["approved_amount"]
+                by_name[nm]["disb_date"] = p["disb_date"]
+                by_name[nm]["report_section"] = "待撥款"
+            else:
+                if p["current_company"] and p["current_company"] != by_name[nm]["current_company"]:
+                    by_name[nm]["concurrent"].append(p["current_company"])
+            if p["status_note"] and p["current_company"]:
+                by_name[nm]["company_notes"][p["current_company"]] = p["status_note"]
+
+    # 建表 + 執行
+    rows_html = ""
+    updated = 0
+    not_found = []
+    for nm, data in by_name.items():
+        recs = name_to_case.get(nm)
+        if not recs:
+            not_found.append(nm)
+            continue
+        target = recs[0]  # 取第一筆
+        cco = data["current_company"]
+        conc = ",".join(data["concurrent"]) if data["concurrent"] else ""
+        amt = data["approved_amount"]
+        disb = data["disb_date"]
+        sec = data["report_section"]
+        notes = data["company_notes"]
+        notes_json = json.dumps(notes, ensure_ascii=False) if notes else "{}"
+        last_update_text = data["status_note"] or (f"{nm} {cco}" if cco else nm)
+        rows_html += f'''<tr>
+          <td style="padding:6px 10px;font-weight:600">{h(nm)}</td>
+          <td style="padding:6px 10px">{h(cco or "-")}</td>
+          <td style="padding:6px 10px">{h(conc or "-")}</td>
+          <td style="padding:6px 10px">{h(amt or "-")}</td>
+          <td style="padding:6px 10px">{h(disb or "-")}</td>
+          <td style="padding:6px 10px">{h(sec or "-")}</td>
+          <td style="padding:6px 10px;font-size:11px">{h(data["status_note"][:40] or "-")}</td>
+        </tr>'''
+        updated += 1
+        if not is_dry:
+            with db_conn(commit=True) as conn:
+                cur = conn.cursor()
+                cur.execute("""UPDATE customers SET
+                    current_company=?, concurrent_companies=?, approved_amount=?,
+                    disbursement_date=?, report_section=?, company_status=?,
+                    last_update=?, updated_at=?
+                    WHERE case_id=?""",
+                    (cco, conc, amt, disb, sec, notes_json,
+                     last_update_text, now_iso(), target["case_id"]))
+
+    nf_html = ""
+    if not_found:
+        nf_html = f'<p style="color:#b91c1c;margin-top:14px">⚠️ {len(not_found)} 位日報有但 DB 找不到：{", ".join(not_found[:20])}{"..." if len(not_found)>20 else ""}</p>'
+
+    if is_dry:
+        action = f'''<form method="post" action="/admin/restore-from-report" style="margin-top:20px">
+          <input type="hidden" name="group_id" value="{h(group_id)}">
+          <input type="hidden" name="report_text" value="{h(text)}">
+          <input type="hidden" name="dry" value="0">
+          <button type="submit" onclick="return confirm('確定執行？會覆蓋 {updated} 筆客戶現況')"
+            style="padding:10px 24px;font-size:15px;background:#b91c1c;color:#fff;border:none;border-radius:7px;cursor:pointer">
+            ⚠️ 確認執行（更新 {updated} 筆）
+          </button>
+        </form>'''
+    else:
+        action = '<p style="color:#16a34a;margin-top:20px;font-weight:700">✅ 執行完成</p>'
+
+    return HTMLResponse(f"""<!DOCTYPE html><html><head>{PAGE_CSS}<title>日報還原預覽</title></head><body>
+    {make_topnav(role, "admin")}
+    <div class="page">
+      <h2>日報還原 — {"預覽" if is_dry else "已執行"}</h2>
+      <p>解析到 {len(by_name)} 位客戶 / 將更新 {updated} 筆 / 找不到 {len(not_found)} 筆</p>
+      <table style="width:100%;border-collapse:collapse;background:#fff;border:1px solid #e5e7eb;font-size:13px">
+        <thead style="background:#f9fafb"><tr>
+          <th style="padding:8px;text-align:left">姓名</th>
+          <th style="padding:8px;text-align:left">current</th>
+          <th style="padding:8px;text-align:left">concurrent</th>
+          <th style="padding:8px;text-align:left">approved</th>
+          <th style="padding:8px;text-align:left">撥款日</th>
+          <th style="padding:8px;text-align:left">section</th>
+          <th style="padding:8px;text-align:left">狀態</th>
+        </tr></thead>
+        <tbody>{rows_html}</tbody>
+      </table>
+      {nf_html}
+      {action}
+      <p style="margin-top:14px"><a href="/admin/restore-from-report">回貼新日報</a></p>
+    </div></body></html>""")
+
+
 @app.get("/admin/bulk-rollback", response_class=HTMLResponse)
 def bulk_rollback(request: Request, group_id: str = "", minutes: str = "30",
                    before: str = "", dry: str = "1"):
