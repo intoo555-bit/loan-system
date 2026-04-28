@@ -6131,11 +6131,24 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
                        f"✅ {name} {'、'.join(matches)} 婉拒（從同送清單移除）\n"
                        f"現在在送：{'、'.join(all_active) if all_active else '無'}")
             return
-        # 情況 3：兩邊都沒有
+        # 情況 3：兩邊都沒有 — 但 company_status 可能有殘留紀錄、清掉避免日報還顯示
         all_active = ([current_co] if current_co else []) + concurrent_list
-        reply_text(reply_token,
-                   f"⚠️ {name} 目前沒在送 {co}\n"
-                   f"現在在送：{'、'.join(all_active) if all_active else '無'}")
+        cs_cleared = False
+        try:
+            cs_raw = target["company_status"] or "{}"
+            cs = json.loads(cs_raw)
+            if co_norm in cs:
+                del cs[co_norm]
+                with db_conn(commit=True) as _cn:
+                    _cn.cursor().execute("UPDATE customers SET company_status=? WHERE case_id=?",
+                                         (json.dumps(cs, ensure_ascii=False), target["case_id"]))
+                cs_cleared = True
+        except Exception:
+            pass
+        msg = f"⚠️ {name} 目前沒在送 {co}\n現在在送：{'、'.join(all_active) if all_active else '無'}"
+        if cs_cleared:
+            msg += f"\n（已清掉 {co} 的舊狀態紀錄、日報該家區塊不再顯示）"
+        reply_text(reply_token, msg)
         return
 
     if t == "reject_to":
