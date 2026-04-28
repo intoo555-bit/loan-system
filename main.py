@@ -5708,7 +5708,12 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
             reply_text(reply_token, f"❌ {name} 找不到當前送件公司，請明確指定：{name} 公司 核准 {amount}")
             return
         # 套 COMPANY_ALIAS 規範化（例：「貸10」→「貸救補」）
-        company = COMPANY_ALIAS.get(company, company)
+        # 但若 alias 指向 section 類別（零卡/銀行/商品貸 等）→ 保留原產品名
+        # 例：慢點付 → 零卡 不轉，保留「慢點付」當公司名（顯示也對）
+        _category_targets = {"零卡", "銀行", "商品貸", "代書", "當舖", "鄉民", "房地"}
+        _aliased = COMPANY_ALIAS.get(company)
+        if _aliased and _aliased not in _category_targets:
+            company = _aliased
         # 若是概略公司名（如「21」→「21商品」）但客戶實際送的是同家族的具體方案
         # （例如 21機車12萬）→ 用客戶實際在送那家、避免誤核准到別的方案
         _co_norm = normalize_section(company)
