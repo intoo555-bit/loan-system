@@ -2998,9 +2998,11 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
         except Exception:
             _row_cs_check = {}
         # 「還沒送件」判定：有缺件 + company_status 空 + 不是待撥款
-        # 此情境（如潘建宇）要強制歸送件區塊、不分 current_company 或 concurrent 都不顯示
-        _is_pre_send = (bool(_row_pend_check) and not _row_cs_check
-                        and report_sec != "待撥款")
+        # 或 report_section 明確設「送件」（如張宇鋒：送件順序設了但還沒被 A 群處理）
+        _is_pre_send = (
+            (bool(_row_pend_check) and not _row_cs_check and report_sec != "待撥款")
+            or report_sec == "送件"
+        )
         if _is_pre_send:
             section = "送件"
         elif section == "送件" and current_co:
