@@ -2237,6 +2237,8 @@ def init_settings():
     env_var_map = {
         "admin_pw": "ADMIN_PASSWORD",
         "adminB_pw": "ADMINB_PASSWORD",
+        "ops_admin_pw": "OPS_ADMIN_PASSWORD",
+        "sales_admin_pw": "SALES_ADMIN_PASSWORD",
         "report_pw": "REPORT_PASSWORD",
         "vba_secret": "VBA_SECRET",
     }
@@ -10492,13 +10494,13 @@ GROUP_COLORS = ["#1a1a2e","#2d5016","#7c2d12","#1e3a5f","#4a1d6e","#1e4d4d",
                 "#78350f","#164e63","#4c1d95","#052e16"]
 
 def check_auth(request: Request) -> str:
-    """回傳 'admin'/'adminB'/'normal'/'group_xxx'/'' """
+    """回傳 'admin'/'adminB'/'ops_admin'/'sales_admin'/'normal'/'group_xxx'/'' """
     t = request.cookies.get("auth_token", "")
     session = _lookup_session(t)
     if not session:
         return ""
     role = session["role"]
-    if role in ("admin", "adminB", "normal"):
+    if role in ("admin", "adminB", "ops_admin", "sales_admin", "normal"):
         return role
     if role == "group" and session["group_id"]:
         return f"group_{session['group_id']}"
@@ -10514,10 +10516,10 @@ def get_auth_group_id(request: Request) -> str:
 def make_topnav(role: str, active: str) -> str:
     links = [("📊 日報","/report","report"),("🔍 查詢","/search","search"),
              ("📁 歷史","/history","history"),("📖 指令速查","/guide","guide")]
-    if role in ("admin","adminB","normal") or role.startswith("group_"):
+    if role in ("admin","adminB","ops_admin","sales_admin","normal") or role.startswith("group_"):
         links.append(("📋 客戶資料庫","/pending-customers","pending"))
         links.append(("➕ 新增客戶","/new-customer","new"))
-    if role in ("admin","adminB"):
+    if role in ("admin","adminB","ops_admin"):
         links.append(("📋 行政B作業","/adminb","adminb"))
     admin_items = []
     if role == "admin":
@@ -10697,9 +10699,24 @@ def render_customer_row(row, role="") -> str:
             '</div>'
             '</div>'
         )
+    cid_for_btn = row["case_id"]
+    # 修案件狀態給 admin/adminB/ops_admin/sales_admin（業務員看不到、不會誤動）
+    is_admin = role in ("admin", "adminB", "ops_admin", "sales_admin")
+    case_edit_btn = (
+        '<a href="/case-edit?case_id=' + h(cid_for_btn) + '" onclick="event.stopPropagation()" '
+        'style="background:#16a34a;color:#fff;font-size:12px;padding:6px 14px;border-radius:6px;text-decoration:none;font-weight:600">🛠️ 修案件狀態</a>'
+    ) if is_admin else ''
+    quick_buttons = (
+        '<div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap">'
+        + case_edit_btn
+        + '<a href="/edit-pending?case_id=' + h(cid_for_btn) + '" onclick="event.stopPropagation()" '
+        'style="background:#f3f4f6;color:#374151;font-size:12px;padding:6px 14px;border-radius:6px;text-decoration:none;font-weight:600;border:1px solid #d1d5db">✏️ 改個資</a>'
+        + '</div>'
+    )
     detail_html = (
         '<div style="background:#f0ebe4;padding:12px 16px;border-top:1px solid #ddd5ca;">'
-        '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:6px">'
+        + quick_buttons
+        + '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:6px">'
         '<div><div style="font-size:11px;color:#6a5e4e;font-weight:600">身分證</div><div style="font-size:13px;color:#2c2820;font-weight:500">' + h(id_no or "-") + '</div></div>'
         '<div><div style="font-size:11px;color:#6a5e4e;font-weight:600">電話</div><div style="font-size:13px;color:#2c2820;font-weight:500">' + h(phone or "-") + '</div></div>'
         '<div><div style="font-size:11px;color:#6a5e4e;font-weight:600">公司</div><div style="font-size:13px;color:#2c2820;font-weight:500">' + h(company or "-") + '</div></div>'
@@ -10813,6 +10830,8 @@ def login_page(request: Request, error: str = ""):
           <label style="font-size:12px;color:#5a4e40;font-weight:600;display:block;margin-bottom:6px">身份</label>
           <select name="role" class="input" style="padding:9px 12px" onchange="document.getElementById('grp_sec').style.display=this.value==='group'?'block':'none'">
             <option value="admin">管理員</option>
+            <option value="ops_admin">行政管理員</option>
+            <option value="sales_admin">業務管理員</option>
             <option value="normal">行政A</option>
             <option value="adminB">行政B</option>
             <option value="group">業務（選群組）</option>
@@ -10857,6 +10876,14 @@ async def login_post(request: Request):
         stored = get_setting("adminB_pw")
         ok = verify_pw(pw, stored)
         session_role = "adminB"
+    elif role == "ops_admin":
+        stored = get_setting("ops_admin_pw")
+        ok = verify_pw(pw, stored)
+        session_role = "ops_admin"
+    elif role == "sales_admin":
+        stored = get_setting("sales_admin_pw")
+        ok = verify_pw(pw, stored)
+        session_role = "sales_admin"
     elif role == "normal":
         stored = get_setting("report_pw")
         ok = verify_pw(pw, stored)
@@ -12250,6 +12277,226 @@ async def edit_pending_post(request: Request):
         cur.execute("UPDATE customers SET debt_list=?, updated_at=? WHERE case_id=?", (debt_json_str, now, case_id))
     conn.commit(); conn.close()
     return RedirectResponse("/edit-pending?case_id=" + case_id + "&saved=1", status_code=303)
+
+
+@app.get("/case-edit", response_class=HTMLResponse)
+def case_edit_get(request: Request, case_id: str = "", saved: str = ""):
+    """案件狀態編輯頁（admin/adminB）— 修 LINE 解析錯的案件狀態。
+    這頁只動：current_company / concurrent / approved_amount / disb_date /
+    report_section / pending_docs / status / last_update。個資去 /edit-pending"""
+    from fastapi.responses import RedirectResponse
+    role = check_auth(request)
+    if not role:
+        return RedirectResponse("/login")
+    if role not in ("admin", "adminB", "ops_admin", "sales_admin"):
+        return HTMLResponse("無權限（只有管理員/行政管理員/業務管理員可改案件狀態）", status_code=403)
+    if not case_id:
+        return RedirectResponse("/pending-customers")
+    conn = get_conn(); cur = conn.cursor()
+    cur.execute("SELECT * FROM customers WHERE case_id=?", (case_id,))
+    row = cur.fetchone()
+    if not row:
+        conn.close()
+        return RedirectResponse("/pending-customers")
+    r = dict(row)
+    conn.close()
+    def v(k): return r.get(k, "") or ""
+
+    # 公司下拉：COMPANY_LIST + 常用 alias 主名
+    company_choices = sorted(set(COMPANY_LIST + ["第一", "亞太", "和裕", "21", "21機車12萬", "21機車25萬",
+                                  "21商品", "21汽車", "麻吉", "喬美", "分貝機車", "分貝汽車",
+                                  "貸救補", "鄉民", "手機分期", "預付手機分期",
+                                  "慢點付", "大哥付", "新鑫", "元大", "渣打", "估房",
+                                  "裕融", "和潤", "中租", "創鉅", "合信", "興達", "鼎多"]))
+    sec_choices = ["", "送件", "待撥款"] + [s for s in REPORT_SECTIONS if s not in ("送件", "待撥款")]
+    # 案件狀態：常用只放 3 個。其他狀態（違約金/放棄/全數婉拒/已刪除）保留現值但不下拉
+    status_label_common = {
+        "ACTIVE": "進行中（在日報上）",
+        "CLOSED": "已結案",
+        "PENDING": "待建檔（不上日報）",
+    }
+    status_label_rare = {
+        "PENALTY": "違約金結案",
+        "ABANDONED": "放棄",
+        "REJECTED": "全數婉拒",
+        "DELETED": "已刪除",
+    }
+    pending_common = ["身分證", "薪轉", "帳單", "合照", "勞保", "在職", "存摺", "駕照", "行照", "繳息", "手機合照"]
+
+    cur_co = v("current_company")
+    co_opts = '<option value="">（無）</option>' + "".join(
+        f'<option value="{h(c)}" {"selected" if c == cur_co else ""}>{h(c)}</option>' for c in company_choices)
+    sec_now = v("report_section")
+    sec_opts = "".join(
+        f'<option value="{h(s)}" {"selected" if s == sec_now else ""}>{h(s) or "（無 / 公司區塊自動歸類）"}</option>' for s in sec_choices)
+    st_now = v("status") or "ACTIVE"
+    # 顯示順序：常用 3 個在前；如果現值是 rare 狀態（違約金等）也保留下拉裡
+    all_status = dict(status_label_common)
+    if st_now in status_label_rare and st_now not in all_status:
+        all_status[st_now] = status_label_rare[st_now] + "（少用、保留現值）"
+    st_opts = "".join(
+        f'<option value="{s}" {"selected" if s == st_now else ""}>{label}</option>' for s, label in all_status.items())
+
+    conc_now = v("concurrent_companies")
+    conc_list = [x.strip() for x in conc_now.split(",") if x.strip()]
+    conc_chips = "".join(f'<span class="chip" data-v="{h(x)}">{h(x)} <a onclick="removeChip(this,\'conc\')">×</a></span>' for x in conc_list)
+    pend_now = v("pending_docs")
+    pend_list = [x.strip() for x in pend_now.split(",") if x.strip()]
+    pend_chips = "".join(f'<span class="chip" data-v="{h(x)}">{h(x)} <a onclick="removeChip(this,\'pend\')">×</a></span>' for x in pend_list)
+
+    saved_msg = '<div style="background:#dcfce7;color:#166534;padding:10px 14px;border-radius:6px;margin-bottom:14px;font-weight:600">✅ 已儲存</div>' if saved else ""
+
+    return HTMLResponse(f"""<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>案件狀態 - {h(v("customer_name"))}</title>
+{PAGE_CSS}
+<style>
+.page{{max-width:760px;margin:24px auto;padding:0 16px 40px;}}
+.card{{background:#fff;border-radius:10px;padding:18px;margin-bottom:14px;border:1px solid #e5e7eb;}}
+.row{{margin-bottom:14px;}}
+label{{display:block;font-size:12px;font-weight:700;color:#374151;margin-bottom:5px;}}
+.fld{{width:100%;padding:9px 11px;border:1px solid #d1d5db;border-radius:6px;font-size:14px;font-family:inherit;background:#fff;box-sizing:border-box;}}
+.chips{{display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:8px;border:1px solid #d1d5db;border-radius:6px;background:#fff;min-height:40px}}
+.chip{{display:inline-flex;align-items:center;gap:5px;background:#dbeafe;color:#1e40af;padding:4px 10px;border-radius:14px;font-size:13px}}
+.chip a{{cursor:pointer;color:#1e40af;font-weight:700;text-decoration:none}}
+.qadd{{display:flex;flex-wrap:wrap;gap:5px;margin-top:6px}}
+.qadd button{{background:#f3f4f6;border:1px solid #d1d5db;padding:3px 9px;border-radius:12px;font-size:11px;cursor:pointer}}
+.qadd input{{padding:4px 8px;border:1px solid #d1d5db;border-radius:5px;font-size:12px;width:130px}}
+.btn-save{{background:#16a34a;color:#fff;border:none;padding:11px 32px;border-radius:8px;font-size:15px;font-weight:700;cursor:pointer}}
+.btn-cancel{{background:#fff;color:#374151;border:1px solid #d1d5db;padding:11px 24px;border-radius:8px;font-size:14px;text-decoration:none;display:inline-block;margin-left:10px}}
+</style></head><body>
+{make_topnav(role, "case-edit")}
+<div class="page">
+<h2 style="margin-bottom:6px">{h(v("customer_name"))} <span style="font-weight:400;color:#6b7280;font-size:14px">案件狀態修正</span></h2>
+<p style="font-size:12px;color:#6b7280;margin-top:0">案件編號: {h(case_id)} ｜ 建檔: {h(v("created_at")[:10])} ｜ 群組: {h(v("source_group_id"))}</p>
+<div style="background:#fef3c7;color:#78350f;padding:10px 14px;border-radius:7px;margin:10px 0 18px;font-size:13px;line-height:1.6">
+  💡 <b>什麼時候用這頁？</b>當 LINE 訊息被 BOT 解析錯時、用這頁直接改案件狀態。<br>
+  改完按底下「💾 儲存」、日報就會跟著變。要改個資（電話、地址）請按下面「改個資」鈕。
+</div>
+{saved_msg}
+<form method="post" action="/case-edit">
+<input type="hidden" name="case_id" value="{h(case_id)}">
+
+<div class="card">
+  <div class="row"><label>案件狀態</label>
+    <select name="status" class="fld">{st_opts}</select>
+  </div>
+  <div class="row"><label>主要公司</label>
+    <select name="current_company" class="fld">{co_opts}</select>
+  </div>
+  <div class="row"><label>同時送件</label>
+    <div id="concBox" class="chips">{conc_chips}</div>
+    <div class="qadd">
+      <input id="concInput" type="text" placeholder="加公司、Enter 確認">
+      <button type="button" onclick="addChip('conc')">+ 加</button>
+    </div>
+    <input type="hidden" name="concurrent_companies" id="concVal" value="{h(conc_now)}">
+  </div>
+</div>
+
+<div class="card">
+  <div class="row"><label>核准金額（格式：10萬）</label>
+    <input type="text" name="approved_amount" class="fld" value="{h(v("approved_amount"))}">
+  </div>
+  <div class="row"><label>撥款日期（格式：4/27 或 2026-04-27）</label>
+    <input type="text" name="disbursement_date" class="fld" value="{h(v("disbursement_date"))}">
+  </div>
+  <div class="row"><label>日報區塊</label>
+    <select name="report_section" class="fld">{sec_opts}</select>
+    <p style="font-size:11px;color:#6b7280;margin:4px 0 0">空白 = 自動歸到「主要公司」對應的公司區塊。「送件」「待撥款」要明確選</p>
+  </div>
+</div>
+
+<div class="card">
+  <div class="row"><label>缺件</label>
+    <div id="pendBox" class="chips">{pend_chips}</div>
+    <div class="qadd">
+      {"".join(f'<button type="button" onclick="quickAddPend(\'{p}\')">+ {p}</button>' for p in pending_common)}
+      <input id="pendInput" type="text" placeholder="自訂、Enter 確認">
+      <button type="button" onclick="addChip('pend')">+ 加</button>
+    </div>
+    <input type="hidden" name="pending_docs" id="pendVal" value="{h(pend_now)}">
+  </div>
+  <div class="row"><label>最後狀態文字</label>
+    <textarea name="last_update" class="fld" rows="3">{h(v("last_update"))}</textarea>
+  </div>
+</div>
+
+<div style="margin-top:18px">
+  <button type="submit" class="btn-save">💾 儲存</button>
+  <a href="/edit-pending?case_id={h(case_id)}" class="btn-cancel">改個資</a>
+  <a href="/report" class="btn-cancel">回日報</a>
+</div>
+</form>
+</div>
+<script>
+function syncVal(kind) {{
+  const box = document.getElementById(kind+'Box');
+  const arr = [...box.querySelectorAll('.chip')].map(c=>c.dataset.v);
+  document.getElementById(kind+'Val').value = arr.join(',');
+}}
+function removeChip(el, kind) {{
+  el.parentElement.remove();
+  syncVal(kind);
+}}
+function addChip(kind) {{
+  const inp = document.getElementById(kind+'Input');
+  const v = inp.value.trim();
+  if (!v) return;
+  const box = document.getElementById(kind+'Box');
+  if ([...box.querySelectorAll('.chip')].some(c=>c.dataset.v===v)) {{ inp.value=''; return; }}
+  const sp = document.createElement('span');
+  sp.className = 'chip';
+  sp.dataset.v = v;
+  sp.innerHTML = v + ' <a onclick="removeChip(this,\\''+kind+'\\')">×</a>';
+  box.appendChild(sp);
+  inp.value = '';
+  syncVal(kind);
+}}
+function quickAddPend(v) {{
+  const box = document.getElementById('pendBox');
+  if ([...box.querySelectorAll('.chip')].some(c=>c.dataset.v===v)) return;
+  const sp = document.createElement('span');
+  sp.className = 'chip';
+  sp.dataset.v = v;
+  sp.innerHTML = v + ' <a onclick="removeChip(this,\\'pend\\')">×</a>';
+  box.appendChild(sp);
+  syncVal('pend');
+}}
+['conc','pend'].forEach(k=>{{
+  document.getElementById(k+'Input').addEventListener('keydown', e=>{{
+    if (e.key==='Enter') {{ e.preventDefault(); addChip(k); }}
+  }});
+}});
+</script>
+</body></html>""")
+
+
+@app.post("/case-edit")
+async def case_edit_post(request: Request):
+    from fastapi.responses import RedirectResponse
+    role = check_auth(request)
+    if not role:
+        return RedirectResponse("/login")
+    if role not in ("admin", "adminB"):
+        return HTMLResponse("無權限", status_code=403)
+    form = await request.form()
+    f = dict(form)
+    case_id = f.get("case_id", "")
+    if not case_id:
+        return RedirectResponse("/pending-customers")
+    # 寫入：用 update_customer 走標準 case_logs（含 snapshot_json）保留還原能力
+    # text 參數會被寫入 last_update + 記到 case_logs
+    last_update_text = f.get("last_update") or "[網頁編輯]"
+    update_customer(case_id,
+                    status=f.get("status") or "ACTIVE",
+                    current_company=f.get("current_company") or "",
+                    concurrent_companies=f.get("concurrent_companies") or "",
+                    approved_amount=f.get("approved_amount") or "",
+                    disbursement_date=f.get("disbursement_date") or "",
+                    report_section=f.get("report_section") or "",
+                    pending_docs=f.get("pending_docs") or "",
+                    text=last_update_text, from_group_id="WEB_ADMIN")
+    return RedirectResponse(f"/case-edit?case_id={case_id}&saved=1", status_code=303)
 
 
 @app.post("/delete-customer")
@@ -15718,6 +15965,16 @@ def passwords_page(request: Request):
           <button onclick="changePw('adminB','','adminB_pw')" class="btn btn-primary">更新</button>
         </div>
         <div style="display:grid;grid-template-columns:120px 1fr 100px;gap:10px;align-items:end;padding:10px 0;border-bottom:1px solid #f3f4f6">
+          <div style="font-size:14px;font-weight:500">行政管理員</div>
+          <input type="password" id="ops_admin_pw" class="input" placeholder="輸入新密碼">
+          <button onclick="changePw('ops_admin','','ops_admin_pw')" class="btn btn-primary">更新</button>
+        </div>
+        <div style="display:grid;grid-template-columns:120px 1fr 100px;gap:10px;align-items:end;padding:10px 0;border-bottom:1px solid #f3f4f6">
+          <div style="font-size:14px;font-weight:500">業務管理員</div>
+          <input type="password" id="sales_admin_pw" class="input" placeholder="輸入新密碼">
+          <button onclick="changePw('sales_admin','','sales_admin_pw')" class="btn btn-primary">更新</button>
+        </div>
+        <div style="display:grid;grid-template-columns:120px 1fr 100px;gap:10px;align-items:end;padding:10px 0;border-bottom:1px solid #f3f4f6">
           <div style="font-size:14px;font-weight:500">行政A</div>
           <input type="password" id="report_pw" class="input" placeholder="輸入新密碼">
           <button onclick="changePw('normal','','report_pw')" class="btn btn-primary">更新</button>
@@ -15810,6 +16067,12 @@ async def update_password(request: Request):
     elif pw_role == "adminB":
         set_setting("adminB_pw", hashed)
         return JSONResponse({"ok": True, "message": "行政B密碼已更新"})
+    elif pw_role == "ops_admin":
+        set_setting("ops_admin_pw", hashed)
+        return JSONResponse({"ok": True, "message": "行政管理員密碼已更新"})
+    elif pw_role == "sales_admin":
+        set_setting("sales_admin_pw", hashed)
+        return JSONResponse({"ok": True, "message": "業務管理員密碼已更新"})
     elif pw_role == "normal":
         set_setting("report_pw", hashed)
         return JSONResponse({"ok": True, "message": "行政A密碼已更新"})
