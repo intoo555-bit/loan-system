@@ -9295,27 +9295,35 @@ async def restore_from_report_post(request: Request):
     cur_section = ""
     debug_unparsed = []  # 收集前 8 行「應該是客戶但沒被解析」的行（給使用者看）
     debug_ignored = []  # 收集 8 行非客戶/非 section 的行（divider/header）
+    # section names 排序：長的先比、避免「21」搶到「21汽車」前面
+    SECTION_NAMES_SORTED = sorted(SECTION_NAMES, key=lambda x: -len(x))
     for raw_line in text.splitlines():
         # 移除 BOM、零寬字、首尾空白
         line = raw_line.replace("﻿", "").replace("​", "").strip()
         if not line:
             continue
+        # 把分隔線剝掉（━━━━━━ / —————）後再判 section
+        # 例：「━━━━━━ 零卡」「━━━━━━ 待撥款」應該認得是 zh 卡 / 待撥款
+        line_stripped = re.sub(r"^[━—\-=\s]+", "", line).strip()
+        line_stripped = re.sub(r"[━—\-=]+\s*$", "", line_stripped).strip()
         # 區塊標題（一行一個 section 名）
         matched_section = False
-        if line in SECTION_NAMES:
-            cur_section = line
+        # 整行就是 section
+        if line_stripped in SECTION_NAMES:
+            cur_section = line_stripped
             matched_section = True
         else:
-            # 也可能標題前後有 emoji / 多餘字
-            for s in SECTION_NAMES:
-                if line == s or line.startswith(s + " ") or line == "🆕" + s or line == s + "區":
+            # 容錯：剝掉 emoji/分隔線後 startswith
+            for s in SECTION_NAMES_SORTED:
+                if line_stripped == s or line_stripped.startswith(s + " ") or line_stripped == "🆕" + s or line_stripped == s + "區":
                     cur_section = s
                     matched_section = True
                     break
         if matched_section:
             continue
         # 客戶行：開頭含日期 MM/DD- 或 🆕MM/DD-（姓名 2-8 字、容錯 emoji）
-        m = re.match(r"^[🆕💰⏰\s]*(\d{1,2}/\d{1,2})-([一-鿿]{2,8})-(.+)$", line)
+        # rest 容空（例 04/23-曾月英- → 公司空白、在送件區）
+        m = re.match(r"^[🆕💰⏰\s]*(\d{1,2}/\d{1,2})-([一-鿿]{2,8})-(.*)$", line)
         if not m:
             # debug 用：看 parser 漏了什麼
             if re.search(r"\d{1,2}/\d{1,2}", line) and "-" in line and len(debug_unparsed) < 8:
@@ -9363,7 +9371,7 @@ async def restore_from_report_post(request: Request):
                 })
                 continue
 
-        # 一般 section 行：rest = "公司" 或 "公司-狀態" 或 "公司 (缺X)"
+        # 一般 section 行：rest = "公司" 或 "公司-狀態" 或 "公司 (缺X)" 或 "公司A/公司B"（送件同送）
         # 先把括號(缺X)抽出來、不算公司也不算狀態
         pending_inline = ""
         rest_no_paren = re.sub(r"\s*\([^)]*\)\s*", "", rest).strip()
@@ -9378,7 +9386,14 @@ async def restore_from_report_post(request: Request):
             co_part = parts[0].strip()
             status_note = parts[1].strip()
         # 公司前去掉空白、不要含 "(...)" 殘留
-        co = co_part.split()[0] if co_part else ""
+        # 同送格式「第一/喬美」→ 主公司=第一、concurrent=[喬美]
+        sub_concurrent = []
+        co = ""
+        if co_part:
+            cos = [c.strip() for c in co_part.split("/") if c.strip()]
+            if cos:
+                co = cos[0]
+                sub_concurrent = cos[1:]
         # 排除「待撥款」「送件」這種特殊區塊名當作公司
         if cur_section in ("送件",) and not co:
             co = ""
@@ -9387,6 +9402,7 @@ async def restore_from_report_post(request: Request):
             "approved_amount": "", "disb_date": "",
             "report_section": cur_section if cur_section in ("待撥款", "送件") else "",
             "build_date": date_str, "pending_docs": pending_inline,
+            "sub_concurrent": sub_concurrent,
         })
 
     # 找此群所有 ACTIVE 客戶、按姓名 map
@@ -9415,6 +9431,10 @@ async def restore_from_report_post(request: Request):
             }
             if p["status_note"] and p["current_company"]:
                 by_name[nm]["company_notes"][p["current_company"]] = p["status_note"]
+            # 同行格式「第一/喬美」→ 後面當 concurrent
+            for sc in p.get("sub_concurrent", []):
+                if sc and sc != p["current_company"] and sc not in by_name[nm]["concurrent"]:
+                    by_name[nm]["concurrent"].append(sc)
             # 待撥款 dual-approve：第二家也加入 concurrent
             for ea in p.get("extra_approved", []):
                 if ea.get("company") and ea["company"] != p["current_company"]:
