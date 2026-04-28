@@ -2583,9 +2583,14 @@ def parse_disbursement_list(text: str) -> Dict:
     current_date = ""
     current_company = ""
 
-    # 撥款名單標頭正則（有日期）
+    # 撥款名單標頭正則（有日期 + 公司）
     DISB_HEADER_RE = re.compile(
         r"(\d{1,2}/\d{1,2})\s*([\w一-鿿]+?)\s*(撥款名單|預計排撥|排撥|今日撥款|商品撥款|機車撥款|汽車撥款|撥款)",
+        re.IGNORECASE
+    )
+    # 無公司標頭（有日期、無公司）：「4/24 撥款」/「4/24 撥款名單」 → 公司空字串、後面查每個客戶的核准公司
+    DISB_HEADER_NOCO_RE = re.compile(
+        r"^\s*(\d{1,2}/\d{1,2})\s*(撥款名單|預計排撥|排撥|今日撥款|撥款)\s*$",
         re.IGNORECASE
     )
     # 無日期標頭：「貸救補 今日撥款」
@@ -2602,10 +2607,24 @@ def parse_disbursement_list(text: str) -> Dict:
         if not line:
             continue
 
+        # 無公司標頭（4/24 撥款）優先比對：避免 "(date)(撥款 keyword)" 被 DISB_HEADER_RE 抓成 company=撥款
+        m_noco = DISB_HEADER_NOCO_RE.match(line)
+        if m_noco:
+            current_date = m_noco.group(1)
+            current_company = ""  # 空 = 後面用客戶的核准公司
+            if current_date not in result:
+                result[current_date] = {}
+            if current_company not in result[current_date]:
+                result[current_date][current_company] = []
+            continue
+
         m = DISB_HEADER_RE.search(line)
         if m:
             current_date = m.group(1)
             current_company = m.group(2).strip()
+            # 排除把「撥款」自己誤當公司名（例如 "4/24 撥款" 整段亂吃）
+            if current_company in ("撥款", "撥款名單", "排撥", "預計排撥", "今日撥款"):
+                continue
             if current_date not in result:
                 result[current_date] = {}
             if current_company not in result[current_date]:
@@ -7512,6 +7531,17 @@ def handle_disbursement_list(text: str, reply_token: str):
                 sales_group_name = get_group_name(target["source_group_id"])
                 if sales_group_name == "未知群組":
                     sales_group_name = "-"
+                # company 空 = 用客戶 route_plan 已核准的公司（適用「4/24 撥款」無公司格式）
+                if not company:
+                    approved_list = get_all_approved(target["route_plan"] or "")
+                    # 找尚未撥款的核准家（沒 disbursed 的）優先撥
+                    pending_appr = [a for a in approved_list if not a.get("disbursed")]
+                    if pending_appr:
+                        company = pending_appr[0].get("company") or ""
+                    elif approved_list:
+                        company = approved_list[0].get("company") or ""
+                    elif target["current_company"]:
+                        company = target["current_company"]
                 # 優先從 route_plan history 找這家公司的金額，找不到再用 approved_amount
                 approved_amount = get_amount_from_history(target["route_plan"] or "", company)
                 if not approved_amount:
