@@ -9228,6 +9228,133 @@ def inspect_customer(request: Request, names: str = ""):
     </div></body></html>""")
 
 
+@app.get("/admin/merge-personal-data", response_class=HTMLResponse)
+def merge_personal_data_preview(request: Request, target_group_id: str = "", dry: str = "1"):
+    """合併「同名跨群」的個資：把舊群（練習群）的個資複製到目標群（正式群）的同名客戶。
+
+    用法（dry run 看結果）：
+      /admin/merge-personal-data?target_group_id=C0aae01dffc0f26f1befee07afc2679f6
+
+    實際執行：
+      /admin/merge-personal-data?target_group_id=...&dry=0
+    """
+    role = check_auth(request)
+    if role != "admin":
+        from fastapi.responses import RedirectResponse
+        return RedirectResponse("/login")
+    if not target_group_id:
+        return HTMLResponse("""<div style='padding:40px'>
+        參數 target_group_id 必填。<br>
+        範例：<br>
+        /admin/merge-personal-data?target_group_id=C0aae01dffc0f26f1befee07afc2679f6 (鉅烽)<br>
+        /admin/merge-personal-data?target_group_id=C59054bd9fd4e08636cbf4497dbc35f32 (樂保)<br>
+        /admin/merge-personal-data?target_group_id=C58db10759b2b4e36dc46f1e6293d968f (勞工優選)<br>
+        加 &dry=0 才會實際執行。</div>""")
+    is_dry = (dry != "0")
+    target_gname = get_group_name(target_group_id) or target_group_id[:8]
+
+    # 待複製的個資欄位
+    PD_FIELDS = [
+        "birth_date", "phone", "email", "line_id",
+        "fb_name", "carrier", "marriage", "education",
+        "id_issue_date", "id_issue_place", "id_issue_type",
+        "reg_city", "reg_district", "reg_address", "reg_phone",
+        "live_same_as_reg", "live_city", "live_district", "live_address",
+        "live_phone", "live_status", "live_years", "live_months",
+        "company_name_detail", "company_role", "company_years", "company_months",
+        "company_salary", "company_phone_area", "company_phone_num", "company_phone_ext",
+        "company_city", "company_district", "company_address",
+        "contact1_name", "contact1_relation", "contact1_phone", "contact1_known",
+        "contact2_name", "contact2_relation", "contact2_phone", "contact2_known",
+        "eval_fund_need", "eval_sent_3m", "eval_sent_3m_detail", "eval_alert",
+        "eval_labor_ins", "eval_salary_transfer", "eval_license", "eval_late",
+        "eval_late_days", "eval_fine", "eval_fuel_tax", "eval_credit_card",
+        "eval_property", "eval_law", "eval_note", "debt_list",
+    ]
+
+    rows_html = ""
+    merge_count = 0
+    skip_count = 0
+    not_found_count = 0
+    with db_conn(commit=not is_dry) as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM customers WHERE source_group_id=? AND status='ACTIVE'", (target_group_id,))
+        target_customers = cur.fetchall()
+        for tc in target_customers:
+            name = tc["customer_name"]
+            tcid = tc["case_id"]
+            # 找其他群同名 ACTIVE 客戶
+            cur.execute("SELECT * FROM customers WHERE customer_name=? AND source_group_id!=? AND case_id!=?",
+                        (name, target_group_id, tcid))
+            others = cur.fetchall()
+            if not others:
+                not_found_count += 1
+                continue
+            # 找第一個有個資的舊紀錄
+            old_rec = None
+            for o in others:
+                # 看有沒有任一個資欄位非空
+                if any((o[f] or "").strip() for f in PD_FIELDS if f in o.keys()):
+                    old_rec = o
+                    break
+            if not old_rec:
+                skip_count += 1
+                continue
+            # 複製：只複製目標客戶該欄位空的
+            updates = {}
+            for f in PD_FIELDS:
+                if f not in tc.keys():
+                    continue
+                target_val = (tc[f] or "").strip() if isinstance(tc[f], str) else tc[f]
+                source_val = (old_rec[f] or "").strip() if isinstance(old_rec[f], str) else old_rec[f]
+                if not target_val and source_val:
+                    updates[f] = old_rec[f]
+            old_gname = get_group_name(old_rec["source_group_id"]) or old_rec["source_group_id"][:8]
+            if updates:
+                rows_html += f'<tr><td>{h(name)}</td><td>{h(old_gname)}</td><td>{len(updates)} 欄</td><td>{h(", ".join(list(updates.keys())[:8]))}{"..." if len(updates)>8 else ""}</td></tr>'
+                merge_count += 1
+                if not is_dry:
+                    set_clause = ", ".join(f"{k}=?" for k in updates)
+                    vals = list(updates.values()) + [tcid]
+                    cur.execute(f"UPDATE customers SET {set_clause} WHERE case_id=?", vals)
+                    # 把舊紀錄結案、避免日報重複
+                    cur.execute("UPDATE customers SET status='CLOSED', updated_at=? WHERE case_id=?",
+                                (now_iso(), old_rec["case_id"]))
+            else:
+                skip_count += 1
+
+    action_btn = ""
+    if is_dry:
+        action_btn = f'''<form method="get" action="/admin/merge-personal-data" style="margin-top:20px">
+          <input type="hidden" name="target_group_id" value="{h(target_group_id)}">
+          <input type="hidden" name="dry" value="0">
+          <button type="submit" onclick="return confirm('確定執行合併？舊紀錄會被結案')"
+            style="padding:10px 24px;font-size:15px;background:#b91c1c;color:#fff;border:none;border-radius:7px;cursor:pointer">
+            ⚠️ 確認執行（會修改 DB）
+          </button>
+        </form>'''
+    else:
+        action_btn = '<p style="color:#16a34a;margin-top:20px;font-weight:700">✅ 合併執行完成</p>'
+
+    return HTMLResponse(f"""<!DOCTYPE html><html><head>{PAGE_CSS}<title>合併個資</title></head><body>
+    {make_topnav(role, "admin")}
+    <div class="page">
+      <h2>合併個資 — 目標：{h(target_gname)}</h2>
+      <p style="color:#6b7280;font-size:13px">{"🟡 預覽模式（dry=1、未實際修改）" if is_dry else "🔴 已執行模式（dry=0、已修改 DB）"}</p>
+      <p>合併 {merge_count} 筆 / 跳過 {skip_count} 筆（沒個資可合）/ 沒同名 {not_found_count} 筆</p>
+      <table style="width:100%;border-collapse:collapse;background:#fff;border:1px solid #e5e7eb;font-size:13px">
+        <thead style="background:#f9fafb"><tr>
+          <th style="padding:8px;text-align:left">姓名</th>
+          <th style="padding:8px;text-align:left">舊群</th>
+          <th style="padding:8px;text-align:left">複製欄數</th>
+          <th style="padding:8px;text-align:left">欄位</th>
+        </tr></thead>
+        <tbody>{rows_html}</tbody>
+      </table>
+      {action_btn}
+    </div></body></html>""")
+
+
 @app.post("/admin/move-customer")
 async def move_customer_to_group(request: Request):
     """把指定 case_id 搬到目標 group（救援用）。"""
