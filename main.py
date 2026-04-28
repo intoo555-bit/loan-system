@@ -9763,11 +9763,14 @@ def report_web(request: Request):
     today = now_tw().strftime("%m/%d")
     conn = get_conn(); cur = conn.cursor()
 
-    # 業務只看自己群組
+    # 業務只看自己群組；正式群組排上面、測試群組（含「測試」字）排最下面
     if auth_group:
         cur.execute("SELECT * FROM groups WHERE group_id=? AND is_active=1", (auth_group,))
     else:
-        cur.execute("SELECT * FROM groups WHERE group_type='SALES_GROUP' AND is_active=1 ORDER BY group_name")
+        cur.execute("""SELECT * FROM groups WHERE group_type='SALES_GROUP' AND is_active=1
+                       ORDER BY
+                         CASE WHEN group_name LIKE '%測試%' OR group_name LIKE '%test%' THEN 1 ELSE 0 END,
+                         group_name""")
     groups = cur.fetchall()
 
     # 統計
