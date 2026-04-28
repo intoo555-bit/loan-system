@@ -5725,7 +5725,9 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
         for _c in _cc_list:
             if normalize_section(_c) == _co_norm and _c not in _candidates:
                 _candidates.append(_c)
-        if _candidates and company not in _candidates:
+        # 只在輸入是「概略名稱」（normalize 後跟自己一樣、如 "21"）時、才用 _candidates 具體方案
+        # 輸入已經是具體名稱（慢點付、亞太機車25萬 等）就保留原值
+        if _candidates and company not in _candidates and company == _co_norm:
             company = _candidates[0]
         route = target["route_plan"] or ""
         new_route = update_company_amount_in_history(route, company, amount)
@@ -12603,6 +12605,31 @@ async def new_customer_post(request: Request):
         errs.append(f"Email 格式錯誤：{email}（請檢查 @ 跟結尾，例：xxx@gmail.com / xxx@yahoo.com.tw）")
     if not line_id: errs.append("LINE ID為必填")
     if not raddr: errs.append("戶籍地址不可空白")
+    else:
+        # 戶籍詳細地址至少要含「號 / 巷 / 弄 / 路 / 街 / 段」其中之一
+        if not _re.search(r"[號巷弄路街段]", raddr):
+            errs.append(f"戶籍地址格式可能錯誤：「{raddr}」缺少 號/巷/弄/路/街/段（請對照身分證背面）")
+        # 不應重複包含縣市（縣市另外選了）
+        rcity_in_addr = f.get("rcity","")
+        if rcity_in_addr and rcity_in_addr in raddr:
+            errs.append(f"戶籍地址不應重複含「{rcity_in_addr}」（縣市已另選、地址只填路名+門牌）")
+    rdist = f.get("rdist","").strip()
+    if rdist and not _re.search(r"[區市鄉鎮]", rdist):
+        errs.append(f"戶籍區/鄉鎮 「{rdist}」格式錯誤（應含 區/市/鄉/鎮）")
+    # 戶籍縣市 vs 發證地 跨縣市 提醒（不擋）— 注意：發證地是短碼（北市/桃市/中市 等）
+    rcity = f.get("rcity","")
+    idplace = f.get("idplace","")
+    if rcity and idplace:
+        _city_short = {"台北市":"北市","新北市":"新北市","桃園市":"桃市","台中市":"中市",
+                       "台南市":"南市","高雄市":"高市","基隆市":"基市","新竹市":"竹市",
+                       "新竹縣":"竹縣","苗栗縣":"苗縣","彰化縣":"彰縣","南投縣":"投縣",
+                       "雲林縣":"雲縣","嘉義市":"嘉市","嘉義縣":"嘉縣","屏東縣":"屏縣",
+                       "宜蘭縣":"宜縣","花蓮縣":"花縣","台東縣":"東縣","澎湖縣":"澎縣",
+                       "金門縣":"金門","連江縣":"連江"}
+        rcity_short = _city_short.get(rcity, rcity)
+        # 不完全相同 → 提醒（很多人發證地跟戶籍真的不同、不擋只警告）
+        if idplace not in (rcity_short, rcity) and rcity_short not in idplace:
+            errs.append(f"⚠️ 戶籍縣市「{rcity}」跟發證地「{idplace}」不同、請對照身分證背面確認（如確認跨縣市請忽略此提醒）")
     if not live_same and not laddr: errs.append("居住地址不可空白（或勾選同戶籍）")
     lyear_str = f.get("lyear","").strip()
     if not lyear_str: errs.append("居住年數不可空白")
