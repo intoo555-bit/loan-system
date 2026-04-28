@@ -6185,6 +6185,20 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
                         concurrent_companies=new_concurrent,
                         text=f"{name} {reject_co} 婉拒，轉送 {'+'.join(target_cos)}",
                         from_group_id=group_id)
+        # 清 company_status[reject_co] 避免日報該家區塊還顯示這客戶
+        # （history-rejected display loop 會檢查 cs 內容、有「補件」keyword 就顯示）
+        if reject_co:
+            try:
+                cs_raw = target["company_status"] or "{}"
+                cs = json.loads(cs_raw)
+                rej_norm = normalize_section(reject_co)
+                if rej_norm in cs:
+                    del cs[rej_norm]
+                    with db_conn(commit=True) as _cn:
+                        _cn.cursor().execute("UPDATE customers SET company_status=? WHERE case_id=?",
+                                             (json.dumps(cs, ensure_ascii=False), target["case_id"]))
+            except Exception:
+                pass
         display_target = "+".join(target_cos)
         push_text(target["source_group_id"], f"{name} {reject_co} 婉拒\n➡️ 跳轉到：{display_target}")
         reply_text(reply_token, f"✅ {name} {reject_co} 婉拒\n➡️ 跳轉到：{display_target}")
