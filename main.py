@@ -12473,6 +12473,7 @@ function doSubmit(){
   if(!ph)e.push('行動電話不可空白');
   else if(ph.length!==10||!/^09/.test(ph))e.push('行動電話10碼');
   if(!em)e.push('Email必填');
+  else if(!/^[\w.!#$%&'*+\/=?^_`{|}~-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.(com|net|org|edu|gov|tw|jp|hk|cn|io|app|me|tv|cc|info|biz|name|tech|xyz)(\.[a-z]{2,4})?$/i.test(em))e.push('Email格式錯誤（請檢查 @ 跟結尾、例：xxx@gmail.com / xxx@yahoo.com.tw）');
   if(!li)e.push('LINE ID必填');
   if(!ra)e.push('戸籍地址不可空白');
   if(!sa&&!la)e.push('居住地址不可空白');
@@ -12598,6 +12599,8 @@ async def new_customer_post(request: Request):
     if not phone: errs.append("行動電話不可空白")
     elif len(phone)!=10 or not phone.startswith("09"): errs.append("行動電話需為10碼（09開頭）")
     if not email: errs.append("Email為必填")
+    elif not _re.match(r"^[\w.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.(com|net|org|edu|gov|tw|jp|hk|cn|io|app|me|tv|cc|info|biz|name|tech|xyz)(\.[a-z]{2,4})?$", email, _re.IGNORECASE):
+        errs.append(f"Email 格式錯誤：{email}（請檢查 @ 跟結尾，例：xxx@gmail.com / xxx@yahoo.com.tw）")
     if not line_id: errs.append("LINE ID為必填")
     if not raddr: errs.append("戶籍地址不可空白")
     if not live_same and not laddr: errs.append("居住地址不可空白（或勾選同戶籍）")
