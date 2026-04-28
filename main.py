@@ -3189,8 +3189,9 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
         except Exception:
             pass
         # 同時送件的公司也要顯示
+        # 但「還沒送件」狀態（_is_pre_send）→ 不要散到 concurrent 公司區塊（潘建宇情境）
         concurrent_str = row["concurrent_companies"] or ""
-        if concurrent_str:
+        if concurrent_str and not _is_pre_send:
             for co in concurrent_str.split(","):
                 co = co.strip()
                 if not co:
