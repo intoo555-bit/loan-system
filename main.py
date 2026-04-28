@@ -6884,6 +6884,15 @@ def _handle_a_case_block_locked(block_text, reply_token, id_no, name, forced_cas
     # 若第 1 行沒結論、整段有婉拒也算（備註很多、結論在後的情況）
     if not is_approved and not is_reject and "婉拒" in block_text:
         is_reject = True
+    # 但若第 1 行明確是「補申覆/補保人/補件」等補件動作 → 視為補件、不推 route
+    # 例：A 群打「張惠德 維力商品貸 補申覆\n（前次婉拒原因 X）」
+    #     → 補件動作、不要因為說明文的「婉拒」就把客戶推下家
+    _supplement_action_kw = ["補申覆", "補保人", "補聯徵", "補件", "補資料",
+                             "補薪轉", "補照片", "補時段", "補照會", "補行照",
+                             "補在職", "補存摺", "補勞保", "補駕照", "補身分證",
+                             "補JCIC", "補jcic"]
+    if is_reject and any(k in first_line_for_status for k in _supplement_action_kw):
+        is_reject = False
     route = customer["route_plan"] or ""
     new_route, next_co = route, ""
     # 檢查公司是否在同時送件清單或 route 裡（用 normalize_section 兩邊正規化
