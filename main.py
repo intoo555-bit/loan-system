@@ -9241,7 +9241,8 @@ def bulk_rollback(request: Request, group_id: str = "", minutes: str = "30", dry
     is_dry = (dry != "0")
     from datetime import datetime as _dt, timedelta as _td
     cutoff_dt = _dt.now() + _td(hours=8) - _td(minutes=mins)  # 台灣時間
-    cutoff_iso = cutoff_dt.strftime("%Y-%m-%dT%H:%M:%S")
+    # DB 的 updated_at 格式是 "YYYY-MM-DD HH:MM:SS"（空格分隔、不是 T）
+    cutoff_iso = cutoff_dt.strftime("%Y-%m-%d %H:%M:%S")
     gname = get_group_name(group_id) or group_id[:8]
 
     rows_html = ""
