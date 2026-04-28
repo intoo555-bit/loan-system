@@ -5356,8 +5356,14 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
         approved_cos = [a.get("company", "") for a in all_approved if a.get("company")]
         # 判斷撥哪家
         if co_raw:
-            # 有指定公司
-            co = COMPANY_ALIAS.get(co_raw, co_raw)
+            # 有指定公司：套 alias、但若 alias 指向 section 類別（零卡/銀行 等）→ 保留原產品名
+            # 例：慢點付 → 零卡、保留「慢點付」當公司名
+            _category_targets = {"零卡", "銀行", "商品貸", "代書", "當舖", "鄉民", "房地"}
+            _aliased_d = COMPANY_ALIAS.get(co_raw)
+            if _aliased_d and _aliased_d not in _category_targets:
+                co = _aliased_d
+            else:
+                co = co_raw
             if not _validate_companies_or_warn([co], reply_token, name):
                 return
             # 精確比對找不到 → 試公司家族模糊比對（21 ↔ 21機車12萬、亞太 ↔ 亞太機車25萬）
