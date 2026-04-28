@@ -9222,11 +9222,14 @@ async def import_juofeng_confirm(request: Request):
 
 
 @app.get("/admin/bulk-rollback", response_class=HTMLResponse)
-def bulk_rollback(request: Request, group_id: str = "", minutes: str = "30", dry: str = "1"):
-    """批次還原指定群在最近 N 分鐘內被更新的客戶到「之前」的快照。
+def bulk_rollback(request: Request, group_id: str = "", minutes: str = "30",
+                   before: str = "", dry: str = "1"):
+    """批次還原指定群在 cutoff 之後被更新的客戶到「cutoff 之前」的快照。
 
-    用法（預覽）：/admin/bulk-rollback?group_id=C7704...&minutes=20
-    執行：/admin/bulk-rollback?group_id=...&minutes=20&dry=0
+    用法（預覽）：
+      /admin/bulk-rollback?group_id=...&minutes=20  # 還原最近 20 分鐘
+      /admin/bulk-rollback?group_id=...&before=19:41  # 還原 19:41 之後（今天）
+    執行：加 &dry=0
     """
     role = check_auth(request)
     if role != "admin":
@@ -9240,7 +9243,16 @@ def bulk_rollback(request: Request, group_id: str = "", minutes: str = "30", dry
         mins = 30
     is_dry = (dry != "0")
     from datetime import datetime as _dt, timedelta as _td
-    cutoff_dt = _dt.now() + _td(hours=8) - _td(minutes=mins)  # 台灣時間
+    # before 參數：指定還原的 cutoff 時間（HH:MM、今天）→ 比 minutes 優先
+    if before and ":" in before:
+        try:
+            hh, mm = before.split(":")
+            tw_now = _dt.now() + _td(hours=8)
+            cutoff_dt = tw_now.replace(hour=int(hh), minute=int(mm), second=0, microsecond=0)
+        except Exception:
+            cutoff_dt = _dt.now() + _td(hours=8) - _td(minutes=mins)
+    else:
+        cutoff_dt = _dt.now() + _td(hours=8) - _td(minutes=mins)
     # DB 的 updated_at 格式是 "YYYY-MM-DD HH:MM:SS"（空格分隔、不是 T）
     cutoff_iso = cutoff_dt.strftime("%Y-%m-%d %H:%M:%S")
     gname = get_group_name(group_id) or group_id[:8]
