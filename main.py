@@ -9248,12 +9248,25 @@ def bulk_rollback(request: Request, group_id: str = "", minutes: str = "30", dry
     rows_html = ""
     rolled = 0
     skipped = 0
+    debug_info = ""
     with db_conn(commit=not is_dry) as conn:
         cur = conn.cursor()
         # 找此群最近 N 分鐘有更新的客戶
         cur.execute("""SELECT * FROM customers
                        WHERE source_group_id=? AND updated_at >= ?""", (group_id, cutoff_iso))
         affected = cur.fetchall()
+        # debug：抓本群最近 5 筆更新看時間格式對不對
+        cur.execute("""SELECT customer_name, updated_at FROM customers
+                       WHERE source_group_id=? ORDER BY updated_at DESC LIMIT 5""", (group_id,))
+        recent_5 = cur.fetchall()
+        debug_info = f"<pre style='background:#f3f4f6;padding:10px;font-size:12px'>"
+        debug_info += f"伺服器時間 _dt.now() = {_dt.now()}\n"
+        debug_info += f"加 8 小時 (TW) cutoff = {cutoff_iso}\n"
+        debug_info += f"now_iso() = {now_iso()}\n"
+        debug_info += f"---\n本群最近 5 筆更新：\n"
+        for r in recent_5:
+            debug_info += f"  {r['customer_name']}: {r['updated_at']}\n"
+        debug_info += "</pre>"
         for c in affected:
             case_id = c["case_id"]
             name = c["customer_name"]
@@ -9324,6 +9337,7 @@ def bulk_rollback(request: Request, group_id: str = "", minutes: str = "30", dry
       <h2>批次還原 — {h(gname)}（最近 {mins} 分鐘內）</h2>
       <p style="color:#6b7280;font-size:13px">{"🟡 預覽模式（dry=1、未實際修改）" if is_dry else "🔴 已執行"}</p>
       <p>影響 {len(affected)} 筆 / 還原 {rolled} 筆 / 跳過 {skipped} 筆</p>
+      {debug_info}
       <table style="width:100%;border-collapse:collapse;background:#fff;border:1px solid #e5e7eb;font-size:13px">
         <thead style="background:#f9fafb"><tr>
           <th style="padding:8px;text-align:left">姓名</th>
