@@ -2907,12 +2907,9 @@ def extract_status_summary(first_line: str, customer_name: str) -> str:
     # 去掉多餘標點
     text = re.sub(r"^[-－/\s()（）]+|[-－/\s()（）]+$", "", text).strip()
 
-    # 純「缺XX」文字（不是 待補/已補/補件/補資料 等業務狀態）→ 不當狀態顯示
-    # 因為 pending_docs 欄位才是 canonical 缺件來源、日報會另外用「(缺XX)」標記
-    if text and text.startswith("缺") and not any(
-        text.startswith(p) for p in ["缺資料", "缺聯徵", "缺JCIC", "缺jcic", "缺薪轉", "缺保人", "缺在職", "缺存摺"]
-    ):
-        return ""
+    # 「缺XX」文字若是 pending_docs 用「缺件：」格式記錄的內部紀錄、不顯示
+    # 但「缺合照/缺PDF」等自然語氣文字（業務指定特定公司缺件）保留顯示
+    # 改由 _INTERNAL_ACTION_KEYWORDS 處理「缺件：」吞掉、自然語氣留下
 
     # 只取前20字
     return text[:20] if text else ""
@@ -2989,10 +2986,32 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
         report_sec = row["report_section"] or ""
         current_co = row["current_company"] or row["company"] or ""
         section = report_sec or current_co or "送件"
-        # 「送件」= fallback；只要有 current_company 就直接歸該公司區塊
-        # （行政後給送件順序、客戶之前在送件區的情況 → 自動移到對應公司）
+        # 預先讀 pending_docs 跟 company_status（給「送件區塊保留」邏輯判斷用）
+        try:
+            _row_pend_check = (row["pending_docs"] or "").strip()
+        except (IndexError, KeyError):
+            _row_pend_check = ""
+        try:
+            _row_cs_check = json.loads(row["company_status"] or "{}")
+        except Exception:
+            _row_cs_check = {}
+        # 「送件」= fallback：
+        # 規則 1：有缺件（pending_docs）+ company_status 空（沒被 A 群處理）
+        #         → 保留送件區塊（潘建宇情境：要送和裕、還缺 PDF、還沒給照會）
+        # 規則 2：民間方案（房地/銀行/零卡 等）→ 跳對應公司區塊（熊高玲情境）
+        # 規則 3：其他（貸款方案 + 沒缺件 + 已有狀態）→ 跳對應公司區塊
         if section == "送件" and current_co:
-            section = current_co
+            _cur_norm_pre = normalize_section(current_co)
+            _private_secs = {"房地", "銀行", "零卡", "商品貸", "代書", "當舖", "鄉民"}
+            if _cur_norm_pre in _private_secs:
+                # 民間方案 → 一律跳對應
+                section = current_co
+            elif _row_pend_check and not _row_cs_check:
+                # 有缺件 + 沒被處理過 → 保留送件區塊
+                pass
+            else:
+                # 其他 → 跳對應公司區塊
+                section = current_co
         section = normalize_section(section)
         created = row["created_at"] or ""
         date_str = created[5:10].replace("-", "/") if created else ""
