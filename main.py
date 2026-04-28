@@ -9253,7 +9253,7 @@ def restore_from_report_get(request: Request):
     groups = cur.fetchall(); conn.close()
     grp_opts = "".join(f'<option value="{h(g["group_id"])}">{h(g["group_name"])}</option>' for g in groups)
     return HTMLResponse(f"""<!DOCTYPE html><html><head>{PAGE_CSS}<title>日報還原</title></head><body>
-    {make_topnav(role, "admin")}
+    {make_topnav(role, "restore-report")}
     <div class="page" style="max-width:920px">
       <h2>📋 用日報還原客戶資料</h2>
       <p style="font-size:13px;color:#6b7280">把「對的版本」日報整段貼進來、選群、按預覽 → 系統會列出每位客戶會被改成什麼。確認後按執行。</p>
@@ -9540,7 +9540,7 @@ async def restore_from_report_post(request: Request):
         action = '<p style="color:#16a34a;margin-top:20px;font-weight:700">✅ 執行完成</p>'
 
     return HTMLResponse(f"""<!DOCTYPE html><html><head>{PAGE_CSS}<title>日報還原預覽</title></head><body>
-    {make_topnav(role, "admin")}
+    {make_topnav(role, "restore-report")}
     <div class="page">
       <h2>日報還原 — {"預覽" if is_dry else "已執行"}</h2>
       <p>解析到 {len(by_name)} 位客戶 / 將更新 {updated} 筆 / 找不到 {len(not_found)} 筆</p>
@@ -10470,6 +10470,7 @@ def make_topnav(role: str, active: str) -> str:
                        ("🔑 密碼管理","/admin/passwords","passwords"),
                        ("📝 操作紀錄","/admin/logs","logs"),
                        ("📄 申請書範本","/admin/templates","templates"),
+                       ("📋 日報還原","/admin/restore-from-report","restore-report"),
                        ("💾 下載備份","/admin/download-db","download"),
                        ("☁️ Drive 備份","/admin/gdrive-backup","gdrive-backup"),
                        ("🗑️ 清除資料","/admin/reset_data","reset")]
