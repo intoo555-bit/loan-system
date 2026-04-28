@@ -10673,9 +10673,9 @@ def render_customer_row(row, role="") -> str:
         )
     else:
         edit_progress_html = ""
-    # 送件順序編輯（admin / adminB 才顯示）
+    # 送件順序編輯（admin / adminB / ops_admin / sales_admin 才顯示）
     reorder_html = ""
-    if role in ("admin", "adminB"):
+    if role in ("admin", "adminB", "ops_admin", "sales_admin"):
         _rd = parse_route_json(row.get("route_plan", "") or "")
         _order = _rd.get("order", [])
         _idx = _rd.get("current_index", 0)
@@ -10954,9 +10954,9 @@ async def report_update_progress(request: Request):
 
 @app.post("/report/reorder-route")
 async def report_reorder_route(request: Request):
-    """改送件順序：保留 history/current、覆寫剩餘 route（admin/adminB 限定）。"""
+    """改送件順序：保留 history/current、覆寫剩餘 route（admin/adminB/ops_admin/sales_admin 限定）。"""
     role = check_auth(request)
-    if role not in ("admin", "adminB"):
+    if role not in ("admin", "adminB", "ops_admin", "sales_admin"):
         return JSONResponse({"ok": False, "message": "需要管理員權限"}, status_code=403)
     data = await request.json()
     case_id = data.get("case_id", "")
@@ -11230,10 +11230,34 @@ def report_web(request: Request):
     }}
     function filterByName(q){{
       q = (q||'').trim().toLowerCase();
+      var matches = [];
       document.querySelectorAll('.cust-wrap').forEach(function(el){{
         var n = (el.dataset.name||'').toLowerCase();
-        el.style.display = (!q || n.indexOf(q) !== -1) ? '' : 'none';
+        var hit = !q || n.indexOf(q) !== -1;
+        el.style.display = hit ? '' : 'none';
+        if (q && hit) matches.push(el);
       }});
+      if (!q) return;
+      // 有命中 → 找它所在 section 自動展開、第一筆自動展開卡片+捲到位
+      var seenSecs = new Set();
+      matches.forEach(function(el){{
+        var sec = el.closest('[id^="sc-"]');
+        if (sec && !seenSecs.has(sec.id)) {{
+          sec.style.display = 'block';
+          var arrow = document.getElementById('sa-' + sec.id.slice(3));
+          if (arrow) arrow.textContent = '▼';
+          seenSecs.add(sec.id);
+        }}
+      }});
+      if (matches.length === 1) {{
+        var only = matches[0];
+        var cid = only.dataset.cid;
+        if (cid) {{
+          var dd = document.getElementById('dd-' + cid);
+          if (dd) dd.style.display = 'block';
+        }}
+        only.scrollIntoView({{behavior:'smooth', block:'center'}});
+      }}
     }}
     // 客戶姓名點擊 → 展開/收合詳細資料（用事件委派、不怕 cache/quote 問題）
     document.addEventListener('click', function(e){{
@@ -12323,6 +12347,15 @@ def case_edit_get(request: Request, case_id: str = "", saved: str = ""):
     }
     pending_common = ["身分證", "薪轉", "帳單", "合照", "勞保", "在職", "存摺", "駕照", "行照", "繳息", "手機合照"]
 
+    # 送件順序資料（路線顯示 + 預填輸入框）
+    _rd = parse_route_json(v("route_plan") or "")
+    _order = _rd.get("order", [])
+    _idx = _rd.get("current_index", 0)
+    done_html = " → ".join(f'<span style="color:#9ca3af">{h(c)}</span>' for c in _order[:_idx]) if _idx > 0 else ""
+    curr_html = f'<b style="color:#dc2626">{h(_order[_idx])}</b>' if 0 <= _idx < len(_order) else ""
+    rest_default = "/".join(_order[_idx+1:]) if _idx + 1 < len(_order) else ""
+    route_display = (done_html + (" → " if done_html else "") if done_html else "") + (curr_html or "（無 current）")
+
     cur_co = v("current_company")
     co_opts = '<option value="">（無）</option>' + "".join(
         f'<option value="{h(c)}" {"selected" if c == cur_co else ""}>{h(c)}</option>' for c in company_choices)
@@ -12343,6 +12376,48 @@ def case_edit_get(request: Request, case_id: str = "", saved: str = ""):
     pend_now = v("pending_docs")
     pend_list = [x.strip() for x in pend_now.split(",") if x.strip()]
     pend_chips = "".join(f'<span class="chip" data-v="{h(x)}">{h(x)} <a onclick="removeChip(this,\'pend\')">×</a></span>' for x in pend_list)
+
+    # 各家狀態（company_status JSON：{公司: 狀態文字}）
+    try:
+        company_status = json.loads(v("company_status") or "{}")
+    except Exception:
+        company_status = {}
+    cs_rows_html = ""
+    for co_key, status_text in company_status.items():
+        cs_rows_html += (
+            '<div class="cs-row" style="display:flex;gap:6px;margin-bottom:6px;align-items:center">'
+            f'<input type="text" class="cs-co fld" value="{h(co_key)}" style="flex:0 0 130px" placeholder="公司">'
+            f'<input type="text" class="cs-text fld" value="{h(status_text)}" style="flex:1" placeholder="狀態文字">'
+            '<button type="button" class="cs-del" onclick="this.parentElement.remove()" style="background:#fee2e2;color:#dc2626;border:1px solid #fca5a5;padding:9px 12px;border-radius:6px;cursor:pointer;font-size:12px">刪</button>'
+            '</div>'
+        )
+
+    # 結案 / 違約金欄位
+    closed_reason_now = ""
+    if st_now in ("CLOSED", "ABANDONED", "REJECTED", "PENALTY"):
+        # 結案原因可能放在 last_update 第一行（如「結案 撥款完成」）— 不強制
+        pass
+    penalty_amt = v("penalty_amount")
+    penalty_dt = v("penalty_date")
+
+    # 操作歷史（最近 10 筆）
+    conn2 = get_conn(); cur2 = conn2.cursor()
+    cur2.execute("SELECT id, message_text, from_group_id, created_at FROM case_logs WHERE case_id=? ORDER BY id DESC LIMIT 10", (case_id,))
+    log_rows = cur2.fetchall(); conn2.close()
+    log_html = ""
+    for lg in log_rows:
+        msg = (lg["message_text"] or "")[:60]
+        when = (lg["created_at"] or "")[5:16].replace("-", "/").replace("T", " ")
+        src = (lg["from_group_id"] or "")[:10]
+        log_html += (
+            f'<div style="display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid #f3f4f6;font-size:12px">'
+            f'<span style="color:#6b7280;flex:0 0 100px">{h(when)}</span>'
+            f'<span style="flex:1;color:#374151">{h(msg)}</span>'
+            f'<button type="button" onclick="revertLog({lg["id"]})" style="background:#fef3c7;color:#78350f;border:1px solid #fcd34d;padding:3px 10px;border-radius:5px;cursor:pointer;font-size:11px">↶ 還原</button>'
+            f'</div>'
+        )
+    if not log_html:
+        log_html = '<div style="color:#9ca3af;font-size:12px;padding:8px 0">（無歷史紀錄）</div>'
 
     saved_msg = '<div style="background:#dcfce7;color:#166534;padding:10px 14px;border-radius:6px;margin-bottom:14px;font-weight:600">✅ 已儲存</div>' if saved else ""
 
@@ -12407,6 +12482,55 @@ label{{display:block;font-size:12px;font-weight:700;color:#374151;margin-bottom:
 </div>
 
 <div class="card">
+  <div class="row"><label>送件順序（已送灰、目前紅）</label>
+    <div style="font-size:13px;color:#374151;margin-bottom:8px;padding:6px 10px;background:#f9fafb;border-radius:6px">{route_display}</div>
+    <label style="margin-top:6px">接下來送哪幾家（用 / 分隔）</label>
+    <div style="display:flex;gap:6px;align-items:center">
+      <input id="route_input" type="text" class="fld" value="{h(rest_default)}" placeholder="和裕/貸救補/21" style="flex:1">
+      <button type="button" onclick="saveRouteOrder()" style="background:#6a5e4e;color:#fff;border:none;padding:9px 18px;border-radius:6px;font-size:13px;cursor:pointer;white-space:nowrap">儲存順序</button>
+    </div>
+    <div id="route_msg" style="font-size:12px;margin-top:6px"></div>
+    <p style="font-size:11px;color:#6b7280;margin:6px 0 0">這個按下立即生效（不用按下面的「儲存」）</p>
+  </div>
+</div>
+
+<div class="card">
+  <div class="row"><label>對保區域</label>
+    <input type="text" name="signing_area" class="fld" value="{h(v("signing_area"))}" placeholder="例：台北">
+  </div>
+  <div class="row"><label>對保員 / 對保公司</label>
+    <div style="display:flex;gap:8px">
+      <input type="text" name="signing_salesperson" class="fld" value="{h(v("signing_salesperson"))}" placeholder="對保員姓名" style="flex:1">
+      <input type="text" name="signing_company" class="fld" value="{h(v("signing_company"))}" placeholder="對保公司（如：新光對保）" style="flex:1">
+    </div>
+  </div>
+  <div class="row"><label>對保時間 / 地點</label>
+    <div style="display:flex;gap:8px">
+      <input type="text" name="signing_time" class="fld" value="{h(v("signing_time"))}" placeholder="例：8/20 下午 2 點" style="flex:1">
+      <input type="text" name="signing_location" class="fld" value="{h(v("signing_location"))}" placeholder="例：台北 XX 路" style="flex:1">
+    </div>
+  </div>
+</div>
+
+<div class="card" id="penaltyCard" style="display:{'block' if st_now == 'PENALTY' else 'none'}">
+  <div class="row"><label>違約金</label>
+    <div style="display:flex;gap:8px">
+      <input type="text" name="penalty_amount" class="fld" value="{h(penalty_amt)}" placeholder="例：5000" style="flex:1">
+      <input type="text" name="penalty_date" class="fld" value="{h(penalty_dt)}" placeholder="付款日期" style="flex:1">
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="row"><label>各家狀態（每家公司獨立的狀態文字 — 多家同送時各自顯示）</label>
+    <div id="csBox">{cs_rows_html}</div>
+    <button type="button" onclick="addCsRow()" style="background:#f3f4f6;border:1px solid #d1d5db;padding:6px 14px;border-radius:6px;font-size:12px;cursor:pointer;margin-top:6px">+ 加一家</button>
+    <input type="hidden" name="company_status_json" id="csVal">
+    <p style="font-size:11px;color:#6b7280;margin:4px 0 0">例：第一 → 「核准 28萬-待撥款」、亞太 → 「補保人」</p>
+  </div>
+</div>
+
+<div class="card">
   <div class="row"><label>缺件</label>
     <div id="pendBox" class="chips">{pend_chips}</div>
     <div class="qadd">
@@ -12427,6 +12551,12 @@ label{{display:block;font-size:12px;font-weight:700;color:#374151;margin-bottom:
   <a href="/report" class="btn-cancel">回日報</a>
 </div>
 </form>
+
+<div class="card" style="margin-top:18px">
+  <div style="font-size:13px;font-weight:700;color:#374151;margin-bottom:10px">操作歷史（最近 10 筆）</div>
+  {log_html}
+  <p style="font-size:11px;color:#6b7280;margin:8px 0 0">↶ 還原 = 套用該筆操作前的快照（current/concurrent/金額/區塊等）</p>
+</div>
 </div>
 <script>
 function syncVal(kind) {{
@@ -12467,6 +12597,64 @@ function quickAddPend(v) {{
     if (e.key==='Enter') {{ e.preventDefault(); addChip(k); }}
   }});
 }});
+function saveRouteOrder() {{
+  const cid = '{h(case_id)}';
+  const val = document.getElementById('route_input').value.trim();
+  const msg = document.getElementById('route_msg');
+  if (!val) {{ msg.style.color='#dc2626'; msg.innerText='請填新順序'; return; }}
+  fetch('/report/reorder-route', {{
+    method: 'POST',
+    headers: {{'Content-Type':'application/json'}},
+    body: JSON.stringify({{case_id: cid, new_order: val}})
+  }}).then(r=>r.json()).then(d=>{{
+    if (d.ok) {{ msg.style.color='#16a34a'; msg.innerText=d.message; setTimeout(()=>location.reload(), 1000); }}
+    else {{ msg.style.color='#dc2626'; msg.innerText=d.message || '失敗'; }}
+  }}).catch(e=>{{ msg.style.color='#dc2626'; msg.innerText='網路錯誤'; }});
+}}
+
+// 各家狀態：加一行 / 同步成 JSON
+function addCsRow() {{
+  const box = document.getElementById('csBox');
+  const div = document.createElement('div');
+  div.className = 'cs-row';
+  div.style.cssText = 'display:flex;gap:6px;margin-bottom:6px;align-items:center';
+  div.innerHTML = '<input type="text" class="cs-co fld" placeholder="公司" style="flex:0 0 130px">' +
+    '<input type="text" class="cs-text fld" placeholder="狀態文字" style="flex:1">' +
+    '<button type="button" onclick="this.parentElement.remove()" style="background:#fee2e2;color:#dc2626;border:1px solid #fca5a5;padding:9px 12px;border-radius:6px;cursor:pointer;font-size:12px">刪</button>';
+  box.appendChild(div);
+}}
+
+// 表單送出前：把各家狀態 chip + 缺件 + 同送 + company_status 都同步到 hidden input
+document.querySelector('form[action="/case-edit"]').addEventListener('submit', function() {{
+  syncVal('conc'); syncVal('pend');
+  const obj = {{}};
+  document.querySelectorAll('#csBox .cs-row').forEach(r => {{
+    const coEl = r.querySelector('.cs-co');
+    const txEl = r.querySelector('.cs-text');
+    const co = coEl ? coEl.value.trim() : '';
+    const tx = txEl ? txEl.value.trim() : '';
+    if (co) obj[co] = tx;
+  }});
+  document.getElementById('csVal').value = JSON.stringify(obj);
+}});
+
+// 切 status 自動顯示 / 隱藏違約金卡
+document.querySelector('select[name="status"]').addEventListener('change', function(e) {{
+  document.getElementById('penaltyCard').style.display = (e.target.value === 'PENALTY') ? 'block' : 'none';
+}});
+
+// 還原 case_logs 某筆的 snapshot
+function revertLog(logId) {{
+  if (!confirm('確定還原到此筆操作之前的狀態？\\n（current / concurrent / 金額 / 區塊 等會被改回）')) return;
+  fetch('/case-edit/revert', {{
+    method: 'POST',
+    headers: {{'Content-Type':'application/json'}},
+    body: JSON.stringify({{case_id: '{h(case_id)}', log_id: logId}})
+  }}).then(r=>r.json()).then(d=>{{
+    alert(d.message || (d.ok ? '已還原' : '失敗'));
+    if (d.ok) location.reload();
+  }}).catch(e => alert('網路錯誤'));
+}}
 </script>
 </body></html>""")
 
@@ -12495,8 +12683,70 @@ async def case_edit_post(request: Request):
                     disbursement_date=f.get("disbursement_date") or "",
                     report_section=f.get("report_section") or "",
                     pending_docs=f.get("pending_docs") or "",
+                    signing_area=f.get("signing_area") or "",
+                    signing_salesperson=f.get("signing_salesperson") or "",
+                    signing_company=f.get("signing_company") or "",
+                    signing_time=f.get("signing_time") or "",
+                    signing_location=f.get("signing_location") or "",
+                    penalty_amount=f.get("penalty_amount") or "",
+                    penalty_date=f.get("penalty_date") or "",
                     text=last_update_text, from_group_id="WEB_ADMIN")
+    # company_status / 違約金欄位 update_customer 沒參數、用 raw SQL 補上
+    cs_json = f.get("company_status_json") or "{}"
+    try:
+        json.loads(cs_json)  # 驗 JSON
+    except Exception:
+        cs_json = "{}"
+    with db_conn(commit=True) as conn:
+        cur = conn.cursor()
+        cur.execute("UPDATE customers SET company_status=? WHERE case_id=?", (cs_json, case_id))
     return RedirectResponse(f"/case-edit?case_id={case_id}&saved=1", status_code=303)
+
+
+@app.post("/case-edit/revert")
+async def case_edit_revert(request: Request):
+    """從 case_logs.snapshot_json 還原指定那筆紀錄之前的狀態"""
+    role = check_auth(request)
+    if role not in ("admin", "adminB", "ops_admin", "sales_admin"):
+        return JSONResponse({"ok": False, "message": "無權限"})
+    data = await request.json()
+    case_id = data.get("case_id", "")
+    log_id = data.get("log_id")
+    if not case_id or not log_id:
+        return JSONResponse({"ok": False, "message": "資料不完整"})
+    with db_conn(commit=True) as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT snapshot_json FROM case_logs WHERE id=? AND case_id=?", (log_id, case_id))
+        row = cur.fetchone()
+        if not row or not row["snapshot_json"]:
+            return JSONResponse({"ok": False, "message": "找不到該筆快照"})
+        try:
+            snap = json.loads(row["snapshot_json"])
+        except Exception:
+            return JSONResponse({"ok": False, "message": "快照格式錯誤"})
+        # 套回所有有快照的欄位
+        valid_keys = ["company", "current_company", "concurrent_companies", "route_plan",
+                      "report_section", "approved_amount", "notify_amount", "notify_period",
+                      "disbursement_date", "status", "id_no", "customer_name", "source_group_id",
+                      "signing_area", "signing_salesperson", "signing_company",
+                      "signing_time", "signing_location"]
+        sets = []
+        vals = []
+        for k in valid_keys:
+            if k in snap:
+                sets.append(f"{k}=?")
+                vals.append(snap[k])
+        if not sets:
+            return JSONResponse({"ok": False, "message": "快照沒有可還原欄位"})
+        sets.append("updated_at=?")
+        vals.append(now_iso())
+        vals.append(case_id)
+        cur.execute(f"UPDATE customers SET {', '.join(sets)} WHERE case_id=?", vals)
+        # 寫入還原日誌
+        cur.execute("INSERT INTO case_logs (case_id,customer_name,id_no,company,message_text,from_group_id,created_at) VALUES (?,?,?,?,?,?,?)",
+            (case_id, snap.get("customer_name", ""), snap.get("id_no", ""), snap.get("company", ""),
+             f"[網頁還原] 套用 log#{log_id} 之前的快照", "WEB_ADMIN", now_iso()))
+    return JSONResponse({"ok": True, "message": "✅ 已還原到該筆操作前的狀態"})
 
 
 @app.post("/delete-customer")
