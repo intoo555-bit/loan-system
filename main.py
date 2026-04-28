@@ -2987,6 +2987,8 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
     for row in all_rows:
         report_sec = row["report_section"] or ""
         current_co = row["current_company"] or row["company"] or ""
+        # 防呆：current_company 不該含「(...)」（缺件、狀態等）→ 剝掉、避免日報 section 帶括號
+        current_co = re.sub(r"\s*\([^)]*\)\s*", "", current_co).strip()
         section = report_sec or current_co or "送件"
         # 預先讀 pending_docs 跟 company_status（給「送件區塊保留」邏輯判斷用）
         try:
@@ -9240,6 +9242,32 @@ async def import_juofeng_confirm(request: Request):
     return HTMLResponse(summary)
 
 
+@app.post("/admin/cleanup-company-paren", response_class=HTMLResponse)
+def cleanup_company_paren(request: Request):
+    """一次性清掉 current_company 裡誤存的「(...)」括號內容（admin 限定）。
+    對齊舊資料、避免日報 section 標題帶 (缺手機合照) 等"""
+    role = check_auth(request)
+    if role != "admin":
+        return HTMLResponse("無權限", status_code=403)
+    fixed = []
+    with db_conn(commit=True) as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT case_id, customer_name, current_company, source_group_id FROM customers WHERE current_company LIKE '% (%'")
+        rows = cur.fetchall()
+        for r in rows:
+            old = r["current_company"] or ""
+            new = re.sub(r"\s*\([^)]*\)\s*", "", old).strip()
+            if new != old:
+                cur.execute("UPDATE customers SET current_company=? WHERE case_id=?", (new, r["case_id"]))
+                fixed.append(f"{r['customer_name']}: {old} → {new}")
+    body = "<br>".join(h(x) for x in fixed) or "（無需修正）"
+    return HTMLResponse(f"""<!DOCTYPE html><html><head>{PAGE_CSS}</head><body>
+    {make_topnav(role, "admin")}
+    <div class="page"><h2>✅ 清除 {len(fixed)} 筆異常 current_company</h2>
+    <div style="background:#fff;padding:12px;border-radius:6px;font-size:13px">{body}</div>
+    <p><a href="/report">看日報</a></p></div></body></html>""")
+
+
 @app.get("/admin/restore-from-report", response_class=HTMLResponse)
 def restore_from_report_get(request: Request):
     """以「貼日報文字」為來源、把該群客戶資料調成跟日報一致（admin 限定）"""
@@ -9272,6 +9300,13 @@ def restore_from_report_get(request: Request):
           <button type="submit" name="dry" value="1" class="btn btn-primary" style="padding:10px 24px;font-size:15px">🔍 預覽（不動 DB）</button>
           <button type="submit" name="dry" value="0" onclick="return confirm('確定執行？會覆蓋客戶現況')" style="padding:10px 24px;font-size:15px;background:#b91c1c;color:#fff;border:none;border-radius:7px;cursor:pointer">⚠️ 直接執行</button>
         </div>
+      </form>
+      <hr style="margin:24px 0;border:none;border-top:1px solid #e5e7eb">
+      <form method="post" action="/admin/cleanup-company-paren" onsubmit="return confirm('清掉所有 current_company 裡的 (...)、例：裕融 (缺手機合照) → 裕融')">
+        <p style="font-size:13px;color:#6b7280">
+          💡 若日報出現「裕融 (缺手機合照)」之類雙括號 → 表示 current_company 被誤存了括號。按下面一鍵清。
+        </p>
+        <button type="submit" style="padding:8px 18px;font-size:13px;background:#f3f4f6;color:#111;border:1px solid #d1d5db;border-radius:6px;cursor:pointer">🧹 一鍵清掉公司名裡的 (...)</button>
       </form>
     </div></body></html>""")
 
