@@ -3239,6 +3239,10 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
                 _cs_text = company_status.get(_rej_sec, "")
                 if not _cs_text or not any(k in _cs_text for k in _supp_kw):
                     continue
+                # 排除「婉拒」字眼（婉拒理由含「補保人」「補資料」等只是說明原因、不是真的補件）
+                # 例：「婉拒 55歲以上需補保人」應該 skip、不顯示在該家區塊
+                if "婉拒" in _cs_text:
+                    continue
                 _rej_status = _compress_status(extract_status_summary(_cs_text.splitlines()[0] if _cs_text else "", row["customer_name"]))
                 _rej_short = _display_co(_rej_co) or _rej_co
                 _rej_line = f"{date_str}-{row['customer_name']}-{_rej_short}"
