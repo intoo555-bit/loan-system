@@ -9221,6 +9221,122 @@ async def import_juofeng_confirm(request: Request):
     return HTMLResponse(summary)
 
 
+@app.get("/admin/bulk-rollback", response_class=HTMLResponse)
+def bulk_rollback(request: Request, group_id: str = "", minutes: str = "30", dry: str = "1"):
+    """批次還原指定群在最近 N 分鐘內被更新的客戶到「之前」的快照。
+
+    用法（預覽）：/admin/bulk-rollback?group_id=C7704...&minutes=20
+    執行：/admin/bulk-rollback?group_id=...&minutes=20&dry=0
+    """
+    role = check_auth(request)
+    if role != "admin":
+        from fastapi.responses import RedirectResponse
+        return RedirectResponse("/login")
+    if not group_id:
+        return HTMLResponse("<div style='padding:40px'>缺 group_id 參數</div>")
+    try:
+        mins = int(minutes)
+    except Exception:
+        mins = 30
+    is_dry = (dry != "0")
+    from datetime import datetime as _dt, timedelta as _td
+    cutoff_dt = _dt.now() + _td(hours=8) - _td(minutes=mins)  # 台灣時間
+    cutoff_iso = cutoff_dt.strftime("%Y-%m-%dT%H:%M:%S")
+    gname = get_group_name(group_id) or group_id[:8]
+
+    rows_html = ""
+    rolled = 0
+    skipped = 0
+    with db_conn(commit=not is_dry) as conn:
+        cur = conn.cursor()
+        # 找此群最近 N 分鐘有更新的客戶
+        cur.execute("""SELECT * FROM customers
+                       WHERE source_group_id=? AND updated_at >= ?""", (group_id, cutoff_iso))
+        affected = cur.fetchall()
+        for c in affected:
+            case_id = c["case_id"]
+            name = c["customer_name"]
+            # 找 cutoff 之前最近一筆 case_log 含 snapshot_json
+            cur.execute("""SELECT snapshot_json FROM case_logs
+                           WHERE case_id=? AND created_at < ? AND snapshot_json != ''
+                           ORDER BY created_at DESC LIMIT 1""", (case_id, cutoff_iso))
+            log = cur.fetchone()
+            if not log or not log["snapshot_json"]:
+                rows_html += f'<tr><td>{h(name)}</td><td colspan="5" style="color:#b91c1c">❌ 找不到 {mins} 分鐘前的 snapshot</td></tr>'
+                skipped += 1
+                continue
+            try:
+                snap = json.loads(log["snapshot_json"])
+            except Exception:
+                skipped += 1
+                continue
+            # 列出主要欄位變化
+            cur_co_now = c["current_company"] or ""
+            cur_co_old = snap.get("current_company") or ""
+            sec_now = c["report_section"] or ""
+            sec_old = snap.get("report_section") or ""
+            amt_now = c["approved_amount"] or ""
+            amt_old = snap.get("approved_amount") or ""
+            rows_html += f'''<tr>
+              <td style="padding:6px 10px;font-weight:600">{h(name)}</td>
+              <td style="padding:6px 10px;font-size:11px">{h(cur_co_now)} → {h(cur_co_old)}</td>
+              <td style="padding:6px 10px;font-size:11px">{h(sec_now)} → {h(sec_old)}</td>
+              <td style="padding:6px 10px;font-size:11px">{h(amt_now)} → {h(amt_old)}</td>
+              <td style="padding:6px 10px;font-size:10px;color:#6b7280">{h(c["updated_at"])}</td>
+            </tr>'''
+            rolled += 1
+            if not is_dry:
+                # 還原快照欄位（一次更新所有欄位）
+                _fields = ["current_company", "company", "route_plan", "concurrent_companies",
+                           "report_section", "approved_amount", "approved_at",
+                           "disbursement_date", "company_status", "last_update",
+                           "status", "pending_docs", "notify_amount", "notify_period"]
+                set_pieces = []
+                vals = []
+                for f in _fields:
+                    if f in snap:
+                        set_pieces.append(f"{f}=?")
+                        vals.append(snap[f])
+                if set_pieces:
+                    set_pieces.append("updated_at=?")
+                    vals.append(now_iso())
+                    vals.append(case_id)
+                    cur.execute(f"UPDATE customers SET {', '.join(set_pieces)} WHERE case_id=?", vals)
+
+    action_btn = ""
+    if is_dry:
+        action_btn = f'''<form method="get" action="/admin/bulk-rollback" style="margin-top:20px">
+          <input type="hidden" name="group_id" value="{h(group_id)}">
+          <input type="hidden" name="minutes" value="{mins}">
+          <input type="hidden" name="dry" value="0">
+          <button type="submit" onclick="return confirm('確定還原 {rolled} 筆？此操作無法 undo')"
+            style="padding:10px 24px;font-size:15px;background:#b91c1c;color:#fff;border:none;border-radius:7px;cursor:pointer">
+            ⚠️ 確認還原 {rolled} 筆
+          </button>
+        </form>'''
+    else:
+        action_btn = '<p style="color:#16a34a;margin-top:20px;font-weight:700">✅ 還原執行完成</p>'
+
+    return HTMLResponse(f"""<!DOCTYPE html><html><head>{PAGE_CSS}<title>批次還原</title></head><body>
+    {make_topnav(role, "admin")}
+    <div class="page">
+      <h2>批次還原 — {h(gname)}（最近 {mins} 分鐘內）</h2>
+      <p style="color:#6b7280;font-size:13px">{"🟡 預覽模式（dry=1、未實際修改）" if is_dry else "🔴 已執行"}</p>
+      <p>影響 {len(affected)} 筆 / 還原 {rolled} 筆 / 跳過 {skipped} 筆</p>
+      <table style="width:100%;border-collapse:collapse;background:#fff;border:1px solid #e5e7eb;font-size:13px">
+        <thead style="background:#f9fafb"><tr>
+          <th style="padding:8px;text-align:left">姓名</th>
+          <th style="padding:8px;text-align:left">current_company（現→還原）</th>
+          <th style="padding:8px;text-align:left">section</th>
+          <th style="padding:8px;text-align:left">approved_amount</th>
+          <th style="padding:8px;text-align:left">最後更新</th>
+        </tr></thead>
+        <tbody>{rows_html}</tbody>
+      </table>
+      {action_btn}
+    </div></body></html>""")
+
+
 @app.get("/admin/inspect-customer", response_class=HTMLResponse)
 def inspect_customer(request: Request, names: str = ""):
     """查指定客戶現在在哪個群組（救援用）。
