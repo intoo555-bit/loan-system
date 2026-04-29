@@ -1973,7 +1973,7 @@ def _download_line_image(message_id: str) -> tuple:
     if not message_id:
         return b"", "缺 message_id"
     try:
-        resp = requests.get(
+        resp = req_lib.get(
             f"https://api-data.line.me/v2/bot/message/{message_id}/content",
             headers={"Authorization": f"Bearer {CHANNEL_ACCESS_TOKEN}"},
             timeout=20,
