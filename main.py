@@ -49,6 +49,19 @@ try:
 except Exception:
     pass
 
+# PDF 暫存目錄（24 小時 TTL、用 /tmp）
+import tempfile as _tempfile
+PDF_TMP_DIR = os.path.join(_tempfile.gettempdir(), "loan_pdfs")
+try:
+    os.makedirs(PDF_TMP_DIR, exist_ok=True)
+except Exception:
+    pass
+PDF_TTL_HOURS = 24
+
+# 收件 session：(group_id, user_id) → {"name": str|"", "images": [bytes...], "started_at": iso, "last_at": iso}
+_pdf_collection_sessions = {}
+PDF_SESSION_TIMEOUT_MIN = 5  # 5 分鐘無動作自動收尾
+
 # 11 個 Excel 申請書方案（名稱, 內建範本檔名）— 與 PLAN_TEMPLATE_MAP 對齊
 APPLICATION_PLAN_LIST = [
     ("亞太商品", "亞太商品範本.xlsx"),
@@ -1946,6 +1959,144 @@ def reply_quick_reply(reply_token: str, text: str, items):
             json={"replyToken": reply_token, "messages": [{"type": "text", "text": text[:4900], "quickReply": {"items": items}}]},
             timeout=10,
         )
+    except Exception:
+        pass
+
+
+# =========================
+# PDF 收件（業務在群裡傳圖 → 合 PDF）
+# =========================
+def _download_line_image(message_id: str) -> bytes:
+    """從 LINE 抓原圖 bytes、Content API"""
+    if not CHANNEL_ACCESS_TOKEN:
+        return b""
+    try:
+        resp = requests.get(
+            f"https://api-data.line.me/v2/bot/message/{message_id}/content",
+            headers={"Authorization": f"Bearer {CHANNEL_ACCESS_TOKEN}"},
+            timeout=20,
+        )
+        if resp.status_code == 200:
+            return resp.content
+    except Exception:
+        pass
+    return b""
+
+
+def _pdf_session_key(group_id: str, user_id: str):
+    return (group_id or "", user_id or "")
+
+
+def _start_pdf_session(group_id: str, user_id: str, name: str = ""):
+    """開新收件 session、若已有 session 先收尾舊的"""
+    key = _pdf_session_key(group_id, user_id)
+    old = _pdf_collection_sessions.get(key)
+    finalized_old_msg = ""
+    if old and old.get("images"):
+        finalized_old_msg = _finalize_pdf_session(group_id, user_id, push_to_group=False)
+    _pdf_collection_sessions[key] = {
+        "name": name.strip(),
+        "images": [],
+        "started_at": now_iso(),
+        "last_at": now_iso(),
+    }
+    return finalized_old_msg
+
+
+def _add_image_to_session(group_id: str, user_id: str, image_bytes: bytes) -> int:
+    key = _pdf_session_key(group_id, user_id)
+    sess = _pdf_collection_sessions.get(key)
+    if not sess:
+        return -1
+    sess["images"].append(image_bytes)
+    sess["last_at"] = now_iso()
+    return len(sess["images"])
+
+
+def _build_pdf_from_images(images: list, name_hint: str = "") -> tuple:
+    """images: list[bytes]、回傳 (token, filename, full_path)"""
+    from PIL import Image
+    import io as _io
+    if not images:
+        return None
+    pages = []
+    for img_bytes in images:
+        try:
+            im = Image.open(_io.BytesIO(img_bytes))
+            # 轉 RGB（PDF 不支援 RGBA / palette）
+            if im.mode != "RGB":
+                im = im.convert("RGB")
+            pages.append(im)
+        except Exception:
+            continue
+    if not pages:
+        return None
+    # 產生唯一 token + 檔名
+    import secrets as _secrets
+    token = _secrets.token_urlsafe(12)
+    safe_name = re.sub(r"[^\w一-鿿]", "_", name_hint or "收件")[:30]
+    timestamp = now_tw().strftime("%Y%m%d_%H%M")
+    filename = f"{safe_name}_{timestamp}.pdf"
+    full_path = os.path.join(PDF_TMP_DIR, f"{token}_{filename}")
+    pages[0].save(full_path, format="PDF", save_all=True, append_images=pages[1:], resolution=150.0)
+    return token, filename, full_path
+
+
+def _finalize_pdf_session(group_id: str, user_id: str, push_to_group: bool = True) -> str:
+    """收尾 session：合 PDF + 推下載連結到群、回傳通知文字"""
+    key = _pdf_session_key(group_id, user_id)
+    sess = _pdf_collection_sessions.pop(key, None)
+    if not sess or not sess.get("images"):
+        return ""
+    name = sess.get("name") or "收件"
+    result = _build_pdf_from_images(sess["images"], name)
+    if not result:
+        msg = f"❌ {name} 合 PDF 失敗（圖片格式異常）"
+        if push_to_group and group_id:
+            push_text(group_id, msg)
+        return msg
+    token, filename, full_path = result
+    base_url = os.getenv("PUBLIC_BASE_URL", "")
+    if not base_url:
+        # 本地測試 fallback
+        base_url = f"http://localhost:{os.getenv('PORT', '10000')}"
+    download_url = f"{base_url}/pdfs/{token}/{filename}"
+    msg = (f"📄 {filename} 已產生（{len(sess['images'])} 頁）\n"
+           f"下載：{download_url}\n"
+           f"⏰ {PDF_TTL_HOURS} 小時後失效")
+    if push_to_group and group_id:
+        push_text(group_id, msg)
+    return msg
+
+
+def _check_pdf_session_timeouts():
+    """檢查所有 session、超過 N 分鐘未動作 → 自動收尾"""
+    if not _pdf_collection_sessions:
+        return
+    cutoff = now_tw().timestamp() - PDF_SESSION_TIMEOUT_MIN * 60
+    expired = []
+    for key, sess in list(_pdf_collection_sessions.items()):
+        try:
+            last_ts = datetime.fromisoformat((sess.get("last_at") or "").replace("Z", "")).timestamp()
+        except Exception:
+            last_ts = 0
+        if last_ts and last_ts < cutoff:
+            expired.append(key)
+    for (gid, uid) in expired:
+        _finalize_pdf_session(gid, uid, push_to_group=True)
+
+
+def _cleanup_expired_pdfs():
+    """清掉 PDF_TMP_DIR 內超過 24 小時的 PDF"""
+    try:
+        cutoff = time.time() - PDF_TTL_HOURS * 3600
+        for fn in os.listdir(PDF_TMP_DIR):
+            full = os.path.join(PDF_TMP_DIR, fn)
+            try:
+                if os.path.isfile(full) and os.path.getmtime(full) < cutoff:
+                    os.remove(full)
+            except Exception:
+                pass
     except Exception:
         pass
 
@@ -8104,14 +8255,38 @@ def _process_event_inner(event: dict):
     if event.get("type") != "message":
         return
     message = event.get("message", {})
-    if not isinstance(message, dict) or message.get("type") != "text":
+    if not isinstance(message, dict):
         return
-    text = (message.get("text") or "").strip()
-    reply_token = event.get("replyToken") or ""
+    msg_type = message.get("type", "")
     source = event.get("source") or {}
     if not isinstance(source, dict):
         return
-    group_id = source.get("groupId")
+    group_id = source.get("groupId") or ""
+    user_id = source.get("userId") or ""
+    reply_token = event.get("replyToken") or ""
+
+    # 圖片訊息：若該業務員開了收件 session、加進去
+    if msg_type == "image":
+        msg_id = message.get("id", "")
+        sess = _pdf_collection_sessions.get(_pdf_session_key(group_id, user_id))
+        if sess is None:
+            # 沒開 session、靜默忽略（不要每張圖都吵）
+            return
+        if not msg_id:
+            return
+        img_bytes = _download_line_image(msg_id)
+        if not img_bytes:
+            if reply_token:
+                reply_text(reply_token, "⚠️ 圖片下載失敗")
+            return
+        cnt = _add_image_to_session(group_id, user_id, img_bytes)
+        if reply_token and cnt > 0:
+            reply_text(reply_token, f"📷 {sess.get('name') or '收件'} 已收第 {cnt} 張")
+        return
+
+    if msg_type != "text":
+        return
+    text = (message.get("text") or "").strip()
     if not text:
         return
     # Bug 2: reply_token 空值時 LINE API 會錯誤，直接忽略該事件
@@ -8129,6 +8304,39 @@ def _process_event_inner(event: dict):
         if clean.upper() == "群組ID":
             gname = get_group_name(group_id)
             reply_text(reply_token, f"📋 此群組資訊\n名稱：{gname}\nID：{group_id}")
+            return
+        # PDF 收件指令：@AI 收件 / @AI 姓名 收件 / @AI 完成 / @AI 取消
+        # 必須含 @AI、避免一般「收件清單」之類訊息誤觸
+        # @AI 完成 / @AI 取消 / @AI 姓名 完成 / @AI 姓名 取消
+        m_pdf_done = re.match(r"^([一-鿿]{2,8}\s+)?(完成|取消)$", clean)
+        if m_pdf_done:
+            action = m_pdf_done.group(2)
+            sess = _pdf_collection_sessions.get(_pdf_session_key(group_id, user_id))
+            if not sess:
+                reply_text(reply_token, "⚠️ 沒有進行中的收件、請先打：@AI 收件")
+                return
+            if action == "取消":
+                _pdf_collection_sessions.pop(_pdf_session_key(group_id, user_id), None)
+                reply_text(reply_token, f"❌ 已取消收件、{len(sess.get('images', []))} 張圖丟棄")
+                return
+            # 完成
+            msg = _finalize_pdf_session(group_id, user_id, push_to_group=False)
+            reply_text(reply_token, msg or "❌ 沒有圖、無法合 PDF")
+            return
+        # @AI 收件 / @AI 姓名 收件
+        m_pdf_start = re.match(r"^(?:([一-鿿]{2,8})\s+)?收件$", clean)
+        if m_pdf_start:
+            name = (m_pdf_start.group(1) or "").strip()
+            old_msg = _start_pdf_session(group_id, user_id, name)
+            tip = ""
+            if old_msg:
+                tip = f"（前一個收件已自動收尾：\n{old_msg}）\n\n"
+            label = name or "收件"
+            reply_text(reply_token,
+                       f"{tip}📋 {label} 開始收件\n"
+                       f"請傳圖（可多張）、5 分鐘無動作自動合成\n"
+                       f"提早結束：@AI {('' if not name else name + ' ')}完成\n"
+                       f"取消丟棄：@AI {('' if not name else name + ' ')}取消")
             return
 
     # A 群優先（避免 A 群同時被註冊為 SALES_GROUP 時走錯邏輯）
@@ -9290,6 +9498,22 @@ def cleanup_company_paren(request: Request):
     <div class="page"><h2>✅ 清除 {len(fixed)} 筆異常 current_company</h2>
     <div style="background:#fff;padding:12px;border-radius:6px;font-size:13px">{body}</div>
     <p><a href="/report">看日報</a></p></div></body></html>""")
+
+
+@app.get("/pdfs/{token}/{filename}")
+def download_pdf(token: str, filename: str):
+    """下載收件 PDF（24h 內有效、token 防止被猜網址）"""
+    # 防 path traversal
+    safe_token = re.sub(r"[^A-Za-z0-9_\-]", "", token)[:30]
+    safe_fn = re.sub(r"[^\w一-鿿\.\-_]", "_", filename)[:80]
+    if not safe_token or not safe_fn:
+        return HTMLResponse("無效連結", status_code=404)
+    full_path = os.path.join(PDF_TMP_DIR, f"{safe_token}_{safe_fn}")
+    if not os.path.isfile(full_path):
+        return HTMLResponse("檔案已過期或不存在（24 小時失效）", status_code=404)
+    # 順手清過期檔
+    _cleanup_expired_pdfs()
+    return FileResponse(full_path, filename=safe_fn, media_type="application/pdf")
 
 
 @app.get("/admin/restore-from-report", response_class=HTMLResponse)
@@ -17388,21 +17612,22 @@ def list_gdrive_backups() -> list:
 
 
 def _start_backup_scheduler():
-    if not BACKUP_ENABLED:
-        print("[backup] scheduler disabled (BACKUP_ENABLED != true)")
-        return
-    if not GOOGLE_SERVICE_ACCOUNT_JSON or not GOOGLE_DRIVE_FOLDER_ID:
-        print("[backup] scheduler disabled (missing env vars)")
-        return
     try:
         from apscheduler.schedulers.background import BackgroundScheduler
         sched = BackgroundScheduler(daemon=True)
-        # 19:00 UTC = 03:00 Asia/Taipei
-        sched.add_job(do_backup_now, "cron", hour=19, minute=0, id="daily_gdrive_backup")
+        if BACKUP_ENABLED and GOOGLE_SERVICE_ACCOUNT_JSON and GOOGLE_DRIVE_FOLDER_ID:
+            # 19:00 UTC = 03:00 Asia/Taipei
+            sched.add_job(do_backup_now, "cron", hour=19, minute=0, id="daily_gdrive_backup")
+            print("[backup] scheduler enabled: daily 19:00 UTC (03:00 Taipei)")
+        # PDF 收件相關（不論 backup 開關都跑）：
+        # - 每分鐘檢查 session timeout（5 分鐘無動作自動合 PDF）
+        # - 每小時清過期 PDF（24 hr TTL）
+        sched.add_job(_check_pdf_session_timeouts, "interval", minutes=1, id="pdf_session_timeout")
+        sched.add_job(_cleanup_expired_pdfs, "interval", hours=1, id="pdf_cleanup")
         sched.start()
-        print("[backup] scheduler started: daily 19:00 UTC (03:00 Taipei)")
+        print("[scheduler] PDF session timeout + cleanup tasks started")
     except Exception as e:
-        print(f"[backup] scheduler start failed: {e}")
+        print(f"[scheduler] start failed: {e}")
 
 
 # =========================
