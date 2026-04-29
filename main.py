@@ -49,9 +49,9 @@ try:
 except Exception:
     pass
 
-# PDF 暫存目錄（24 小時 TTL、用 /tmp）
-import tempfile as _tempfile
-PDF_TMP_DIR = os.path.join(_tempfile.gettempdir(), "loan_pdfs")
+# PDF 暫存目錄（24 小時 TTL）
+# 用 DB 同目錄下的 pdfs/ 子資料夾、保證存在 Render 持久磁碟（不會因重啟消失）
+PDF_TMP_DIR = os.path.join(os.path.dirname(DB_PATH) or ".", "pdfs")
 try:
     os.makedirs(PDF_TMP_DIR, exist_ok=True)
 except Exception:
