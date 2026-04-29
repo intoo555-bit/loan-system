@@ -2064,7 +2064,8 @@ def _finalize_pdf_session(group_id: str, user_id: str, push_to_group: bool = Tru
         # 本地測試 fallback
         base_url = f"http://localhost:{os.getenv('PORT', '10000')}"
     download_url = f"{base_url}/pdfs/{token}/{filename}"
-    msg = (f"📄 {filename} 已產生（{len(sess['images'])} 頁）\n"
+    msg = (f"✅ {name} 收件完成\n"
+           f"📄 {filename}（{len(sess['images'])} 頁）\n"
            f"下載：{download_url}\n"
            f"⏰ {PDF_TTL_HOURS} 小時後失效")
     if push_to_group and group_id:
@@ -8279,12 +8280,13 @@ def _process_event_inner(event: dict):
             return
         img_bytes, err = _download_line_image(msg_id)
         if not img_bytes:
+            # 失敗才回報、避免吵
             if reply_token:
                 reply_text(reply_token, f"⚠️ 圖片下載失敗：{err}")
             return
-        cnt = _add_image_to_session(group_id, user_id, img_bytes)
-        if reply_token and cnt > 0:
-            reply_text(reply_token, f"📷 {sess.get('name') or '收件'} 已收第 {cnt} 張")
+        _add_image_to_session(group_id, user_id, img_bytes)
+        # 收到圖**不回訊息**、避免每張都吵業務群
+        # 業務看圖傳了就表示收到、最後 @AI 完成 一次回 PDF
         return
 
     if msg_type != "text":
