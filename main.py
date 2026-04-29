@@ -7946,6 +7946,13 @@ def _handle_bc_case_block_locked(block_text, source_group_id, reply_token, sourc
         "銀行", "零卡", "商品貸", "代書", "當舖", "鄉民", "房地", "新鑫",
         "慢點付", "分期趣", "銀角", "刷卡換現"
     ])
+    # 例外：訊息內明確提到主流貸款方案公司 → 視為貸款方案、不算民間
+    # 例：「謝美芳 21 已補京城銀行薪轉」← 「銀行」只是 supporting docs 提到、主案是 21
+    _major_plan_companies = ["21", "亞太", "和裕", "第一", "麻吉", "喬美", "分貝", "貸救補",
+                             "裕融", "和潤", "中租", "創鉅", "合信", "興達", "鼎多", "手機分期",
+                             "預付手機分期", "21汽車", "21商品", "21機車"]
+    if is_private_loan and any(c in block_text for c in _major_plan_companies):
+        is_private_loan = False
     want_push_a = has_ai_trigger(raw_for_trigger) and has_bu_keyword and not is_private_loan
     has_action = has_business_action_word(block_text)
 
