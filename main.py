@@ -12665,7 +12665,7 @@ async def case_edit_post(request: Request):
     role = check_auth(request)
     if not role:
         return RedirectResponse("/login")
-    if role not in ("admin", "adminB"):
+    if role not in ("admin", "adminB", "ops_admin", "sales_admin"):
         return HTMLResponse("無權限", status_code=403)
     form = await request.form()
     f = dict(form)
