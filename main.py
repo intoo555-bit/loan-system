@@ -12564,9 +12564,11 @@ label{{display:block;font-size:12px;font-weight:700;color:#374151;margin-bottom:
 
 <div style="margin-top:18px">
   <button type="submit" class="btn-save">💾 儲存</button>
+  <button type="button" onclick="previewDailyLine()" style="background:#eef2ff;color:#3730a3;border:1px solid #c7d2fe;padding:11px 22px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;margin-left:10px">🔍 預覽日報那行</button>
   <a href="/edit-pending?case_id={h(case_id)}" class="btn-cancel">改個資</a>
   <a href="/report" class="btn-cancel">回日報</a>
 </div>
+<div id="previewBox" style="display:none;margin-top:14px;padding:14px;background:#fefce8;border:1px solid #fde68a;border-radius:8px;font-family:monospace;font-size:13px"></div>
 </form>
 
 <div class="card" style="margin-top:18px">
@@ -12660,6 +12662,58 @@ document.querySelector('select[name="status"]').addEventListener('change', funct
   document.getElementById('penaltyCard').style.display = (e.target.value === 'PENALTY') ? 'block' : 'none';
 }});
 
+// 預覽日報那行（用當前表單值、不寫 DB）
+function previewDailyLine() {{
+  // 收集所有表單值
+  syncVal('conc'); syncVal('pend');
+  const csObj = {{}};
+  document.querySelectorAll('#csBox .cs-row').forEach(r => {{
+    const co = (r.querySelector('.cs-co')||{{}}).value || '';
+    const tx = (r.querySelector('.cs-text')||{{}}).value || '';
+    if (co.trim()) csObj[co.trim()] = tx;
+  }});
+  const data = {{
+    case_id: '{h(case_id)}',
+    status: document.querySelector('select[name="status"]').value,
+    current_company: document.querySelector('select[name="current_company"]').value,
+    concurrent_companies: document.getElementById('concVal').value,
+    approved_amount: document.querySelector('input[name="approved_amount"]').value,
+    disbursement_date: document.querySelector('input[name="disbursement_date"]').value,
+    report_section: document.querySelector('select[name="report_section"]').value,
+    pending_docs: document.getElementById('pendVal').value,
+    signing_area: document.querySelector('input[name="signing_area"]').value,
+    signing_salesperson: document.querySelector('input[name="signing_salesperson"]').value,
+    signing_company: document.querySelector('input[name="signing_company"]').value,
+    signing_time: document.querySelector('input[name="signing_time"]').value,
+    signing_location: document.querySelector('input[name="signing_location"]').value,
+    last_update: document.querySelector('textarea[name="last_update"]').value,
+    company_status_json: JSON.stringify(csObj),
+  }};
+  const box = document.getElementById('previewBox');
+  box.style.display = 'block';
+  box.innerHTML = '⏳ 預覽中...';
+  fetch('/case-edit/preview', {{
+    method: 'POST',
+    headers: {{'Content-Type':'application/json'}},
+    body: JSON.stringify(data)
+  }}).then(r=>r.json()).then(d=>{{
+    if (!d.ok) {{ box.innerHTML = '<span style="color:#dc2626">' + (d.message||'失敗') + '</span>'; return; }}
+    const secs = d.sections || {{}};
+    if (!Object.keys(secs).length) {{
+      box.innerHTML = '<span style="color:#dc2626">⚠️ 此客戶不會出現在任何日報區塊（可能 status 非 ACTIVE）</span>';
+      return;
+    }}
+    let html = '<div style="font-weight:700;margin-bottom:8px;color:#854d0e">📊 日報預覽（這個客戶會這樣顯示）</div>';
+    for (const [sec, lines] of Object.entries(secs)) {{
+      html += '<div style="margin-bottom:6px"><b style="color:#92400e">' + sec + '</b></div>';
+      lines.forEach(ln => {{
+        html += '<div style="padding:4px 12px;background:#fff;border-radius:4px;margin-bottom:4px">' + ln.replace(/</g,'&lt;') + '</div>';
+      }});
+    }}
+    box.innerHTML = html;
+  }}).catch(e => box.innerHTML = '<span style="color:#dc2626">網路錯誤</span>');
+}}
+
 // 還原 case_logs 某筆的 snapshot
 function revertLog(logId) {{
   if (!confirm('確定還原到此筆操作之前的狀態？\\n（current / concurrent / 金額 / 區塊 等會被改回）')) return;
@@ -12674,6 +12728,80 @@ function revertLog(logId) {{
 }}
 </script>
 </body></html>""")
+
+
+@app.post("/case-edit/preview")
+async def case_edit_preview(request: Request):
+    """以表單值模擬該客戶在日報的顯示、回傳每個 section 的那一行文字"""
+    role = check_auth(request)
+    if role not in ("admin", "adminB", "ops_admin", "sales_admin"):
+        return JSONResponse({"ok": False, "message": "無權限"})
+    data = await request.json()
+    case_id = data.get("case_id", "")
+    if not case_id:
+        return JSONResponse({"ok": False, "message": "缺 case_id"})
+    conn = get_conn(); cur = conn.cursor()
+    cur.execute("SELECT * FROM customers WHERE case_id=?", (case_id,))
+    row = cur.fetchone()
+    conn.close()
+    if not row:
+        return JSONResponse({"ok": False, "message": "找不到客戶"})
+    # 拷貝 row、套用表單值
+    r = dict(row)
+    for k in ("status", "current_company", "concurrent_companies", "approved_amount",
+              "disbursement_date", "report_section", "pending_docs",
+              "signing_area", "signing_salesperson", "signing_company",
+              "signing_time", "signing_location", "penalty_amount", "penalty_date"):
+        if k in data and data[k] is not None:
+            r[k] = data[k]
+    if "last_update" in data:
+        r["last_update"] = data["last_update"] or ""
+    if "company_status_json" in data:
+        try:
+            json.loads(data["company_status_json"] or "{}")
+            r["company_status"] = data["company_status_json"] or "{}"
+        except Exception:
+            pass
+    # 預覽也要套「待撥款 + 金額 + current → 補 route_plan history 核准」邏輯
+    # （否則預覽會多顯示在原公司區塊、跟實際儲存後的日報不一致）
+    if (r.get("report_section") == "待撥款" and (r.get("approved_amount") or "").strip()
+            and (r.get("current_company") or "").strip()):
+        try:
+            rp = parse_route_json(r.get("route_plan") or "")
+        except Exception:
+            rp = {"order": [], "current_index": 0, "history": []}
+        history = rp.get("history", [])
+        cur_co = r["current_company"]
+        amt = r["approved_amount"]
+        disb = r.get("disbursement_date") or ""
+        found = False
+        for hh in history:
+            if hh.get("company") == cur_co and hh.get("status") == "核准":
+                hh["amount"] = amt
+                if disb:
+                    hh["disbursed"] = disb
+                found = True
+                break
+        if not found:
+            history.append({"company": cur_co, "status": "核准", "amount": amt, "disbursed": disb})
+        rp["history"] = history
+        r["route_plan"] = json.dumps(rp, ensure_ascii=False)
+    # 用 sqlite Row 的 dict 行為：build_section_map 用 row[key]、需要 dict-like
+    # 包成 sqlite3.Row 的替代
+    class FakeRow:
+        def __init__(self, d): self._d = d
+        def __getitem__(self, k):
+            return self._d.get(k)
+        def keys(self):
+            return list(self._d.keys())
+        def get(self, k, default=None):
+            return self._d.get(k, default)
+    fake_row = FakeRow(r)
+    section_map = build_section_map([fake_row])
+    lines_by_section = {}
+    for sec, lines in section_map.items():
+        lines_by_section[sec] = lines
+    return JSONResponse({"ok": True, "sections": lines_by_section})
 
 
 @app.post("/case-edit")
@@ -12717,6 +12845,34 @@ async def case_edit_post(request: Request):
     with db_conn(commit=True) as conn:
         cur = conn.cursor()
         cur.execute("UPDATE customers SET company_status=? WHERE case_id=?", (cs_json, case_id))
+        # 自動補 route_plan history：如果改成「待撥款」+ 有金額 + 有 current_company
+        # → 把該家當「核准」寫進 history，避免日報又把客戶顯示在原公司區塊（重複）
+        rsec = (f.get("report_section") or "").strip()
+        amt = (f.get("approved_amount") or "").strip()
+        cur_co = (f.get("current_company") or "").strip()
+        disb = (f.get("disbursement_date") or "").strip()
+        if rsec == "待撥款" and amt and cur_co:
+            cur.execute("SELECT route_plan FROM customers WHERE case_id=?", (case_id,))
+            rp_row = cur.fetchone()
+            try:
+                rp = parse_route_json(rp_row["route_plan"] or "") if rp_row else {"order": [], "current_index": 0, "history": []}
+            except Exception:
+                rp = {"order": [], "current_index": 0, "history": []}
+            history = rp.get("history", [])
+            # 找該公司的核准紀錄
+            found = False
+            for hh in history:
+                if hh.get("company") == cur_co and hh.get("status") == "核准":
+                    hh["amount"] = amt
+                    if disb:
+                        hh["disbursed"] = disb
+                    found = True
+                    break
+            if not found:
+                history.append({"company": cur_co, "status": "核准", "amount": amt, "disbursed": disb})
+            rp["history"] = history
+            cur.execute("UPDATE customers SET route_plan=? WHERE case_id=?",
+                        (json.dumps(rp, ensure_ascii=False), case_id))
     return RedirectResponse(f"/case-edit?case_id={case_id}&saved=1", status_code=303)
 
 
