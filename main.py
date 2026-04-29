@@ -1966,10 +1966,12 @@ def reply_quick_reply(reply_token: str, text: str, items):
 # =========================
 # PDF 收件（業務在群裡傳圖 → 合 PDF）
 # =========================
-def _download_line_image(message_id: str) -> bytes:
-    """從 LINE 抓原圖 bytes、Content API"""
+def _download_line_image(message_id: str) -> tuple:
+    """從 LINE 抓原圖 bytes、Content API。回傳 (bytes, error_msg)"""
     if not CHANNEL_ACCESS_TOKEN:
-        return b""
+        return b"", "未設定 CHANNEL_ACCESS_TOKEN"
+    if not message_id:
+        return b"", "缺 message_id"
     try:
         resp = requests.get(
             f"https://api-data.line.me/v2/bot/message/{message_id}/content",
@@ -1977,10 +1979,11 @@ def _download_line_image(message_id: str) -> bytes:
             timeout=20,
         )
         if resp.status_code == 200:
-            return resp.content
-    except Exception:
-        pass
-    return b""
+            return resp.content, ""
+        # 常見錯誤：401 token 不對、404 訊息過期、429 rate limit
+        return b"", f"HTTP {resp.status_code}: {resp.text[:200]}"
+    except Exception as e:
+        return b"", f"{type(e).__name__}: {str(e)[:200]}"
 
 
 def _pdf_session_key(group_id: str, user_id: str):
@@ -8274,10 +8277,10 @@ def _process_event_inner(event: dict):
             return
         if not msg_id:
             return
-        img_bytes = _download_line_image(msg_id)
+        img_bytes, err = _download_line_image(msg_id)
         if not img_bytes:
             if reply_token:
-                reply_text(reply_token, "⚠️ 圖片下載失敗")
+                reply_text(reply_token, f"⚠️ 圖片下載失敗：{err}")
             return
         cnt = _add_image_to_session(group_id, user_id, img_bytes)
         if reply_token and cnt > 0:
