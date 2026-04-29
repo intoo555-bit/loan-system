@@ -3092,8 +3092,18 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
 
         def get_section_status(sec_name):
             """取得該區塊對應公司的狀態（各家獨立，沒有就不顯示）"""
+            # 先直接 key 比對；不中再用 normalize_section 模糊匹配
+            # （使用者打「分貝」、實際 section 是「分貝機車」，要能對得上）
+            cs_key = None
             if sec_name in company_status:
-                cs_text = company_status[sec_name]
+                cs_key = sec_name
+            else:
+                for k in company_status.keys():
+                    if normalize_section(k) == sec_name:
+                        cs_key = k
+                        break
+            if cs_key is not None:
+                cs_text = company_status[cs_key]
                 # 從所有行找有意義的狀態（第一行通常是姓名+公司，狀態常在第二行）
                 for ln in cs_text.splitlines():
                     ln = ln.strip()
