@@ -9618,8 +9618,8 @@ async def restore_from_report_post(request: Request):
         if matched_section:
             continue
         # 客戶行：開頭含日期 MM/DD- 或 🆕MM/DD-（姓名 2-8 字、容錯 emoji）
-        # rest 容空（例 04/23-曾月英- → 公司空白、在送件區）
-        m = re.match(r"^[🆕💰⏰\s]*(\d{1,2}/\d{1,2})-([一-鿿]{2,8})-(.*)$", line)
+        # 支援兩種分隔：name- 或 name( （送件區常見「黃文駿(確認資料)」沒有 dash）
+        m = re.match(r"^[🆕💰⏰\s]*(\d{1,2}/\d{1,2})-([一-鿿]{2,8})(?P<sep>[-\(])(?P<rest>.*)$", line)
         if not m:
             # debug 用：看 parser 漏了什麼
             if re.search(r"\d{1,2}/\d{1,2}", line) and "-" in line and len(debug_unparsed) < 8:
@@ -9631,29 +9631,50 @@ async def restore_from_report_post(request: Request):
             continue
         date_str = m.group(1)
         name = m.group(2)
-        rest = m.group(3).strip()
+        rest = m.group("rest").strip()
+        # 若是 name(...) 格式（送件區的「確認資料」備註類）→ 把開頭括號補回去
+        if m.group("sep") == "(":
+            rest = "(" + rest
 
-        # 待撥款區塊：解析「核准 公司 N萬(撥款日)」、可能 dual-approve「.../亞太 12萬(對保4/27)」
+        # 待撥款區塊：解析多種格式
+        # A. 核准{co1} {amt1}萬(撥款M/D)/{co2} {amt2}萬(對保M/D)   ← dual-approve
+        # B. 核准{co} {amt}萬(撥款M/D)                              ← 公司在 「核准」 後
+        # C. {co}-核准{amt}萬                                       ← 公司在 「-核准」 前、無 paren
+        # D. {co}-核准{amt}萬(M/D) / {co}-核准{amt}萬(撥款M/D)      ← 公司在前 + paren
+        # E. 轉{co}-核准{amt}萬(...)                                ← 轉公司前綴、需剝
         if cur_section == "待撥款":
             approvals = []  # [(co, amt, disb_date)]
-            am_full = re.search(r"核准\s*(.+)$", rest)
-            if am_full:
-                tail = am_full.group(1)
-                # 直接抓所有「公司 amt萬(...)」段落（不依賴 / 分隔、避免被括號內 4/20 誤切）
-                for sm in re.finditer(r"([一-鿿0-9]+?)\s*(\d+(?:\.\d+)?)萬\s*\(([^)]+)\)", tail):
-                    co_s = sm.group(1).strip().lstrip("/").strip()
-                    amt_s = sm.group(2) + "萬"
-                    paren = sm.group(3)
-                    disb_s = ""
-                    dm = re.search(r"撥款(\d{1,2}/\d{1,2})", paren)
-                    if dm:
-                        disb_s = dm.group(1)
-                    approvals.append((co_s, amt_s, disb_s))
-                # 沒帶括號的 fallback
-                if not approvals:
-                    sm2 = re.match(r"([一-鿿0-9]+?)\s*(\d+(?:\.\d+)?)萬", tail)
-                    if sm2:
-                        approvals.append((sm2.group(1).strip(), sm2.group(2) + "萬", ""))
+
+            # 先試 C/D/E：公司在「核准」前面
+            m_pre = re.match(r"^(?:轉)?([一-鿿0-9]+?)\s*-?\s*核准\s*(\d+(?:\.\d+)?)萬\s*(?:\(([^)]*)\))?", rest)
+            if m_pre:
+                co_pre = m_pre.group(1).strip().lstrip("轉").strip()
+                amt_pre = m_pre.group(2) + "萬"
+                paren_pre = m_pre.group(3) or ""
+                disb_pre = ""
+                # paren 可能是「撥款4/27」「4/27」「幸福貸」「對保4/27」
+                dm = re.search(r"(\d{1,2}/\d{1,2})", paren_pre)
+                if dm:
+                    disb_pre = dm.group(1)
+                approvals.append((co_pre, amt_pre, disb_pre))
+            else:
+                # A/B：「核准{co} {amt}萬(...)」格式
+                am_full = re.search(r"核准\s*(.+)$", rest)
+                if am_full:
+                    tail = am_full.group(1)
+                    for sm in re.finditer(r"([一-鿿0-9]+?)\s*(\d+(?:\.\d+)?)萬\s*\(([^)]+)\)", tail):
+                        co_s = sm.group(1).strip().lstrip("/").strip()
+                        amt_s = sm.group(2) + "萬"
+                        paren = sm.group(3)
+                        disb_s = ""
+                        dm = re.search(r"撥款(\d{1,2}/\d{1,2})", paren) or re.search(r"(\d{1,2}/\d{1,2})", paren)
+                        if dm:
+                            disb_s = dm.group(1)
+                        approvals.append((co_s, amt_s, disb_s))
+                    if not approvals:
+                        sm2 = re.match(r"([一-鿿0-9]+?)\s*(\d+(?:\.\d+)?)萬", tail)
+                        if sm2:
+                            approvals.append((sm2.group(1).strip(), sm2.group(2) + "萬", ""))
             if approvals:
                 co, amt, disb = approvals[0]
                 extra_approved = []
@@ -9687,6 +9708,9 @@ async def restore_from_report_post(request: Request):
         co = ""
         if co_part:
             cos = [c.strip() for c in co_part.split("/") if c.strip()]
+            # 剝「轉」前綴（「轉亞太」→「亞太」、「轉21」→「21」）
+            cos = [c[1:].strip() if c.startswith("轉") else c for c in cos]
+            cos = [c for c in cos if c]  # 剝完空字串去掉
             if cos:
                 co = cos[0]
                 sub_concurrent = cos[1:]
