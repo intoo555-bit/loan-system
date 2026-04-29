@@ -13880,20 +13880,8 @@ async def new_customer_post(request: Request):
     rdist = f.get("rdist","").strip()
     if rdist and not _re.search(r"[區市鄉鎮]", rdist):
         errs.append(f"戶籍區/鄉鎮 「{rdist}」格式錯誤（應含 區/市/鄉/鎮）")
-    # 戶籍縣市 vs 發證地 跨縣市 提醒（不擋）— 注意：發證地是短碼（北市/桃市/中市 等）
-    rcity = f.get("rcity","")
-    idplace = f.get("idplace","")
-    if rcity and idplace:
-        _city_short = {"台北市":"北市","新北市":"新北市","桃園市":"桃市","台中市":"中市",
-                       "台南市":"南市","高雄市":"高市","基隆市":"基市","新竹市":"竹市",
-                       "新竹縣":"竹縣","苗栗縣":"苗縣","彰化縣":"彰縣","南投縣":"投縣",
-                       "雲林縣":"雲縣","嘉義市":"嘉市","嘉義縣":"嘉縣","屏東縣":"屏縣",
-                       "宜蘭縣":"宜縣","花蓮縣":"花縣","台東縣":"東縣","澎湖縣":"澎縣",
-                       "金門縣":"金門","連江縣":"連江"}
-        rcity_short = _city_short.get(rcity, rcity)
-        # 不完全相同 → 提醒（很多人發證地跟戶籍真的不同、不擋只警告）
-        if idplace not in (rcity_short, rcity) and rcity_short not in idplace:
-            errs.append(f"⚠️ 戶籍縣市「{rcity}」跟發證地「{idplace}」不同、請對照身分證背面確認（如確認跨縣市請忽略此提醒）")
+    # 戶籍縣市 vs 發證地 跨縣市 — 純資訊提示（很多人發證地跟戶籍真的不同、不擋）
+    # 之前誤加入 errs 會擋送出、移除避免阻塞
     if not live_same and not laddr: errs.append("居住地址不可空白（或勾選同戶籍）")
     lyear_str = f.get("lyear","").strip()
     if not lyear_str: errs.append("居住年數不可空白")
