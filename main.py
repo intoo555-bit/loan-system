@@ -12384,11 +12384,13 @@ def case_edit_get(request: Request, case_id: str = "", saved: str = ""):
         company_status = {}
     cs_rows_html = ""
     for co_key, status_text in company_status.items():
+        # textarea 高度依內容自動調整、最少 2 行
+        rows = max(2, status_text.count("\n") + 1)
         cs_rows_html += (
-            '<div class="cs-row" style="display:flex;gap:6px;margin-bottom:6px;align-items:center">'
-            f'<input type="text" class="cs-co fld" value="{h(co_key)}" style="flex:0 0 130px" placeholder="公司">'
-            f'<input type="text" class="cs-text fld" value="{h(status_text)}" style="flex:1" placeholder="狀態文字">'
-            '<button type="button" class="cs-del" onclick="this.parentElement.remove()" style="background:#fee2e2;color:#dc2626;border:1px solid #fca5a5;padding:9px 12px;border-radius:6px;cursor:pointer;font-size:12px">刪</button>'
+            '<div class="cs-row" style="display:flex;gap:6px;margin-bottom:8px;align-items:start">'
+            f'<input type="text" class="cs-co fld" value="{h(co_key)}" style="flex:0 0 130px;height:38px" placeholder="公司">'
+            f'<textarea class="cs-text fld" rows="{rows}" style="flex:1;resize:vertical;min-height:60px" placeholder="第一行 = 日報狀態（如「待補保人」），後面行可寫詳細紀錄">{h(status_text)}</textarea>'
+            '<button type="button" class="cs-del" onclick="this.parentElement.remove()" style="background:#fee2e2;color:#dc2626;border:1px solid #fca5a5;padding:9px 12px;border-radius:6px;cursor:pointer;font-size:12px;height:38px">刪</button>'
             '</div>'
         )
 
@@ -12617,10 +12619,10 @@ function addCsRow() {{
   const box = document.getElementById('csBox');
   const div = document.createElement('div');
   div.className = 'cs-row';
-  div.style.cssText = 'display:flex;gap:6px;margin-bottom:6px;align-items:center';
-  div.innerHTML = '<input type="text" class="cs-co fld" placeholder="公司" style="flex:0 0 130px">' +
-    '<input type="text" class="cs-text fld" placeholder="狀態文字" style="flex:1">' +
-    '<button type="button" onclick="this.parentElement.remove()" style="background:#fee2e2;color:#dc2626;border:1px solid #fca5a5;padding:9px 12px;border-radius:6px;cursor:pointer;font-size:12px">刪</button>';
+  div.style.cssText = 'display:flex;gap:6px;margin-bottom:8px;align-items:start';
+  div.innerHTML = '<input type="text" class="cs-co fld" placeholder="公司" style="flex:0 0 130px;height:38px">' +
+    '<textarea class="cs-text fld" rows="2" placeholder="第一行 = 日報狀態（如「待補保人」），後面行可寫詳細紀錄" style="flex:1;resize:vertical;min-height:60px"></textarea>' +
+    '<button type="button" onclick="this.parentElement.remove()" style="background:#fee2e2;color:#dc2626;border:1px solid #fca5a5;padding:9px 12px;border-radius:6px;cursor:pointer;font-size:12px;height:38px">刪</button>';
   box.appendChild(div);
 }}
 
