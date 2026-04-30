@@ -6496,19 +6496,42 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
         if concurrent_names:
             update_kw["concurrent_companies"] = ",".join(concurrent_names)
         else:
-            # 單一公司照會：若那家不是 current、也不在 concurrent → 視為「轉送到那家」
-            # 例：潘建宇 原 current=和裕、業務打「潘建宇 21 照會」→ current 改成 21
-            cur_co_norm = normalize_section(target["current_company"] or "")
+            # 單一公司照會：若那家不是 current、也不在 concurrent → 視為「跳過原 current、轉送到那家」
+            # 例：潘建宇 原 current=和裕、業務打「潘建宇 21 照會」→ current=21、和裕完全清掉
+            cur_co_old = target["current_company"] or ""
+            cur_co_norm = normalize_section(cur_co_old)
             target_norm = normalize_section(company)
             existing_concurrent = [c.strip() for c in (target["concurrent_companies"] or "").split(",") if c.strip()]
             in_concurrent = any(normalize_section(c) == target_norm for c in existing_concurrent)
             if company and target_norm != cur_co_norm and not in_concurrent:
-                # 嘗試用 route_plan 的 advance_route_to（若 route 內有那家、推進）
+                # 1. 推進 route_plan（原 current 進 history 標「跳過」、不算婉拒）
                 old_route = target["route_plan"] or ""
-                new_route, ok, _ = advance_route_to(old_route, company, "婉拒") if old_route else (old_route, False, "")
+                if old_route:
+                    new_route, ok, _ = advance_route_to(old_route, company, "跳過")
+                    if ok:
+                        update_kw["route_plan"] = new_route
+                # 2. current 改成新公司
                 update_kw["current_company"] = company
-                if ok:
-                    update_kw["route_plan"] = new_route
+                # 3. 從 concurrent 移除被跳過的舊 current（避免日報還顯示和裕區塊）
+                kept_concurrent = [c for c in existing_concurrent if normalize_section(c) != cur_co_norm]
+                if kept_concurrent != existing_concurrent:
+                    update_kw["concurrent_companies"] = ",".join(kept_concurrent)
+                # 4. 清掉舊 current 的 company_status entry（避免和裕區塊還顯示補件資訊）
+                try:
+                    old_cs = json.loads(target["company_status"] or "{}")
+                except Exception:
+                    old_cs = {}
+                cs_changed = False
+                for k in list(old_cs.keys()):
+                    if normalize_section(k) == cur_co_norm:
+                        del old_cs[k]
+                        cs_changed = True
+                if cs_changed:
+                    # company_status 沒在 update_customer 參數、用 raw SQL 後面寫
+                    pass
+                # 5. 清掉 pending_docs（和裕缺的件 跟 21 沒關）
+                if (target["pending_docs"] or "").strip():
+                    update_kw["pending_docs"] = ""
         if first_amount:
             update_kw["notify_amount"] = first_amount
             update_kw["notify_period"] = first_period
@@ -6613,6 +6636,9 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
         if notify_amount:
             update_kw["notify_amount"] = notify_amount
             update_kw["notify_period"] = notify_period
+        # 「送」= 已送、清掉「送件」標記、跳到公司區塊
+        if (target["report_section"] or "") == "送件":
+            update_kw["report_section"] = ""
         update_customer(target["case_id"], **update_kw)
         # 組訊息
         msg_parts = [f"✅ {name}"]
@@ -6804,6 +6830,9 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
                 if notify_amount:
                     update_kw["notify_amount"] = notify_amount
                     update_kw["notify_period"] = notify_period
+                # 「轉」= 已送、清掉「送件」標記、跳到公司區塊
+                if (target["report_section"] or "") == "送件":
+                    update_kw["report_section"] = ""
                 update_customer(target["case_id"], **update_kw)
                 push_text(target["source_group_id"], f"{name} 已轉送：{current} → {single_co}")
                 hint = _build_plan_info_hint([single_co], notify_amount, notify_period)
@@ -6826,6 +6855,9 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
                 if notify_amount:
                     update_kw["notify_amount"] = notify_amount
                     update_kw["notify_period"] = notify_period
+                # 「轉」= 已送、清掉「送件」標記、跳到公司區塊
+                if (target["report_section"] or "") == "送件":
+                    update_kw["report_section"] = ""
                 update_customer(target["case_id"], **update_kw)
                 targets_str = "+".join(targets)
                 hint = _build_plan_info_hint(targets, notify_amount, notify_period)
@@ -6839,8 +6871,12 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
             if not next_co:
                 reply_text(reply_token, f"⚠️ {name} 沒設下一家要送的公司\n若要設送件順序：04/18-{name}-裕融/第一/亞太（不用 @AI）"); return
             new_route = advance_route(route, "轉送")
-            update_customer(target["case_id"], route_plan=new_route, current_company=next_co,
-                            text=f"{name} 轉下一家→{next_co}", from_group_id=group_id)
+            adv_kw = {"route_plan": new_route, "current_company": next_co,
+                     "text": f"{name} 轉下一家→{next_co}", "from_group_id": group_id}
+            # 「轉下一家」= 已送、清掉「送件」標記
+            if (target["report_section"] or "") == "送件":
+                adv_kw["report_section"] = ""
+            update_customer(target["case_id"], **adv_kw)
             push_text(target["source_group_id"], f"{name} 已轉送：{current} → {next_co}")
             reply_text(reply_token, f"✅ {name} 已轉送：{current} → {next_co}")
 
