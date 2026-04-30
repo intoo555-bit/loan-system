@@ -1009,7 +1009,7 @@ PLAN_ELIGIBILITY_RULES = [
     },
     {
         "company": "亞太工會機車",
-        "max_amount": 25,
+        "max_amount": 15,
         "priority": 70,
         "rules": [
             {"type": "simple", "label": "年齡 20~50", "field": "age", "op": "between", "value": [20, 50]},
@@ -1022,7 +1022,7 @@ PLAN_ELIGIBILITY_RULES = [
     },
     {
         "company": "亞太商品",
-        "max_amount": 25,
+        "max_amount": 12,
         "priority": 65,
         "rules": [
             {"type": "simple", "label": "年齡 20~50", "field": "age", "op": "between", "value": [20, 50]},
