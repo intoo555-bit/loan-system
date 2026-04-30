@@ -6917,17 +6917,18 @@ def handle_route_order_block(block_text, source_group_id, reply_token) -> Option
     same = [r for r in rows if r["source_group_id"] == source_group_id]
     dupe_suffix = f"（已去除重複 {dupe_count} 家）" if dupe_count > 0 else ""
     if same:
-        # 更新既有客戶（行政後給順序的情境）：不強設 report_section
-        # 讓 build_section_map 用 current_company 算對應區塊、避免被覆蓋回「送件」
+        # 更新既有客戶 — 設送件順序時：
+        # 民間方案（房地/銀行/零卡）→ 直接放對應區塊
+        # 貸款方案 → 留在「送件區」（因為才剛排好順序、還沒實際送出去）
         update_kw = {"route_plan": route_json, "current_company": current_co,
                      "text": block_text, "from_group_id": source_group_id}
         update_kw.update(notify_kw)
-        # 民間方案（房地/銀行/零卡）→ 設對應 section，避免卡在送件區
         if is_private:
             update_kw["report_section"] = ""
-        # 既有 report_section=送件 → 清空讓 current_company 接管
-        if (same[0]["report_section"] or "") == "送件":
-            update_kw["report_section"] = ""
+        else:
+            # 貸款方案：除非案件已待撥款（不要降級）、否則歸到「送件」區
+            if (same[0]["report_section"] or "") != "待撥款":
+                update_kw["report_section"] = "送件"
         update_customer(same[0]["case_id"], **update_kw)
         return f"📋 已更新 {name} 送件順序：{'/'.join(companies)}{dupe_suffix}"
     other = [r for r in rows if r["source_group_id"] != source_group_id]
