@@ -1020,6 +1020,8 @@ PLAN_ELIGIBILITY_RULES = [
                 {"type": "manual", "label": "負責人有營登、設立 1 年以上", "hint": "需提供營登表或網站截圖"},
             ]},
             {"type": "simple", "label": "車齡 ≤ 15 年", "field": "vehicle_year", "op": "year_age_le", "value": 15},
+            {"type": "simple", "label": "客戶名下無動保（單車貸款）", "op": "not_has_dynbao",
+             "manual_check": "若有動保 → 應送 15 萬版本（二車貸款）"},
             {"type": "manual", "label": "代償專案：原機車有貸款須前貸是 中租/和潤/裕融", "hint": "有貸款沒空間 → 不能送"},
         ],
         "required_docs": ["身分證正反", "第二證件", "機車合照", "行照", "強制險截圖"],
@@ -1038,8 +1040,8 @@ PLAN_ELIGIBILITY_RULES = [
                 {"type": "manual", "label": "負責人有營登、設立 1 年以上"},
             ]},
             {"type": "simple", "label": "車齡 ≤ 15 年", "field": "vehicle_year", "op": "year_age_le", "value": 15},
-            {"type": "manual", "label": "二車貸款專案：客人名下有其他車有動保 + 要貸的是另一台沒貸款的車",
-             "hint": "若客人只有一台車或要貸的車有貸款 → 不適用此方案、應送 25 萬版本"},
+            {"type": "simple", "label": "客戶名下有動保（二車貸款情境）", "op": "has_dynbao",
+             "manual_check": "確認要貸的是另一台沒貸款的車（前車有動保 + 新車無貸款）"},
         ],
         "required_docs": ["身分證正反", "第二證件", "機車合照", "行照", "強制險截圖"],
     },
@@ -1215,6 +1217,21 @@ def _calc_vehicle_age(year_str):
     return None
 
 
+def _customer_has_dynbao(customer):
+    """檢查客戶 debt_list 是否有任一筆「動保」(dy 欄位)
+    回傳 True = 有動保（= 二車貸款情境）
+    """
+    try:
+        debt_list = json.loads(customer.get("debt_list") or "[]") if customer.get("debt_list") else []
+        for d in debt_list:
+            dy = (d.get("dy", "") or "")
+            if "動保" in dy:
+                return True
+    except Exception:
+        pass
+    return False
+
+
 def _check_rule(rule, customer):
     """單條規則比對、回 (status, label, actual_str)
     status: 'pass' / 'fail' / 'manual' / 'unknown'"""
@@ -1242,6 +1259,12 @@ def _check_rule(rule, customer):
         field = rule.get("field", "")
         op = rule.get("op", "")
         value = rule.get("value")
+        # 特殊 op：has_dynbao / not_has_dynbao（不需要 field、直接檢查 debt_list）
+        if op in ("has_dynbao", "not_has_dynbao"):
+            has = _customer_has_dynbao(customer)
+            ok = has if op == "has_dynbao" else (not has)
+            actual_str = "有動保" if has else "無動保"
+            return ("pass" if ok else "fail", label, actual_str)
         # 取值
         if field == "age":
             actual = _calc_age_from_birth(customer.get("birth_date", "") or "")
