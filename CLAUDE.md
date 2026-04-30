@@ -581,3 +581,87 @@ PENDING → ACTIVE → CLOSED
 - 含身分證/送件順序/核准金額/撥款日/每家獨立備註（寫入 customers.company_status）
 - 日報 build_date 覆寫 `created_at`（原建案日、非匯入日）
 - **密碼初始化：** `init_settings()` 只在首次運行時設定預設密碼 hash
+
+---
+
+## 2026/04/30 補充規則（重要、修 bug 必看）
+
+### 「送件區塊」vs「公司區塊」明確規則 ⭐
+
+| 客戶狀態 | 應該在哪 |
+|---------|---------|
+| 設了送件順序、業務還沒打過任何指令 | **送件區塊**（report_section="送件"）|
+| 業務打過「送/轉/照會」其中一個 | **公司區塊**（current_company section、清掉送件標記）|
+| A 群核准 + 有金額 | **待撥款區塊** |
+| 結案 | 不顯示 |
+
+**實作對齊**（每個 handler 都要做）：
+- `handle_route_order_block`（設順序）：force `report_section="送件"`（commit cd877ea）
+- `add_concurrent`（送）：若 `report_section=="送件"` → 清空（commit bb68495）
+- `advance`（轉、單公司+多公司+下一家三條路徑）：清空送件標記
+- `notification`（照會）：清空送件標記
+- `mark_doc_completed` / `clear_missing_docs`（已補）：補完後若 company_status 空 → **保持送件**（commit b08e0d8）
+
+### concurrent_companies 永遠散到對應區塊（commit 324edc8）
+
+`build_section_map` 中、`concurrent_str` 的散開邏輯**不要**用 `_is_pre_send` 擋。
+理由：`concurrent_companies` 是業務明確打 `@AI 姓名 送 X` 寫進去的、表達意圖、必顯示。
+
+```python
+# ✅ 對：
+if concurrent_str:
+    for co in concurrent_str.split(","):
+        # 散到 co 對應區塊
+
+# ❌ 錯（被 _is_pre_send 擋住、加送的家不顯示）：
+if concurrent_str and not _is_pre_send:
+```
+
+### 單一公司照會 = 跳過原 current（commit 82aa3a1）
+
+業務打 `@AI 王小明 21 照會`（單一公司、不是 +）：
+- 若 21 == current → 只給話術、不動 case
+- 若 21 在 concurrent → 只給話術、不動 case
+- 若 21 是新的 → **跳過原 current、改送 21**：
+  1. `current_company = 21`
+  2. `route_plan` 用 `advance_route_to(..., status="跳過")` 推進
+  3. 從 concurrent 移除舊 current
+  4. 清舊 current 的 `company_status` entry
+  5. 清 `pending_docs`（舊 current 缺的件跟 21 沒關）
+
+業務心智：「21 照會」= 「決定送 21、原 current 不送了、跳過」、不是「對 21 發照會話術」。
+
+### 「送/轉/照會」指令統一原則
+
+三個指令在「業務語意」上等價：「我把案子送出去了」。差別：
+- **送 X**：原 current 保留、加 X 進 concurrent（多家同送）
+- **轉 X**：原 current 換成 X、原 X 進 history
+- **X 照會**：等同「轉 X」（原 current 跳過、不留 history 婉拒紀錄）
+
+三個都會清掉「送件」標記、跳到公司區塊。
+
+### 跨群組同送 / 加送防呆
+
+`update_customer` 的 `concurrent_companies` 設置會自動：
+- 移除跟 `current_company` 相同的項目（normalize_section 比對）
+- 移除重複公司（同公司不同產品如「21機車25萬」「21商品」算同公司）
+
+### 6 個必對清單（修 bug 前先看）
+
+每次修一個 handler、要對照下表 confirm 不會踩到別的：
+
+| Handler | report_section | current_company | concurrent_companies | route_plan | company_status | pending_docs |
+|---------|----------------|-----------------|---------------------|-----------|----------------|--------------|
+| 設順序 | force "送件" | 第一家 | 不動 | 寫 order | 不動 | 不動 |
+| 送 X | 若"送件"→清 | 不動（除非 alias 替換）| 加 X | 不動 | 不動 | 不動 |
+| 轉 X | 若"送件"→清 | 改 X | 不動 | advance_route_to(X) | 不動 | 不動 |
+| X 照會 | 若"送件"→清 | 改 X | 移除舊 current | advance_route_to(X) | 移除舊 current | 清空 |
+| X 婉拒 | 若"送件"→清 | 推下一家 or 清 | 移除 X | advance + 標婉拒 | 不動 | 不動 |
+| 已補 | 若"送件"+空 cs+補完 → 保持"送件" | 不動 | 不動 | 不動 | 不動 | 移除該項 |
+
+### 修 bug 之前必須做的事
+
+1. **讀這份 CLAUDE.md 2026/04/30 補充規則**（這份）
+2. 在 `main.py` 找對應 handler、看現在做了什麼
+3. **不要只看眼前的 bug 改**：用「6 個必對清單」逐欄位 review、確認新邏輯不破壞別的指令
+4. 改完跑測試（建客戶 → 設順序 → 各種指令 → 看日報）
