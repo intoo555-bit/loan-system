@@ -994,6 +994,7 @@ APT_RED_LINES = [
     {"type": "simple", "label": "罰單金額 ≤ 3 萬", "field": "eval_fine", "op": "<=", "value": 30000},
     {"type": "manual", "label": "無酒駕/毒駕紀錄", "hint": "看法學欄位或備註、有就不能送亞太"},
     {"type": "simple", "label": "信用卡無問題（無卡循/遲繳/強制停卡/協商）", "op": "creditcard_no_bad"},
+    {"type": "simple", "label": "近三月沒送過亞太", "field": "eval_sent_3m_detail", "op": "not_contains", "value": "亞太"},
     # 「中華民國身分證」這條已涵蓋在每個方案規則中（id_no tw_id 檢查）→ 居留證自動 fail
 ]
 
@@ -1346,6 +1347,15 @@ def _check_rule(rule, customer):
                     if rule.get("exclude_value") in ex_actual:
                         ok = False
                         actual_str += f"（但 {rule['exclude_field']}={ex_actual}）"
+            elif op == "not_contains":
+                # value 可以是字串或字串列表（任一含到就 fail）
+                if isinstance(value, list):
+                    found = next((v for v in value if v in str(actual)), None)
+                    ok = found is None
+                    actual_str = f"{actual}（含「{found}」）" if found else (str(actual) or "未填")
+                else:
+                    ok = value not in str(actual)
+                    actual_str = str(actual) or "未填"
             elif op == "=":
                 ok = str(actual) == str(value)
                 actual_str = str(actual)
