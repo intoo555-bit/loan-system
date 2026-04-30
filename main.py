@@ -996,6 +996,15 @@ APT_RED_LINES = [
     # 「中華民國身分證」這條已涵蓋在每個方案規則中（id_no tw_id 檢查）→ 居留證自動 fail
 ]
 
+# 全方案共用的加分項（所有公司都一樣、不影響 eligible 狀態）
+COMMON_BONUS_ITEMS = [
+    "信用卡（不能有卡循/遲繳/強制停卡）",
+    "證照",
+    "上市櫃公司任職",
+    "股票/基金",
+    "定存/存款",
+]
+
 PLAN_ELIGIBILITY_RULES = [
     {
         "company": "亞太機車25萬",
@@ -1110,6 +1119,60 @@ PLAN_ELIGIBILITY_RULES = [
             {"type": "manual", "label": "至少 2 位聯絡人、其中 1 位為二等親屬"},
         ],
         "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面", "機車合照（要有時間相機）", "行照"],
+    },
+    # ===== 和裕系列 =====
+    # 排序原則：亞太排前面、和裕後（如亞太婉拒會跳過和裕）
+    {
+        "company": "和裕機車",
+        "max_amount": 15,
+        "priority": 62,
+        "rules": [
+            {"type": "simple", "label": "年齡 20~55", "field": "age", "op": "between", "value": [20, 55]},
+            {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
+            {"type": "manual", "label": "至少 2 位聯絡人、其中 1 位為二等親屬"},
+            {"type": "simple", "label": "車齡 ≤ 20 年", "field": "vehicle_year", "op": "year_age_le", "value": 20},
+            {"type": "manual", "label": "若 45~55 歲 → 必須勞保滿 1 年以上",
+             "hint": "45 歲以下不看勞保、財力 3 選 1 即可"},
+            {"type": "oneof", "label": "財務能力（擇一）", "options": [
+                {"type": "manual", "label": "持有信用卡 + 近 2 期完整繳款明細",
+                 "hint": "信用卡 + 帳單或收據、不能有卡循/遲繳/強制停卡"},
+                {"type": "simple", "label": "勞保滿半年 或 工會保滿 2 年（須紙本或 PDF）",
+                 "field": "eval_labor_ins", "op": "in", "value": ["公司保", "軍保", "公保", "工會保"],
+                 "manual_check": "勞保須半年+工會須2年、紙本或 PDF、勞保須一週內"},
+                {"type": "simple", "label": "有不動產（不能有私設、須提供權狀）",
+                 "field": "eval_property", "op": "contains", "value": "不動產",
+                 "exclude_field": "eval_alert", "exclude_value": "有",
+                 "manual_check": "須提供權狀"},
+            ]},
+            {"type": "manual", "label": "⚠️ 排序提醒：亞太婉拒過 → 不送和裕、跳過此方案",
+             "hint": "若客戶亞太已婉拒、行政應改送其他家、不再送和裕"},
+        ],
+        "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面", "勞保/工會保（紙本或 PDF）", "機車正反合照", "行照"],
+    },
+    {
+        "company": "和裕商品",
+        "max_amount": 12,
+        "priority": 60,
+        "rules": [
+            {"type": "simple", "label": "年齡 20~55", "field": "age", "op": "between", "value": [20, 55]},
+            {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
+            {"type": "manual", "label": "至少 2 位聯絡人、其中 1 位為二等親屬"},
+            {"type": "manual", "label": "若 45~55 歲 → 必須勞保滿 1 年以上",
+             "hint": "45 歲以下不看勞保、財力 3 選 1 即可"},
+            {"type": "oneof", "label": "財務能力（擇一）", "options": [
+                {"type": "manual", "label": "持有信用卡 + 近 2 期完整繳款明細",
+                 "hint": "信用卡 + 帳單或收據、不能有卡循/遲繳/強制停卡"},
+                {"type": "simple", "label": "勞保滿半年 或 工會保滿 2 年（須紙本或 PDF）",
+                 "field": "eval_labor_ins", "op": "in", "value": ["公司保", "軍保", "公保", "工會保"],
+                 "manual_check": "勞保須半年+工會須2年、紙本或 PDF、勞保須一週內"},
+                {"type": "simple", "label": "有不動產（不能有私設、須提供權狀）",
+                 "field": "eval_property", "op": "contains", "value": "不動產",
+                 "exclude_field": "eval_alert", "exclude_value": "有",
+                 "manual_check": "須提供權狀"},
+            ]},
+            {"type": "manual", "label": "⚠️ 排序提醒：亞太婉拒過 → 不送和裕、跳過此方案"},
+        ],
+        "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面", "勞保/工會保（紙本或 PDF）", "手機型號", "imei", "手機合照"],
     },
 ]
 
@@ -1292,6 +1355,7 @@ def evaluate_case(customer):
             "checks": checks,
             "summary": summary,
             "required_docs": plan.get("required_docs", []),
+            "bonus_items": plan.get("bonus_items", COMMON_BONUS_ITEMS),
         })
     # 排序：可送（含 manual）→ 不可送、金額大優先、priority 高優先
     def sort_key(r):
@@ -13625,6 +13689,9 @@ function checkEligibility() {{
         }}
         if (r.required_docs && r.required_docs.length) {{
           html += '<div style="margin-top:6px;font-size:11px;color:#6b7280">📎 必要文件：' + r.required_docs.join('、') + '</div>';
+        }}
+        if (r.bonus_items && r.bonus_items.length) {{
+          html += '<div style="margin-top:4px;font-size:11px;color:#166534">✨ 加分項（有就給）：' + r.bonus_items.join('、') + '</div>';
         }}
         html += '</div>';
       }});
