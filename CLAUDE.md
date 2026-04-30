@@ -665,3 +665,117 @@ if concurrent_str and not _is_pre_send:
 2. 在 `main.py` 找對應 handler、看現在做了什麼
 3. **不要只看眼前的 bug 改**：用「6 個必對清單」逐欄位 review、確認新邏輯不破壞別的指令
 4. 改完跑測試（建客戶 → 設順序 → 各種指令 → 看日報）
+
+---
+
+## 2026/05/01 案件判別功能（規則查表助手）
+
+### 在解什麼問題
+- 行政判太慢（各家規則太多記不住）
+- 只有 1 個老行政會、新人想學
+- 用「規則表」自動比對客戶條件 vs 各家公司規則、列出可送/不可送 + 理由
+
+### DB 新增欄位（customers）
+- `eval_labor_amount` — 勞保投保金額（萬）
+- `vehicle_model` — 車款（如 YAMAHA SMAX）
+- `vehicle_year` — 出廠年份（西元 2019 或民國 108 都可、自動轉）
+
+### /new-customer + /edit-pending 新欄位
+「貸款諮詢事項」區塊加：
+- 勞保投保金額（萬）：`elabor_amt`
+- 車款：`vmodel`
+- 出廠年份：`vyear`
+
+### 規則表結構（PLAN_ELIGIBILITY_RULES）
+
+每家公司一筆 dict、按 priority 排序（金額大、容易過件 → 高 priority）
+
+```python
+{
+  "company": "亞太機車25萬",
+  "max_amount": 25,
+  "priority": 75,
+  "rules": [...],
+  "required_docs": [...],
+  "bonus_items": [...],  # 沒給就用 COMMON_BONUS_ITEMS
+}
+```
+
+### Rule type 三類
+
+| type | 用途 | 行為 |
+|------|------|------|
+| `simple` | 系統可自動比對的條件 | 自動 ✅/❌ |
+| `oneof` | 擇一達成（任一 ✅ 整個 ✅）| 內部選項任一 pass 就 pass |
+| `manual` | 系統沒此欄位、靠人 | 一律 ⚠️ |
+
+### simple op 列表
+
+| op | 用法 |
+|----|------|
+| `between` | `[lo, hi]` 範圍（年齡）|
+| `tw_id` | 中華民國身分證格式（居留證自動 fail）|
+| `year_age_le` | 從出廠年份算車齡 ≤ N |
+| `in` | actual 在 value list 內 |
+| `contains` | actual 含 value 字串、可加 exclude_field/exclude_value |
+| `not_contains` | actual 不含 value（字串或字串列表）|
+| `=` `>=` `<=` | 一般比較、空值視為 0（>= / <=）|
+| `has_dynbao` / `not_has_dynbao` | 從 debt_list 看有無動保（區分二車貸款）|
+| `creditcard_good` | eval_credit_card 判：有銀行名 ✅、卡循/協商 ❌、空 unknown |
+| `creditcard_no_bad` | 只要無紅線（卡循/協商）就 pass |
+
+### manual_check 修飾
+
+simple op pass 時、如有 `manual_check` 欄位 → 改回「⚠️ 自動✓ + 需人工確認 XXX」。
+用於「自動可知道但仍需人看」的情境（如：勞保狀態 ✓、需確認滿半年）。
+
+### 已完成 9 家方案
+
+```
+priority   公司           金額  特點
+─────────────────────────────────────
+78         21機車25萬     25    嚴格（20~50、車齡 ≤15、財務 3 選 1）
+75         亞太機車25萬   25    無動保（單車貸款）
+73         亞太機車15萬   15    有動保（二車貸款）⭐ auto 動保偵測
+70         亞太工會機車   15    工會保
+65         亞太商品       12    無車齡限制
+62         和裕機車       15    車齡 ≤20、信用卡 auto 判
+60         和裕商品       12    信用卡 auto 判
+55         21商品         12    寬鬆（18~60 軟性、55+ 補保人）
+53         21機車12萬     12    同上
+```
+
+### 共用紅線
+
+#### 亞太系列共用紅線（APT_RED_LINES）
+- 罰單金額 ≤ 3 萬（auto）
+- 無酒駕/毒駕（manual）
+- 近三月沒送過亞太（auto、`eval_sent_3m_detail not_contains 亞太`）
+- 中華民國身分證（每家規則內、tw_id）
+
+#### 加分項（COMMON_BONUS_ITEMS、所有方案共用、不影響判別）
+- 信用卡（不能卡循/遲繳/強制停卡）
+- 證照、上市櫃任職、股票/基金、定存/存款
+
+### UI（/case-edit + /adminb）
+
+按「📋 對照規則表」黃色按鈕、AJAX `GET /api/check-eligibility?case_id=xxx` → 顯示：
+- 每家方案排序好的清單（可送 → 不可送、金額大優先）
+- 各條規則 ✅/❌/⚠️ + 實際值
+- 📎 必要文件
+- ✨ 加分項
+
+### 重要原則（用戶教過、不要再搞混）⚠️
+
+1. **「擇一」就是擇一**：oneof 任一 ✅ 整個 ✅、不要把每項都當紅線
+2. **加分項 ≠ 紅線**：信用卡有遲繳只是加分無效、不能擋整個方案
+3. **信用卡是和裕「財力擇一」其中一項**、不是全部方案的紅線
+4. **「跳過」≠「婉拒」**：照會跳過 current 時、advance_route_to 用 status="跳過"
+5. **金額對齊 PLAN_INFO**、不要亂打（亞太工會 15、亞太商品 12、21機25萬 25）
+6. **「亞太婉拒過 → 不送和裕」**：目前用 manual hint、未來可加 auto 檢查 route_plan history
+
+### 下一步（pending）
+- 等用戶教其他公司規則（喬美 / 貸救補 / 第一 / 麻吉 / 分貝 / 興達 / 合信）
+- 整合到 /adminb 加同樣判別按鈕
+- 加 conditional 規則（如「45+ 才看勞保」）
+- 自動偵測「亞太婉拒過 → 和裕直接 fail」
