@@ -979,6 +979,241 @@ PLAN_INFO = {
 
 APPROVAL_EXCLUDE_KEYWORDS = ["初估", "待補", "照會", "金主初估", "需補", "補資料才"]
 
+# =========================
+# 案件判別規則表（規則查表助手）
+# =========================
+# 每家公司一筆、按 priority 排序（金額大、容易過件 → 高 priority）
+# rule check 三類：
+#   - simple：單條件比對（field/op/value）
+#   - oneof：擇一達成（options 陣列）
+#   - manual：標「⚠️ 需人工確認」（系統無此欄位）
+# 比對結果由 evaluate_case() 處理
+PLAN_ELIGIBILITY_RULES = [
+    {
+        "company": "亞太機車25萬",
+        "max_amount": 25,
+        "priority": 75,
+        "rules": [
+            {"type": "simple", "label": "年齡 20~50", "field": "age", "op": "between", "value": [20, 50]},
+            {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
+            {"type": "manual", "label": "聯絡人 1 為二等親屬", "hint": "看聯絡人 1 關係（父母/配偶/兄弟姐妹/子女）"},
+            {"type": "oneof", "label": "財務能力（擇一）", "options": [
+                {"type": "simple", "label": "勞保/軍保/公保滿半年（不可部分工時）", "field": "eval_labor_ins", "op": "in", "value": ["公司保", "軍保", "公保"], "manual_check": "需確認滿半年 + 非部分工時"},
+                {"type": "simple", "label": "有不動產（不能有私設當鋪）", "field": "eval_property", "op": "contains", "value": "不動產", "exclude_field": "eval_alert", "exclude_value": "有"},
+                {"type": "manual", "label": "負責人有營登、設立 1 年以上", "hint": "需提供營登表或網站截圖"},
+            ]},
+            {"type": "simple", "label": "車齡 ≤ 15 年", "field": "vehicle_year", "op": "year_age_le", "value": 15},
+            {"type": "manual", "label": "代償專案：原機車有貸款須前貸是 中租/和潤/裕融", "hint": "有貸款沒空間 → 不能送"},
+        ],
+        "required_docs": ["身分證正反", "第二證件", "機車合照", "行照", "強制險截圖"],
+    },
+    {
+        "company": "亞太工會機車",
+        "max_amount": 25,
+        "priority": 70,
+        "rules": [
+            {"type": "simple", "label": "年齡 20~50", "field": "age", "op": "between", "value": [20, 50]},
+            {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
+            {"type": "manual", "label": "聯絡人 1 為二等親屬"},
+            {"type": "simple", "label": "工會投保滿半年", "field": "eval_labor_ins", "op": "=", "value": "工會保", "manual_check": "需確認滿半年"},
+            {"type": "simple", "label": "車齡 ≤ 15 年", "field": "vehicle_year", "op": "year_age_le", "value": 15},
+        ],
+        "required_docs": ["身分證正反", "第二證件", "機車合照", "行照", "強制險截圖", "半年內存摺明細"],
+    },
+    {
+        "company": "亞太商品",
+        "max_amount": 25,
+        "priority": 65,
+        "rules": [
+            {"type": "simple", "label": "年齡 20~50", "field": "age", "op": "between", "value": [20, 50]},
+            {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
+            {"type": "manual", "label": "聯絡人 1 為二等親屬"},
+            {"type": "oneof", "label": "財務能力（擇一）", "options": [
+                {"type": "simple", "label": "勞保/軍保/公保滿半年（不可部分工時）", "field": "eval_labor_ins", "op": "in", "value": ["公司保", "軍保", "公保"], "manual_check": "需確認滿半年 + 非部分工時"},
+                {"type": "simple", "label": "有不動產（不能有私設）", "field": "eval_property", "op": "contains", "value": "不動產", "exclude_field": "eval_alert", "exclude_value": "有"},
+                {"type": "manual", "label": "負責人有營登、設立 1 年以上"},
+            ]},
+        ],
+        "required_docs": ["身分證正反", "第二證件", "手機型號", "imei", "手機合照"],
+    },
+]
+
+
+def _calc_age_from_birth(birth_str):
+    """從 birth_date 算年齡。支援 086/12/15（民國）或 1985-12-15"""
+    if not birth_str:
+        return None
+    try:
+        # 民國年 086/12/15
+        m = re.match(r"^(\d{2,3})/(\d{1,2})/(\d{1,2})$", birth_str.strip())
+        if m:
+            year = int(m.group(1))
+            if year < 200:
+                year += 1911
+            return now_tw().year - year
+        # 西元 1985-12-15 或 1985/12/15
+        m = re.match(r"^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$", birth_str.strip())
+        if m:
+            return now_tw().year - int(m.group(1))
+    except Exception:
+        pass
+    return None
+
+
+def _calc_vehicle_age(year_str):
+    """從車輛出廠年份算車齡。支援 2019 或 108（民國）"""
+    if not year_str:
+        return None
+    try:
+        s = str(year_str).strip()
+        m = re.match(r"^(\d+)$", s)
+        if m:
+            year = int(m.group(1))
+            if year < 200:
+                year += 1911
+            return now_tw().year - year
+    except Exception:
+        pass
+    return None
+
+
+def _check_rule(rule, customer):
+    """單條規則比對、回 (status, label, actual_str)
+    status: 'pass' / 'fail' / 'manual' / 'unknown'"""
+    rt = rule.get("type", "simple")
+    label = rule.get("label", "")
+    if rt == "manual":
+        return ("manual", label + (f" — {rule['hint']}" if rule.get("hint") else ""), "需人工確認")
+    if rt == "oneof":
+        sub_results = []
+        any_pass = False
+        for opt in rule.get("options", []):
+            s, l, a = _check_rule(opt, customer)
+            sub_results.append((s, l, a))
+            if s == "pass":
+                any_pass = True
+                break
+        if any_pass:
+            return ("pass", label + " — 至少一項符合", "")
+        # 全 manual → 視為需人工
+        if all(s == "manual" for s, _, _ in sub_results):
+            return ("manual", label, "需人工確認其中一項")
+        # 有 fail 但無 pass → fail
+        return ("fail", label + " — 三項都不符合", "")
+    if rt == "simple":
+        field = rule.get("field", "")
+        op = rule.get("op", "")
+        value = rule.get("value")
+        # 取值
+        if field == "age":
+            actual = _calc_age_from_birth(customer.get("birth_date", "") or "")
+        elif field == "vehicle_year":
+            actual = _calc_vehicle_age(customer.get("vehicle_year", "") or "")
+        else:
+            actual = (customer.get(field, "") or "").strip()
+        if actual is None or actual == "":
+            return ("unknown", label, "資料不齊")
+        # 比對
+        try:
+            if op == "between":
+                lo, hi = value
+                if lo <= int(actual) <= hi:
+                    ok = True
+                else:
+                    ok = False
+                actual_str = f"{actual}"
+            elif op == "tw_id":
+                ok = bool(re.match(r"^[A-Z][12]\d{8}$", str(actual)))
+                actual_str = str(actual)
+            elif op == "year_age_le":
+                if int(actual) <= int(value):
+                    ok = True
+                else:
+                    ok = False
+                actual_str = f"車齡 {actual} 年"
+            elif op == "in":
+                ok = actual in value
+                actual_str = str(actual)
+            elif op == "contains":
+                ok = value in str(actual)
+                actual_str = str(actual)
+                # 排除條件
+                if ok and rule.get("exclude_field"):
+                    ex_actual = (customer.get(rule["exclude_field"], "") or "").strip()
+                    if rule.get("exclude_value") in ex_actual:
+                        ok = False
+                        actual_str += f"（但 {rule['exclude_field']}={ex_actual}）"
+            elif op == "=":
+                ok = str(actual) == str(value)
+                actual_str = str(actual)
+            elif op == ">=":
+                ok = float(actual) >= float(value)
+                actual_str = str(actual)
+            elif op == "<=":
+                ok = float(actual) <= float(value)
+                actual_str = str(actual)
+            else:
+                return ("unknown", label, f"未知 op: {op}")
+        except Exception as e:
+            return ("unknown", label, f"比對失敗：{e}")
+        # 加分提示：manual_check 表示自動比對通過、但仍需人工確認
+        if ok and rule.get("manual_check"):
+            return ("manual", label + f"（自動 ✓、{rule['manual_check']}）", actual_str)
+        return ("pass" if ok else "fail", label, actual_str)
+    return ("unknown", label, "未知規則類型")
+
+
+def evaluate_case(customer):
+    """跑所有規則、回排序好的方案清單
+
+    回傳格式：[
+      {
+        "company": "亞太機車25萬",
+        "max_amount": 25,
+        "eligible": True/False/"manual",
+        "checks": [(status, label, actual), ...],
+        "summary": "✅ 全達標" 或 "❌ 車齡超過" 或 "⚠️ 需確認 N 項",
+      }
+    ]
+    """
+    results = []
+    for plan in PLAN_ELIGIBILITY_RULES:
+        checks = []
+        has_fail = False
+        manual_count = 0
+        for rule in plan["rules"]:
+            status, label, actual = _check_rule(rule, customer)
+            checks.append({"status": status, "label": label, "actual": actual})
+            if status == "fail":
+                has_fail = True
+            elif status in ("manual", "unknown"):
+                manual_count += 1
+        if has_fail:
+            eligible = False
+            summary = "❌ 不符合（看 ❌ 項目）"
+        elif manual_count > 0:
+            eligible = "manual"
+            summary = f"⚠️ 自動 OK、需人工確認 {manual_count} 項"
+        else:
+            eligible = True
+            summary = "✅ 全部達標"
+        results.append({
+            "company": plan["company"],
+            "max_amount": plan["max_amount"],
+            "priority": plan.get("priority", 0),
+            "eligible": eligible,
+            "checks": checks,
+            "summary": summary,
+            "required_docs": plan.get("required_docs", []),
+        })
+    # 排序：可送（含 manual）→ 不可送、金額大優先、priority 高優先
+    def sort_key(r):
+        eligible_score = {True: 0, "manual": 1, False: 2}[r["eligible"]]
+        return (eligible_score, -r["max_amount"], -r["priority"])
+    results.sort(key=sort_key)
+    return results
+
+
 IGNORE_NAME_SET = {
     "信用不良", "不需要了", "不用了", "不要了", "結案", "補件", "核准", "婉拒",
     "申覆", "申請", "待審", "初估",
@@ -13116,10 +13351,12 @@ label{{display:block;font-size:12px;font-weight:700;color:#374151;margin-bottom:
 <div style="margin-top:18px">
   <button type="submit" class="btn-save">💾 儲存</button>
   <button type="button" onclick="previewDailyLine()" style="background:#eef2ff;color:#3730a3;border:1px solid #c7d2fe;padding:11px 22px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;margin-left:10px">🔍 預覽日報那行</button>
+  <button type="button" onclick="checkEligibility()" style="background:#fef3c7;color:#854d0e;border:1px solid #fde047;padding:11px 22px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;margin-left:10px">📋 對照規則表</button>
   <a href="/edit-pending?case_id={h(case_id)}" class="btn-cancel">改個資</a>
   <a href="/report" class="btn-cancel">回日報</a>
 </div>
 <div id="previewBox" style="display:none;margin-top:14px;padding:14px;background:#fefce8;border:1px solid #fde68a;border-radius:8px;font-family:monospace;font-size:13px"></div>
+<div id="eligibilityBox" style="display:none;margin-top:14px;padding:14px;background:#fff;border:1px solid #e5e7eb;border-radius:8px;font-size:13px"></div>
 </form>
 
 <div class="card" style="margin-top:18px">
@@ -13265,6 +13502,50 @@ function previewDailyLine() {{
   }}).catch(e => box.innerHTML = '<span style="color:#dc2626">網路錯誤</span>');
 }}
 
+// 對照規則表（案件判別）
+function checkEligibility() {{
+  const cid = '{h(case_id)}';
+  const box = document.getElementById('eligibilityBox');
+  box.style.display = 'block';
+  box.innerHTML = '⏳ 計算中...';
+  fetch('/api/check-eligibility?case_id=' + encodeURIComponent(cid))
+    .then(r => r.json())
+    .then(d => {{
+      if (!d.ok) {{
+        box.innerHTML = '<span style="color:#dc2626">' + (d.message || '失敗') + '</span>';
+        return;
+      }}
+      const results = d.results || [];
+      if (!results.length) {{
+        box.innerHTML = '<span style="color:#6b7280">目前沒有規則表（待補規則）</span>';
+        return;
+      }}
+      let html = '<div style="font-weight:700;font-size:14px;color:#854d0e;margin-bottom:10px">📋 規則對照結果（依金額大、容易過件排序）</div>';
+      results.forEach(r => {{
+        let icon = r.eligible === true ? '✅' : (r.eligible === 'manual' ? '⚠️' : '❌');
+        let bgColor = r.eligible === true ? '#f0fdf4' : (r.eligible === 'manual' ? '#fef3c7' : '#fef2f2');
+        let borderColor = r.eligible === true ? '#86efac' : (r.eligible === 'manual' ? '#fde047' : '#fca5a5');
+        html += '<div style="background:' + bgColor + ';border:1px solid ' + borderColor + ';border-radius:8px;padding:12px;margin-bottom:10px">';
+        html += '<div style="font-weight:700;font-size:14px;margin-bottom:6px">' + icon + ' ' + r.company + '（最高 ' + r.max_amount + ' 萬）— ' + r.summary + '</div>';
+        if (r.checks && r.checks.length) {{
+          html += '<ul style="margin:6px 0 0;padding-left:22px;font-size:12px;color:#374151">';
+          r.checks.forEach(c => {{
+            let mark = c.status === 'pass' ? '✅' : (c.status === 'fail' ? '❌' : (c.status === 'manual' ? '⚠️' : '❓'));
+            let act = c.actual ? ('（' + c.actual + '）') : '';
+            html += '<li>' + mark + ' ' + c.label + act + '</li>';
+          }});
+          html += '</ul>';
+        }}
+        if (r.required_docs && r.required_docs.length) {{
+          html += '<div style="margin-top:6px;font-size:11px;color:#6b7280">📎 必要文件：' + r.required_docs.join('、') + '</div>';
+        }}
+        html += '</div>';
+      }});
+      box.innerHTML = html;
+    }})
+    .catch(e => box.innerHTML = '<span style="color:#dc2626">網路錯誤</span>');
+}}
+
 // 還原 case_logs 某筆的 snapshot
 function revertLog(logId) {{
   if (!confirm('確定還原到此筆操作之前的狀態？\\n（current / concurrent / 金額 / 區塊 等會被改回）')) return;
@@ -13279,6 +13560,24 @@ function revertLog(logId) {{
 }}
 </script>
 </body></html>""")
+
+
+@app.get("/api/check-eligibility")
+def api_check_eligibility(request: Request, case_id: str = ""):
+    """跑案件判別、回 JSON 給 /case-edit、/adminb 顯示"""
+    role = check_auth(request)
+    if not role:
+        return JSONResponse({"ok": False, "message": "請先登入"})
+    if not case_id:
+        return JSONResponse({"ok": False, "message": "缺 case_id"})
+    conn = get_conn(); cur = conn.cursor()
+    cur.execute("SELECT * FROM customers WHERE case_id=?", (case_id,))
+    row = cur.fetchone(); conn.close()
+    if not row:
+        return JSONResponse({"ok": False, "message": "找不到客戶"})
+    customer = dict(row)
+    results = evaluate_case(customer)
+    return JSONResponse({"ok": True, "results": results})
 
 
 @app.post("/case-edit/preview")
