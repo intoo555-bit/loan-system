@@ -6495,6 +6495,20 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
         update_kw = {}
         if concurrent_names:
             update_kw["concurrent_companies"] = ",".join(concurrent_names)
+        else:
+            # 單一公司照會：若那家不是 current、也不在 concurrent → 視為「轉送到那家」
+            # 例：潘建宇 原 current=和裕、業務打「潘建宇 21 照會」→ current 改成 21
+            cur_co_norm = normalize_section(target["current_company"] or "")
+            target_norm = normalize_section(company)
+            existing_concurrent = [c.strip() for c in (target["concurrent_companies"] or "").split(",") if c.strip()]
+            in_concurrent = any(normalize_section(c) == target_norm for c in existing_concurrent)
+            if company and target_norm != cur_co_norm and not in_concurrent:
+                # 嘗試用 route_plan 的 advance_route_to（若 route 內有那家、推進）
+                old_route = target["route_plan"] or ""
+                new_route, ok, _ = advance_route_to(old_route, company, "婉拒") if old_route else (old_route, False, "")
+                update_kw["current_company"] = company
+                if ok:
+                    update_kw["route_plan"] = new_route
         if first_amount:
             update_kw["notify_amount"] = first_amount
             update_kw["notify_period"] = first_period
