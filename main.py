@@ -3365,9 +3365,10 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
         except Exception:
             pass
         # 同時送件的公司也要顯示
-        # 但「還沒送件」狀態（_is_pre_send）→ 不要散到 concurrent 公司區塊（潘建宇情境）
+        # concurrent_companies 是業務明確打「@AI 姓名 送 X」寫入、表達加送意圖
+        # → 那家公司就該顯示在對應區塊（即使主案還在送件區）
         concurrent_str = row["concurrent_companies"] or ""
-        if concurrent_str and not _is_pre_send:
+        if concurrent_str:
             for co in concurrent_str.split(","):
                 co = co.strip()
                 if not co:
