@@ -1008,6 +1008,25 @@ PLAN_ELIGIBILITY_RULES = [
         "required_docs": ["身分證正反", "第二證件", "機車合照", "行照", "強制險截圖"],
     },
     {
+        "company": "亞太機車15萬",
+        "max_amount": 15,
+        "priority": 73,
+        "rules": [
+            {"type": "simple", "label": "年齡 20~50", "field": "age", "op": "between", "value": [20, 50]},
+            {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
+            {"type": "manual", "label": "聯絡人 1 為二等親屬"},
+            {"type": "oneof", "label": "財務能力（擇一）", "options": [
+                {"type": "simple", "label": "勞保/軍保/公保滿半年（不可部分工時）", "field": "eval_labor_ins", "op": "in", "value": ["公司保", "軍保", "公保"], "manual_check": "需確認滿半年 + 非部分工時"},
+                {"type": "simple", "label": "有不動產（不能有私設當鋪）", "field": "eval_property", "op": "contains", "value": "不動產", "exclude_field": "eval_alert", "exclude_value": "有"},
+                {"type": "manual", "label": "負責人有營登、設立 1 年以上"},
+            ]},
+            {"type": "simple", "label": "車齡 ≤ 15 年", "field": "vehicle_year", "op": "year_age_le", "value": 15},
+            {"type": "manual", "label": "二車貸款專案：客人名下有其他車有動保 + 要貸的是另一台沒貸款的車",
+             "hint": "若客人只有一台車或要貸的車有貸款 → 不適用此方案、應送 25 萬版本"},
+        ],
+        "required_docs": ["身分證正反", "第二證件", "機車合照", "行照", "強制險截圖"],
+    },
+    {
         "company": "亞太工會機車",
         "max_amount": 15,
         "priority": 70,
