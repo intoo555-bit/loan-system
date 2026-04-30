@@ -1063,6 +1063,54 @@ PLAN_ELIGIBILITY_RULES = [
         ],
         "required_docs": ["身分證正反", "第二證件", "手機型號", "imei", "手機合照"],
     },
+    # ===== 21 系列 =====
+    {
+        "company": "21機車25萬",
+        "max_amount": 25,
+        "priority": 78,
+        "rules": [
+            {"type": "simple", "label": "年齡 20~50", "field": "age", "op": "between", "value": [20, 50]},
+            {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
+            {"type": "manual", "label": "至少 2 位聯絡人、其中 1 位為二等親屬"},
+            {"type": "simple", "label": "車齡 ≤ 15 年", "field": "vehicle_year", "op": "year_age_le", "value": 15},
+            {"type": "oneof", "label": "財務能力（擇一）", "options": [
+                {"type": "simple", "label": "勞保/軍保/公保滿半年（不可部分工時、勞保須一週內）",
+                 "field": "eval_labor_ins", "op": "in", "value": ["公司保", "軍保", "公保"],
+                 "manual_check": "需確認滿半年 + 非部分工時 + 一週內勞保"},
+                {"type": "simple", "label": "有不動產（不能有私設、須提供權狀）",
+                 "field": "eval_property", "op": "contains", "value": "不動產",
+                 "exclude_field": "eval_alert", "exclude_value": "有",
+                 "manual_check": "須提供權狀"},
+                {"type": "manual", "label": "負責人有營登、設立 1 年以上",
+                 "hint": "須提供營利事業登記表或網站截圖"},
+            ]},
+        ],
+        "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面", "機車合照（要有時間相機）", "行照"],
+    },
+    {
+        "company": "21商品",
+        "max_amount": 12,
+        "priority": 55,
+        "rules": [
+            {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
+            {"type": "manual", "label": "年齡 18~60（55 以上補保人、超過 60 也可試送）",
+             "hint": "硬性：18 歲以上、軟性：60 以上實務上仍會送、有過件機會"},
+            {"type": "manual", "label": "至少 2 位聯絡人、其中 1 位為二等親屬"},
+        ],
+        "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面", "手機型號", "imei", "手機合照"],
+    },
+    {
+        "company": "21機車12萬",
+        "max_amount": 12,
+        "priority": 53,
+        "rules": [
+            {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
+            {"type": "manual", "label": "年齡 18~60（55 以上補保人、超過 60 也可試送）",
+             "hint": "硬性：18 歲以上、軟性：60 以上實務上仍會送、有過件機會"},
+            {"type": "manual", "label": "至少 2 位聯絡人、其中 1 位為二等親屬"},
+        ],
+        "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面", "機車合照（要有時間相機）", "行照"],
+    },
 ]
 
 
