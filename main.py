@@ -1008,6 +1008,7 @@ COMMON_BONUS_ITEMS = [
     "權狀",
     "扣繳憑單",
     "薪轉",
+    "儲蓄險",
 ]
 
 PLAN_ELIGIBILITY_RULES = [
