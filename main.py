@@ -15473,10 +15473,8 @@ td {{ background: #fff; }}
 <tr><th>公司地址</th><td colspan="3">{company_addr}</td></tr>
 <tr><th>行業</th><td colspan="3">{v("company_industry")}</td></tr>
 <tr class="sec"><td colspan="4">聯絡人</td></tr>
-<tr><th>聯絡人1</th><td>{v("contact1_name")}</td><th>關係</th><td style="word-break:keep-all;white-space:nowrap">{v("contact1_relation")}</td></tr>
-<tr><th>電話</th><td>{v("contact1_phone")}</td><th>知情</th><td>{v("contact1_known")}</td></tr>
-<tr><th>聯絡人2</th><td>{v("contact2_name")}</td><th>關係</th><td style="word-break:keep-all;white-space:nowrap">{v("contact2_relation")}</td></tr>
-<tr><th>電話</th><td>{v("contact2_phone")}</td><th>知情</th><td>{v("contact2_known")}</td></tr>
+<tr><th>聯絡人1</th><td colspan="3" style="word-break:keep-all">{v("contact1_name")}　（{v("contact1_relation")}）　{v("contact1_phone")}　{v("contact1_known")}</td></tr>
+<tr><th>聯絡人2</th><td colspan="3" style="word-break:keep-all">{v("contact2_name")}　（{v("contact2_relation")}）　{v("contact2_phone")}　{v("contact2_known")}</td></tr>
 </table>
 <div style="page-break-before:always;margin-top:20px;"></div>
 <table>
@@ -15548,10 +15546,8 @@ def _build_customer_pdf_body(r: dict) -> str:
 <tr><th>公司地址</th><td colspan="3">{company_addr}</td></tr>
 <tr><th>行業</th><td colspan="3">{v("company_industry")}</td></tr>
 <tr class="sec"><td colspan="4">聯絡人</td></tr>
-<tr><th>聯絡人1</th><td>{v("contact1_name")}</td><th>關係</th><td style="word-break:keep-all;white-space:nowrap">{v("contact1_relation")}</td></tr>
-<tr><th>電話</th><td>{v("contact1_phone")}</td><th>知情</th><td>{v("contact1_known")}</td></tr>
-<tr><th>聯絡人2</th><td>{v("contact2_name")}</td><th>關係</th><td style="word-break:keep-all;white-space:nowrap">{v("contact2_relation")}</td></tr>
-<tr><th>電話</th><td>{v("contact2_phone")}</td><th>知情</th><td>{v("contact2_known")}</td></tr>
+<tr><th>聯絡人1</th><td colspan="3" style="word-break:keep-all">{v("contact1_name")}　（{v("contact1_relation")}）　{v("contact1_phone")}　{v("contact1_known")}</td></tr>
+<tr><th>聯絡人2</th><td colspan="3" style="word-break:keep-all">{v("contact2_name")}　（{v("contact2_relation")}）　{v("contact2_phone")}　{v("contact2_known")}</td></tr>
 </table>
 <div style="page-break-before:always;margin-top:20px;"></div>
 <table>
@@ -18576,10 +18572,8 @@ function exportPDF(){
     r2('年資',ctime,'月薪',gv('csal')+'萬')+
     r1('公司地址',caddr));
   trows+=s3('聯絡人資料',
-    r2('聯絡人1',gv('c1name'),'關係',gv('c1rel'))+
-    r2('電話1',gv('c1tel'),'知情1',gv('c1know'))+
-    r2('聯絡人2',gv('c2name'),'關係',gv('c2rel'))+
-    r2('電話2',gv('c2tel'),'知情2',gv('c2know')));
+    r1('聯絡人1',gv('c1name')+'　（'+gv('c1rel')+'）　'+gv('c1tel')+'　'+gv('c1know'))+
+    r1('聯絡人2',gv('c2name')+'　（'+gv('c2rel')+'）　'+gv('c2tel')+'　'+gv('c2know')));
   trows+=s3('貸款諮詢事項',
     r2('資金需求',gv('efund'),'近三月送件',gv('esent'))+
     r2('當鋪私設',gv('eprivate'),'勞保狀態',gv('elabor'))+
