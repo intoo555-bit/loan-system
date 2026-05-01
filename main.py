@@ -15467,8 +15467,26 @@ td {{ background: #fff; }}
 <tr><th>公司地址</th><td colspan="3">{company_addr}</td></tr>
 <tr><th>行業</th><td colspan="3">{v("company_industry")}</td></tr>
 <tr class="sec"><td colspan="4">聯絡人</td></tr>
-<tr><th>聯絡人1</th><td colspan="3" style="word-break:keep-all">{v("contact1_name")}　（{v("contact1_relation")}）　{v("contact1_phone")}　{v("contact1_known")}</td></tr>
-<tr><th>聯絡人2</th><td colspan="3" style="word-break:keep-all">{v("contact2_name")}　（{v("contact2_relation")}）　{v("contact2_phone")}　{v("contact2_known")}</td></tr>
+<tr><th>聯絡人1</th><td colspan="3" style="padding:0 !important">
+  <table style="width:100%;border-collapse:collapse;margin:0">
+    <tr>
+      <th style="background:#f0ebe4;width:60px;border:0;border-right:1px solid #bbb;padding:6px 10px;font-weight:700;color:#3a3020">姓名</th><td style="border:0;border-right:1px solid #bbb;padding:6px 10px;background:#fff">{v("contact1_name")}</td>
+      <th style="background:#f0ebe4;width:60px;border:0;border-right:1px solid #bbb;padding:6px 10px;font-weight:700;color:#3a3020">關係</th><td style="border:0;border-right:1px solid #bbb;padding:6px 10px;background:#fff;word-break:keep-all">{v("contact1_relation")}</td>
+      <th style="background:#f0ebe4;width:60px;border:0;border-right:1px solid #bbb;padding:6px 10px;font-weight:700;color:#3a3020">電話</th><td style="border:0;border-right:1px solid #bbb;padding:6px 10px;background:#fff">{v("contact1_phone")}</td>
+      <th style="background:#f0ebe4;width:60px;border:0;border-right:1px solid #bbb;padding:6px 10px;font-weight:700;color:#3a3020">知情</th><td style="border:0;padding:6px 10px;background:#fff">{v("contact1_known")}</td>
+    </tr>
+  </table>
+</td></tr>
+<tr><th>聯絡人2</th><td colspan="3" style="padding:0 !important">
+  <table style="width:100%;border-collapse:collapse;margin:0">
+    <tr>
+      <th style="background:#f0ebe4;width:60px;border:0;border-right:1px solid #bbb;padding:6px 10px;font-weight:700;color:#3a3020">姓名</th><td style="border:0;border-right:1px solid #bbb;padding:6px 10px;background:#fff">{v("contact2_name")}</td>
+      <th style="background:#f0ebe4;width:60px;border:0;border-right:1px solid #bbb;padding:6px 10px;font-weight:700;color:#3a3020">關係</th><td style="border:0;border-right:1px solid #bbb;padding:6px 10px;background:#fff;word-break:keep-all">{v("contact2_relation")}</td>
+      <th style="background:#f0ebe4;width:60px;border:0;border-right:1px solid #bbb;padding:6px 10px;font-weight:700;color:#3a3020">電話</th><td style="border:0;border-right:1px solid #bbb;padding:6px 10px;background:#fff">{v("contact2_phone")}</td>
+      <th style="background:#f0ebe4;width:60px;border:0;border-right:1px solid #bbb;padding:6px 10px;font-weight:700;color:#3a3020">知情</th><td style="border:0;padding:6px 10px;background:#fff">{v("contact2_known")}</td>
+    </tr>
+  </table>
+</td></tr>
 </table>
 <div style="page-break-before:always;margin-top:20px;"></div>
 <table>
@@ -15561,8 +15579,26 @@ def _build_customer_pdf_body(r: dict) -> str:
 <tr><th>公司地址</th><td colspan="3">{company_addr}</td></tr>
 <tr><th>行業</th><td colspan="3">{v("company_industry")}</td></tr>
 <tr class="sec"><td colspan="4">聯絡人</td></tr>
-<tr><th>聯絡人1</th><td colspan="3" style="word-break:keep-all">{v("contact1_name")}　（{v("contact1_relation")}）　{v("contact1_phone")}　{v("contact1_known")}</td></tr>
-<tr><th>聯絡人2</th><td colspan="3" style="word-break:keep-all">{v("contact2_name")}　（{v("contact2_relation")}）　{v("contact2_phone")}　{v("contact2_known")}</td></tr>
+<tr><th>聯絡人1</th><td colspan="3" style="padding:0 !important">
+  <table style="width:100%;border-collapse:collapse;margin:0">
+    <tr>
+      <th style="background:#f0ebe4;width:60px;border:0;border-right:1px solid #bbb;padding:6px 10px;font-weight:700;color:#3a3020">姓名</th><td style="border:0;border-right:1px solid #bbb;padding:6px 10px;background:#fff">{v("contact1_name")}</td>
+      <th style="background:#f0ebe4;width:60px;border:0;border-right:1px solid #bbb;padding:6px 10px;font-weight:700;color:#3a3020">關係</th><td style="border:0;border-right:1px solid #bbb;padding:6px 10px;background:#fff;word-break:keep-all">{v("contact1_relation")}</td>
+      <th style="background:#f0ebe4;width:60px;border:0;border-right:1px solid #bbb;padding:6px 10px;font-weight:700;color:#3a3020">電話</th><td style="border:0;border-right:1px solid #bbb;padding:6px 10px;background:#fff">{v("contact1_phone")}</td>
+      <th style="background:#f0ebe4;width:60px;border:0;border-right:1px solid #bbb;padding:6px 10px;font-weight:700;color:#3a3020">知情</th><td style="border:0;padding:6px 10px;background:#fff">{v("contact1_known")}</td>
+    </tr>
+  </table>
+</td></tr>
+<tr><th>聯絡人2</th><td colspan="3" style="padding:0 !important">
+  <table style="width:100%;border-collapse:collapse;margin:0">
+    <tr>
+      <th style="background:#f0ebe4;width:60px;border:0;border-right:1px solid #bbb;padding:6px 10px;font-weight:700;color:#3a3020">姓名</th><td style="border:0;border-right:1px solid #bbb;padding:6px 10px;background:#fff">{v("contact2_name")}</td>
+      <th style="background:#f0ebe4;width:60px;border:0;border-right:1px solid #bbb;padding:6px 10px;font-weight:700;color:#3a3020">關係</th><td style="border:0;border-right:1px solid #bbb;padding:6px 10px;background:#fff;word-break:keep-all">{v("contact2_relation")}</td>
+      <th style="background:#f0ebe4;width:60px;border:0;border-right:1px solid #bbb;padding:6px 10px;font-weight:700;color:#3a3020">電話</th><td style="border:0;border-right:1px solid #bbb;padding:6px 10px;background:#fff">{v("contact2_phone")}</td>
+      <th style="background:#f0ebe4;width:60px;border:0;border-right:1px solid #bbb;padding:6px 10px;font-weight:700;color:#3a3020">知情</th><td style="border:0;padding:6px 10px;background:#fff">{v("contact2_known")}</td>
+    </tr>
+  </table>
+</td></tr>
 </table>
 <div style="page-break-before:always;margin-top:20px;"></div>
 <table>
@@ -18586,9 +18622,23 @@ function exportPDF(){
     r2('公司電話',ctel,'職稱',gv('crole'))+
     r2('年資',ctime,'月薪',gv('csal')+'萬')+
     r1('公司地址',caddr));
+  function rContact(label,name,rel,tel,known){
+    var subTbl='<table style="width:100%;border-collapse:collapse;margin:0">'+
+      '<tr>'+
+      '<th style="background:#f0ebe4;width:50px;border:0;border-right:1px solid #bbb;padding:5px 8px;font-weight:600;color:#3a3020;font-size:12px">姓名</th>'+
+      '<td style="border:0;border-right:1px solid #bbb;padding:5px 8px;background:#fff">'+(name||'-')+'</td>'+
+      '<th style="background:#f0ebe4;width:50px;border:0;border-right:1px solid #bbb;padding:5px 8px;font-weight:600;color:#3a3020;font-size:12px">關係</th>'+
+      '<td style="border:0;border-right:1px solid #bbb;padding:5px 8px;background:#fff">'+(rel||'-')+'</td>'+
+      '<th style="background:#f0ebe4;width:50px;border:0;border-right:1px solid #bbb;padding:5px 8px;font-weight:600;color:#3a3020;font-size:12px">電話</th>'+
+      '<td style="border:0;border-right:1px solid #bbb;padding:5px 8px;background:#fff">'+(tel||'-')+'</td>'+
+      '<th style="background:#f0ebe4;width:50px;border:0;border-right:1px solid #bbb;padding:5px 8px;font-weight:600;color:#3a3020;font-size:12px">知情</th>'+
+      '<td style="border:0;padding:5px 8px;background:#fff">'+(known||'-')+'</td>'+
+      '</tr></table>';
+    return '<tr><th>'+label+'</th><td colspan="3" style="padding:0 !important">'+subTbl+'</td></tr>';
+  }
   trows+=s3('聯絡人資料',
-    r1('聯絡人1',gv('c1name')+'　（'+gv('c1rel')+'）　'+gv('c1tel')+'　'+gv('c1know'))+
-    r1('聯絡人2',gv('c2name')+'　（'+gv('c2rel')+'）　'+gv('c2tel')+'　'+gv('c2know')));
+    rContact('聯絡人1',gv('c1name'),gv('c1rel'),gv('c1tel'),gv('c1know'))+
+    rContact('聯絡人2',gv('c2name'),gv('c2rel'),gv('c2tel'),gv('c2know')));
   trows+=s3('貸款諮詢事項',
     r2('資金需求',gv('efund'),'近三月送件',gv('esent'))+
     r2('當鋪私設',gv('eprivate'),'勞保狀態',gv('elabor'))+
