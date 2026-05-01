@@ -1140,9 +1140,9 @@ PLAN_ELIGIBILITY_RULES = [
             {"type": "oneof", "label": "財務能力（擇一）", "options": [
                 {"type": "simple", "label": "持有信用卡 + 近 2 期完整繳款明細", "op": "creditcard_good",
                  "manual_check": "需提供近 2 期帳單或收據"},
-                {"type": "simple", "label": "勞保滿半年 或 工會保滿 2 年（須紙本或 PDF）",
+                {"type": "simple", "label": "勞保/軍保/公保滿半年 或 工會保滿 2 年（須紙本或 PDF）",
                  "field": "eval_labor_ins", "op": "in", "value": ["公司保", "軍保", "公保", "工會保"],
-                 "manual_check": "勞保須半年+工會須2年、紙本或 PDF、勞保須一週內"},
+                 "manual_check": "勞保/軍保/公保須半年、工會保須 2 年、紙本或 PDF、勞保須一週內"},
                 {"type": "simple", "label": "有不動產（不能有私設、須提供權狀）",
                  "field": "eval_property", "op": "contains", "value": "不動產",
                  "exclude_field": "eval_alert", "exclude_value": "有",
@@ -1166,9 +1166,9 @@ PLAN_ELIGIBILITY_RULES = [
             {"type": "oneof", "label": "財務能力（擇一）", "options": [
                 {"type": "simple", "label": "持有信用卡 + 近 2 期完整繳款明細", "op": "creditcard_good",
                  "manual_check": "需提供近 2 期帳單或收據"},
-                {"type": "simple", "label": "勞保滿半年 或 工會保滿 2 年（須紙本或 PDF）",
+                {"type": "simple", "label": "勞保/軍保/公保滿半年 或 工會保滿 2 年（須紙本或 PDF）",
                  "field": "eval_labor_ins", "op": "in", "value": ["公司保", "軍保", "公保", "工會保"],
-                 "manual_check": "勞保須半年+工會須2年、紙本或 PDF、勞保須一週內"},
+                 "manual_check": "勞保/軍保/公保須半年、工會保須 2 年、紙本或 PDF、勞保須一週內"},
                 {"type": "simple", "label": "有不動產（不能有私設、須提供權狀）",
                  "field": "eval_property", "op": "contains", "value": "不動產",
                  "exclude_field": "eval_alert", "exclude_value": "有",
