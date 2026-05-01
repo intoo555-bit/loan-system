@@ -15412,13 +15412,7 @@ def customer_pdf(request: Request, case_id: str = ""):
         debt_data = _json.loads(r.get("debt_list", "") or "[]") if r.get("debt_list") else []
     except Exception:
         debt_data = []
-    debt_html = ""
-    if debt_data:
-        debt_html = '<table style="width:100%;border-collapse:collapse;font-size:13px;margin-top:8px;">'
-        debt_html += '<tr style="background:#e8e2da;font-weight:600;"><th style="padding:6px;border:1px solid #bbb;">貸款商家</th><th style="padding:6px;border:1px solid #bbb;">金額</th><th style="padding:6px;border:1px solid #bbb;">期數/已繳</th><th style="padding:6px;border:1px solid #bbb;">月繳</th><th style="padding:6px;border:1px solid #bbb;">剩餘</th><th style="padding:6px;border:1px solid #bbb;">日期</th><th style="padding:6px;border:1px solid #bbb;">動保</th><th style="padding:6px;border:1px solid #bbb;">空間</th></tr>'
-        for d in debt_data:
-            debt_html += f'<tr><td style="padding:5px;border:1px solid #bbb;">{h(d.get("co",""))}</td><td style="padding:5px;border:1px solid #bbb;">{h(d.get("lo",""))}</td><td style="padding:5px;border:1px solid #bbb;">{h(d.get("pe",""))}/{h(d.get("pa",""))}</td><td style="padding:5px;border:1px solid #bbb;">{h(d.get("mo",""))}</td><td style="padding:5px;border:1px solid #bbb;">{h(d.get("re",""))}</td><td style="padding:5px;border:1px solid #bbb;">{h(d.get("da",""))}</td><td style="padding:5px;border:1px solid #bbb;">{h(d.get("dy",""))}</td><td style="padding:5px;border:1px solid #bbb;">{h(d.get("sp",""))}</td></tr>'
-        debt_html += '</table>'
+    debt_html = _build_debt_html_split(debt_data)
 
     lsame = r.get("live_same_as_reg", "") == "1"
     live_addr = f'{v("reg_city")}{v("reg_district")}{v("reg_address")}' if lsame else f'{v("live_city")}{v("live_district")}{v("live_address")}'
@@ -15493,6 +15487,33 @@ td {{ background: #fff; }}
 </body></html>"""
 
 
+def _build_debt_html_split(debt_data):
+    """負債明細拆「車貸」「信貸」分開顯示
+    車貸：dy 含「公路」或「動保」→ 顯示動保/空間欄
+    信貸：其餘 → 不顯示動保/空間欄
+    """
+    if not debt_data:
+        return ""
+    car_loans = [d for d in debt_data if "公路" in (d.get("dy", "") or "") or "動保" in (d.get("dy", "") or "")]
+    other_loans = [d for d in debt_data if d not in car_loans]
+    out = ""
+    if car_loans:
+        out += '<div style="font-size:12px;font-weight:600;color:#4a3e30;margin:8px 0 4px">🚗 車貸</div>'
+        out += '<table style="width:100%;border-collapse:collapse;font-size:13px;margin-bottom:10px;">'
+        out += '<tr style="background:#e8e2da;font-weight:600;"><th style="padding:6px;border:1px solid #bbb;">貸款商家</th><th style="padding:6px;border:1px solid #bbb;">金額</th><th style="padding:6px;border:1px solid #bbb;">期數/已繳</th><th style="padding:6px;border:1px solid #bbb;">月繳</th><th style="padding:6px;border:1px solid #bbb;">剩餘</th><th style="padding:6px;border:1px solid #bbb;">日期</th><th style="padding:6px;border:1px solid #bbb;">動保</th><th style="padding:6px;border:1px solid #bbb;">空間</th></tr>'
+        for d in car_loans:
+            out += f'<tr><td style="padding:5px;border:1px solid #bbb;">{h(d.get("co",""))}</td><td style="padding:5px;border:1px solid #bbb;">{h(d.get("lo",""))}</td><td style="padding:5px;border:1px solid #bbb;">{h(d.get("pe",""))}/{h(d.get("pa",""))}</td><td style="padding:5px;border:1px solid #bbb;">{h(d.get("mo",""))}</td><td style="padding:5px;border:1px solid #bbb;">{h(d.get("re",""))}</td><td style="padding:5px;border:1px solid #bbb;">{h(d.get("da",""))}</td><td style="padding:5px;border:1px solid #bbb;">{h(d.get("dy",""))}</td><td style="padding:5px;border:1px solid #bbb;">{h(d.get("sp",""))}</td></tr>'
+        out += '</table>'
+    if other_loans:
+        out += '<div style="font-size:12px;font-weight:600;color:#4a3e30;margin:8px 0 4px">💳 信貸／其他</div>'
+        out += '<table style="width:100%;border-collapse:collapse;font-size:13px;margin-bottom:10px;">'
+        out += '<tr style="background:#e8e2da;font-weight:600;"><th style="padding:6px;border:1px solid #bbb;">貸款商家</th><th style="padding:6px;border:1px solid #bbb;">金額</th><th style="padding:6px;border:1px solid #bbb;">期數/已繳</th><th style="padding:6px;border:1px solid #bbb;">月繳</th><th style="padding:6px;border:1px solid #bbb;">剩餘</th></tr>'
+        for d in other_loans:
+            out += f'<tr><td style="padding:5px;border:1px solid #bbb;">{h(d.get("co",""))}</td><td style="padding:5px;border:1px solid #bbb;">{h(d.get("lo",""))}</td><td style="padding:5px;border:1px solid #bbb;">{h(d.get("pe",""))}/{h(d.get("pa",""))}</td><td style="padding:5px;border:1px solid #bbb;">{h(d.get("mo",""))}</td><td style="padding:5px;border:1px solid #bbb;">{h(d.get("re",""))}</td></tr>'
+        out += '</table>'
+    return out
+
+
 def _build_customer_pdf_body(r: dict) -> str:
     """組出單一客戶在 PDF 內的內容（header + 兩頁表格），給單筆與批次共用"""
     def v(k): return h(r.get(k, "") or "")
@@ -15504,13 +15525,7 @@ def _build_customer_pdf_body(r: dict) -> str:
         debt_data = _json.loads(r.get("debt_list", "") or "[]") if r.get("debt_list") else []
     except Exception:
         debt_data = []
-    debt_html = ""
-    if debt_data:
-        debt_html = '<table style="width:100%;border-collapse:collapse;font-size:13px;margin-top:8px;">'
-        debt_html += '<tr style="background:#e8e2da;font-weight:600;"><th style="padding:6px;border:1px solid #bbb;">貸款商家</th><th style="padding:6px;border:1px solid #bbb;">金額</th><th style="padding:6px;border:1px solid #bbb;">期數/已繳</th><th style="padding:6px;border:1px solid #bbb;">月繳</th><th style="padding:6px;border:1px solid #bbb;">剩餘</th><th style="padding:6px;border:1px solid #bbb;">日期</th><th style="padding:6px;border:1px solid #bbb;">動保</th><th style="padding:6px;border:1px solid #bbb;">空間</th></tr>'
-        for d in debt_data:
-            debt_html += f'<tr><td style="padding:5px;border:1px solid #bbb;">{h(d.get("co",""))}</td><td style="padding:5px;border:1px solid #bbb;">{h(d.get("lo",""))}</td><td style="padding:5px;border:1px solid #bbb;">{h(d.get("pe",""))}/{h(d.get("pa",""))}</td><td style="padding:5px;border:1px solid #bbb;">{h(d.get("mo",""))}</td><td style="padding:5px;border:1px solid #bbb;">{h(d.get("re",""))}</td><td style="padding:5px;border:1px solid #bbb;">{h(d.get("da",""))}</td><td style="padding:5px;border:1px solid #bbb;">{h(d.get("dy",""))}</td><td style="padding:5px;border:1px solid #bbb;">{h(d.get("sp",""))}</td></tr>'
-        debt_html += '</table>'
+    debt_html = _build_debt_html_split(debt_data)
 
     lsame = r.get("live_same_as_reg", "") == "1"
     live_addr = f'{v("reg_city")}{v("reg_district")}{v("reg_address")}' if lsame else f'{v("live_city")}{v("live_district")}{v("live_address")}'
