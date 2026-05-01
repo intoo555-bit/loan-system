@@ -1131,6 +1131,26 @@ PLAN_ELIGIBILITY_RULES = [
         ],
         "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面", "機車合照（要有時間相機）", "行照"],
     },
+    # ===== 貸救補（貸10）=====
+    {
+        "company": "貸救補",
+        "max_amount": 10,
+        "priority": 51,
+        "rules": [
+            {"type": "simple", "label": "年齡 20~60", "field": "age", "op": "between", "value": [20, 60]},
+            {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
+            {"type": "oneof", "label": "財務能力（擇一、有就可、無期限要求）", "options": [
+                {"type": "simple", "label": "有勞保/軍保/公保（無期限要求）",
+                 "field": "eval_labor_ins", "op": "in", "value": ["公司保", "軍保", "公保"]},
+                {"type": "simple", "label": "有薪轉（無期限要求）",
+                 "field": "eval_salary_transfer", "op": "=", "value": "有薪轉"},
+                {"type": "simple", "label": "工會保 + 近 3 個月存摺明細",
+                 "field": "eval_labor_ins", "op": "=", "value": "工會保",
+                 "manual_check": "須附近 3 個月存摺明細"},
+            ]},
+        ],
+        "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面", "手機型號", "imei", "手機合照"],
+    },
     # ===== 麻吉系列 =====
     # 業務備註：
     # 1. 21 跟麻吉、通常能送 21 就送 21（條件寬鬆、金額較高）
