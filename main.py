@@ -1163,6 +1163,21 @@ PLAN_ELIGIBILITY_RULES = [
         "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面",
                           "（手機）型號+IMEI+手機合照 OR（機車）行照+前後合照"],
     },
+    # ===== 手機分期 =====
+    # 業務備註：金額低、通常只給警示戶送（拿現金、不用補保人）
+    {
+        "company": "手機分期",
+        "max_amount": 6,
+        "priority": 30,
+        "rules": [
+            {"type": "simple", "label": "年齡 18 歲以上（學生也可送）", "field": "age", "op": ">=", "value": 18},
+            {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
+            {"type": "manual", "label": "💡 適用情境：警示戶客人（金額低、可拿現金、不用補保人）",
+             "hint": "通常只有警示戶才送此方案、其他客戶建議送其他金額較高的方案"},
+            {"type": "manual", "label": "以買手機的名義貸款"},
+        ],
+        "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面", "手機帳單"],
+    },
     # ===== 貸救補（貸10）=====
     {
         "company": "貸救補",
