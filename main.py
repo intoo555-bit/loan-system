@@ -1089,6 +1089,8 @@ PLAN_ELIGIBILITY_RULES = [
             {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
             {"type": "manual", "label": "至少 2 位聯絡人、其中 1 位為二等親屬"},
             {"type": "simple", "label": "車齡 ≤ 15 年", "field": "vehicle_year", "op": "year_age_le", "value": 15},
+            {"type": "simple", "label": "機車無貸款（21 機車送件條件）", "op": "not_has_dynbao",
+             "manual_check": "確認要貸的機車本身沒貸款"},
             {"type": "oneof", "label": "財務能力（擇一）", "options": [
                 {"type": "simple", "label": "勞保/軍保/公保滿半年（不可部分工時、勞保須一週內）",
                  "field": "eval_labor_ins", "op": "in", "value": ["公司保", "軍保", "公保"],
@@ -1124,6 +1126,8 @@ PLAN_ELIGIBILITY_RULES = [
             {"type": "manual", "label": "年齡 18~60（55 以上補保人、超過 60 也可試送）",
              "hint": "硬性：18 歲以上、軟性：60 以上實務上仍會送、有過件機會"},
             {"type": "manual", "label": "至少 2 位聯絡人、其中 1 位為二等親屬"},
+            {"type": "simple", "label": "機車無貸款（21 機車送件條件）", "op": "not_has_dynbao",
+             "manual_check": "確認要貸的機車本身沒貸款"},
         ],
         "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面", "機車合照（要有時間相機）", "行照"],
     },
