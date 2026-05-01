@@ -1131,6 +1131,68 @@ PLAN_ELIGIBILITY_RULES = [
         ],
         "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面", "機車合照（要有時間相機）", "行照"],
     },
+    # ===== 麻吉系列 =====
+    # 業務備註：21 跟麻吉、通常能送 21 就送 21（條件寬鬆、金額較高）
+    {
+        "company": "麻吉機車",
+        "max_amount": 10,
+        "priority": 50,
+        "rules": [
+            {"type": "simple", "label": "年齡 18~70", "field": "age", "op": "between", "value": [18, 70]},
+            {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
+            {"type": "manual", "label": "未滿 20 歲須法代知情（已婚視同成年）",
+             "hint": "18~20 歲須父或母其一知情；已婚視同成年、不需法代"},
+            {"type": "simple", "label": "機車無貸款（送件條件）", "op": "not_has_dynbao",
+             "manual_check": "確認要貸的機車本身沒貸款"},
+        ],
+        "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面", "機車行照"],
+    },
+    {
+        "company": "麻吉U質手機",
+        "max_amount": 10,
+        "priority": 48,
+        "rules": [
+            {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
+            {"type": "manual", "label": "年齡 20~65（55 以上補保人、超過 60 也可試送）",
+             "hint": "硬性：20 歲以上、軟性：60 以上實務上仍會送、有過件機會"},
+            {"type": "oneof", "label": "財務能力（擇一、5 選 1）", "options": [
+                {"type": "simple", "label": "勞保/軍保/公保滿 3 個月 或 薪轉滿 3 個月",
+                 "field": "eval_labor_ins", "op": "in", "value": ["公司保", "軍保", "公保"],
+                 "manual_check": "需確認勞保滿 3 個月、或薪轉滿 3 個月"},
+                {"type": "simple", "label": "持有不動產（不可有私設）",
+                 "field": "eval_property", "op": "contains", "value": "不動產",
+                 "exclude_field": "eval_alert", "exclude_value": "有"},
+                {"type": "manual", "label": "同業有貸款繳滿 6 期、附完整繳息",
+                 "hint": "看負債明細是否有貸款已繳超過 6 期"},
+                {"type": "manual", "label": "提供信用報告（聯徵/JCIC、信用正常、不可小白）",
+                 "hint": "客戶須提供信用報告、不能完全沒信用紀錄（小白）"},
+                {"type": "manual", "label": "近半年有 21 汽車核准紀錄"},
+            ]},
+        ],
+        "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面", "手機型號", "imei", "手機合照"],
+    },
+    {
+        "company": "麻吉手機",
+        "max_amount": 6,
+        "priority": 45,
+        "rules": [
+            {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
+            {"type": "manual", "label": "年齡 18~55（55 以上補保人、超過 60 也可試送）",
+             "hint": "硬性：18 歲以上、軟性：60 以上實務上仍會送、有過件機會"},
+            {"type": "oneof", "label": "財務能力（擇一、5 選 1）", "options": [
+                {"type": "simple", "label": "勞保/軍保/公保滿 3 個月 或 薪轉滿 3 個月",
+                 "field": "eval_labor_ins", "op": "in", "value": ["公司保", "軍保", "公保"],
+                 "manual_check": "需確認勞保滿 3 個月、或薪轉滿 3 個月"},
+                {"type": "simple", "label": "持有不動產（不可有私設）",
+                 "field": "eval_property", "op": "contains", "value": "不動產",
+                 "exclude_field": "eval_alert", "exclude_value": "有"},
+                {"type": "manual", "label": "同業有貸款繳滿 6 期、附完整繳息"},
+                {"type": "manual", "label": "提供信用報告（聯徵/JCIC、信用正常、不可小白）"},
+                {"type": "manual", "label": "近半年有 21 汽車核准紀錄"},
+            ]},
+        ],
+        "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面", "手機型號", "imei", "手機合照"],
+    },
     # ===== 和裕系列 =====
     # 排序原則：亞太排前面、和裕後（如亞太婉拒會跳過和裕）
     {
