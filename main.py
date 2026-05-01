@@ -15466,27 +15466,34 @@ td {{ background: #fff; }}
 <tr><th>年資</th><td>{v("company_years")}年{v("company_months")}月</td><th>月薪</th><td>{fmt_salary(v("company_salary"))}</td></tr>
 <tr><th>公司地址</th><td colspan="3">{company_addr}</td></tr>
 <tr><th>行業</th><td colspan="3">{v("company_industry")}</td></tr>
-<tr class="sec"><td colspan="4">聯絡人</td></tr>
-<tr><th>聯絡人1</th><td colspan="3" style="padding:0 !important">
-  <table style="width:100%;border-collapse:collapse;margin:0">
-    <tr>
-      <th style="background:#f0ebe4;width:60px;border:0;border-right:1px solid #bbb;padding:6px 10px;font-weight:700;color:#3a3020">姓名</th><td style="border:0;border-right:1px solid #bbb;padding:6px 10px;background:#fff">{v("contact1_name")}</td>
-      <th style="background:#f0ebe4;width:60px;border:0;border-right:1px solid #bbb;padding:6px 10px;font-weight:700;color:#3a3020">關係</th><td style="border:0;border-right:1px solid #bbb;padding:6px 10px;background:#fff;word-break:keep-all">{v("contact1_relation")}</td>
-      <th style="background:#f0ebe4;width:60px;border:0;border-right:1px solid #bbb;padding:6px 10px;font-weight:700;color:#3a3020">電話</th><td style="border:0;border-right:1px solid #bbb;padding:6px 10px;background:#fff">{v("contact1_phone")}</td>
-      <th style="background:#f0ebe4;width:60px;border:0;border-right:1px solid #bbb;padding:6px 10px;font-weight:700;color:#3a3020">知情</th><td style="border:0;padding:6px 10px;background:#fff">{v("contact1_known")}</td>
-    </tr>
-  </table>
-</td></tr>
-<tr><th>聯絡人2</th><td colspan="3" style="padding:0 !important">
-  <table style="width:100%;border-collapse:collapse;margin:0">
-    <tr>
-      <th style="background:#f0ebe4;width:60px;border:0;border-right:1px solid #bbb;padding:6px 10px;font-weight:700;color:#3a3020">姓名</th><td style="border:0;border-right:1px solid #bbb;padding:6px 10px;background:#fff">{v("contact2_name")}</td>
-      <th style="background:#f0ebe4;width:60px;border:0;border-right:1px solid #bbb;padding:6px 10px;font-weight:700;color:#3a3020">關係</th><td style="border:0;border-right:1px solid #bbb;padding:6px 10px;background:#fff;word-break:keep-all">{v("contact2_relation")}</td>
-      <th style="background:#f0ebe4;width:60px;border:0;border-right:1px solid #bbb;padding:6px 10px;font-weight:700;color:#3a3020">電話</th><td style="border:0;border-right:1px solid #bbb;padding:6px 10px;background:#fff">{v("contact2_phone")}</td>
-      <th style="background:#f0ebe4;width:60px;border:0;border-right:1px solid #bbb;padding:6px 10px;font-weight:700;color:#3a3020">知情</th><td style="border:0;padding:6px 10px;background:#fff">{v("contact2_known")}</td>
-    </tr>
-  </table>
-</td></tr>
+</table>
+<table style="width:100%;border-collapse:collapse;margin-bottom:16px;table-layout:fixed">
+<colgroup>
+  <col style="width:90px"><col style="width:55px"><col><col style="width:55px"><col style="width:90px"><col style="width:55px"><col><col style="width:55px"><col style="width:80px">
+</colgroup>
+<tr><td colspan="9" class="sec" style="background:#3a3530;color:#fff;font-size:12px;font-weight:700;padding:6px 10px">聯絡人</td></tr>
+<tr>
+  <th style="border:1px solid #bbb;padding:7px 8px;font-size:13px;background:#f0ebe4">聯絡人1</th>
+  <th style="border:1px solid #bbb;padding:7px 8px;font-size:13px;background:#f0ebe4">姓名</th>
+  <td style="border:1px solid #bbb;padding:7px 10px;font-size:13px">{v("contact1_name")}</td>
+  <th style="border:1px solid #bbb;padding:7px 8px;font-size:13px;background:#f0ebe4">關係</th>
+  <td style="border:1px solid #bbb;padding:7px 10px;font-size:13px">{v("contact1_relation")}</td>
+  <th style="border:1px solid #bbb;padding:7px 8px;font-size:13px;background:#f0ebe4">電話</th>
+  <td style="border:1px solid #bbb;padding:7px 10px;font-size:13px">{v("contact1_phone")}</td>
+  <th style="border:1px solid #bbb;padding:7px 8px;font-size:13px;background:#f0ebe4">知情</th>
+  <td style="border:1px solid #bbb;padding:7px 10px;font-size:13px">{v("contact1_known")}</td>
+</tr>
+<tr>
+  <th style="border:1px solid #bbb;padding:7px 8px;font-size:13px;background:#f0ebe4">聯絡人2</th>
+  <th style="border:1px solid #bbb;padding:7px 8px;font-size:13px;background:#f0ebe4">姓名</th>
+  <td style="border:1px solid #bbb;padding:7px 10px;font-size:13px">{v("contact2_name")}</td>
+  <th style="border:1px solid #bbb;padding:7px 8px;font-size:13px;background:#f0ebe4">關係</th>
+  <td style="border:1px solid #bbb;padding:7px 10px;font-size:13px">{v("contact2_relation")}</td>
+  <th style="border:1px solid #bbb;padding:7px 8px;font-size:13px;background:#f0ebe4">電話</th>
+  <td style="border:1px solid #bbb;padding:7px 10px;font-size:13px">{v("contact2_phone")}</td>
+  <th style="border:1px solid #bbb;padding:7px 8px;font-size:13px;background:#f0ebe4">知情</th>
+  <td style="border:1px solid #bbb;padding:7px 10px;font-size:13px">{v("contact2_known")}</td>
+</tr>
 </table>
 <div style="page-break-before:always;margin-top:20px;"></div>
 <table>
@@ -15578,27 +15585,34 @@ def _build_customer_pdf_body(r: dict) -> str:
 <tr><th>年資</th><td>{v("company_years")}年{v("company_months")}月</td><th>月薪</th><td>{fmt_salary(v("company_salary"))}</td></tr>
 <tr><th>公司地址</th><td colspan="3">{company_addr}</td></tr>
 <tr><th>行業</th><td colspan="3">{v("company_industry")}</td></tr>
-<tr class="sec"><td colspan="4">聯絡人</td></tr>
-<tr><th>聯絡人1</th><td colspan="3" style="padding:0 !important">
-  <table style="width:100%;border-collapse:collapse;margin:0">
-    <tr>
-      <th style="background:#f0ebe4;width:60px;border:0;border-right:1px solid #bbb;padding:6px 10px;font-weight:700;color:#3a3020">姓名</th><td style="border:0;border-right:1px solid #bbb;padding:6px 10px;background:#fff">{v("contact1_name")}</td>
-      <th style="background:#f0ebe4;width:60px;border:0;border-right:1px solid #bbb;padding:6px 10px;font-weight:700;color:#3a3020">關係</th><td style="border:0;border-right:1px solid #bbb;padding:6px 10px;background:#fff;word-break:keep-all">{v("contact1_relation")}</td>
-      <th style="background:#f0ebe4;width:60px;border:0;border-right:1px solid #bbb;padding:6px 10px;font-weight:700;color:#3a3020">電話</th><td style="border:0;border-right:1px solid #bbb;padding:6px 10px;background:#fff">{v("contact1_phone")}</td>
-      <th style="background:#f0ebe4;width:60px;border:0;border-right:1px solid #bbb;padding:6px 10px;font-weight:700;color:#3a3020">知情</th><td style="border:0;padding:6px 10px;background:#fff">{v("contact1_known")}</td>
-    </tr>
-  </table>
-</td></tr>
-<tr><th>聯絡人2</th><td colspan="3" style="padding:0 !important">
-  <table style="width:100%;border-collapse:collapse;margin:0">
-    <tr>
-      <th style="background:#f0ebe4;width:60px;border:0;border-right:1px solid #bbb;padding:6px 10px;font-weight:700;color:#3a3020">姓名</th><td style="border:0;border-right:1px solid #bbb;padding:6px 10px;background:#fff">{v("contact2_name")}</td>
-      <th style="background:#f0ebe4;width:60px;border:0;border-right:1px solid #bbb;padding:6px 10px;font-weight:700;color:#3a3020">關係</th><td style="border:0;border-right:1px solid #bbb;padding:6px 10px;background:#fff;word-break:keep-all">{v("contact2_relation")}</td>
-      <th style="background:#f0ebe4;width:60px;border:0;border-right:1px solid #bbb;padding:6px 10px;font-weight:700;color:#3a3020">電話</th><td style="border:0;border-right:1px solid #bbb;padding:6px 10px;background:#fff">{v("contact2_phone")}</td>
-      <th style="background:#f0ebe4;width:60px;border:0;border-right:1px solid #bbb;padding:6px 10px;font-weight:700;color:#3a3020">知情</th><td style="border:0;padding:6px 10px;background:#fff">{v("contact2_known")}</td>
-    </tr>
-  </table>
-</td></tr>
+</table>
+<table style="width:100%;border-collapse:collapse;margin-bottom:16px;table-layout:fixed">
+<colgroup>
+  <col style="width:90px"><col style="width:55px"><col><col style="width:55px"><col style="width:90px"><col style="width:55px"><col><col style="width:55px"><col style="width:80px">
+</colgroup>
+<tr><td colspan="9" class="sec" style="background:#3a3530;color:#fff;font-size:11px;font-weight:700;padding:4px 8px">聯絡人</td></tr>
+<tr>
+  <th style="border:1px solid #bbb;padding:6px 8px;font-size:13px;background:#f0ebe4">聯絡人1</th>
+  <th style="border:1px solid #bbb;padding:6px 8px;font-size:13px;background:#f0ebe4">姓名</th>
+  <td style="border:1px solid #bbb;padding:6px 9px;font-size:13px">{v("contact1_name")}</td>
+  <th style="border:1px solid #bbb;padding:6px 8px;font-size:13px;background:#f0ebe4">關係</th>
+  <td style="border:1px solid #bbb;padding:6px 9px;font-size:13px">{v("contact1_relation")}</td>
+  <th style="border:1px solid #bbb;padding:6px 8px;font-size:13px;background:#f0ebe4">電話</th>
+  <td style="border:1px solid #bbb;padding:6px 9px;font-size:13px">{v("contact1_phone")}</td>
+  <th style="border:1px solid #bbb;padding:6px 8px;font-size:13px;background:#f0ebe4">知情</th>
+  <td style="border:1px solid #bbb;padding:6px 9px;font-size:13px">{v("contact1_known")}</td>
+</tr>
+<tr>
+  <th style="border:1px solid #bbb;padding:6px 8px;font-size:13px;background:#f0ebe4">聯絡人2</th>
+  <th style="border:1px solid #bbb;padding:6px 8px;font-size:13px;background:#f0ebe4">姓名</th>
+  <td style="border:1px solid #bbb;padding:6px 9px;font-size:13px">{v("contact2_name")}</td>
+  <th style="border:1px solid #bbb;padding:6px 8px;font-size:13px;background:#f0ebe4">關係</th>
+  <td style="border:1px solid #bbb;padding:6px 9px;font-size:13px">{v("contact2_relation")}</td>
+  <th style="border:1px solid #bbb;padding:6px 8px;font-size:13px;background:#f0ebe4">電話</th>
+  <td style="border:1px solid #bbb;padding:6px 9px;font-size:13px">{v("contact2_phone")}</td>
+  <th style="border:1px solid #bbb;padding:6px 8px;font-size:13px;background:#f0ebe4">知情</th>
+  <td style="border:1px solid #bbb;padding:6px 9px;font-size:13px">{v("contact2_known")}</td>
+</tr>
 </table>
 <div style="page-break-before:always;margin-top:20px;"></div>
 <table>
