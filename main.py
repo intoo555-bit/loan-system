@@ -1132,6 +1132,34 @@ PLAN_ELIGIBILITY_RULES = [
         ],
         "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面", "機車合照（要有時間相機）", "行照"],
     },
+    # ===== 喬美 =====
+    {
+        "company": "喬美",
+        "max_amount": 14,
+        "priority": 64,
+        "rules": [
+            {"type": "simple", "label": "年齡 20~未滿 50（剛好 50 不可送）", "field": "age", "op": "between", "value": [20, 49]},
+            {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
+            {"type": "oneof", "label": "財務能力（擇一、5 選 1）", "options": [
+                {"type": "simple", "label": "近 2 期信用卡帳單", "op": "creditcard_good",
+                 "manual_check": "須附近 2 期完整帳單或繳款收據"},
+                {"type": "simple", "label": "3 個月勞保/軍保/公保 或 薪轉",
+                 "field": "eval_labor_ins", "op": "in", "value": ["公司保", "軍保", "公保"],
+                 "manual_check": "需確認滿 3 個月、或薪轉滿 3 個月"},
+                {"type": "manual", "label": "近一個月內銀行撥款 或 信用卡核卡",
+                 "hint": "客戶近一個月有銀行貸款撥款或新核卡"},
+                {"type": "manual", "label": "近一個月內有 中租/和潤/裕融/亞太/21/銀行 撥款",
+                 "hint": "須附撥款明細"},
+                {"type": "simple", "label": "持有不動產（權狀、不可有私設）",
+                 "field": "eval_property", "op": "contains", "value": "不動產",
+                 "exclude_field": "eval_alert", "exclude_value": "有",
+                 "manual_check": "須提供權狀"},
+            ]},
+            {"type": "manual", "label": "商品 2 選 1：手機（型號+IMEI+合照）或 機車（行照+前後合照）"},
+        ],
+        "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面",
+                          "（手機）型號+IMEI+手機合照 OR（機車）行照+前後合照"],
+    },
     # ===== 貸救補（貸10）=====
     {
         "company": "貸救補",
