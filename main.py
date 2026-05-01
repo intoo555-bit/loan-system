@@ -1019,7 +1019,7 @@ PLAN_ELIGIBILITY_RULES = [
         "rules": APT_RED_LINES + [
             {"type": "simple", "label": "年齡 20~50", "field": "age", "op": "between", "value": [20, 50]},
             {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
-            {"type": "manual", "label": "聯絡人 1 為二等親屬", "hint": "看聯絡人 1 關係（父母/配偶/兄弟姐妹/子女）"},
+            {"type": "simple", "label": "聯絡人 1 為二等親屬", "op": "contact1_2nd_kin"},
             {"type": "oneof", "label": "財務能力（擇一）", "options": [
                 {"type": "simple", "label": "勞保/軍保/公保滿半年（不可部分工時）", "field": "eval_labor_ins", "op": "in", "value": ["公司保", "軍保", "公保"], "manual_check": "需確認滿半年 + 非部分工時"},
                 {"type": "simple", "label": "有不動產（不能有私設當鋪）", "field": "eval_property", "op": "contains", "value": "不動產", "exclude_field": "eval_alert", "exclude_value": "有"},
@@ -1040,7 +1040,7 @@ PLAN_ELIGIBILITY_RULES = [
         "rules": APT_RED_LINES + [
             {"type": "simple", "label": "年齡 20~50", "field": "age", "op": "between", "value": [20, 50]},
             {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
-            {"type": "manual", "label": "聯絡人 1 為二等親屬"},
+            {"type": "simple", "label": "聯絡人 1 為二等親屬", "op": "contact1_2nd_kin"},
             {"type": "oneof", "label": "財務能力（擇一）", "options": [
                 {"type": "simple", "label": "勞保/軍保/公保滿半年（不可部分工時）", "field": "eval_labor_ins", "op": "in", "value": ["公司保", "軍保", "公保"], "manual_check": "需確認滿半年 + 非部分工時"},
                 {"type": "simple", "label": "有不動產（不能有私設當鋪）", "field": "eval_property", "op": "contains", "value": "不動產", "exclude_field": "eval_alert", "exclude_value": "有"},
@@ -1059,7 +1059,7 @@ PLAN_ELIGIBILITY_RULES = [
         "rules": APT_RED_LINES + [
             {"type": "simple", "label": "年齡 20~50", "field": "age", "op": "between", "value": [20, 50]},
             {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
-            {"type": "manual", "label": "聯絡人 1 為二等親屬"},
+            {"type": "simple", "label": "聯絡人 1 為二等親屬", "op": "contact1_2nd_kin"},
             {"type": "simple", "label": "工會投保滿半年", "field": "eval_labor_ins", "op": "=", "value": "工會保", "manual_check": "需確認滿半年"},
             {"type": "simple", "label": "車齡 ≤ 15 年", "field": "vehicle_year", "op": "year_age_le", "value": 15},
         ],
@@ -1072,7 +1072,7 @@ PLAN_ELIGIBILITY_RULES = [
         "rules": APT_RED_LINES + [
             {"type": "simple", "label": "年齡 20~50", "field": "age", "op": "between", "value": [20, 50]},
             {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
-            {"type": "manual", "label": "聯絡人 1 為二等親屬"},
+            {"type": "simple", "label": "聯絡人 1 為二等親屬", "op": "contact1_2nd_kin"},
             {"type": "oneof", "label": "財務能力（擇一）", "options": [
                 {"type": "simple", "label": "勞保/軍保/公保滿半年（不可部分工時）", "field": "eval_labor_ins", "op": "in", "value": ["公司保", "軍保", "公保"], "manual_check": "需確認滿半年 + 非部分工時"},
                 {"type": "simple", "label": "有不動產（不能有私設）", "field": "eval_property", "op": "contains", "value": "不動產", "exclude_field": "eval_alert", "exclude_value": "有"},
@@ -1089,7 +1089,7 @@ PLAN_ELIGIBILITY_RULES = [
         "rules": [
             {"type": "simple", "label": "年齡 20~50", "field": "age", "op": "between", "value": [20, 50]},
             {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
-            {"type": "manual", "label": "至少 2 位聯絡人、其中 1 位為二等親屬"},
+            {"type": "simple", "label": "至少 2 位聯絡人、其中 1 位為二等親屬", "op": "any_contact_2nd_kin"},
             {"type": "simple", "label": "車齡 ≤ 15 年", "field": "vehicle_year", "op": "year_age_le", "value": 15},
             {"type": "simple", "label": "原融（機車無貸款）", "op": "not_has_dynbao",
              "manual_check": "確認要貸的機車本身沒貸款"},
@@ -1116,7 +1116,7 @@ PLAN_ELIGIBILITY_RULES = [
             {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
             {"type": "manual", "label": "年齡 18~60（55 以上補保人、超過 60 也可試送）",
              "hint": "硬性：18 歲以上、軟性：60 以上實務上仍會送、有過件機會"},
-            {"type": "manual", "label": "至少 2 位聯絡人、其中 1 位為二等親屬"},
+            {"type": "simple", "label": "至少 2 位聯絡人、其中 1 位為二等親屬", "op": "any_contact_2nd_kin"},
             {"type": "manual", "label": "💡 警示戶可送（但需補保人）"},
         ],
         "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面", "手機型號", "imei", "手機合照"],
@@ -1129,7 +1129,7 @@ PLAN_ELIGIBILITY_RULES = [
             {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
             {"type": "manual", "label": "年齡 18~60（55 以上補保人、超過 60 也可試送）",
              "hint": "硬性：18 歲以上、軟性：60 以上實務上仍會送、有過件機會"},
-            {"type": "manual", "label": "至少 2 位聯絡人、其中 1 位為二等親屬"},
+            {"type": "simple", "label": "至少 2 位聯絡人、其中 1 位為二等親屬", "op": "any_contact_2nd_kin"},
             {"type": "simple", "label": "原融（機車無貸款）", "op": "not_has_dynbao",
              "manual_check": "確認要貸的機車本身沒貸款"},
             {"type": "manual", "label": "💡 警示戶可送（但需補保人）"},
@@ -1349,7 +1349,7 @@ PLAN_ELIGIBILITY_RULES = [
         "rules": [
             {"type": "simple", "label": "年齡 20~55", "field": "age", "op": "between", "value": [20, 55]},
             {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
-            {"type": "manual", "label": "至少 2 位聯絡人、其中 1 位為二等親屬"},
+            {"type": "simple", "label": "至少 2 位聯絡人、其中 1 位為二等親屬", "op": "any_contact_2nd_kin"},
             {"type": "simple", "label": "車齡 ≤ 20 年", "field": "vehicle_year", "op": "year_age_le", "value": 20},
             {"type": "manual", "label": "若 45~55 歲 → 必須勞保滿 1 年以上",
              "hint": "45 歲以下不看勞保、財力 3 選 1 即可"},
@@ -1410,7 +1410,7 @@ PLAN_ELIGIBILITY_RULES = [
         "rules": [
             {"type": "simple", "label": "年齡 20~55", "field": "age", "op": "between", "value": [20, 55]},
             {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
-            {"type": "manual", "label": "至少 2 位聯絡人、其中 1 位為二等親屬"},
+            {"type": "simple", "label": "至少 2 位聯絡人、其中 1 位為二等親屬", "op": "any_contact_2nd_kin"},
             {"type": "manual", "label": "若 45~55 歲 → 必須勞保滿 1 年以上",
              "hint": "45 歲以下不看勞保、財力 3 選 1 即可"},
             {"type": "oneof", "label": "財務能力（擇一）", "options": [
@@ -1484,6 +1484,41 @@ def _customer_has_dynbao(customer):
     return False
 
 
+def _is_2nd_kin(rel_text):
+    """判別關係文字是否為二等親屬
+    二等親屬：父母、配偶、子女、兄弟姐妹、祖父母、孫子女
+    """
+    if not rel_text:
+        return False
+    t = rel_text.strip()
+    if not t:
+        return False
+    # 二等親關鍵字（涵蓋常見寫法）
+    kin_keywords = [
+        # 父母
+        "父", "母", "爸", "媽", "雙親",
+        # 配偶
+        "夫", "妻", "老公", "老婆", "太太", "先生", "配偶", "丈夫", "妻子",
+        # 子女
+        "兒", "女", "子", "女兒", "兒子", "子女",
+        # 兄弟姐妹
+        "兄", "弟", "姊", "姐", "妹", "兄弟", "姊妹", "姐妹",
+        # 祖父母
+        "祖父", "祖母", "爺爺", "奶奶", "外公", "外婆", "外祖父", "外祖母",
+        # 孫子女
+        "孫",
+    ]
+    # 男女朋友/朋友/同事 不算二等親
+    not_kin_kw = ["男友", "女友", "朋友", "同事", "同學", "鄰居", "認識"]
+    for kw in not_kin_kw:
+        if kw in t:
+            return False
+    for kw in kin_keywords:
+        if kw in t:
+            return True
+    return False
+
+
 def _check_creditcard_status(customer):
     """檢查客戶名下信用卡狀況
     回傳 (status, detail)
@@ -1538,6 +1573,22 @@ def _check_rule(rule, customer):
             has = _customer_has_dynbao(customer)
             ok = has if op == "has_dynbao" else (not has)
             actual_str = "有動保" if has else "無動保"
+            return ("pass" if ok else "fail", label, actual_str)
+        # 特殊 op：聯絡人 1 / 聯絡人 2 是否為二等親
+        if op in ("contact1_2nd_kin", "contact2_2nd_kin", "any_contact_2nd_kin"):
+            c1 = (customer.get("contact1_relation", "") or "").strip()
+            c2 = (customer.get("contact2_relation", "") or "").strip()
+            c1_ok = _is_2nd_kin(c1)
+            c2_ok = _is_2nd_kin(c2)
+            if op == "contact1_2nd_kin":
+                ok = c1_ok
+                actual_str = f"聯絡人1：{c1 or '未填'}"
+            elif op == "contact2_2nd_kin":
+                ok = c2_ok
+                actual_str = f"聯絡人2：{c2 or '未填'}"
+            else:  # any_contact_2nd_kin
+                ok = c1_ok or c2_ok
+                actual_str = f"聯絡人1：{c1 or '未填'}、聯絡人2：{c2 or '未填'}"
             return ("pass" if ok else "fail", label, actual_str)
         # 特殊 op：信用卡狀況（直接從 eval_credit_card 文字判）
         if op == "creditcard_good":
@@ -15422,10 +15473,10 @@ td {{ background: #fff; }}
 <tr><th>公司地址</th><td colspan="3">{company_addr}</td></tr>
 <tr><th>行業</th><td colspan="3">{v("company_industry")}</td></tr>
 <tr class="sec"><td colspan="4">聯絡人</td></tr>
-<tr><th>聯絡人1</th><td>{v("contact1_name")}（{v("contact1_relation")}）</td><th>電話</th><td>{v("contact1_phone")}</td></tr>
-<tr><th>知情</th><td colspan="3">{v("contact1_known")}</td></tr>
-<tr><th>聯絡人2</th><td>{v("contact2_name")}（{v("contact2_relation")}）</td><th>電話</th><td>{v("contact2_phone")}</td></tr>
-<tr><th>知情</th><td colspan="3">{v("contact2_known")}</td></tr>
+<tr><th>聯絡人1</th><td>{v("contact1_name")}</td><th>關係</th><td style="word-break:keep-all;white-space:nowrap">{v("contact1_relation")}</td></tr>
+<tr><th>電話</th><td>{v("contact1_phone")}</td><th>知情</th><td>{v("contact1_known")}</td></tr>
+<tr><th>聯絡人2</th><td>{v("contact2_name")}</td><th>關係</th><td style="word-break:keep-all;white-space:nowrap">{v("contact2_relation")}</td></tr>
+<tr><th>電話</th><td>{v("contact2_phone")}</td><th>知情</th><td>{v("contact2_known")}</td></tr>
 </table>
 <div style="page-break-before:always;margin-top:20px;"></div>
 <table>
@@ -15497,10 +15548,10 @@ def _build_customer_pdf_body(r: dict) -> str:
 <tr><th>公司地址</th><td colspan="3">{company_addr}</td></tr>
 <tr><th>行業</th><td colspan="3">{v("company_industry")}</td></tr>
 <tr class="sec"><td colspan="4">聯絡人</td></tr>
-<tr><th>聯絡人1</th><td>{v("contact1_name")}（{v("contact1_relation")}）</td><th>電話</th><td>{v("contact1_phone")}</td></tr>
-<tr><th>知情</th><td colspan="3">{v("contact1_known")}</td></tr>
-<tr><th>聯絡人2</th><td>{v("contact2_name")}（{v("contact2_relation")}）</td><th>電話</th><td>{v("contact2_phone")}</td></tr>
-<tr><th>知情</th><td colspan="3">{v("contact2_known")}</td></tr>
+<tr><th>聯絡人1</th><td>{v("contact1_name")}</td><th>關係</th><td style="word-break:keep-all;white-space:nowrap">{v("contact1_relation")}</td></tr>
+<tr><th>電話</th><td>{v("contact1_phone")}</td><th>知情</th><td>{v("contact1_known")}</td></tr>
+<tr><th>聯絡人2</th><td>{v("contact2_name")}</td><th>關係</th><td style="word-break:keep-all;white-space:nowrap">{v("contact2_relation")}</td></tr>
+<tr><th>電話</th><td>{v("contact2_phone")}</td><th>知情</th><td>{v("contact2_known")}</td></tr>
 </table>
 <div style="page-break-before:always;margin-top:20px;"></div>
 <table>
@@ -18525,8 +18576,9 @@ function exportPDF(){
     r2('年資',ctime,'月薪',gv('csal')+'萬')+
     r1('公司地址',caddr));
   trows+=s3('聯絡人資料',
-    r2('聯絡人1',gv('c1name')+'（'+gv('c1rel')+'）','電話1',gv('c1tel'))+
-    r2('知情1',gv('c1know'),'聯絡人2',gv('c2name')+'（'+gv('c2rel')+'）')+
+    r2('聯絡人1',gv('c1name'),'關係',gv('c1rel'))+
+    r2('電話1',gv('c1tel'),'知情1',gv('c1know'))+
+    r2('聯絡人2',gv('c2name'),'關係',gv('c2rel'))+
     r2('電話2',gv('c2tel'),'知情2',gv('c2know')));
   trows+=s3('貸款諮詢事項',
     r2('資金需求',gv('efund'),'近三月送件',gv('esent'))+
