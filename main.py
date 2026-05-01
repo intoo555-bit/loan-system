@@ -1005,6 +1005,7 @@ COMMON_BONUS_ITEMS = [
     "上市櫃公司任職",
     "股票/基金",
     "定存/存款",
+    "權狀",
 ]
 
 PLAN_ELIGIBILITY_RULES = [
@@ -1152,6 +1153,40 @@ PLAN_ELIGIBILITY_RULES = [
              "hint": "若客戶亞太已婉拒、行政應改送其他家、不再送和裕"},
         ],
         "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面", "勞保/工會保（紙本或 PDF）", "機車正反合照", "行照"],
+    },
+    # ===== 第一系列（EGO）=====
+    {
+        "company": "第一汽車",
+        "max_amount": 30,
+        "priority": 77,
+        "rules": [
+            {"type": "simple", "label": "年齡 20~65", "field": "age", "op": "between", "value": [20, 65]},
+            {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
+            {"type": "simple", "label": "勞保/軍保/公保滿半年（須一週內）",
+             "field": "eval_labor_ins", "op": "in", "value": ["公司保", "軍保", "公保"],
+             "manual_check": "需確認滿半年 + 勞保須一週內"},
+            {"type": "manual", "label": "有貸款汽車繳款滿 1 年、遲繳不可超過 15 天",
+             "hint": "看負債明細有汽車貸款 + 設定日期 1 年以上、查繳款狀況"},
+        ],
+        "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面", "勞保/軍保/公保（半年以上）",
+                          "汽車行照", "汽車繳息明細", "身份證補換發(戶役)查詢畫面"],
+    },
+    {
+        "company": "第一信貸",
+        "max_amount": 30,
+        "priority": 76,
+        "rules": [
+            {"type": "simple", "label": "年齡 20~65", "field": "age", "op": "between", "value": [20, 65]},
+            {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
+            {"type": "simple", "label": "勞保/軍保/公保滿半年（須一週內）",
+             "field": "eval_labor_ins", "op": "in", "value": ["公司保", "軍保", "公保"],
+             "manual_check": "需確認滿半年 + 勞保須一週內"},
+            {"type": "manual", "label": "近一個月內撥款的銀行信貸",
+             "hint": "客戶最近一個月有銀行信貸撥款紀錄"},
+        ],
+        "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面", "勞保/軍保/公保（半年以上）",
+                          "近一個月內核准通知書 / 合約 / 撥款紀錄存摺內頁",
+                          "身份證補換發(戶役)查詢畫面"],
     },
     {
         "company": "和裕商品",
