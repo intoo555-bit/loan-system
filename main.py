@@ -1265,6 +1265,53 @@ PLAN_ELIGIBILITY_RULES = [
         ],
         "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面", "手機帳單"],
     },
+    # ===== 民間方案類（零卡/商品貸/代書/當鋪）=====
+    # 共同特性：不看條件、無條件排給客戶申請、警示戶可送、現金撥二等親或朋友都可
+    {
+        "company": "零卡(C)",
+        "max_amount": 3,
+        "priority": 25,
+        "rules": [
+            {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
+            {"type": "manual", "label": "💡 包含：慢點付/分期趣/遠信月付大人/大哥付/幫你付/銀角零卡/先享後付/PI錢包/分期趣"},
+            {"type": "manual", "label": "💡 不看條件、每個客戶都會排進去申請看看"},
+            {"type": "manual", "label": "💡 警示戶可送、現金撥二等親或朋友都可"},
+        ],
+        "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面"],
+    },
+    {
+        "company": "商品貸",
+        "max_amount": 5,
+        "priority": 22,
+        "rules": [
+            {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
+            {"type": "manual", "label": "💡 民間貸款、不看條件、無條件排給客戶申請"},
+            {"type": "manual", "label": "💡 警示戶可送、通常對保當下直接拿現金"},
+        ],
+        "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面"],
+    },
+    {
+        "company": "代書",
+        "max_amount": 10,
+        "priority": 20,
+        "rules": [
+            {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
+            {"type": "manual", "label": "💡 民間貸款、不看條件、無條件排給客戶申請"},
+            {"type": "manual", "label": "💡 警示戶可送、通常對保當下直接拿現金"},
+        ],
+        "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面"],
+    },
+    {
+        "company": "當舖",
+        "max_amount": 5,
+        "priority": 18,
+        "rules": [
+            {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
+            {"type": "manual", "label": "💡 民間貸款、不看條件、無條件排給客戶申請"},
+            {"type": "manual", "label": "💡 警示戶可送、通常對保當下直接拿現金"},
+        ],
+        "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面"],
+    },
     # ===== 貸救補（貸10）=====
     {
         "company": "貸救補",
