@@ -1265,6 +1265,34 @@ PLAN_ELIGIBILITY_RULES = [
         ],
         "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面", "手機帳單"],
     },
+    # ===== 鄉民 =====
+    {
+        "company": "鄉民",
+        "max_amount": 12,
+        "priority": 52,
+        "rules": [
+            {"type": "simple", "label": "年齡 18~60", "field": "age", "op": "between", "value": [18, 60]},
+            {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
+            {"type": "manual", "label": "聯徵分數 ≥ 440 分（紅線）",
+             "hint": "業務後續會跟客戶要信用報告、未達 440 不能送"},
+            {"type": "manual", "label": "勞保明細"},
+            {"type": "manual", "label": "近 3 個月薪轉（網銀調 3 個月）或存摺內頁"},
+            {"type": "oneof", "label": "財務能力（擇一）", "options": [
+                {"type": "simple", "label": "勞保/軍保/公保滿 3 個月",
+                 "field": "eval_labor_ins", "op": "in", "value": ["公司保", "軍保", "公保"],
+                 "manual_check": "需確認滿 3 個月"},
+                {"type": "simple", "label": "持有不動產（1 分之 1、不可持分）",
+                 "field": "eval_property", "op": "contains", "value": "不動產",
+                 "manual_check": "須完整持分、不可共有"},
+                {"type": "manual", "label": "自營商有設立營登",
+                 "hint": "需提供營利事業登記表"},
+            ]},
+            {"type": "manual", "label": "💡 通常排在後面、業務確認 440 分後再送"},
+            {"type": "manual", "label": "🚫 警示戶不做"},
+        ],
+        "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面",
+                          "聯徵報告（440 分+）", "勞保明細", "近 3 月薪轉/存摺內頁"],
+    },
     # ===== 民間方案類（零卡/商品貸/代書/當鋪）=====
     # 共同特性：不看條件、無條件排給客戶申請、警示戶可送、現金撥二等親或朋友都可
     {
