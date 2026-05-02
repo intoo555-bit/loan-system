@@ -1265,6 +1265,22 @@ PLAN_ELIGIBILITY_RULES = [
         ],
         "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面", "手機帳單"],
     },
+    # ===== 銀行 =====
+    {
+        "company": "銀行",
+        "max_amount": 30,
+        "priority": 56,
+        "rules": [
+            {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
+            {"type": "simple", "label": "信用正常（無呆帳/協商/卡強停）", "op": "creditcard_no_bad"},
+            {"type": "simple", "label": "勞保滿 3 個月",
+             "field": "eval_labor_ins", "op": "in", "value": ["公司保", "軍保", "公保"],
+             "manual_check": "需確認滿 3 個月"},
+            {"type": "manual", "label": "💡 條件達標就排序送貸"},
+            {"type": "manual", "label": "🚫 警示戶不做"},
+        ],
+        "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面"],
+    },
     # ===== 鄉民 =====
     {
         "company": "鄉民",
