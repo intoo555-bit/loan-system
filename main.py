@@ -1375,6 +1375,35 @@ PLAN_ELIGIBILITY_RULES = [
         ],
         "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面", "勞保/工會保（紙本或 PDF）", "機車正反合照", "行照"],
     },
+    # ===== 分貝（=分唄）系列 =====
+    # 21 體系紅線：21+麻吉+分貝+樂分期+分期趣+慢點付 含利息剩餘 ≥ 25 萬 → 不能送
+    {
+        "company": "分貝汽車改裝1+1",
+        "max_amount": 15,
+        "priority": 71,
+        "rules": [
+            {"type": "simple", "label": "年齡 20~65", "field": "age", "op": "between", "value": [20, 65]},
+            {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
+            {"type": "simple", "label": "客戶有汽車貸款（送件條件）", "op": "has_car_loan",
+             "manual_check": "汽車貸款需繳息至少 1 期、確認動保資訊"},
+            {"type": "simple", "label": "21 體系（麻吉/21/分貝/樂分期/分期趣/慢點付）含利息剩餘 < 25 萬",
+             "op": "group21_remain_lt", "value": 250000},
+        ],
+        "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面", "汽車行照"],
+    },
+    {
+        "company": "分貝機車改裝",
+        "max_amount": 8,
+        "priority": 67,
+        "rules": [
+            {"type": "simple", "label": "年齡 20~65", "field": "age", "op": "between", "value": [20, 65]},
+            {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
+            {"type": "manual", "label": "機車有貸款或無貸款都可送（不用附繳息）"},
+            {"type": "simple", "label": "21 體系（麻吉/21/分貝/樂分期/分期趣/慢點付）含利息剩餘 < 25 萬",
+             "op": "group21_remain_lt", "value": 250000},
+        ],
+        "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面", "機車行照"],
+    },
     # ===== 21汽車系列（二十一世紀數位車貸 A/B/C 專案）=====
     # 紅線：警示戶不做、車輛不在天書/權威不做、車價 ≤ 10 萬不做
     # A 專案（200 萬）需符合 14 項中的 2 項
@@ -1595,6 +1624,56 @@ def _is_2nd_kin(rel_text):
     return False
 
 
+def _21group_remaining(customer):
+    """計算客戶 debt_list 裡 21 體系（麻吉PAY/21/分貝/樂分期/分期趣/慢點付）剩餘金額加總
+    回傳：(總金額元, 對應廠商列表)
+    """
+    group_keywords = ["麻吉", "21", "二一", "廿一", "分貝", "分唄", "樂分期", "分期趣", "慢點付"]
+    total = 0.0
+    matched = []
+    try:
+        debt_list = json.loads(customer.get("debt_list") or "[]") if customer.get("debt_list") else []
+        for d in debt_list:
+            co = (d.get("co", "") or "")
+            if not any(kw in co for kw in group_keywords):
+                continue
+            # 剩餘金額：「re」欄位或從 mo*pe-mo*pa 算
+            try:
+                re_str = (d.get("re", "") or "").replace("$", "").replace(",", "").strip()
+                if re_str and re_str.isdigit():
+                    total += float(re_str)
+                    matched.append(co)
+                    continue
+                mo = float(d.get("mo", "") or 0)
+                pe_pa = (d.get("pe", "") or "").split("/")
+                pe = float(pe_pa[0]) if pe_pa[0] else 0
+                pa = float(pe_pa[1]) if len(pe_pa) > 1 and pe_pa[1] else 0
+                rem = mo * (pe - pa)
+                if rem > 0:
+                    total += rem
+                    matched.append(co)
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return total, matched
+
+
+def _customer_has_car_loan(customer):
+    """檢查 debt_list 裡是否有汽車貸款（dy 含「動保」或「公路」+ 商家名含「車」）
+    或從 dy 動保標記簡化判別（車貸通常有動保）
+    """
+    try:
+        debt_list = json.loads(customer.get("debt_list") or "[]") if customer.get("debt_list") else []
+        for d in debt_list:
+            dy = (d.get("dy", "") or "")
+            if "動保" in dy or "公路" in dy:
+                return True
+    except Exception:
+        pass
+    return False
+
+
 def _check_creditcard_status(customer):
     """檢查客戶名下信用卡狀況
     回傳 (status, detail)
@@ -1650,6 +1729,16 @@ def _check_rule(rule, customer):
             ok = has if op == "has_dynbao" else (not has)
             actual_str = "有動保" if has else "無動保"
             return ("pass" if ok else "fail", label, actual_str)
+        # 特殊 op：21 體系剩餘額度（< value 元 = pass）
+        if op == "group21_remain_lt":
+            total, matched = _21group_remaining(customer)
+            if total < float(value):
+                return ("pass", label, f"21 體系剩餘 {int(total):,} 元（{', '.join(matched) or '無'}）")
+            return ("fail", label, f"21 體系剩餘 {int(total):,} 元（已達 {int(value):,} 上限）")
+        # 特殊 op：客戶有汽車貸款
+        if op == "has_car_loan":
+            ok = _customer_has_car_loan(customer)
+            return ("pass" if ok else "fail", label, "有車貸" if ok else "無車貸")
         # 特殊 op：聯絡人 1 / 聯絡人 2 是否為二等親
         if op in ("contact1_2nd_kin", "contact2_2nd_kin", "any_contact_2nd_kin"):
             c1 = (customer.get("contact1_relation", "") or "").strip()
