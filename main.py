@@ -1277,9 +1277,10 @@ PLAN_ELIGIBILITY_RULES = [
              "field": "eval_labor_ins", "op": "in", "value": ["公司保", "軍保", "公保"],
              "manual_check": "需確認滿 3 個月"},
             {"type": "manual", "label": "💡 條件達標就排序送貸"},
+            {"type": "manual", "label": "💡 證件不用先給、業務群組會給銀行表格、業務後續處理"},
             {"type": "manual", "label": "🚫 警示戶不做"},
         ],
-        "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面"],
+        "required_docs": [],
     },
     # ===== 鄉民 =====
     {
@@ -1320,8 +1321,9 @@ PLAN_ELIGIBILITY_RULES = [
             {"type": "manual", "label": "💡 包含：慢點付/分期趣/遠信月付大人/大哥付/幫你付/銀角零卡/先享後付/PI錢包/分期趣"},
             {"type": "manual", "label": "💡 不看條件、每個客戶都會排進去申請看看"},
             {"type": "manual", "label": "💡 警示戶可送、現金撥二等親或朋友都可"},
+            {"type": "manual", "label": "💡 證件不用先給、業務後續處理"},
         ],
-        "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面"],
+        "required_docs": [],
     },
     {
         "company": "商品貸",
@@ -1353,8 +1355,9 @@ PLAN_ELIGIBILITY_RULES = [
             {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
             {"type": "manual", "label": "💡 民間貸款、不看條件、無條件排給客戶申請"},
             {"type": "manual", "label": "💡 警示戶可送、通常對保當下直接拿現金"},
+            {"type": "manual", "label": "💡 證件不用先給、業務後續處理"},
         ],
-        "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面"],
+        "required_docs": [],
     },
     # ===== 貸救補（貸10）=====
     {
@@ -1456,6 +1459,8 @@ PLAN_ELIGIBILITY_RULES = [
             {"type": "simple", "label": "年齡 20~55", "field": "age", "op": "between", "value": [20, 55]},
             {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
             {"type": "simple", "label": "至少 2 位聯絡人、其中 1 位為二等親屬", "op": "any_contact_2nd_kin"},
+            {"type": "simple", "label": "戶籍非外島（澎湖/金門/連江/馬祖）",
+             "field": "reg_city", "op": "not_contains", "value": ["澎湖", "金門", "連江", "馬祖"]},
             {"type": "simple", "label": "車齡 ≤ 20 年", "field": "vehicle_year", "op": "year_age_le", "value": 20},
             {"type": "manual", "label": "若 45~55 歲 → 必須勞保滿 1 年以上",
              "hint": "45 歲以下不看勞保、財力 3 選 1 即可"},
@@ -1621,6 +1626,8 @@ PLAN_ELIGIBILITY_RULES = [
             {"type": "simple", "label": "年齡 20~55", "field": "age", "op": "between", "value": [20, 55]},
             {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
             {"type": "simple", "label": "至少 2 位聯絡人、其中 1 位為二等親屬", "op": "any_contact_2nd_kin"},
+            {"type": "simple", "label": "戶籍非外島（澎湖/金門/連江/馬祖）",
+             "field": "reg_city", "op": "not_contains", "value": ["澎湖", "金門", "連江", "馬祖"]},
             {"type": "manual", "label": "若 45~55 歲 → 必須勞保滿 1 年以上",
              "hint": "45 歲以下不看勞保、財力 3 選 1 即可"},
             {"type": "oneof", "label": "財務能力（擇一）", "options": [
@@ -15861,28 +15868,28 @@ def _build_customer_pdf_body(r: dict) -> str:
 <colgroup>
   <col style="width:90px"><col style="width:55px"><col><col style="width:55px"><col style="width:90px"><col style="width:55px"><col><col style="width:55px"><col style="width:80px">
 </colgroup>
-<tr><td colspan="9" class="sec" style="background:#3a3530;color:#fff;font-size:11px;font-weight:700;padding:4px 8px">聯絡人</td></tr>
+<tr><td colspan="9" class="sec" style="background:#3a3530;color:#fff;font-size:12px;font-weight:700;padding:6px 10px">聯絡人</td></tr>
 <tr>
-  <th style="border:1px solid #bbb;padding:6px 8px;font-size:13px;background:#f0ebe4">聯絡人1</th>
-  <th style="border:1px solid #bbb;padding:6px 8px;font-size:13px;background:#f0ebe4">姓名</th>
-  <td style="border:1px solid #bbb;padding:6px 9px;font-size:13px">{v("contact1_name")}</td>
-  <th style="border:1px solid #bbb;padding:6px 8px;font-size:13px;background:#f0ebe4">關係</th>
-  <td style="border:1px solid #bbb;padding:6px 9px;font-size:13px">{v("contact1_relation")}</td>
-  <th style="border:1px solid #bbb;padding:6px 8px;font-size:13px;background:#f0ebe4">電話</th>
-  <td style="border:1px solid #bbb;padding:6px 9px;font-size:13px">{v("contact1_phone")}</td>
-  <th style="border:1px solid #bbb;padding:6px 8px;font-size:13px;background:#f0ebe4">知情</th>
-  <td style="border:1px solid #bbb;padding:6px 9px;font-size:13px">{v("contact1_known")}</td>
+  <th style="border:1px solid #bbb;padding:7px 8px;font-size:13px;background:#f0ebe4">聯絡人1</th>
+  <th style="border:1px solid #bbb;padding:7px 8px;font-size:13px;background:#f0ebe4">姓名</th>
+  <td style="border:1px solid #bbb;padding:7px 10px;font-size:13px">{v("contact1_name")}</td>
+  <th style="border:1px solid #bbb;padding:7px 8px;font-size:13px;background:#f0ebe4">關係</th>
+  <td style="border:1px solid #bbb;padding:7px 10px;font-size:13px">{v("contact1_relation")}</td>
+  <th style="border:1px solid #bbb;padding:7px 8px;font-size:13px;background:#f0ebe4">電話</th>
+  <td style="border:1px solid #bbb;padding:7px 10px;font-size:13px">{v("contact1_phone")}</td>
+  <th style="border:1px solid #bbb;padding:7px 8px;font-size:13px;background:#f0ebe4">知情</th>
+  <td style="border:1px solid #bbb;padding:7px 10px;font-size:13px">{v("contact1_known")}</td>
 </tr>
 <tr>
-  <th style="border:1px solid #bbb;padding:6px 8px;font-size:13px;background:#f0ebe4">聯絡人2</th>
-  <th style="border:1px solid #bbb;padding:6px 8px;font-size:13px;background:#f0ebe4">姓名</th>
-  <td style="border:1px solid #bbb;padding:6px 9px;font-size:13px">{v("contact2_name")}</td>
-  <th style="border:1px solid #bbb;padding:6px 8px;font-size:13px;background:#f0ebe4">關係</th>
-  <td style="border:1px solid #bbb;padding:6px 9px;font-size:13px">{v("contact2_relation")}</td>
-  <th style="border:1px solid #bbb;padding:6px 8px;font-size:13px;background:#f0ebe4">電話</th>
-  <td style="border:1px solid #bbb;padding:6px 9px;font-size:13px">{v("contact2_phone")}</td>
-  <th style="border:1px solid #bbb;padding:6px 8px;font-size:13px;background:#f0ebe4">知情</th>
-  <td style="border:1px solid #bbb;padding:6px 9px;font-size:13px">{v("contact2_known")}</td>
+  <th style="border:1px solid #bbb;padding:7px 8px;font-size:13px;background:#f0ebe4">聯絡人2</th>
+  <th style="border:1px solid #bbb;padding:7px 8px;font-size:13px;background:#f0ebe4">姓名</th>
+  <td style="border:1px solid #bbb;padding:7px 10px;font-size:13px">{v("contact2_name")}</td>
+  <th style="border:1px solid #bbb;padding:7px 8px;font-size:13px;background:#f0ebe4">關係</th>
+  <td style="border:1px solid #bbb;padding:7px 10px;font-size:13px">{v("contact2_relation")}</td>
+  <th style="border:1px solid #bbb;padding:7px 8px;font-size:13px;background:#f0ebe4">電話</th>
+  <td style="border:1px solid #bbb;padding:7px 10px;font-size:13px">{v("contact2_phone")}</td>
+  <th style="border:1px solid #bbb;padding:7px 8px;font-size:13px;background:#f0ebe4">知情</th>
+  <td style="border:1px solid #bbb;padding:7px 10px;font-size:13px">{v("contact2_known")}</td>
 </tr>
 </table>
 <div style="page-break-before:always;margin-top:20px;"></div>
@@ -15904,20 +15911,16 @@ def _build_customer_pdf_body(r: dict) -> str:
 _PDF_STYLE = """<style>
 @media print { @page { size: A4 portrait; margin: 10mm 12mm; } .no-print { display: none !important; } }
 * { box-sizing: border-box; margin: 0; padding: 0; }
-body { font-family: 'Microsoft JhengHei', 'PingFang TC', sans-serif; background: #eee; color: #1a1a1a; font-size: 14px; -webkit-font-smoothing: antialiased; margin: 0; padding: 0; }
-#pdf-wrap { padding: 20px 0 0 0; }
-#pdf-content { width: 210mm; min-height: 297mm; padding: 10mm 12mm; background: #fff; box-sizing: border-box; margin: 0 auto; }
-@media print { body { background: #fff; } #pdf-wrap { padding: 0; } #pdf-content { padding: 0; width: auto; min-height: auto; margin: 0; } }
-.header { background: #3a3530; color: #fff; padding: 10px 16px; border-radius: 6px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; }
-.header-name { font-size: 18px; font-weight: 700; line-height: 1.3; }
-.header-sub { font-size: 11px; color: #c8bfb5; margin-top: 2px; line-height: 1.3; }
-table { width: 100%; border-collapse: collapse; margin-bottom: 10px; table-layout: fixed; }
-col.c-th { width: 15%; }
-col.c-td { width: 35%; }
-th, td { border: 1px solid #bbb; padding: 6px 9px; font-size: 14px; line-height: 1.4; vertical-align: middle; word-break: break-all; }
-th { background: #f0ebe4; color: #3a3020; font-weight: 700; white-space: nowrap; text-align: left; }
+body { font-family: 'Microsoft JhengHei', 'PingFang TC', sans-serif; background: #fff; color: #1a1a1a; font-size: 13px; padding: 20px; }
+.header { background: #3a3530; color: #fff; padding: 16px 20px; border-radius: 8px; margin-bottom: 16px; display: flex; justify-content: space-between; align-items: center; }
+.header-name { font-size: 22px; font-weight: 700; }
+.header-sub { font-size: 12px; color: #c8bfb5; margin-top: 4px; }
+table { width: 100%; border-collapse: collapse; margin-bottom: 16px; }
+th, td { border: 1px solid #bbb; padding: 7px 10px; font-size: 13px; line-height: 1.5; }
+th { background: #f0ebe4; color: #3a3020; font-weight: 700; width: 100px; white-space: nowrap; text-align: left; }
 td { background: #fff; }
-.sec td { background: #3a3530; color: #fff; font-size: 11px; font-weight: 700; padding: 4px 8px; }
+.sec { background: #3a3530; color: #fff; font-size: 12px; font-weight: 700; padding: 6px 10px; }
+.sec td { background: #3a3530; color: #fff; font-weight: 700; }
 </style>"""
 
 
@@ -15957,92 +15960,12 @@ def customer_pdf_batch(request: Request, ids: str = ""):
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>客戶資料批次列印（{len(ordered)} 筆）</title>
 {_PDF_STYLE}
-<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 </head><body>
 <div class="no-print" style="text-align:center;margin-bottom:16px;">
-  <button id="pdf-btn" onclick="downloadPDF()" style="background:#4e7055;color:#fff;border:none;padding:10px 28px;border-radius:6px;font-size:14px;cursor:pointer;font-weight:600;">下載 PDF（共 {len(ordered)} 筆）</button>
+  <button onclick="window.print()" style="background:#4e7055;color:#fff;border:none;padding:10px 28px;border-radius:6px;font-size:14px;cursor:pointer;font-weight:600;">列印 / 存 PDF（共 {len(ordered)} 筆）</button>
   <button onclick="window.close()" style="background:#6a5e4e;color:#fff;border:none;padding:10px 28px;border-radius:6px;font-size:14px;cursor:pointer;font-weight:600;margin-left:8px;">關閉</button>
 </div>
-<div id="pdf-wrap">
-<div id="pdf-content">
 {body_html}
-</div>
-</div>
-<script>
-function downloadPDF() {{
-  var btn = document.getElementById('pdf-btn');
-  var originalText = btn.innerText;
-  if (typeof html2pdf === 'undefined') {{
-    window.print();
-    return;
-  }}
-  btn.disabled = true;
-  btn.innerText = '產生中，請稍候…';
-  btn.style.opacity = '0.6';
-  btn.style.cursor = 'wait';
-  var element = document.getElementById('pdf-content');
-  var opt = {{
-    margin: 0,
-    filename: {json.dumps(pdf_filename, ensure_ascii=False)},
-    image: {{ type: 'jpeg', quality: 0.95 }},
-    html2canvas: {{
-      scale: 2, useCORS: true, letterRendering: true, backgroundColor: '#ffffff',
-      scrollX: 0, scrollY: -window.scrollY,
-      onclone: function(doc) {{
-        var el = doc.getElementById('pdf-content');
-        if (el) {{
-          el.style.margin = '0';
-          el.style.position = 'static';
-          el.style.left = '0';
-          el.style.transform = 'none';
-        }}
-        doc.body.style.padding = '0';
-        doc.body.style.margin = '0';
-        doc.body.style.background = '#fff';
-        doc.documentElement.style.margin = '0';
-        doc.documentElement.style.padding = '0';
-      }}
-    }},
-    jsPDF: {{ unit: 'mm', format: 'a4', orientation: 'portrait' }},
-    pagebreak: {{ mode: ['css', 'legacy'] }}
-  }};
-  var ua = navigator.userAgent || '';
-  var isMobile = /iPhone|iPad|iPod|Android|Line/i.test(ua);
-  var resetBtn = function() {{
-    btn.disabled = false;
-    btn.innerText = originalText;
-    btn.style.opacity = '1';
-    btn.style.cursor = 'pointer';
-  }};
-  var worker = html2pdf().from(element).set(opt);
-  if (isMobile) {{
-    // 手機（iOS/Android/LINE 內建瀏覽器）：產生 blob URL 在新分頁開啟
-    // 讓使用者用系統分享鍵存檔或傳送，不靠 programmatic download
-    worker.toPdf().get('pdf').then(function(pdf) {{
-      var blob = pdf.output('blob');
-      var url = URL.createObjectURL(blob);
-      var opened = window.open(url, '_blank');
-      if (!opened) {{
-        // 跳窗被擋 → 直接換頁顯示 PDF
-        window.location.href = url;
-      }}
-      resetBtn();
-    }}).catch(function(err) {{
-      console.error('PDF 產生失敗：', err);
-      alert('PDF 產生失敗：' + (err && err.message ? err.message : err));
-      resetBtn();
-    }});
-  }} else {{
-    // 電腦：直接下載
-    worker.save().then(resetBtn).catch(function(err) {{
-      console.error('PDF 產生失敗：', err);
-      alert('PDF 產生失敗，改用瀏覽器列印功能');
-      window.print();
-      resetBtn();
-    }});
-  }}
-}}
-</script>
 </body></html>"""
 
 
