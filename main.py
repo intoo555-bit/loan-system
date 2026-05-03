@@ -1277,10 +1277,9 @@ PLAN_ELIGIBILITY_RULES = [
              "field": "eval_labor_ins", "op": "in", "value": ["公司保", "軍保", "公保"],
              "manual_check": "需確認滿 3 個月"},
             {"type": "manual", "label": "💡 條件達標就排序送貸"},
-            {"type": "manual", "label": "💡 證件不用先給、業務群組會給銀行表格、業務後續處理"},
             {"type": "manual", "label": "🚫 警示戶不做"},
         ],
-        "required_docs": [],
+        "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面"],
     },
     # ===== 鄉民 =====
     {
@@ -1321,9 +1320,8 @@ PLAN_ELIGIBILITY_RULES = [
             {"type": "manual", "label": "💡 包含：慢點付/分期趣/遠信月付大人/大哥付/幫你付/銀角零卡/先享後付/PI錢包/分期趣"},
             {"type": "manual", "label": "💡 不看條件、每個客戶都會排進去申請看看"},
             {"type": "manual", "label": "💡 警示戶可送、現金撥二等親或朋友都可"},
-            {"type": "manual", "label": "💡 證件不用先給、業務後續處理"},
         ],
-        "required_docs": [],
+        "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面"],
     },
     {
         "company": "商品貸",
@@ -1355,9 +1353,8 @@ PLAN_ELIGIBILITY_RULES = [
             {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
             {"type": "manual", "label": "💡 民間貸款、不看條件、無條件排給客戶申請"},
             {"type": "manual", "label": "💡 警示戶可送、通常對保當下直接拿現金"},
-            {"type": "manual", "label": "💡 證件不用先給、業務後續處理"},
         ],
-        "required_docs": [],
+        "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面"],
     },
     # ===== 貸救補（貸10）=====
     {
@@ -1459,8 +1456,6 @@ PLAN_ELIGIBILITY_RULES = [
             {"type": "simple", "label": "年齡 20~55", "field": "age", "op": "between", "value": [20, 55]},
             {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
             {"type": "simple", "label": "至少 2 位聯絡人、其中 1 位為二等親屬", "op": "any_contact_2nd_kin"},
-            {"type": "simple", "label": "戶籍非外島（澎湖/金門/連江/馬祖）",
-             "field": "reg_city", "op": "not_contains", "value": ["澎湖", "金門", "連江", "馬祖"]},
             {"type": "simple", "label": "車齡 ≤ 20 年", "field": "vehicle_year", "op": "year_age_le", "value": 20},
             {"type": "manual", "label": "若 45~55 歲 → 必須勞保滿 1 年以上",
              "hint": "45 歲以下不看勞保、財力 3 選 1 即可"},
@@ -1626,8 +1621,6 @@ PLAN_ELIGIBILITY_RULES = [
             {"type": "simple", "label": "年齡 20~55", "field": "age", "op": "between", "value": [20, 55]},
             {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
             {"type": "simple", "label": "至少 2 位聯絡人、其中 1 位為二等親屬", "op": "any_contact_2nd_kin"},
-            {"type": "simple", "label": "戶籍非外島（澎湖/金門/連江/馬祖）",
-             "field": "reg_city", "op": "not_contains", "value": ["澎湖", "金門", "連江", "馬祖"]},
             {"type": "manual", "label": "若 45~55 歲 → 必須勞保滿 1 年以上",
              "hint": "45 歲以下不看勞保、財力 3 選 1 即可"},
             {"type": "oneof", "label": "財務能力（擇一）", "options": [
