@@ -3347,6 +3347,15 @@ def init_db():
         ("eval_labor_amount", "TEXT"),  # 勞保投保金額（萬）
         ("vehicle_model", "TEXT"),      # 車款（如 YAMAHA SMAX）
         ("vehicle_year", "TEXT"),        # 出廠年份（如 2019 或 108）
+        # 無貸款車輛清單（2026/05/05 加）— JSON：[{type, plate, year}, ...]
+        ("unloan_vehicles", "TEXT"),
+        # 警示戶標記（2026/05/05 加）— "是"/"否"/空
+        ("eval_alert_warning", "TEXT"),
+        # 警示戶撥款方式（2026/05/05 加）— "撥二等親"/"現金或朋友"/空
+        ("eval_alert_warning_method", "TEXT"),
+        # 房屋私設（2026/05/05 加）— 自有時才填、"有"/"無"/空
+        # 不影響 adminB 邏輯、純 PDF 顯示用
+        ("eval_house_private", "TEXT"),
     ]:
         ensure_column(cur, "customers", col, defn)
     # groups 表新增業務群對應欄位
@@ -13077,10 +13086,18 @@ def apply_adminb_rules(row: dict) -> dict:
         result["live_status_val"] = "宿舍"
         result["live_status_adj"] = False
     elif any(k in ls for k in own_kw):
-        result["live_status_display"] = f"填入：{ls}"
-        result["live_status_val"] = ls
-        result["live_status_adj"] = False
-        warnings.append("⚠️ 居住狀況「自有」請確認無私設！")
+        # 房屋私設邏輯：自有 + 房屋私設=有 → 改填「父母名下」（避免私設）
+        house_private = (row.get("eval_house_private", "") or "").strip()
+        if house_private == "有":
+            result["live_status_display"] = f"客戶填：{ls} + 房屋私設=有 → 填入：父母名下"
+            result["live_status_val"] = "父母名下"
+            result["live_status_adj"] = True
+        else:
+            result["live_status_display"] = f"填入：{ls}"
+            result["live_status_val"] = ls
+            result["live_status_adj"] = False
+            if not house_private:
+                warnings.append("⚠️ 居住狀況「自有」請確認無私設！（請至客戶資料填房屋私設欄位）")
     else:
         result["live_status_display"] = f"填入：{ls}"
         result["live_status_val"] = ls
@@ -13449,6 +13466,7 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
         }}).catch(function(e) {{ alert('錯誤：' + e); }});
     }}
     window.addEventListener('DOMContentLoaded', qmInit);
+
     </script>
     </form>
     </div>
@@ -13600,6 +13618,12 @@ def edit_pending_get(request: Request, case_id: str = ""):
     # 負債明細轉成可編輯的 JSON 給前端
     import json as _json2
     debt_json = _json2.dumps(debt_data, ensure_ascii=False)
+    # 無貸款車輛清單
+    try:
+        unloan_data = _json.loads(v("unloan_vehicles")) if v("unloan_vehicles") else []
+    except Exception:
+        unloan_data = []
+    unloan_json = _json2.dumps(unloan_data, ensure_ascii=False)
     return f"""<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>編輯 {h(v("customer_name"))}</title>
 {PAGE_CSS}
@@ -13650,7 +13674,8 @@ label{{display:block;font-size:12px;font-weight:600;color:#5a4e40;margin-bottom:
   </div>
   <div class="g3">
     <div><label>現住電話</label><input name="lphone" class="ep" value="{h(v("live_phone"))}"></div>
-    <div><label>居住狀況</label><select name="lstatus" class="ep"><option {"selected" if v("live_status")=="自有" else ""}>自有</option><option {"selected" if v("live_status")=="配偶" else ""}>配偶</option><option {"selected" if v("live_status")=="父母" else ""}>父母</option><option {"selected" if v("live_status")=="親屬" else ""}>親屬</option><option {"selected" if v("live_status")=="租屋" else ""}>租屋</option><option {"selected" if v("live_status")=="宿舍" else ""}>宿舍</option></select></div>
+    <div><label>居住狀況</label><select name="lstatus" class="ep" onchange="document.getElementById('hp_box').style.display=this.value==='自有'?'block':'none'"><option {"selected" if v("live_status")=="自有" else ""}>自有</option><option {"selected" if v("live_status")=="配偶" else ""}>配偶</option><option {"selected" if v("live_status")=="父母" else ""}>父母</option><option {"selected" if v("live_status")=="親屬" else ""}>親屬</option><option {"selected" if v("live_status")=="租屋" else ""}>租屋</option><option {"selected" if v("live_status")=="宿舍" else ""}>宿舍</option></select></div>
+    <div id="hp_box" style="{'display:block' if v('live_status')=='自有' else 'display:none'}"><label style="color:#b91c1c;font-weight:700">⚠️ 房屋私設（自有時填）</label><select name="hprivate" class="ep" style="border:2px solid #b91c1c"><option value="">請選擇</option><option {"selected" if v("eval_house_private")=="無" else ""}>無</option><option {"selected" if v("eval_house_private")=="有" else ""}>有</option></select></div>
     <div><label>居住時間</label><div style="display:flex;gap:6px;align-items:center"><input name="lyear" class="ep" value="{h(v("live_years"))}" style="width:60px"><span>年</span><input name="lmon" class="ep" value="{h(v("live_months"))}" style="width:60px"><span>月</span></div></div>
   </div>
 </div>
@@ -13674,6 +13699,8 @@ label{{display:block;font-size:12px;font-weight:600;color:#5a4e40;margin-bottom:
   <div><label>知情</label><select name="c2know" class="ep"><option {"selected" if v("contact2_known")=="可知情" else ""}>可知情</option><option {"selected" if v("contact2_known")=="保密" else ""}>保密</option></select></div>
 </div></div>
 <div class="card"><div class="sec">貸款諮詢事項</div><div class="g2">
+  <div><label style="color:#b91c1c;font-weight:700">⚠️ 警示戶</label><select name="ewarning" class="ep" style="border:2px solid #b91c1c;font-weight:700" onchange="document.getElementById('ewmethod_box').style.display=this.value==='是'?'block':'none'"><option value="">請選擇</option><option {"selected" if v("eval_alert_warning")=="否" else ""}>否</option><option {"selected" if v("eval_alert_warning")=="是" else ""}>是</option></select></div>
+  <div id="ewmethod_box" style="{'display:block' if v('eval_alert_warning')=='是' else 'display:none'}"><label style="color:#b91c1c;font-weight:700">⚠️ 警示戶撥款方式</label><select name="ewmethod" class="ep" style="border:2px solid #b91c1c;font-weight:700"><option value="">請選擇</option><option {"selected" if v("eval_alert_warning_method")=="撥二等親" else ""}>撥二等親</option><option {"selected" if v("eval_alert_warning_method")=="現金或朋友" else ""}>現金或朋友</option></select></div>
   <div><label>資金需求</label><input name="efund" class="ep" value="{h(v("eval_fund_need"))}"></div>
   <div><label>近三月送件 / 送過什麼</label><div style="display:flex;gap:6px"><select name="esent" class="ep" style="width:72px;flex:0 0 72px"><option {"selected" if v("eval_sent_3m")=="否" else ""}>否</option><option {"selected" if v("eval_sent_3m")=="是" else ""}>是</option></select><input name="esent_detail" class="ep" placeholder="例：喬美、裕融" value="{h(v("eval_sent_3m_detail"))}" style="flex:1"></div></div>
   <div><label>當鋪私設</label><select name="eprivate" class="ep"><option {"selected" if v("eval_alert")=="無" else ""}>無</option><option {"selected" if v("eval_alert")=="有" else ""}>有</option></select></div>
@@ -13682,13 +13709,11 @@ label{{display:block;font-size:12px;font-weight:600;color:#5a4e40;margin-bottom:
   <div><label>有無證照</label><select name="elicense" class="ep"><option {"selected" if v("eval_license")=="無" else ""}>無</option><option {"selected" if v("eval_license")=="有" else ""}>有</option></select></div>
   <div><label>貸款遲繳</label><select name="elate" class="ep"><option {"selected" if v("eval_late")=="無" else ""}>無</option><option {"selected" if v("eval_late")=="有" else ""}>有</option></select></div>
   <div><label>遲繳天數</label><input name="elateday" class="ep" value="{h(v("eval_late_days"))}"></div>
-  <div><label>罰單欠費 $</label><input name="efine" class="ep" value="{h(v("eval_fine"))}"></div>
-  <div><label>燃料稅 $</label><input name="efuel" class="ep" value="{h(v("eval_fuel_tax"))}"></div>
+  <div><label>罰單欠費 $</label><input name="efine" class="ep" value="{h(v("eval_fine"))}" type="number" min="0" oninput="calcF()"></div>
+  <div><label>燃料稅 $</label><input name="efuel" class="ep" value="{h(v("eval_fuel_tax"))}" type="number" min="0" oninput="calcF()"></div>
+  <div style="grid-column:1/-1"><label>欠費總額（自動計算）</label><div id="tfees" style="font-size:15px;color:#b84a35;font-weight:700;padding:8px 11px;background:#fff8f5;border:1px solid #f0d8d2;border-radius:6px">$0</div></div>
   <div><label>名下信用卡</label><input name="ecard" class="ep" value="{h(v("eval_credit_card"))}"></div>
   <div><label>動產/不動產</label><input name="eprop" class="ep" value="{h(v("eval_property"))}"></div>
-  <div><label>勞保投保金額（萬）</label><input name="elabor_amt" class="ep" value="{h(v("eval_labor_amount"))}" placeholder="4.2"></div>
-  <div><label>車款</label><input name="vmodel" class="ep" value="{h(v("vehicle_model"))}" placeholder="YAMAHA SMAX"></div>
-  <div><label>出廠年份</label><input name="vyear" class="ep" value="{h(v("vehicle_year"))}" placeholder="2019"></div>
   <div><label>法學</label><input name="elaw" class="ep" value="{h(v("eval_law"))}"></div>
   <div style="grid-column:1/-1"><label>備註</label><textarea name="enote" class="ep" style="min-height:60px">{h(v("eval_note"))}</textarea></div>
 </div></div>
@@ -13698,6 +13723,14 @@ label{{display:block;font-size:12px;font-weight:600;color:#5a4e40;margin-bottom:
   <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
     <button type="button" onclick="addD('車貸')" style="background:#e8e2da;color:#4a3e30;border:1px dashed #a09080;border-radius:6px;padding:8px 16px;font-size:13px;cursor:pointer;font-weight:600">+ 新增車貸</button>
     <button type="button" onclick="addD('信貸')" style="background:#e8e2da;color:#4a3e30;border:1px dashed #a09080;border-radius:6px;padding:8px 16px;font-size:13px;cursor:pointer;font-weight:600">+ 新增信貸/其他</button>
+  </div>
+</div>
+<div class="card"><div class="sec">無貸款車輛</div>
+  <div id="ep-unloan-list"></div>
+  <input type="hidden" name="unloan_json" id="unloan_json_input">
+  <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+    <button type="button" onclick="addUL('機車')" style="background:#e8e2da;color:#4a3e30;border:1px dashed #a09080;border-radius:6px;padding:8px 16px;font-size:13px;cursor:pointer;font-weight:600">+ 新增無貸款機車</button>
+    <button type="button" onclick="addUL('汽車')" style="background:#e8e2da;color:#4a3e30;border:1px dashed #a09080;border-radius:6px;padding:8px 16px;font-size:13px;cursor:pointer;font-weight:600">+ 新增無貸款汽車</button>
   </div>
 </div>
 <div style="display:flex;gap:10px;margin-top:8px;align-items:center;flex-wrap:wrap">
@@ -13732,11 +13765,25 @@ document.querySelector('form[action="/edit-pending"]').addEventListener('submit'
   if(ra&&!rdist&&hasDistWord(ra))errs.push('戶籍詳細地址含區/鄉/鎮，請拆到「區/鄉鎮」欄位');
   if(!sameReg&&la&&!ldist&&hasDistWord(la))errs.push('住家詳細地址含區/鄉/鎮，請拆到「區/鄉鎮」欄位');
   if(ca&&!cdist&&hasDistWord(ca))errs.push('公司詳細地址含區/鄉/鎮，請拆到「區/鄉鎮」欄位');
+  // 警示戶必填
+  var ew=qq('ewarning');
+  if(!ew)errs.push('⚠️ 警示戶必填（是 / 否）');
+  if(ew==='是'){{
+    var ewm=qq('ewmethod');
+    if(!ewm)errs.push('⚠️ 警示戶撥款方式必填（撥二等親 / 現金或朋友）');
+  }}
+  // 居住=自有 → 房屋私設必填
+  var ls=qq('lstatus');
+  if(ls==='自有'){{
+    var hp=qq('hprivate');
+    if(!hp)errs.push('⚠️ 居住「自有」時、房屋私設必填（有 / 無）');
+  }}
   if(errs.length){{ev.preventDefault();alert('⚠️ 請修正以下錯誤：\\n\\n• '+errs.join('\\n• '));return false;}}
 }});
 </script>
 """ + """<script>
 var existingDebts=""" + debt_json + """;
+var existingUnloan=""" + unloan_json + """;
 var dc=0;
 function addD(type, preset){
   dc++;var n=dc;
@@ -13779,10 +13826,11 @@ function addD(type, preset){
     var spOpts=['有','無'].map(function(o){return '<option'+(o===spVal?' selected':'')+'>'+o+'</option>';}).join('');
     h+='<div style="'+FS+'"><div style="'+LS+'">動保／公路</div><select id="dg'+n+'" style="'+SS+'">'+dyOpts+'</select></div>';
     h+='<div style="'+FS+'"><div style="'+LS+'">空間</div><select id="ds'+n+'" style="'+SS+'">'+spOpts+'</select></div>';
-    h+='<div style="height:49px;"></div><div style="height:49px;"></div>';
+    h+='<div style="'+FS+'"><div style="'+LS+'">車牌</div><input id="dpl'+n+'" value="'+esc(d.pl||'')+'" placeholder="ABC-1234" style="'+IS+'"></div>';
+    h+='<div style="'+FS+'"><div style="'+LS+'">出廠年月</div><input id="dyr'+n+'" value="'+esc(d.yr||'')+'" placeholder="2019/05" style="'+IS+'"></div>';
     h+='</div>';
   }else{
-    h+='<input id="dd'+n+'" value="" style="display:none;"><input id="dg'+n+'" value="-" style="display:none;"><input id="ds'+n+'" value="-" style="display:none;">';
+    h+='<input id="dd'+n+'" value="" style="display:none;"><input id="dg'+n+'" value="-" style="display:none;"><input id="ds'+n+'" value="-" style="display:none;"><input id="dpl'+n+'" value="" style="display:none;"><input id="dyr'+n+'" value="" style="display:none;">';
   }
   r.innerHTML=h;
   document.getElementById('ep-debt-list').appendChild(r);
@@ -13818,7 +13866,9 @@ function collectDebts(){
       re:(document.getElementById('dr'+i)||{}).textContent||'',
       da:(document.getElementById('dd'+i)||{}).value||'',
       dy:(document.getElementById('dg'+i)||{}).value||'',
-      sp:(document.getElementById('ds'+i)||{}).value||''
+      sp:(document.getElementById('ds'+i)||{}).value||'',
+      pl:(document.getElementById('dpl'+i)||{}).value||'',
+      yr:(document.getElementById('dyr'+i)||{}).value||''
     });
   }
   return rows;
@@ -13831,8 +13881,72 @@ function collectDebts(){
     addD(isCar?'車貸':'信貸',d);
   });
 })();
+
+// 罰單+燃料稅 自動加總
+function calcF(){
+  var f=parseFloat((document.querySelector('[name="efine"]')||{}).value)||0;
+  var u=parseFloat((document.querySelector('[name="efuel"]')||{}).value)||0;
+  var el=document.getElementById('tfees');
+  if(el)el.textContent='$'+(f+u).toLocaleString();
+}
+calcF();
+
+// === 無貸款車輛 ===
+var ulc=0;
+function addUL(type, preset){
+  ulc++;var n=ulc;
+  var d=preset||{};
+  var vt=preset?(preset.type||type):type;
+  var r=document.createElement('div');
+  r.id='ul'+n;
+  var bg=vt==='汽車'?'#fef3e2':'#e8f0f8';
+  var bc=vt==='汽車'?'#d97706':'#0369a1';
+  r.style.cssText='border-radius:8px;margin-bottom:8px;padding:10px 14px;background:'+bg+';border-left:4px solid '+bc+';';
+  function esc(s){return String(s==null?'':s).replace(/"/g,'&quot;');}
+  var icon=vt==='汽車'?'🚗':'🏍';
+  var IS='width:100%;height:34px;padding:0 8px;border:0.5px solid #ddd5ca;border-radius:6px;font-size:13px;font-family:inherit;box-sizing:border-box;background:#fff;color:#2c2820;';
+  var SS='width:100%;height:34px;padding:0 6px;border:0.5px solid #ddd5ca;border-radius:6px;font-size:13px;font-family:inherit;box-sizing:border-box;background:#fff;color:#2c2820;';
+  var FS='display:flex;flex-direction:column;gap:4px;';
+  var LS='font-size:12px;font-weight:500;color:#2c2820;height:17px;';
+  var GS='display:grid;grid-template-columns:repeat(3,1fr);gap:8px;';
+  var h='';
+  h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">';
+  h+='<span style="font-size:13px;font-weight:600;color:'+bc+';">'+icon+' 無貸款 '+vt+'</span>';
+  h+='<button type="button" onclick="rmUL('+n+')" style="background:#f5ddd8;color:#b84a35;border:none;border-radius:5px;width:28px;height:28px;cursor:pointer;font-size:13px;">✕</button>';
+  h+='</div>';
+  h+='<div style="'+GS+'">';
+  var typeOpts=['機車','汽車'].map(function(o){return '<option'+(o===vt?' selected':'')+'>'+o+'</option>';}).join('');
+  h+='<div style="'+FS+'"><div style="'+LS+'">類型</div><select id="ult'+n+'" style="'+SS+'">'+typeOpts+'</select></div>';
+  h+='<div style="'+FS+'"><div style="'+LS+'">車牌</div><input id="ulp'+n+'" value="'+esc(d.plate||'')+'" placeholder="ABC-1234" style="'+IS+'"></div>';
+  h+='<div style="'+FS+'"><div style="'+LS+'">出廠年月</div><input id="uly'+n+'" value="'+esc(d.year||'')+'" placeholder="2019/05" style="'+IS+'"></div>';
+  h+='</div>';
+  r.innerHTML=h;
+  document.getElementById('ep-unloan-list').appendChild(r);
+}
+function rmUL(n){var el=document.getElementById('ul'+n);if(el)el.remove();}
+function collectUL(){
+  var rows=[];
+  for(var i=1;i<=ulc;i++){
+    var el=document.getElementById('ul'+i);if(!el)continue;
+    var p=(document.getElementById('ulp'+i)||{}).value||'';
+    var y=(document.getElementById('uly'+i)||{}).value||'';
+    if(!p&&!y)continue;
+    rows.push({
+      type:(document.getElementById('ult'+i)||{}).value||'機車',
+      plate:p,
+      year:y
+    });
+  }
+  return rows;
+}
+(function(){
+  if(typeof existingUnloan==='undefined'||!existingUnloan||!existingUnloan.length){return;}
+  existingUnloan.forEach(function(d){addUL(d.type||'機車',d);});
+})();
+
 document.querySelector('form').addEventListener('submit',function(){
   document.getElementById('debt_json_input').value=JSON.stringify(collectDebts());
+  document.getElementById('unloan_json_input').value=JSON.stringify(collectUL());
 });
 </script>
 </div></body></html>"""
@@ -13880,20 +13994,22 @@ async def edit_pending_post(request: Request):
          now, case_id))
     # 更新諮詢事項
     cur.execute("""UPDATE customers SET
-        eval_fund_need=?,eval_sent_3m=?,eval_sent_3m_detail=?,eval_alert=?,eval_labor_ins=?,eval_salary_transfer=?,
+        eval_fund_need=?,eval_sent_3m=?,eval_sent_3m_detail=?,eval_alert=?,eval_alert_warning=?,eval_alert_warning_method=?,eval_house_private=?,eval_labor_ins=?,eval_salary_transfer=?,
         eval_license=?,eval_late=?,eval_late_days=?,eval_fine=?,eval_fuel_tax=?,eval_credit_card=?,eval_property=?,eval_law=?,eval_note=?,
         updated_at=? WHERE case_id=?""",
-        (f.get("efund",""),f.get("esent",""),f.get("esent_detail",""),f.get("eprivate",""),f.get("elabor",""),f.get("esal",""),
+        (f.get("efund",""),f.get("esent",""),f.get("esent_detail",""),f.get("eprivate",""),f.get("ewarning",""),f.get("ewmethod",""),f.get("hprivate",""),f.get("elabor",""),f.get("esal",""),
          f.get("elicense",""),f.get("elate",""),f.get("elateday",""),f.get("efine",""),f.get("efuel",""),f.get("ecard",""),f.get("eprop",""),f.get("elaw",""),f.get("enote",""),
          now, case_id))
     # 更新案件判別欄位（勞保金額、車款、出廠年份）
-    cur.execute("""UPDATE customers SET
-        eval_labor_amount=?, vehicle_model=?, vehicle_year=?, updated_at=? WHERE case_id=?""",
-        (f.get("elabor_amt",""), f.get("vmodel",""), f.get("vyear",""), now, case_id))
+    # eval_labor_amount/vehicle_model/vehicle_year 已從表單移除、不再覆寫（原值保留）
     # 更新負債明細
     debt_json_str = f.get("debt_json", "")
     if debt_json_str:
         cur.execute("UPDATE customers SET debt_list=?, updated_at=? WHERE case_id=?", (debt_json_str, now, case_id))
+    # 更新無貸款車輛清單
+    unloan_json_str = f.get("unloan_json", "")
+    if unloan_json_str:
+        cur.execute("UPDATE customers SET unloan_vehicles=?, updated_at=? WHERE case_id=?", (unloan_json_str, now, case_id))
     conn.commit(); conn.close()
     return RedirectResponse("/edit-pending?case_id=" + case_id + "&saved=1", status_code=303)
 
@@ -15343,7 +15459,7 @@ def new_customer_page(request: Request):
     group_opts = '<option value="">請選擇</option>' + "".join(f'<option value="{h(g["group_id"])}">{h(g["group_name"])}</option>' for g in groups)
     grp_map_js = json.dumps({g["group_id"]: g["group_name"] for g in groups}, ensure_ascii=False)
     pdf_js = _PDF_EXPORT_JS.replace("__GRP_MAP__", grp_map_js)
-    HTML_PAGE = '<!DOCTYPE html>\n<html lang="zh-TW">\n<head>\n<meta charset="UTF-8">\n<meta name="viewport" content="width=device-width, initial-scale=1.0">\n<title>新增客戶資料</title>\n<style>\n* { box-sizing: border-box; margin: 0; padding: 0; }\nbody { font-family: \'Microsoft JhengHei\', \'PingFang TC\', sans-serif; background: #ece8e2; color: #2c2820; font-size: 14px; }\n.topnav { background: #3a3530; padding: 0 20px; display: flex; align-items: center; height: 50px; gap: 4px; }\n.topnav a { color: #c8bfb5; text-decoration: none; padding: 7px 14px; border-radius: 6px; font-size: 14px; }\n.topnav a.active { background: #7c6f5e; color: #fff; }\n.topnav a:hover { background: #4a4540; color: #fff; }\n.page { max-width: 820px; margin: 24px auto; padding: 0 16px 40px; }\n.page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; padding-bottom: 12px; border-bottom: 2px solid #8a7a68; }\nh2 { font-size: 20px; font-weight: 700; color: #2c2820; }\n.card { background: #faf6f2; border-radius: 10px; padding: 18px; margin-bottom: 14px; box-shadow: 0 1px 4px rgba(0,0,0,0.08); border: 1px solid #ddd5ca; }\n.section-title { font-size: 13px; font-weight: 700; color: #5a4e40; margin-bottom: 14px; padding-bottom: 7px; border-bottom: 1px solid #ddd5ca; letter-spacing: 0.5px; }\n.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }\n.grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }\n.grid4 { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 12px; }\n.full { grid-column: 1 / -1; }\nlabel { display: block; font-size: 12px; color: #5a4e40; margin-bottom: 5px; font-weight: 600; }\n.req { color: #b84a35; }\ninput, select, textarea {\n  width: 100%; padding: 8px 11px; border: 1px solid #c8bfb5;\n  border-radius: 6px; font-size: 14px; font-family: inherit;\n  background: #fff; color: #2c2820; transition: border 0.15s;\n}\ninput:focus, select:focus, textarea:focus { outline: none; border-color: #7c6f5e; background: #fffcf9; }\ninput::placeholder, textarea::placeholder { color: #c8bfb5; }\ntextarea { resize: vertical; min-height: 65px; }\n.hint { font-size: 12px; color: #8a7a68; margin-top: 4px; }\n.auto-val { font-size: 15px; color: #b84a35; font-weight: 700; margin-top: 5px; }\n.vehicle-card { background: #f0ebe4; border: 1px solid #ccc5ba; border-radius: 8px; padding: 14px; margin-bottom: 10px; position: relative; }\n.vehicle-card .card-label { font-size: 13px; font-weight: 700; color: #5a4e40; margin-bottom: 10px; }\n.remove-btn { position: absolute; top: 12px; right: 12px; background: #f5ddd8; color: #b84a35; border: none; border-radius: 4px; padding: 4px 12px; font-size: 12px; cursor: pointer; font-weight: 600; }\n.debt-header { display: grid; grid-template-columns: 1.2fr 0.8fr 0.6fr 0.8fr 0.6fr 1fr 0.9fr 0.8fr 30px; gap: 5px; font-size: 12px; color: #5a4e40; font-weight: 600; margin-bottom: 6px; }\n.debt-row { display: grid; grid-template-columns: 1.2fr 0.8fr 0.6fr 0.8fr 0.6fr 1fr 0.9fr 0.8fr 30px; gap: 5px; margin-bottom: 7px; align-items: center; }\n.debt-row input { font-size: 13px; padding: 6px 8px; }\n.debt-remain { font-size: 13px; font-weight: 700; color: #b84a35; }\n.debt-del { background: #f5ddd8; color: #b84a35; border: none; border-radius: 4px; width: 30px; height: 32px; cursor: pointer; font-size: 15px; }\n.add-btn { background: #e8e2da; color: #4a3e30; border: 1px dashed #a09080; border-radius: 6px; padding: 8px 16px; font-size: 13px; cursor: pointer; margin-top: 8px; font-weight: 600; }\n.add-btn:hover { background: #ddd5ca; }\n.btn-row { display: flex; gap: 10px; margin-top: 22px; flex-wrap: wrap; }\n.btn { padding: 11px 26px; border-radius: 8px; font-size: 15px; font-weight: 700; cursor: pointer; border: none; font-family: inherit; }\n.btn-primary { background: #6a5e4e; color: #fff; }\n.btn-primary:hover { background: #5a4e40; }\n.btn-export { background: #4e7055; color: #fff; }\n.btn-export:hover { background: #3e5e45; }\n.btn-cancel { background: #ddd5ca; color: #4a3e30; }\n.btn-cancel:hover { background: #ccc5ba; }\n.ig { display: flex; gap: 6px; align-items: center; }\n.ig span { font-size: 14px; white-space: nowrap; line-height: 36px; color: #4a3e30; font-weight: 600; }\n</style>\n</head>\n<body>\n<div class="topnav">\n  <a href="/">&#128202; 日報</a>\n  <a href="/pending-customers">&#128203; 客戶資料庫</a>\n  <a href="/new-customer" class="active">&#10133; 新增客戶</a>\n</div>\n<div class="page">\n  <div class="page-header">\n    <h2>新增客戶資料</h2>\n\n  </div>\n  <form id="cf" method="post" action="/new-customer">\n    <div class="card">\n      <div class="section-title">所屬群組</div>\n      <div>\n        <div><label>群組</label><select name="grp"><option>B群</option><option>C群</option></select></div>\n      </div>\n    </div>\n    <div class="card">\n      <div class="section-title">基本資料</div>\n      <div class="grid2">\n        <div><label>客戶姓名 <span class="req">*</span></label><input name="cname" placeholder="王小明" required></div>\n        <div><label>身分證字號 <span class="req">*</span></label><input name="idno" placeholder="A123456789" style="text-transform:uppercase" required pattern="[A-Za-z][12]\\d{8}" title="格式：英文字母+1或2+8位數字"></div>\n        <div><label>出生年月日 <span class="req">*</span></label><input name="birth" placeholder="086/12/15"><div class="hint">民國年：086/12/15</div></div>\n        <div><label>行動電話 <span class="req">*</span></label><input name="phone" placeholder="0912-345678" pattern="09\\d{8}" title="格式：09開頭共10位數字"></div>\n        <div><label>電信業者</label><select name="carrier"><option value="">--- 請選擇 ---</option><option>中華電信</option><option>遠傳電信</option><option>台灣大哥大</option><option>台灣之星</option><option>亞太電信</option><option>其他</option></select></div>\n        <div><label>Email</label><input name="email" placeholder="example@gmail.com"></div>\n        <div><label>LINE ID</label><input name="line"></div>\n        <div><label>客戶FB</label><input name="fb" placeholder="Facebook名稱"></div>\n        <div><label>婚姻狀態</label><select name="marry"><option value="">--- 請選擇 ---</option><option>未婚</option><option>已婚</option></select></div>\n        <div><label>最高學歷</label><select name="edu"><option value="">--- 請選擇 ---</option><option>高中/職</option><option>專科/大學</option><option>研究所以上</option><option>其他</option></select></div>\n      </div>\n    </div>\n    <div class="card">\n      <div class="section-title">身分證發證資料</div>\n      <div class="grid3">\n        <div><label>發證日期 <span class="req">*</span></label><input name="iddate" placeholder="114/03/05"><div class="hint">民國年：114/03/05</div></div>\n        <div><label>發證地 <span class="req">*</span></label><select name="idplace"><option value="">--- 請選擇 ---</option><option>北市</option><option>北縣</option><option>新北市</option><option>桃市</option><option>桃縣</option><option>中市</option><option>中縣</option><option>南市</option><option>南縣</option><option>高市</option><option>高縣</option><option>基市</option><option>竹市</option><option>竹縣</option><option>苗縣</option><option>彰縣</option><option>投縣</option><option>雲縣</option><option>嘉市</option><option>嘉縣</option><option>屏縣</option><option>宜縣</option><option>花縣</option><option>東縣</option><option>澎縣</option><option>金門</option><option>連江</option></select></div>\n        <div><label>換補發類別 <span class="req">*</span></label><select name="idtype"><option value="">--- 請選擇 ---</option><option>初發</option><option>補發</option><option>換發</option></select></div>\n      </div>\n    </div>\n    <div class="card">\n      <div class="section-title">地址資料</div>\n      <div style="font-size:13px;font-weight:700;color:#4a3e30;margin-bottom:10px">戶籍地址</div>\n      <div class="grid3" style="margin-bottom:10px">\n        <div><label>縣市 <span class="req">*</span></label><select name="rcity"><option value="">請選擇</option><option>台北市</option><option>新北市</option><option>桃園市</option><option>台中市</option><option>台南市</option><option>高雄市</option><option>基隆市</option><option>新竹市</option><option>新竹縣</option><option>苗栗縣</option><option>彰化縣</option><option>南投縣</option><option>雲林縣</option><option>嘉義市</option><option>嘉義縣</option><option>屏東縣</option><option>宜蘭縣</option><option>花蓮縣</option><option>台東縣</option><option>澎湖縣</option><option>金門縣</option><option>連江縣</option></select></div>\n        <div><label>區/鄉鎮</label><input name="rdist" placeholder="苗栗市"></div>\n        <div><label>詳細地址 <span class="req">*</span></label><input name="raddr" placeholder="新東街257號"></div>\n      </div>\n      <div style="margin-bottom:12px"><label>戶籍電話</label><input name="rphone" placeholder="037-123456" style="max-width:200px"></div>\n      <label style="display:flex;align-items:center;gap:8px;font-size:14px;color:#3a3020;margin-bottom:12px;cursor:pointer;font-weight:600">\n        <input type="checkbox" id="sameck" name="sameck" checked style="width:18px;height:18px;flex-shrink:0;accent-color:#6a5e4e" onchange="document.getElementById(\'lsec\').style.display=this.checked?\'none\':\'block\'">\n        住家地址與戶籍相同\n      </label>\n      <div id="lsec" style="display:none;margin-bottom:12px">\n        <div style="font-size:13px;font-weight:700;color:#4a3e30;margin-bottom:10px">住家地址</div>\n        <div class="grid3">\n          <div><label>縣市</label><select name="lcity"><option value="">請選擇</option><option>台北市</option><option>新北市</option><option>桃園市</option><option>台中市</option><option>台南市</option><option>高雄市</option><option>基隆市</option><option>新竹市</option><option>新竹縣</option><option>苗栗縣</option><option>彰化縣</option><option>南投縣</option><option>雲林縣</option><option>嘉義市</option><option>嘉義縣</option><option>屏東縣</option><option>宜蘭縣</option><option>花蓮縣</option><option>台東縣</option><option>澎湖縣</option><option>金門縣</option><option>連江縣</option></select></div>\n          <div><label>區/鄉鎮</label><input name="ldist"></div>\n          <div><label>詳細地址</label><input name="laddr"></div>\n        </div>\n      </div>\n      <div class="grid3">\n        <div><label>現住電話</label><input name="lphone" placeholder="037-123456"></div>\n        <div><label>居住狀況</label><select name="lstatus"><option value="">--- 請選擇 ---</option><option>自有</option><option>配偶</option><option>父母</option><option>親屬</option><option>租屋</option><option>宿舍</option></select></div>\n        <div><label>居住時間</label><div class="ig"><input name="lyear" placeholder="5" style="width:58px"><span>年</span><input name="lmon" placeholder="0" style="width:58px"><span>月</span></div></div>\n      </div>\n    </div>\n    <div class="card">\n      <div class="section-title">職業資料</div>\n      <div class="grid2">\n        <div class="full"><label>公司名稱 <span class="req">*</span></label><input name="cmpname" placeholder="嘉合企業社"></div>\n        <div><label>公司電話 <span class="req">*</span></label><div class="ig"><select name="carea" style="width:82px"><option value="">區碼</option><option>02</option><option>03</option><option>037</option><option>04</option><option>049</option><option>05</option><option>06</option><option>07</option><option>08</option><option>089</option><option value="mobile">手機</option></select><input name="cnum" placeholder="1234567"><input name="cext" placeholder="分機" style="width:68px"></div></div>\n        <div><label>職稱</label><input name="crole" placeholder="技工"></div>\n        <div><label>年資</label><div class="ig"><input name="cyear" placeholder="3" style="width:62px"><span>年</span><input name="cmon" placeholder="0" style="width:62px"><span>月</span></div></div>\n        <div><label>月薪（萬）</label><input name="csal" placeholder="3.5"></div>\n        <div class="full"><label>公司地址</label><div style="display:grid;grid-template-columns:1fr 1fr 2fr;gap:8px"><select name="ccity"><option value="">請選擇</option><option>台北市</option><option>新北市</option><option>桃園市</option><option>台中市</option><option>台南市</option><option>高雄市</option><option>基隆市</option><option>新竹市</option><option>新竹縣</option><option>苗栗縣</option><option>彰化縣</option><option>南投縣</option><option>雲林縣</option><option>嘉義市</option><option>嘉義縣</option><option>屏東縣</option><option>宜蘭縣</option><option>花蓮縣</option><option>台東縣</option><option>澎湖縣</option><option>金門縣</option><option>連江縣</option></select><input name="cdist" placeholder="區/鄉鎮"><input name="caddr" placeholder="詳細地址"></div></div>\n      </div>\n    </div>\n    <div class="card">\n      <div class="section-title">聯絡人資料</div>\n      <div style="margin-bottom:14px;padding-bottom:14px;border-bottom:1px solid #ddd5ca">\n        <div style="font-size:13px;color:#5a4e40;font-weight:600;margin-bottom:10px">聯絡人1（需為二等親）</div>\n        <div class="grid4">\n          <div><label>姓名 <span class="req">*</span></label><input name="c1name" placeholder="吳玉英"></div>\n          <div><label>關係</label><input name="c1rel" placeholder="母"></div>\n          <div><label>電話 <span class="req">*</span></label><input name="c1tel" placeholder="0978-055530"></div>\n          <div><label>可知情</label><select name="c1know"><option value="">請選擇</option><option>可知情</option><option>保密</option></select></div>\n        </div>\n      </div>\n      <div>\n        <div style="font-size:13px;color:#5a4e40;font-weight:600;margin-bottom:10px">聯絡人2</div>\n        <div class="grid4">\n          <div><label>姓名 <span class="req">*</span></label><input name="c2name" placeholder="賴俊明"></div>\n          <div><label>關係</label><input name="c2rel" placeholder="友"></div>\n          <div><label>電話 <span class="req">*</span></label><input name="c2tel" placeholder="0919-616821"></div>\n          <div><label>可知情</label><select name="c2know"><option value="">請選擇</option><option>可知情</option><option>保密</option></select></div>\n        </div>\n      </div>\n    </div>\n    <div class="card">\n      <div class="section-title">貸款諮詢事項</div>\n      <div class="grid2">\n        <div><label>資金需求</label><input name="efund" placeholder="$100,000"></div>\n        <div><label>近三月送件 / 送過什麼</label><div style="display:flex;gap:6px"><select name="esent" style="width:72px;flex:0 0 72px"><option value="">?</option><option>否</option><option>是</option></select><input name="esent_detail" placeholder="例：喬美、裕融" style="flex:1"></div></div>\n        <div><label>當鋪私設</label><select name="eprivate"><option value="">請選擇</option><option>無</option><option>有</option></select></div>\n        <div><label>勞保狀態</label><select name="elabor"><option value="">請選擇</option><option>公司保</option><option>工會保</option><option>自行投保</option><option>軍保</option><option>公保</option><option>農保</option><option>漁保</option><option>無勞保</option></select></div>\n        <div><label>勞保投保金額（萬）</label><input name="elabor_amt" placeholder="4.2"></div>\n        <div><label>有無薪轉</label><select name="esal"><option value="">請選擇</option><option>有薪轉</option><option>無薪轉</option></select></div>\n        <div><label>有無證照</label><select name="elicense"><option value="">請選擇</option><option>無</option><option>有</option></select></div>\n        <div><label>貸款遲繳</label><select name="elate"><option value="">請選擇</option><option>無</option><option>有</option></select></div>\n        <div><label>遲繳天數</label><input name="elateday" placeholder="0"></div>\n        <div><label>罰單欠費金額 $</label><input name="efine" placeholder="0" type="number" min="0" oninput="calcF()"></div>\n        <div><label>燃料稅金額 $</label><input name="efuel" placeholder="0" type="number" min="0" oninput="calcF()"></div>\n        <div class="full"><label>欠費總額（自動計算）</label><div class="auto-val" id="tfees">$0</div></div>\n        <div><label>名下信用卡</label><input name="ecard" placeholder="銀行協商"></div>\n        <div><label>有無動產/不動產</label><input name="eprop" placeholder="有機車"></div>\n        <div><label>車款</label><input name="vmodel" placeholder="YAMAHA SMAX"></div>\n        <div><label>出廠年份</label><input name="vyear" placeholder="2019"></div>\n        <div><label>法學（幾條）</label><input name="elaw" placeholder="共1條"></div>\n        <div class="full"><label>備註</label><textarea name="enote" placeholder="其他說明..."></textarea></div>\n      </div>\n    </div>\n    <div class="card">\n      <div class="section-title">負債明細</div>\n      <div id="dlist"></div>\n      <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;">\n        <button type="button" class="add-btn" onclick="addD(\'車貸\')">&#10133; 新增車貸</button>\n        <button type="button" class="add-btn" onclick="addD(\'信貸\')">&#10133; 新增信貸/其他</button>\n      </div>\n    </div>\n    <div class="btn-row">\n      <div id="err-box" style="display:none;background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;padding:12px 16px;margin-bottom:12px;"></div><button type="button" class="btn btn-primary" onclick="doSubmit()">&#9989; 建立客戶</button>\n      <button type="button" class="btn btn-cancel" onclick="history.back()">取消</button>\n    </div>\n  </form>\n</div>\n<script>\nlet vc=0,dc=0;\nfunction gv(n){const e=document.querySelector(\'[name="\'+n+\'"]\');return e?e.value||\'\':\'\';}\n\nfunction addD(type){\n  dc++;const n=dc;\n  var isCar=(type===\'車貸\');\n  var r=document.createElement(\'div\');\n  r.id=\'d\'+n;r.className=\'d-row\';\n  var bg=isCar?\'#f2f8f4\':\'#f8f5f1\';\n  var bc=isCar?\'#4e7055\':\'#8a7a68\';\n  r.style.cssText=\'border-radius:8px;margin-bottom:8px;padding:10px 14px;background:\'+bg+\';border-left:4px solid \'+bc+\';\';\n  var lbl=isCar?\'🚗 車貸\':\'💳 信貸/其他\';\n  var lc=isCar?\'#4e7055\':\'#6a5e4e\';\n  var LS=\'font-size:12px;font-weight:500;color:#2c2820;height:17px;\';\n  var IS=\'width:100%;height:34px;padding:0 8px;border:0.5px solid #ddd5ca;border-radius:6px;font-size:13px;font-family:inherit;box-sizing:border-box;background:#fff;color:#2c2820;\';\n  var RS=\'width:100%;height:34px;padding:0 8px;border:0.5px solid #e8c0b0;border-radius:6px;font-size:13px;font-weight:500;color:#b84a35;background:#fff8f5;display:flex;align-items:center;justify-content:flex-end;box-sizing:border-box;\';\n  var SS=\'width:100%;height:34px;padding:0 6px;border:0.5px solid #ddd5ca;border-radius:6px;font-size:13px;font-family:inherit;box-sizing:border-box;background:#fff;color:#2c2820;\';\n  var FS=\'display:flex;flex-direction:column;gap:4px;\';\n  var GS=\'display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-bottom:8px;\';\n  var h=\'\';\n  h+=\'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">\';\n  h+=\'<span style="font-size:13px;font-weight:500;color:\'+lc+\';">\'+lbl+\'</span>\';\n  h+=\'<button type="button" onclick="rmD(\'+n+\')" style="background:#f5ddd8;color:#b84a35;border:none;border-radius:5px;width:28px;height:28px;cursor:pointer;font-size:13px;">✕</button>\';\n  h+=\'</div>\';\n  h+=\'<div style="\'+GS+\'">\';\n  h+=\'<div style="\'+FS+\'"><div style="\'+LS+\'">貸款商家</div><input id="dc\'+n+\'" placeholder="裕融" style="\'+IS+\'"></div>\';\n  h+=\'<div style="\'+FS+\'"><div style="\'+LS+\'">貸款金額</div><input id="dl\'+n+\'" placeholder="150000" type="number" style="\'+IS+\'"></div>\';\n  h+=\'<div style="\'+FS+\'"><div style="\'+LS+\'">期數／已繳</div><input id="dp\'+n+\'" placeholder="36 / 0" oninput="calcD(\'+n+\')" style="\'+IS+\'"></div>\';\n  h+=\'<div style="\'+FS+\'"><div style="\'+LS+\'">月繳金額</div><input id="dm\'+n+\'" placeholder="5265" type="number" oninput="calcD(\'+n+\')" style="\'+IS+\'"></div>\';\n  h+=\'<div style="\'+FS+\'"><div style="\'+LS+\'">剩餘金額</div><div id="dr\'+n+\'" style="\'+RS+\'">-</div></div>\';\n  h+=\'</div>\';\n  if(isCar){\n    h+=\'<div style="\'+GS+\'">\';\n    h+=\'<div style="\'+FS+\'"><div style="\'+LS+\'">設定日期（民國）</div><input id="dd\'+n+\'" placeholder="112/01" style="\'+IS+\'"></div>\';\n    h+=\'<div style="\'+FS+\'"><div style="\'+LS+\'">動保／公路</div><select id="dg\'+n+\'" style="\'+SS+\'"><option>無</option><option>公路</option><option>動保</option><option>公路+動保</option></select></div>\';\n    h+=\'<div style="\'+FS+\'"><div style="\'+LS+\'">空間</div><select id="ds\'+n+\'" style="\'+SS+\'"><option>有</option><option>無</option></select></div>\';\n    h+=\'<div style="height:49px;"></div><div style="height:49px;"></div>\';\n    h+=\'</div>\';\n  }else{\n    h+=\'<input id="dd\'+n+\'" value="" style="display:none;"><input id="dg\'+n+\'" value="-" style="display:none;"><input id="ds\'+n+\'" value="-" style="display:none;">\';\n  }\n  r.innerHTML=h;\n  document.getElementById(\'dlist\').appendChild(r);\n}\nfunction rmD(n){\n  var el=document.getElementById(\'d\'+n);if(el)el.remove();\n}\nfunction calcD(n){\n  var m=parseFloat(document.getElementById(\'dm\'+n)?.value)||0;\n  var dpv=(document.getElementById(\'dp\'+n)?.value||\'\').trim();\n  var parts=dpv.split(\'/\');\n  var p=parseFloat(parts[0])||0;\n  var a=parseFloat(parts[1])||0;\n  var el=document.getElementById(\'dr\'+n);if(!el)return;\n  if(m>0&&p>0){\n    var rem=(m*p)-(m*a);\n    el.textContent=\'$\'+Math.round(rem).toLocaleString();\n    el.style.color=rem>0?\'#b84a35\':\'#4e7055\';\n  }else el.textContent=\'-\';\n}\n\nfunction calcF(){\n  const f=parseFloat(document.querySelector(\'[name="efine"]\')?.value)||0;\n  const u=parseFloat(document.querySelector(\'[name="efuel"]\')?.value)||0;\n  document.getElementById(\'tfees\').textContent=\'$\'+(f+u).toLocaleString();\n}\n\nfunction sec(t){\n  return \'<div style="background:#5a4e40;color:#fff;font-size:13px;font-weight:500;padding:7px 12px;border-radius:5px 5px 0 0;letter-spacing:0.5px;">\'+t+\'</div>\'\n    +\'<div style="border:1px solid #ccc5ba;border-top:none;border-radius:0 0 5px 5px;padding:8px 14px;margin-bottom:14px;background:#fdfaf7;">\';\n}\nfunction fl(l,v){\n  if(!v||v===\'-\'||v===\'0年0月\')return\'\';\n  return \'<div style="display:grid;grid-template-columns:110px 1fr;gap:6px;padding:7px 0;border-bottom:0.5px solid #ece8e2;">\'\n    +\'<span style="font-size:13px;color:#5a4e40;font-weight:500;line-height:1.5;">\'+l+\'</span>\'\n    +\'<span style="font-size:14px;font-weight:400;color:#2c2820;line-height:1.5;">\'+v+\'</span></div>\';\n}\nfunction fl2(items){\n  var h=\'<div style="display:grid;grid-template-columns:1fr 1fr;gap:0 28px;">\';\n  items.forEach(function(x){h+=fl(x[0],x[1]);});\n  return h+\'</div>\';\n}\n\nfunction exportPDF(){/* overridden by inject */}\n\n// page-init\n</script>\n</body>\n</html>\n'
+    HTML_PAGE = '<!DOCTYPE html>\n<html lang="zh-TW">\n<head>\n<meta charset="UTF-8">\n<meta name="viewport" content="width=device-width, initial-scale=1.0">\n<title>新增客戶資料</title>\n<style>\n* { box-sizing: border-box; margin: 0; padding: 0; }\nbody { font-family: \'Microsoft JhengHei\', \'PingFang TC\', sans-serif; background: #ece8e2; color: #2c2820; font-size: 14px; }\n.topnav { background: #3a3530; padding: 0 20px; display: flex; align-items: center; height: 50px; gap: 4px; }\n.topnav a { color: #c8bfb5; text-decoration: none; padding: 7px 14px; border-radius: 6px; font-size: 14px; }\n.topnav a.active { background: #7c6f5e; color: #fff; }\n.topnav a:hover { background: #4a4540; color: #fff; }\n.page { max-width: 820px; margin: 24px auto; padding: 0 16px 40px; }\n.page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; padding-bottom: 12px; border-bottom: 2px solid #8a7a68; }\nh2 { font-size: 20px; font-weight: 700; color: #2c2820; }\n.card { background: #faf6f2; border-radius: 10px; padding: 18px; margin-bottom: 14px; box-shadow: 0 1px 4px rgba(0,0,0,0.08); border: 1px solid #ddd5ca; }\n.section-title { font-size: 13px; font-weight: 700; color: #5a4e40; margin-bottom: 14px; padding-bottom: 7px; border-bottom: 1px solid #ddd5ca; letter-spacing: 0.5px; }\n.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }\n.grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }\n.grid4 { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 12px; }\n.full { grid-column: 1 / -1; }\nlabel { display: block; font-size: 12px; color: #5a4e40; margin-bottom: 5px; font-weight: 600; }\n.req { color: #b84a35; }\ninput, select, textarea {\n  width: 100%; padding: 8px 11px; border: 1px solid #c8bfb5;\n  border-radius: 6px; font-size: 14px; font-family: inherit;\n  background: #fff; color: #2c2820; transition: border 0.15s;\n}\ninput:focus, select:focus, textarea:focus { outline: none; border-color: #7c6f5e; background: #fffcf9; }\ninput::placeholder, textarea::placeholder { color: #c8bfb5; }\ntextarea { resize: vertical; min-height: 65px; }\n.hint { font-size: 12px; color: #8a7a68; margin-top: 4px; }\n.auto-val { font-size: 15px; color: #b84a35; font-weight: 700; margin-top: 5px; }\n.vehicle-card { background: #f0ebe4; border: 1px solid #ccc5ba; border-radius: 8px; padding: 14px; margin-bottom: 10px; position: relative; }\n.vehicle-card .card-label { font-size: 13px; font-weight: 700; color: #5a4e40; margin-bottom: 10px; }\n.remove-btn { position: absolute; top: 12px; right: 12px; background: #f5ddd8; color: #b84a35; border: none; border-radius: 4px; padding: 4px 12px; font-size: 12px; cursor: pointer; font-weight: 600; }\n.debt-header { display: grid; grid-template-columns: 1.2fr 0.8fr 0.6fr 0.8fr 0.6fr 1fr 0.9fr 0.8fr 30px; gap: 5px; font-size: 12px; color: #5a4e40; font-weight: 600; margin-bottom: 6px; }\n.debt-row { display: grid; grid-template-columns: 1.2fr 0.8fr 0.6fr 0.8fr 0.6fr 1fr 0.9fr 0.8fr 30px; gap: 5px; margin-bottom: 7px; align-items: center; }\n.debt-row input { font-size: 13px; padding: 6px 8px; }\n.debt-remain { font-size: 13px; font-weight: 700; color: #b84a35; }\n.debt-del { background: #f5ddd8; color: #b84a35; border: none; border-radius: 4px; width: 30px; height: 32px; cursor: pointer; font-size: 15px; }\n.add-btn { background: #e8e2da; color: #4a3e30; border: 1px dashed #a09080; border-radius: 6px; padding: 8px 16px; font-size: 13px; cursor: pointer; margin-top: 8px; font-weight: 600; }\n.add-btn:hover { background: #ddd5ca; }\n.btn-row { display: flex; gap: 10px; margin-top: 22px; flex-wrap: wrap; }\n.btn { padding: 11px 26px; border-radius: 8px; font-size: 15px; font-weight: 700; cursor: pointer; border: none; font-family: inherit; }\n.btn-primary { background: #6a5e4e; color: #fff; }\n.btn-primary:hover { background: #5a4e40; }\n.btn-export { background: #4e7055; color: #fff; }\n.btn-export:hover { background: #3e5e45; }\n.btn-cancel { background: #ddd5ca; color: #4a3e30; }\n.btn-cancel:hover { background: #ccc5ba; }\n.ig { display: flex; gap: 6px; align-items: center; }\n.ig span { font-size: 14px; white-space: nowrap; line-height: 36px; color: #4a3e30; font-weight: 600; }\n</style>\n</head>\n<body>\n<div class="topnav">\n  <a href="/">&#128202; 日報</a>\n  <a href="/pending-customers">&#128203; 客戶資料庫</a>\n  <a href="/new-customer" class="active">&#10133; 新增客戶</a>\n</div>\n<div class="page">\n  <div class="page-header">\n    <h2>新增客戶資料</h2>\n\n  </div>\n  <form id="cf" method="post" action="/new-customer">\n    <div class="card">\n      <div class="section-title">所屬群組</div>\n      <div>\n        <div><label>群組</label><select name="grp"><option>B群</option><option>C群</option></select></div>\n      </div>\n    </div>\n    <div class="card">\n      <div class="section-title">基本資料</div>\n      <div class="grid2">\n        <div><label>客戶姓名 <span class="req">*</span></label><input name="cname" placeholder="王小明" required></div>\n        <div><label>身分證字號 <span class="req">*</span></label><input name="idno" placeholder="A123456789" style="text-transform:uppercase" required pattern="[A-Za-z][12]\\d{8}" title="格式：英文字母+1或2+8位數字"></div>\n        <div><label>出生年月日 <span class="req">*</span></label><input name="birth" placeholder="086/12/15"><div class="hint">民國年：086/12/15</div></div>\n        <div><label>行動電話 <span class="req">*</span></label><input name="phone" placeholder="0912-345678" pattern="09\\d{8}" title="格式：09開頭共10位數字"></div>\n        <div><label>電信業者</label><select name="carrier"><option value="">--- 請選擇 ---</option><option>中華電信</option><option>遠傳電信</option><option>台灣大哥大</option><option>台灣之星</option><option>亞太電信</option><option>其他</option></select></div>\n        <div><label>Email</label><input name="email" placeholder="example@gmail.com"></div>\n        <div><label>LINE ID</label><input name="line"></div>\n        <div><label>客戶FB</label><input name="fb" placeholder="Facebook名稱"></div>\n        <div><label>婚姻狀態</label><select name="marry"><option value="">--- 請選擇 ---</option><option>未婚</option><option>已婚</option></select></div>\n        <div><label>最高學歷</label><select name="edu"><option value="">--- 請選擇 ---</option><option>高中/職</option><option>專科/大學</option><option>研究所以上</option><option>其他</option></select></div>\n      </div>\n    </div>\n    <div class="card">\n      <div class="section-title">身分證發證資料</div>\n      <div class="grid3">\n        <div><label>發證日期 <span class="req">*</span></label><input name="iddate" placeholder="114/03/05"><div class="hint">民國年：114/03/05</div></div>\n        <div><label>發證地 <span class="req">*</span></label><select name="idplace"><option value="">--- 請選擇 ---</option><option>北市</option><option>北縣</option><option>新北市</option><option>桃市</option><option>桃縣</option><option>中市</option><option>中縣</option><option>南市</option><option>南縣</option><option>高市</option><option>高縣</option><option>基市</option><option>竹市</option><option>竹縣</option><option>苗縣</option><option>彰縣</option><option>投縣</option><option>雲縣</option><option>嘉市</option><option>嘉縣</option><option>屏縣</option><option>宜縣</option><option>花縣</option><option>東縣</option><option>澎縣</option><option>金門</option><option>連江</option></select></div>\n        <div><label>換補發類別 <span class="req">*</span></label><select name="idtype"><option value="">--- 請選擇 ---</option><option>初發</option><option>補發</option><option>換發</option></select></div>\n      </div>\n    </div>\n    <div class="card">\n      <div class="section-title">地址資料</div>\n      <div style="font-size:13px;font-weight:700;color:#4a3e30;margin-bottom:10px">戶籍地址</div>\n      <div class="grid3" style="margin-bottom:10px">\n        <div><label>縣市 <span class="req">*</span></label><select name="rcity"><option value="">請選擇</option><option>台北市</option><option>新北市</option><option>桃園市</option><option>台中市</option><option>台南市</option><option>高雄市</option><option>基隆市</option><option>新竹市</option><option>新竹縣</option><option>苗栗縣</option><option>彰化縣</option><option>南投縣</option><option>雲林縣</option><option>嘉義市</option><option>嘉義縣</option><option>屏東縣</option><option>宜蘭縣</option><option>花蓮縣</option><option>台東縣</option><option>澎湖縣</option><option>金門縣</option><option>連江縣</option></select></div>\n        <div><label>區/鄉鎮</label><input name="rdist" placeholder="苗栗市"></div>\n        <div><label>詳細地址 <span class="req">*</span></label><input name="raddr" placeholder="新東街257號"></div>\n      </div>\n      <div style="margin-bottom:12px"><label>戶籍電話</label><input name="rphone" placeholder="037-123456" style="max-width:200px"></div>\n      <label style="display:flex;align-items:center;gap:8px;font-size:14px;color:#3a3020;margin-bottom:12px;cursor:pointer;font-weight:600">\n        <input type="checkbox" id="sameck" name="sameck" checked style="width:18px;height:18px;flex-shrink:0;accent-color:#6a5e4e" onchange="document.getElementById(\'lsec\').style.display=this.checked?\'none\':\'block\'">\n        住家地址與戶籍相同\n      </label>\n      <div id="lsec" style="display:none;margin-bottom:12px">\n        <div style="font-size:13px;font-weight:700;color:#4a3e30;margin-bottom:10px">住家地址</div>\n        <div class="grid3">\n          <div><label>縣市</label><select name="lcity"><option value="">請選擇</option><option>台北市</option><option>新北市</option><option>桃園市</option><option>台中市</option><option>台南市</option><option>高雄市</option><option>基隆市</option><option>新竹市</option><option>新竹縣</option><option>苗栗縣</option><option>彰化縣</option><option>南投縣</option><option>雲林縣</option><option>嘉義市</option><option>嘉義縣</option><option>屏東縣</option><option>宜蘭縣</option><option>花蓮縣</option><option>台東縣</option><option>澎湖縣</option><option>金門縣</option><option>連江縣</option></select></div>\n          <div><label>區/鄉鎮</label><input name="ldist"></div>\n          <div><label>詳細地址</label><input name="laddr"></div>\n        </div>\n      </div>\n      <div class="grid3">\n        <div><label>現住電話</label><input name="lphone" placeholder="037-123456"></div>\n        <div><label>居住狀況</label><select name="lstatus" onchange="document.getElementById(\'hp_box\').style.display=this.value===\'自有\'?\'block\':\'none\'"><option value="">--- 請選擇 ---</option><option>自有</option><option>配偶</option><option>父母</option><option>親屬</option><option>租屋</option><option>宿舍</option></select></div>\n        <div id="hp_box" style="display:none"><label style="color:#b91c1c;font-weight:700">⚠️ 房屋私設（自有時填）</label><select name="hprivate" style="border:2px solid #b91c1c"><option value="">請選擇</option><option>無</option><option>有</option></select></div>\n        <div><label>居住時間</label><div class="ig"><input name="lyear" placeholder="5" style="width:58px"><span>年</span><input name="lmon" placeholder="0" style="width:58px"><span>月</span></div></div>\n      </div>\n    </div>\n    <div class="card">\n      <div class="section-title">職業資料</div>\n      <div class="grid2">\n        <div class="full"><label>公司名稱 <span class="req">*</span></label><input name="cmpname" placeholder="嘉合企業社"></div>\n        <div><label>公司電話 <span class="req">*</span></label><div class="ig"><select name="carea" style="width:82px"><option value="">區碼</option><option>02</option><option>03</option><option>037</option><option>04</option><option>049</option><option>05</option><option>06</option><option>07</option><option>08</option><option>089</option><option value="mobile">手機</option></select><input name="cnum" placeholder="1234567"><input name="cext" placeholder="分機" style="width:68px"></div></div>\n        <div><label>職稱</label><input name="crole" placeholder="技工"></div>\n        <div><label>年資</label><div class="ig"><input name="cyear" placeholder="3" style="width:62px"><span>年</span><input name="cmon" placeholder="0" style="width:62px"><span>月</span></div></div>\n        <div><label>月薪（萬）</label><input name="csal" placeholder="3.5"></div>\n        <div class="full"><label>公司地址</label><div style="display:grid;grid-template-columns:1fr 1fr 2fr;gap:8px"><select name="ccity"><option value="">請選擇</option><option>台北市</option><option>新北市</option><option>桃園市</option><option>台中市</option><option>台南市</option><option>高雄市</option><option>基隆市</option><option>新竹市</option><option>新竹縣</option><option>苗栗縣</option><option>彰化縣</option><option>南投縣</option><option>雲林縣</option><option>嘉義市</option><option>嘉義縣</option><option>屏東縣</option><option>宜蘭縣</option><option>花蓮縣</option><option>台東縣</option><option>澎湖縣</option><option>金門縣</option><option>連江縣</option></select><input name="cdist" placeholder="區/鄉鎮"><input name="caddr" placeholder="詳細地址"></div></div>\n      </div>\n    </div>\n    <div class="card">\n      <div class="section-title">聯絡人資料</div>\n      <div style="margin-bottom:14px;padding-bottom:14px;border-bottom:1px solid #ddd5ca">\n        <div style="font-size:13px;color:#5a4e40;font-weight:600;margin-bottom:10px">聯絡人1（需為二等親）</div>\n        <div class="grid4">\n          <div><label>姓名 <span class="req">*</span></label><input name="c1name" placeholder="吳玉英"></div>\n          <div><label>關係</label><input name="c1rel" placeholder="母"></div>\n          <div><label>電話 <span class="req">*</span></label><input name="c1tel" placeholder="0978-055530"></div>\n          <div><label>可知情</label><select name="c1know"><option value="">請選擇</option><option>可知情</option><option>保密</option></select></div>\n        </div>\n      </div>\n      <div>\n        <div style="font-size:13px;color:#5a4e40;font-weight:600;margin-bottom:10px">聯絡人2</div>\n        <div class="grid4">\n          <div><label>姓名 <span class="req">*</span></label><input name="c2name" placeholder="賴俊明"></div>\n          <div><label>關係</label><input name="c2rel" placeholder="友"></div>\n          <div><label>電話 <span class="req">*</span></label><input name="c2tel" placeholder="0919-616821"></div>\n          <div><label>可知情</label><select name="c2know"><option value="">請選擇</option><option>可知情</option><option>保密</option></select></div>\n        </div>\n      </div>\n    </div>\n    <div class="card">\n      <div class="section-title">貸款諮詢事項</div>\n      <div class="grid2">\n        <div><label style="color:#b91c1c;font-weight:700">⚠️ 警示戶</label><select name="ewarning" style="border:2px solid #b91c1c;font-weight:700" onchange="document.getElementById(\'ewmethod_box\').style.display=this.value===\'是\'?\'block\':\'none\'"><option value="">請選擇</option><option>否</option><option>是</option></select></div>\n        <div id="ewmethod_box" style="display:none"><label style="color:#b91c1c;font-weight:700">⚠️ 警示戶撥款方式</label><select name="ewmethod" style="border:2px solid #b91c1c;font-weight:700"><option value="">請選擇</option><option>撥二等親</option><option>現金或朋友</option></select></div>\n        <div><label>資金需求</label><input name="efund" placeholder="$100,000"></div>\n        <div><label>近三月送件 / 送過什麼</label><div style="display:flex;gap:6px"><select name="esent" style="width:72px;flex:0 0 72px"><option value="">?</option><option>否</option><option>是</option></select><input name="esent_detail" placeholder="例：喬美、裕融" style="flex:1"></div></div>\n        <div><label>當鋪私設</label><select name="eprivate"><option value="">請選擇</option><option>無</option><option>有</option></select></div>\n        <div><label>勞保狀態</label><select name="elabor"><option value="">請選擇</option><option>公司保</option><option>工會保</option><option>自行投保</option><option>軍保</option><option>公保</option><option>農保</option><option>漁保</option><option>無勞保</option></select></div>\n        <div><label>有無薪轉</label><select name="esal"><option value="">請選擇</option><option>有薪轉</option><option>無薪轉</option></select></div>\n        <div><label>有無證照</label><select name="elicense"><option value="">請選擇</option><option>無</option><option>有</option></select></div>\n        <div><label>貸款遲繳</label><select name="elate"><option value="">請選擇</option><option>無</option><option>有</option></select></div>\n        <div><label>遲繳天數</label><input name="elateday" placeholder="0"></div>\n        <div><label>罰單欠費金額 $</label><input name="efine" placeholder="0" type="number" min="0" oninput="calcF()"></div>\n        <div><label>燃料稅金額 $</label><input name="efuel" placeholder="0" type="number" min="0" oninput="calcF()"></div>\n        <div class="full"><label>欠費總額（自動計算）</label><div class="auto-val" id="tfees">$0</div></div>\n        <div><label>名下信用卡</label><input name="ecard" placeholder="銀行協商"></div>\n        <div><label>有無動產/不動產</label><input name="eprop" placeholder="有機車"></div>\n        <div><label>法學（幾條）</label><input name="elaw" placeholder="共1條"></div>\n        <div class="full"><label>備註</label><textarea name="enote" placeholder="其他說明..."></textarea></div>\n      </div>\n    </div>\n    <div class="card">\n      <div class="section-title">負債明細</div>\n      <div id="dlist"></div>\n      <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;">\n        <button type="button" class="add-btn" onclick="addD(\'車貸\')">&#10133; 新增車貸</button>\n        <button type="button" class="add-btn" onclick="addD(\'信貸\')">&#10133; 新增信貸/其他</button>\n      </div>\n    </div>\n    <div class="card">\n      <div class="section-title">無貸款車輛</div>\n      <div id="ulist"></div>\n      <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;">\n        <button type="button" class="add-btn" onclick="addUL(\'機車\')">&#10133; 新增無貸款機車</button>\n        <button type="button" class="add-btn" onclick="addUL(\'汽車\')">&#10133; 新增無貸款汽車</button>\n      </div>\n    </div>\n    <div class="btn-row">\n      <div id="err-box" style="display:none;background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;padding:12px 16px;margin-bottom:12px;"></div><button type="button" class="btn btn-primary" onclick="doSubmit()">&#9989; 建立客戶</button>\n      <button type="button" class="btn btn-cancel" onclick="history.back()">取消</button>\n    </div>\n  </form>\n</div>\n<script>\nlet vc=0,dc=0;\nfunction gv(n){const e=document.querySelector(\'[name="\'+n+\'"]\');return e?e.value||\'\':\'\';}\n\nfunction addD(type){\n  dc++;const n=dc;\n  var isCar=(type===\'車貸\');\n  var r=document.createElement(\'div\');\n  r.id=\'d\'+n;r.className=\'d-row\';\n  var bg=isCar?\'#f2f8f4\':\'#f8f5f1\';\n  var bc=isCar?\'#4e7055\':\'#8a7a68\';\n  r.style.cssText=\'border-radius:8px;margin-bottom:8px;padding:10px 14px;background:\'+bg+\';border-left:4px solid \'+bc+\';\';\n  var lbl=isCar?\'🚗 車貸\':\'💳 信貸/其他\';\n  var lc=isCar?\'#4e7055\':\'#6a5e4e\';\n  var LS=\'font-size:12px;font-weight:500;color:#2c2820;height:17px;\';\n  var IS=\'width:100%;height:34px;padding:0 8px;border:0.5px solid #ddd5ca;border-radius:6px;font-size:13px;font-family:inherit;box-sizing:border-box;background:#fff;color:#2c2820;\';\n  var RS=\'width:100%;height:34px;padding:0 8px;border:0.5px solid #e8c0b0;border-radius:6px;font-size:13px;font-weight:500;color:#b84a35;background:#fff8f5;display:flex;align-items:center;justify-content:flex-end;box-sizing:border-box;\';\n  var SS=\'width:100%;height:34px;padding:0 6px;border:0.5px solid #ddd5ca;border-radius:6px;font-size:13px;font-family:inherit;box-sizing:border-box;background:#fff;color:#2c2820;\';\n  var FS=\'display:flex;flex-direction:column;gap:4px;\';\n  var GS=\'display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-bottom:8px;\';\n  var h=\'\';\n  h+=\'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">\';\n  h+=\'<span style="font-size:13px;font-weight:500;color:\'+lc+\';">\'+lbl+\'</span>\';\n  h+=\'<button type="button" onclick="rmD(\'+n+\')" style="background:#f5ddd8;color:#b84a35;border:none;border-radius:5px;width:28px;height:28px;cursor:pointer;font-size:13px;">✕</button>\';\n  h+=\'</div>\';\n  h+=\'<div style="\'+GS+\'">\';\n  h+=\'<div style="\'+FS+\'"><div style="\'+LS+\'">貸款商家</div><input id="dc\'+n+\'" placeholder="裕融" style="\'+IS+\'"></div>\';\n  h+=\'<div style="\'+FS+\'"><div style="\'+LS+\'">貸款金額</div><input id="dl\'+n+\'" placeholder="150000" type="number" style="\'+IS+\'"></div>\';\n  h+=\'<div style="\'+FS+\'"><div style="\'+LS+\'">期數／已繳</div><input id="dp\'+n+\'" placeholder="36 / 0" oninput="calcD(\'+n+\')" style="\'+IS+\'"></div>\';\n  h+=\'<div style="\'+FS+\'"><div style="\'+LS+\'">月繳金額</div><input id="dm\'+n+\'" placeholder="5265" type="number" oninput="calcD(\'+n+\')" style="\'+IS+\'"></div>\';\n  h+=\'<div style="\'+FS+\'"><div style="\'+LS+\'">剩餘金額</div><div id="dr\'+n+\'" style="\'+RS+\'">-</div></div>\';\n  h+=\'</div>\';\n  if(isCar){\n    h+=\'<div style="\'+GS+\'">\';\n    h+=\'<div style="\'+FS+\'"><div style="\'+LS+\'">設定日期（民國）</div><input id="dd\'+n+\'" placeholder="112/01" style="\'+IS+\'"></div>\';\n    h+=\'<div style="\'+FS+\'"><div style="\'+LS+\'">動保／公路</div><select id="dg\'+n+\'" style="\'+SS+\'"><option>無</option><option>公路</option><option>動保</option><option>公路+動保</option></select></div>\';\n    h+=\'<div style="\'+FS+\'"><div style="\'+LS+\'">空間</div><select id="ds\'+n+\'" style="\'+SS+\'"><option>有</option><option>無</option></select></div>\';\n    h+=\'<div style="\'+FS+\'"><div style="\'+LS+\'">車牌</div><input id="dpl\'+n+\'" placeholder="ABC-1234" style="\'+IS+\'"></div>\';\n    h+=\'<div style="\'+FS+\'"><div style="\'+LS+\'">出廠年月</div><input id="dyr\'+n+\'" placeholder="2019/05" style="\'+IS+\'"></div>\';\n    h+=\'</div>\';\n  }else{\n    h+=\'<input id="dd\'+n+\'" value="" style="display:none;"><input id="dg\'+n+\'" value="-" style="display:none;"><input id="ds\'+n+\'" value="-" style="display:none;"><input id="dpl\'+n+\'" value="" style="display:none;"><input id="dyr\'+n+\'" value="" style="display:none;">\';\n  }\n  r.innerHTML=h;\n  document.getElementById(\'dlist\').appendChild(r);\n}\nfunction rmD(n){\n  var el=document.getElementById(\'d\'+n);if(el)el.remove();\n}\nfunction calcD(n){\n  var m=parseFloat(document.getElementById(\'dm\'+n)?.value)||0;\n  var dpv=(document.getElementById(\'dp\'+n)?.value||\'\').trim();\n  var parts=dpv.split(\'/\');\n  var p=parseFloat(parts[0])||0;\n  var a=parseFloat(parts[1])||0;\n  var el=document.getElementById(\'dr\'+n);if(!el)return;\n  if(m>0&&p>0){\n    var rem=(m*p)-(m*a);\n    el.textContent=\'$\'+Math.round(rem).toLocaleString();\n    el.style.color=rem>0?\'#b84a35\':\'#4e7055\';\n  }else el.textContent=\'-\';\n}\n\nfunction calcF(){\n  const f=parseFloat(document.querySelector(\'[name="efine"]\')?.value)||0;\n  const u=parseFloat(document.querySelector(\'[name="efuel"]\')?.value)||0;\n  document.getElementById(\'tfees\').textContent=\'$\'+(f+u).toLocaleString();\n}\n\nfunction sec(t){\n  return \'<div style="background:#5a4e40;color:#fff;font-size:13px;font-weight:500;padding:7px 12px;border-radius:5px 5px 0 0;letter-spacing:0.5px;">\'+t+\'</div>\'\n    +\'<div style="border:1px solid #ccc5ba;border-top:none;border-radius:0 0 5px 5px;padding:8px 14px;margin-bottom:14px;background:#fdfaf7;">\';\n}\nfunction fl(l,v){\n  if(!v||v===\'-\'||v===\'0年0月\')return\'\';\n  return \'<div style="display:grid;grid-template-columns:110px 1fr;gap:6px;padding:7px 0;border-bottom:0.5px solid #ece8e2;">\'\n    +\'<span style="font-size:13px;color:#5a4e40;font-weight:500;line-height:1.5;">\'+l+\'</span>\'\n    +\'<span style="font-size:14px;font-weight:400;color:#2c2820;line-height:1.5;">\'+v+\'</span></div>\';\n}\nfunction fl2(items){\n  var h=\'<div style="display:grid;grid-template-columns:1fr 1fr;gap:0 28px;">\';\n  items.forEach(function(x){h+=fl(x[0],x[1]);});\n  return h+\'</div>\';\n}\n\nfunction exportPDF(){/* overridden by inject */}\n\n// page-init\n</script>\n</body>\n</html>\n'
     # 在表單前面插入智能填入區塊
     HTML_PAGE = HTML_PAGE.replace('<option>B群</option><option>C群</option>', group_opts)
     # 注入前端驗證JS
@@ -15429,6 +15545,18 @@ function doSubmit(){
   if(ra&&!rdist&&hasDistWord(ra))e.push('戶籍詳細地址含區/鄉/鎮，請拆到「區/鄉鎮」欄位');
   if(!sa&&la&&!ldist&&hasDistWord(la))e.push('住家詳細地址含區/鄉/鎮，請拆到「區/鄉鎮」欄位');
   if(ca&&!cdist&&hasDistWord(ca))e.push('公司詳細地址含區/鄉/鎮，請拆到「區/鄉鎮」欄位');
+  // 警示戶必填
+  var ew=qq('[name="ewarning"]');
+  if(!ew)e.push('⚠️ 警示戶必填（是 / 否）');
+  if(ew==='是'){
+    var ewm=qq('[name="ewmethod"]');
+    if(!ewm)e.push('⚠️ 警示戶撥款方式必填（撥二等親 / 現金或朋友）');
+  }
+  // 居住=自有 → 房屋私設必填
+  if(ls2==='自有'){
+    var hp=qq('[name="hprivate"]');
+    if(!hp)e.push('⚠️ 居住「自有」時、房屋私設必填（有 / 無）');
+  }
   if(e.length>0){showErr(e);return;}
   var w=[];
   var ls=qq('[name="lstatus"]');
@@ -15457,14 +15585,48 @@ function collectDebt(){
       re:document.getElementById('dr'+i)?.textContent||'',
       da:document.getElementById('dd'+i)?.value||'',
       dy:document.getElementById('dg'+i)?.value||'',
-      sp:document.getElementById('ds'+i)?.value||''
+      sp:document.getElementById('ds'+i)?.value||'',
+      pl:document.getElementById('dpl'+i)?.value||'',
+      yr:document.getElementById('dyr'+i)?.value||''
     });
   }
   var h=document.getElementById('debt_list_input');
   if(!h){h=document.createElement('input');h.type='hidden';h.name='debt_list';h.id='debt_list_input';document.getElementById('cf').appendChild(h);}
   h.value=JSON.stringify(rows);
 }
-function doConfirmSubmit(){collectDebt();localStorage.removeItem('nc_draft');document.forms[0].submit();}
+function collectUL(){
+  var rows=[];
+  for(var i=1;i<=(window.ulc||0);i++){
+    var el=document.getElementById('ul'+i);if(!el)continue;
+    var p=document.getElementById('ulp'+i)?.value||'';
+    var y=document.getElementById('uly'+i)?.value||'';
+    if(!p&&!y)continue;
+    rows.push({
+      type:document.getElementById('ult'+i)?.value||'機車',
+      plate:p, year:y
+    });
+  }
+  var h=document.getElementById('unloan_input');
+  if(!h){h=document.createElement('input');h.type='hidden';h.name='unloan_vehicles';h.id='unloan_input';document.getElementById('cf').appendChild(h);}
+  h.value=JSON.stringify(rows);
+}
+function addUL(type){
+  window.ulc=(window.ulc||0)+1;var n=window.ulc;
+  var r=document.createElement('div');r.id='ul'+n;
+  var bg=type==='汽車'?'#fef3e2':'#e8f0f8';var bc=type==='汽車'?'#d97706':'#0369a1';
+  r.style.cssText='border-radius:8px;margin-bottom:8px;padding:10px 14px;background:'+bg+';border-left:4px solid '+bc+';';
+  var icon=type==='汽車'?'🚗':'🏍';
+  var IS='width:100%;height:34px;padding:0 8px;border:0.5px solid #ddd5ca;border-radius:6px;font-size:13px;box-sizing:border-box;background:#fff;';
+  var SS='width:100%;height:34px;padding:0 6px;border:0.5px solid #ddd5ca;border-radius:6px;font-size:13px;box-sizing:border-box;background:#fff;';
+  var FS='display:flex;flex-direction:column;gap:4px;';
+  var LS='font-size:12px;font-weight:500;color:#2c2820;';
+  var GS='display:grid;grid-template-columns:repeat(3,1fr);gap:8px;';
+  var typeOpts=['機車','汽車'].map(function(o){return '<option'+(o===type?' selected':'')+'>'+o+'</option>';}).join('');
+  r.innerHTML='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;"><span style="font-size:13px;font-weight:600;color:'+bc+';">'+icon+' 無貸款 '+type+'</span><button type="button" onclick="rmUL('+n+')" style="background:#f5ddd8;color:#b84a35;border:none;border-radius:5px;width:28px;height:28px;cursor:pointer;">✕</button></div><div style="'+GS+'"><div style="'+FS+'"><div style="'+LS+'">類型</div><select id="ult'+n+'" style="'+SS+'">'+typeOpts+'</select></div><div style="'+FS+'"><div style="'+LS+'">車牌</div><input id="ulp'+n+'" placeholder="ABC-1234" style="'+IS+'"></div><div style="'+FS+'"><div style="'+LS+'">出廠年月</div><input id="uly'+n+'" placeholder="2019/05" style="'+IS+'"></div></div>';
+  document.getElementById('ulist').appendChild(r);
+}
+function rmUL(n){var el=document.getElementById('ul'+n);if(el)el.remove();}
+function doConfirmSubmit(){collectDebt();collectUL();localStorage.removeItem('nc_draft');document.forms[0].submit();}
 function saveForm(){var data={};document.querySelectorAll('#cf input,#cf select,#cf textarea').forEach(function(el){if(!el.name)return;if(el.type==='checkbox')data[el.name]=el.checked;else data[el.name]=el.value;});localStorage.setItem('nc_draft',JSON.stringify(data));}
 function restoreForm(){var raw=localStorage.getItem('nc_draft');if(!raw)return;var data=JSON.parse(raw);Object.keys(data).forEach(function(k){var el=document.querySelector('#cf [name="'+k+'"]');if(!el)return;if(el.type==='checkbox')el.checked=data[k];else el.value=data[k];});var ck=document.getElementById('sameck');if(ck)document.getElementById('lsec').style.display=ck.checked?'none':'block';}
 window.addEventListener('DOMContentLoaded',function(){restoreForm();document.getElementById('cf').addEventListener('input',saveForm);document.getElementById('cf').addEventListener('change',saveForm);});
@@ -15618,7 +15780,7 @@ async def new_customer_post(request: Request):
         contact2_phone=f.get("c2tel",""), contact2_known=f.get("c2know",""),
         eval_fund_need=f.get("efund",""), eval_sent_3m=f.get("esent",""),
         eval_labor_ins=f.get("elabor",""), eval_salary_transfer=f.get("esal",""),
-        eval_alert=f.get("eprivate",""), eval_credit_card=f.get("ecard",""),
+        eval_alert=f.get("eprivate",""), eval_alert_warning=f.get("ewarning",""), eval_alert_warning_method=f.get("ewmethod",""), eval_house_private=f.get("hprivate",""), eval_credit_card=f.get("ecard",""),
         eval_property=f.get("eprop",""), eval_fine=f.get("efine",""),
         eval_fuel_tax=f.get("efuel",""), eval_late=f.get("elate",""), eval_late_days=f.get("elateday",""), eval_note=f.get("enote",""),
         eval_license=f.get("elicense",""), eval_law=f.get("elaw",""), eval_vehicle=f.get("evehicle",""),
@@ -15626,6 +15788,7 @@ async def new_customer_post(request: Request):
         eval_labor_amount=f.get("elabor_amt",""),
         vehicle_model=f.get("vmodel",""), vehicle_year=f.get("vyear",""),
         debt_list=f.get("debt_list",""),
+        unloan_vehicles=f.get("unloan_vehicles",""),
         carrier=f.get("carrier",""), fb=f.get("fb",""),
         sales_name=f.get("sales",""), source_group_id=source_group_id, created_by_role=role,
     )
@@ -15677,6 +15840,13 @@ def customer_pdf(request: Request, case_id: str = ""):
     gname = h(get_group_name(r.get("source_group_id", "")))
     created = h((r.get("created_at", "") or "")[:10])
 
+    # 罰單 + 燃料稅 總額
+    def _to_int(s):
+        s = str(s or "").strip().replace(",", "").replace("$", "")
+        try: return int(float(s))
+        except: return 0
+    total_fee = _to_int(r.get("eval_fine")) + _to_int(r.get("eval_fuel_tax"))
+
     # Parse debt list
     import json as _json
     try:
@@ -15684,6 +15854,11 @@ def customer_pdf(request: Request, case_id: str = ""):
     except Exception:
         debt_data = []
     debt_html = _build_debt_html_split(debt_data)
+    try:
+        unloan_data = _json.loads(r.get("unloan_vehicles", "") or "[]") if r.get("unloan_vehicles") else []
+    except Exception:
+        unloan_data = []
+    unloan_html = _build_unloan_html(unloan_data)
 
     lsame = r.get("live_same_as_reg", "") == "1"
     live_addr = f'{v("reg_city")}{v("reg_district")}{v("reg_address")}' if lsame else f'{v("live_city")}{v("live_district")}{v("live_address")}'
@@ -15706,11 +15881,13 @@ td {{ background: #fff; }}
 .sec {{ background: #3a3530; color: #fff; font-size: 12px; font-weight: 700; padding: 6px 10px; }}
 .sec td {{ background: #3a3530; color: #fff; font-weight: 700; }}
 </style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 </head><body>
 <div class="no-print" style="text-align:center;margin-bottom:16px;">
-  <button onclick="window.print()" style="background:#4e7055;color:#fff;border:none;padding:10px 28px;border-radius:6px;font-size:14px;cursor:pointer;font-weight:600;">列印 / 存 PDF</button>
+  <button id="pdf-btn" onclick="downloadPDF()" style="background:#4e7055;color:#fff;border:none;padding:10px 28px;border-radius:6px;font-size:14px;cursor:pointer;font-weight:600;">📄 下載 PDF</button>
   <button onclick="history.back()" style="background:#6a5e4e;color:#fff;border:none;padding:10px 28px;border-radius:6px;font-size:14px;cursor:pointer;font-weight:600;margin-left:8px;">返回</button>
 </div>
+<div id="pdf-content">
 <div class="header">
   <div><div class="header-name">{v("customer_name")}</div><div class="header-sub">群組：{gname}　建立日期：{created}</div></div>
   <div style="font-size:13px;color:#c8bfb5;font-weight:600;">客戶資料表</div>
@@ -15730,13 +15907,12 @@ td {{ background: #fff; }}
 <tr><th>戶籍地址</th><td colspan="3">{reg_addr}</td></tr>
 <tr><th>戶籍電話</th><td>{v("reg_phone")}</td><th>現住電話</th><td>{v("live_phone")}</td></tr>
 <tr><th>住家地址</th><td colspan="3">{live_addr}</td></tr>
-<tr><th>居住狀況</th><td>{v("live_status")}</td><th>居住時間</th><td>{v("live_years")}年{v("live_months")}月</td></tr>
+<tr><th>居住狀況</th><td style="{'font-weight:700;color:#b91c1c;background:#fef2f2' if r.get('eval_house_private')=='有' else ''}">{v("live_status")}{(' ⚠️ 房屋有私設' if r.get('eval_house_private')=='有' else '')}</td><th>居住時間</th><td>{v("live_years")}年{v("live_months")}月</td></tr>
 <tr class="sec"><td colspan="4">職業資料</td></tr>
 <tr><th>公司名稱</th><td colspan="3">{v("company_name_detail")}</td></tr>
 <tr><th>公司電話</th><td>{(v("company_phone_area") + "-" + v("company_phone_num")).replace("mobile-", "").lstrip("-")}</td><th>職稱</th><td>{v("company_role")}</td></tr>
 <tr><th>年資</th><td>{v("company_years")}年{v("company_months")}月</td><th>月薪</th><td>{fmt_salary(v("company_salary"))}</td></tr>
 <tr><th>公司地址</th><td colspan="3">{company_addr}</td></tr>
-<tr><th>行業</th><td colspan="3">{v("company_industry")}</td></tr>
 </table>
 <table style="width:100%;border-collapse:collapse;margin-bottom:16px;table-layout:fixed">
 <colgroup>
@@ -15770,43 +15946,116 @@ td {{ background: #fff; }}
 <table>
 <colgroup><col class="c-th"><col class="c-td"><col class="c-th"><col class="c-td"></colgroup>
 <tr class="sec"><td colspan="4">貸款諮詢</td></tr>
+{("<tr><th colspan='4' style='background:#dc2626;color:#fff;text-align:center;font-size:18px;padding:12px;font-weight:900'>⚠️ 警示戶 ⚠️ 撥款：" + (r.get("eval_alert_warning_method") or "未設定") + "</th></tr>") if r.get("eval_alert_warning") == "是" else ""}
 <tr><th>資金需求</th><td>{v("eval_fund_need")}</td><th>近三月送件</th><td>{v("eval_sent_3m")} {v("eval_sent_3m_detail")}</td></tr>
-<tr><th>當鋪私設</th><td>{v("eval_alert")}</td><th>勞保</th><td>{v("eval_labor_ins")}</td></tr>
+<tr><th>當鋪私設</th><td>{v("eval_alert")}</td><th>警示戶</th><td style="{'font-weight:700;color:#b91c1c;background:#fef2f2' if r.get('eval_alert_warning')=='是' else ''}">{v("eval_alert_warning") or "－"}</td></tr>
+<tr><th>勞保</th><td colspan="3">{v("eval_labor_ins")}</td></tr>
 <tr><th>薪轉</th><td>{v("eval_salary_transfer")}</td><th>遲繳</th><td>{v("eval_late")} {v("eval_late_days")}天</td></tr>
 <tr><th>罰單</th><td>{v("eval_fine")}</td><th>燃料稅</th><td>{v("eval_fuel_tax")}</td></tr>
-<tr><th>信用卡</th><td>{v("eval_credit_card")}</td><th>動產</th><td>{v("eval_property")}</td></tr>
-<tr><th>證照</th><td>{v("eval_license")}</td><th>車輛</th><td>{v("eval_vehicle")}</td></tr>
+<tr><th>欠費總額</th><td colspan="3" style="font-weight:700;color:#b84a35">${total_fee:,}</td></tr>
+<tr><th>信用卡</th><td>{v("eval_credit_card")}</td><th>動產/不動產</th><td>{v("eval_property")}</td></tr>
+<tr><th>證照</th><td colspan="3">{v("eval_license")}</td></tr>
 <tr><th>法學</th><td colspan="3">{v("eval_law")}</td></tr>
 {"<tr><th>備註</th><td colspan='3'>" + v("eval_note") + "</td></tr>" if r.get("eval_note") else ""}
 </table>
 {"<div style='font-size:13px;font-weight:700;color:#3a3530;margin-bottom:8px;'>負債明細</div>" + debt_html if debt_html else ""}
+{unloan_html}
+</div>
+<script>
+function downloadPDF() {{
+  var btn = document.getElementById('pdf-btn');
+  var orig = btn.innerText;
+  if (typeof html2pdf === 'undefined') {{
+    window.print();
+    return;
+  }}
+  btn.disabled = true;
+  btn.innerText = '產生中、請稍候…';
+  btn.style.opacity = '0.6';
+  var element = document.getElementById('pdf-content');
+  var fname = {json.dumps(v('customer_name') + '_客戶資料.pdf', ensure_ascii=False)};
+  var opt = {{
+    margin: 10,
+    filename: fname,
+    image: {{ type: 'jpeg', quality: 0.95 }},
+    html2canvas: {{ scale: 2, useCORS: true, letterRendering: true, backgroundColor: '#ffffff' }},
+    jsPDF: {{ unit: 'mm', format: 'a4', orientation: 'portrait' }},
+    pagebreak: {{ mode: ['css', 'legacy'] }}
+  }};
+  var ua = navigator.userAgent || '';
+  var isMobile = /iPhone|iPad|iPod|Android|Line/i.test(ua);
+  var resetBtn = function() {{
+    btn.disabled = false; btn.innerText = orig; btn.style.opacity = '1';
+  }};
+  var worker = html2pdf().from(element).set(opt);
+  if (isMobile) {{
+    worker.toPdf().get('pdf').then(function(pdf) {{
+      var blob = pdf.output('blob');
+      var url = URL.createObjectURL(blob);
+      var opened = window.open(url, '_blank');
+      if (!opened) window.location.href = url;
+      resetBtn();
+    }}).catch(function(err) {{ alert('PDF 產生失敗：' + err); resetBtn(); }});
+  }} else {{
+    worker.save().then(resetBtn).catch(function(err) {{
+      alert('PDF 產生失敗，改用瀏覽器列印'); window.print(); resetBtn();
+    }});
+  }}
+}}
+</script>
 </body></html>"""
 
 
 def _build_debt_html_split(debt_data):
     """負債明細拆「車貸」「信貸」分開顯示
-    車貸：dy 含「公路」或「動保」→ 顯示動保/空間欄
-    信貸：其餘 → 不顯示動保/空間欄
+    車貸判定（與 edit-pending 相同）：
+      - da (設定日期) 非空、或
+      - dy (動保/公路) 非空且不是「-」、或
+      - sp (空間) 非空且不是「-」
+    信貸：其餘
     """
     if not debt_data:
         return ""
-    car_loans = [d for d in debt_data if "公路" in (d.get("dy", "") or "") or "動保" in (d.get("dy", "") or "")]
-    other_loans = [d for d in debt_data if d not in car_loans]
+    def _is_car_loan(d):
+        da = (d.get("da", "") or "").strip()
+        dy = (d.get("dy", "") or "").strip()
+        sp = (d.get("sp", "") or "").strip()
+        return bool(da) or (dy and dy != "-") or (sp and sp != "-")
+    car_loans = [d for d in debt_data if _is_car_loan(d)]
+    other_loans = [d for d in debt_data if not _is_car_loan(d)]
     out = ""
+    car_th = 'padding:7px 5px;border:1px solid #b8a890;font-size:12px;background:#d4c5a8;color:#3a3020;font-weight:700;text-align:center;vertical-align:middle;word-break:break-word'
+    car_td = 'padding:7px 5px;border:1px solid #cbb89d;font-size:13px;color:#2c2820;text-align:center;vertical-align:middle;background:#fdfbf6;word-break:break-word'
     if car_loans:
-        out += '<div style="font-size:12px;font-weight:600;color:#4a3e30;margin:8px 0 4px">🚗 車貸</div>'
-        out += '<table style="width:100%;border-collapse:collapse;font-size:13px;margin-bottom:10px;">'
-        out += '<tr style="background:#e8e2da;font-weight:600;"><th style="padding:6px;border:1px solid #bbb;">貸款商家</th><th style="padding:6px;border:1px solid #bbb;">金額</th><th style="padding:6px;border:1px solid #bbb;">期數/已繳</th><th style="padding:6px;border:1px solid #bbb;">月繳</th><th style="padding:6px;border:1px solid #bbb;">剩餘</th><th style="padding:6px;border:1px solid #bbb;">日期</th><th style="padding:6px;border:1px solid #bbb;">動保</th><th style="padding:6px;border:1px solid #bbb;">空間</th></tr>'
+        out += '<div style="font-size:13px;font-weight:700;color:#4a3e30;margin:10px 0 6px;letter-spacing:0.5px">🚗 車貸</div>'
+        out += '<table style="width:100%;border-collapse:collapse;margin-bottom:12px;table-layout:fixed">'
+        out += '<colgroup><col style="width:12%"><col style="width:9%"><col style="width:10%"><col style="width:8%"><col style="width:11%"><col style="width:11%"><col style="width:6%"><col style="width:6%"><col style="width:14%"><col style="width:13%"></colgroup>'
+        out += f'<tr><th style="{car_th}">貸款商家</th><th style="{car_th}">金額</th><th style="{car_th}">期數/已繳</th><th style="{car_th}">月繳</th><th style="{car_th}">剩餘</th><th style="{car_th}">日期</th><th style="{car_th}">動保</th><th style="{car_th}">空間</th><th style="{car_th}">車牌</th><th style="{car_th}">出廠</th></tr>'
         for d in car_loans:
-            out += f'<tr><td style="padding:5px;border:1px solid #bbb;">{h(d.get("co",""))}</td><td style="padding:5px;border:1px solid #bbb;">{h(d.get("lo",""))}</td><td style="padding:5px;border:1px solid #bbb;">{h(d.get("pe",""))}/{h(d.get("pa",""))}</td><td style="padding:5px;border:1px solid #bbb;">{h(d.get("mo",""))}</td><td style="padding:5px;border:1px solid #bbb;">{h(d.get("re",""))}</td><td style="padding:5px;border:1px solid #bbb;">{h(d.get("da",""))}</td><td style="padding:5px;border:1px solid #bbb;">{h(d.get("dy",""))}</td><td style="padding:5px;border:1px solid #bbb;">{h(d.get("sp",""))}</td></tr>'
+            out += f'<tr><td style="{car_td};text-align:left;font-weight:600">{h(d.get("co",""))}</td><td style="{car_td}">{h(d.get("lo",""))}</td><td style="{car_td}">{h(d.get("pe",""))}/{h(d.get("pa",""))}</td><td style="{car_td}">{h(d.get("mo",""))}</td><td style="{car_td};color:#b84a35;font-weight:600">{h(d.get("re",""))}</td><td style="{car_td}">{h(d.get("da",""))}</td><td style="{car_td}">{h(d.get("dy",""))}</td><td style="{car_td}">{h(d.get("sp",""))}</td><td style="{car_td};font-family:monospace">{h(d.get("pl",""))}</td><td style="{car_td}">{h(d.get("yr",""))}</td></tr>'
         out += '</table>'
+    other_th = 'padding:7px 5px;border:1px solid #b8a890;font-size:12px;background:#e0d4be;color:#3a3020;font-weight:700;text-align:center;vertical-align:middle;word-break:break-word'
+    other_td = 'padding:7px 8px;border:1px solid #cbb89d;font-size:13px;color:#2c2820;vertical-align:middle;background:#fdfbf6;word-break:break-word'
     if other_loans:
-        out += '<div style="font-size:12px;font-weight:600;color:#4a3e30;margin:8px 0 4px">💳 信貸／其他</div>'
-        out += '<table style="width:100%;border-collapse:collapse;font-size:13px;margin-bottom:10px;">'
-        out += '<tr style="background:#e8e2da;font-weight:600;"><th style="padding:6px;border:1px solid #bbb;">貸款商家</th><th style="padding:6px;border:1px solid #bbb;">金額</th><th style="padding:6px;border:1px solid #bbb;">期數/已繳</th><th style="padding:6px;border:1px solid #bbb;">月繳</th><th style="padding:6px;border:1px solid #bbb;">剩餘</th></tr>'
+        out += '<div style="font-size:13px;font-weight:700;color:#4a3e30;margin:10px 0 6px;letter-spacing:0.5px">💳 信貸／其他</div>'
+        out += '<table style="width:100%;border-collapse:collapse;margin-bottom:12px">'
+        out += f'<tr><th style="{other_th}">貸款商家</th><th style="{other_th}">金額</th><th style="{other_th}">期數/已繳</th><th style="{other_th}">月繳</th><th style="{other_th}">剩餘</th></tr>'
         for d in other_loans:
-            out += f'<tr><td style="padding:5px;border:1px solid #bbb;">{h(d.get("co",""))}</td><td style="padding:5px;border:1px solid #bbb;">{h(d.get("lo",""))}</td><td style="padding:5px;border:1px solid #bbb;">{h(d.get("pe",""))}/{h(d.get("pa",""))}</td><td style="padding:5px;border:1px solid #bbb;">{h(d.get("mo",""))}</td><td style="padding:5px;border:1px solid #bbb;">{h(d.get("re",""))}</td></tr>'
+            out += f'<tr><td style="{other_td};font-weight:600">{h(d.get("co",""))}</td><td style="{other_td};text-align:right">{h(d.get("lo",""))}</td><td style="{other_td};text-align:center">{h(d.get("pe",""))}/{h(d.get("pa",""))}</td><td style="{other_td};text-align:right">{h(d.get("mo",""))}</td><td style="{other_td};text-align:right;color:#b84a35;font-weight:600">{h(d.get("re",""))}</td></tr>'
         out += '</table>'
+    return out
+
+
+def _build_unloan_html(unloan_data):
+    """無貸款車輛清單 PDF 表格"""
+    if not unloan_data:
+        return ""
+    out = '<div style="font-size:12px;font-weight:600;color:#4a3e30;margin:8px 0 4px">✅ 無貸款車輛</div>'
+    out += '<table style="width:100%;border-collapse:collapse;font-size:13px;margin-bottom:10px;">'
+    out += '<tr style="background:#e8f0e8;font-weight:600;"><th style="padding:6px;border:1px solid #bbb;">類型</th><th style="padding:6px;border:1px solid #bbb;">車牌</th><th style="padding:6px;border:1px solid #bbb;">出廠年月</th></tr>'
+    for v in unloan_data:
+        out += f'<tr><td style="padding:5px;border:1px solid #bbb;">{h(v.get("type",""))}</td><td style="padding:5px;border:1px solid #bbb;">{h(v.get("plate",""))}</td><td style="padding:5px;border:1px solid #bbb;">{h(v.get("year",""))}</td></tr>'
+    out += '</table>'
     return out
 
 
@@ -15822,6 +16071,18 @@ def _build_customer_pdf_body(r: dict) -> str:
     except Exception:
         debt_data = []
     debt_html = _build_debt_html_split(debt_data)
+    try:
+        unloan_data = _json.loads(r.get("unloan_vehicles", "") or "[]") if r.get("unloan_vehicles") else []
+    except Exception:
+        unloan_data = []
+    unloan_html = _build_unloan_html(unloan_data)
+
+    # 罰單 + 燃料稅 總額
+    def _to_int(s):
+        s = str(s or "").strip().replace(",", "").replace("$", "")
+        try: return int(float(s))
+        except: return 0
+    total_fee = _to_int(r.get("eval_fine")) + _to_int(r.get("eval_fuel_tax"))
 
     lsame = r.get("live_same_as_reg", "") == "1"
     live_addr = f'{v("reg_city")}{v("reg_district")}{v("reg_address")}' if lsame else f'{v("live_city")}{v("live_district")}{v("live_address")}'
@@ -15829,6 +16090,7 @@ def _build_customer_pdf_body(r: dict) -> str:
     company_addr = f'{v("company_city")}{v("company_district")}{v("company_address")}'
     note_html = "<tr><th>備註</th><td colspan='3'>" + v("eval_note") + "</td></tr>" if r.get("eval_note") else ""
     debt_section = "<div style='font-size:13px;font-weight:700;color:#3a3530;margin-bottom:8px;'>負債明細</div>" + debt_html if debt_html else ""
+    unloan_section = unloan_html  # 已含 title
 
     return f"""<div class="header">
   <div><div class="header-name">{v("customer_name")}</div><div class="header-sub">群組：{gname}　建立日期：{created}</div></div>
@@ -15849,13 +16111,12 @@ def _build_customer_pdf_body(r: dict) -> str:
 <tr><th>戶籍地址</th><td colspan="3">{reg_addr}</td></tr>
 <tr><th>戶籍電話</th><td>{v("reg_phone")}</td><th>現住電話</th><td>{v("live_phone")}</td></tr>
 <tr><th>住家地址</th><td colspan="3">{live_addr}</td></tr>
-<tr><th>居住狀況</th><td>{v("live_status")}</td><th>居住時間</th><td>{v("live_years")}年{v("live_months")}月</td></tr>
+<tr><th>居住狀況</th><td style="{'font-weight:700;color:#b91c1c;background:#fef2f2' if r.get('eval_house_private')=='有' else ''}">{v("live_status")}{(' ⚠️ 房屋有私設' if r.get('eval_house_private')=='有' else '')}</td><th>居住時間</th><td>{v("live_years")}年{v("live_months")}月</td></tr>
 <tr class="sec"><td colspan="4">職業資料</td></tr>
 <tr><th>公司名稱</th><td colspan="3">{v("company_name_detail")}</td></tr>
 <tr><th>公司電話</th><td>{(v("company_phone_area") + "-" + v("company_phone_num")).replace("mobile-", "").lstrip("-")}</td><th>職稱</th><td>{v("company_role")}</td></tr>
 <tr><th>年資</th><td>{v("company_years")}年{v("company_months")}月</td><th>月薪</th><td>{fmt_salary(v("company_salary"))}</td></tr>
 <tr><th>公司地址</th><td colspan="3">{company_addr}</td></tr>
-<tr><th>行業</th><td colspan="3">{v("company_industry")}</td></tr>
 </table>
 <table style="width:100%;border-collapse:collapse;margin-bottom:16px;table-layout:fixed">
 <colgroup>
@@ -15889,16 +16150,20 @@ def _build_customer_pdf_body(r: dict) -> str:
 <table>
 <colgroup><col class="c-th"><col class="c-td"><col class="c-th"><col class="c-td"></colgroup>
 <tr class="sec"><td colspan="4">貸款諮詢</td></tr>
+{("<tr><th colspan='4' style='background:#dc2626;color:#fff;text-align:center;font-size:18px;padding:12px;font-weight:900'>⚠️ 警示戶 ⚠️ 撥款：" + (r.get("eval_alert_warning_method") or "未設定") + "</th></tr>") if r.get("eval_alert_warning") == "是" else ""}
 <tr><th>資金需求</th><td>{v("eval_fund_need")}</td><th>近三月送件</th><td>{v("eval_sent_3m")} {v("eval_sent_3m_detail")}</td></tr>
-<tr><th>當鋪私設</th><td>{v("eval_alert")}</td><th>勞保</th><td>{v("eval_labor_ins")}</td></tr>
+<tr><th>當鋪私設</th><td>{v("eval_alert")}</td><th>警示戶</th><td style="{'font-weight:700;color:#b91c1c;background:#fef2f2' if r.get('eval_alert_warning')=='是' else ''}">{v("eval_alert_warning") or "－"}</td></tr>
+<tr><th>勞保</th><td colspan="3">{v("eval_labor_ins")}</td></tr>
 <tr><th>薪轉</th><td>{v("eval_salary_transfer")}</td><th>遲繳</th><td>{v("eval_late")} {v("eval_late_days")}天</td></tr>
 <tr><th>罰單</th><td>{v("eval_fine")}</td><th>燃料稅</th><td>{v("eval_fuel_tax")}</td></tr>
-<tr><th>信用卡</th><td>{v("eval_credit_card")}</td><th>動產</th><td>{v("eval_property")}</td></tr>
-<tr><th>證照</th><td>{v("eval_license")}</td><th>車輛</th><td>{v("eval_vehicle")}</td></tr>
+<tr><th>欠費總額</th><td colspan="3" style="font-weight:700;color:#b84a35">${total_fee:,}</td></tr>
+<tr><th>信用卡</th><td>{v("eval_credit_card")}</td><th>動產/不動產</th><td>{v("eval_property")}</td></tr>
+<tr><th>證照</th><td colspan="3">{v("eval_license")}</td></tr>
 <tr><th>法學</th><td colspan="3">{v("eval_law")}</td></tr>
 {note_html}
 </table>
-{debt_section}"""
+{debt_section}
+{unloan_section}"""
 
 
 _PDF_STYLE = """<style>
@@ -15953,12 +16218,86 @@ def customer_pdf_batch(request: Request, ids: str = ""):
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>客戶資料批次列印（{len(ordered)} 筆）</title>
 {_PDF_STYLE}
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 </head><body>
 <div class="no-print" style="text-align:center;margin-bottom:16px;">
-  <button onclick="window.print()" style="background:#4e7055;color:#fff;border:none;padding:10px 28px;border-radius:6px;font-size:14px;cursor:pointer;font-weight:600;">列印 / 存 PDF（共 {len(ordered)} 筆）</button>
+  <button id="pdf-btn" onclick="downloadPDF()" style="background:#4e7055;color:#fff;border:none;padding:10px 28px;border-radius:6px;font-size:14px;cursor:pointer;font-weight:600;">下載 PDF（共 {len(ordered)} 筆）</button>
   <button onclick="window.close()" style="background:#6a5e4e;color:#fff;border:none;padding:10px 28px;border-radius:6px;font-size:14px;cursor:pointer;font-weight:600;margin-left:8px;">關閉</button>
 </div>
+<div id="pdf-wrap">
+<div id="pdf-content">
 {body_html}
+</div>
+</div>
+<script>
+function downloadPDF() {{
+  var btn = document.getElementById('pdf-btn');
+  var originalText = btn.innerText;
+  if (typeof html2pdf === 'undefined') {{
+    window.print();
+    return;
+  }}
+  btn.disabled = true;
+  btn.innerText = '產生中，請稍候…';
+  btn.style.opacity = '0.6';
+  btn.style.cursor = 'wait';
+  var element = document.getElementById('pdf-content');
+  var opt = {{
+    margin: 0,
+    filename: {json.dumps(pdf_filename, ensure_ascii=False)},
+    image: {{ type: 'jpeg', quality: 0.95 }},
+    html2canvas: {{
+      scale: 2, useCORS: true, letterRendering: true, backgroundColor: '#ffffff',
+      scrollX: 0, scrollY: -window.scrollY,
+      onclone: function(doc) {{
+        var el = doc.getElementById('pdf-content');
+        if (el) {{
+          el.style.margin = '0';
+          el.style.position = 'static';
+          el.style.left = '0';
+          el.style.transform = 'none';
+        }}
+        doc.body.style.padding = '0';
+        doc.body.style.margin = '0';
+        doc.body.style.background = '#fff';
+        doc.documentElement.style.margin = '0';
+        doc.documentElement.style.padding = '0';
+      }}
+    }},
+    jsPDF: {{ unit: 'mm', format: 'a4', orientation: 'portrait' }},
+    pagebreak: {{ mode: ['css', 'legacy'] }}
+  }};
+  var ua = navigator.userAgent || '';
+  var isMobile = /iPhone|iPad|iPod|Android|Line/i.test(ua);
+  var resetBtn = function() {{
+    btn.disabled = false;
+    btn.innerText = originalText;
+    btn.style.opacity = '1';
+    btn.style.cursor = 'pointer';
+  }};
+  var worker = html2pdf().from(element).set(opt);
+  if (isMobile) {{
+    worker.toPdf().get('pdf').then(function(pdf) {{
+      var blob = pdf.output('blob');
+      var url = URL.createObjectURL(blob);
+      var opened = window.open(url, '_blank');
+      if (!opened) {{ window.location.href = url; }}
+      resetBtn();
+    }}).catch(function(err) {{
+      console.error('PDF 產生失敗：', err);
+      alert('PDF 產生失敗：' + (err && err.message ? err.message : err));
+      resetBtn();
+    }});
+  }} else {{
+    worker.save().then(resetBtn).catch(function(err) {{
+      console.error('PDF 產生失敗：', err);
+      alert('PDF 產生失敗，改用瀏覽器列印功能');
+      window.print();
+      resetBtn();
+    }});
+  }}
+}}
+</script>
 </body></html>"""
 
 
@@ -16812,10 +17151,10 @@ def _do_download_excel(request: Request, case_id: str):
 
     _base = os.path.dirname(os.path.abspath(__file__))
     PLAN_TEMPLATE_MAP = {
-        "亞太商品": os.path.join(_base, "申請書", "亞太商品範本.xlsx"),
-        "亞太機車15萬": os.path.join(_base, "申請書", "亞太15萬機車範本.xlsx"),
-        "亞太機車25萬": os.path.join(_base, "申請書", "亞太15萬機車範本.xlsx"),
-        "亞太工會機車": os.path.join(_base, "申請書", "亞太工會範本.xlsx"),
+        "亞太商品": os.path.join(_base, "申請書", "亞太商品.xlsx"),
+        "亞太機車15萬": os.path.join(_base, "申請書", "亞太機車15萬.xlsx"),
+        "亞太機車25萬": os.path.join(_base, "申請書", "亞太機車25萬.xlsx"),
+        "亞太工會機車": os.path.join(_base, "申請書", "亞太工會機車.xlsx"),
         "和裕機車": os.path.join(_base, "申請書", "和裕維力貸機車範本).xlsx"),
         "和裕商品": os.path.join(_base, "申請書", "和裕維力貸商品範本.xlsx"),
         "第一": os.path.join(_base, "申請書", "第一申請書範本.xlsx"),
@@ -16871,7 +17210,9 @@ def _do_download_excel(request: Request, case_id: str):
         reg_addr = v("reg_city") + v("reg_district") + v("reg_address")
         live_same = v("live_same_as_reg") == "1"
         live_addr = reg_addr if live_same else (v("live_city") + v("live_district") + v("live_address"))
-        live_status = v("live_status")
+        # 套 adminB 規則：自有 + 房屋私設=有 → 改填「父母名下」（避免私設）
+        _rules = apply_adminb_rules(r)
+        live_status = _rules.get("live_status_val", "") or v("live_status")
         live_years = v("live_years")
         company = v("company_name_detail") or v("company")
         co_phone_area = v("company_phone_area")
@@ -17157,15 +17498,18 @@ def _do_download_excel(request: Request, case_id: str):
                 if raw in valid_live: return raw
                 # 宿舍（優先，避免被後面的親屬規則吃掉）
                 if "宿舍" in raw: return "宿舍"
-                # 自有相關
-                for k in ["自有","本人","名下","自宅","自有房屋"]:
+                # 父母名下 / 配偶名下 → 親屬（優先處理、避免被「名下」誤判成自有）
+                if "父母名下" in raw or "母名下" in raw or "父名下" in raw: return "親屬"
+                if "配偶名下" in raw or "夫名下" in raw or "妻名下" in raw: return "配偶"
+                # 親屬（含父母/兄弟姊妹/家人/租屋/借住）— 不含宿舍
+                for k in ["父母","媽媽","爸爸","母親","父親","親屬","親戚","家人","兄","弟","姊","妹","祖","外公","外婆","租","借住","寄住"]:
+                    if k in raw: return "親屬"
+                # 自有相關（移除模糊的「名下」、避免吃到「父母名下」）
+                for k in ["自有","本人名下","自宅","自有房屋"]:
                     if k in raw: return "自有"
                 # 配偶相關
                 for k in ["配偶","老公","老婆","太太","先生","夫","妻"]:
                     if k in raw: return "配偶"
-                # 親屬（含父母/兄弟姊妹/家人/父母名下/租屋/借住）— 不含宿舍
-                for k in ["父母","媽媽","爸爸","母親","父親","親屬","親戚","家人","兄","弟","姊","妹","祖","外公","外婆","租","借住","寄住"]:
-                    if k in raw: return "親屬"
                 return ""
             live_status_val = map_live_status(live_status)
 
