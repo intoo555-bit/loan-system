@@ -396,12 +396,15 @@ def compute_field_value(field_key: str, r: dict, plan_name: str = "",
     if field_key == "reg_full_address":
         return (v("reg_city") + v("reg_district") + v("reg_address")).strip()
     if field_key == "live_full_address":
-        if v("live_same_as_reg") == "1":
+        # 同戶籍判定：旗標 OR 縣市+區相同（即使門牌不同、業務規則也視為同地區）
+        _same_area = (bool(v("reg_city")) and v("reg_city") == v("live_city")
+                      and v("reg_district") == v("live_district"))
+        if v("live_same_as_reg") == "1" or _same_area:
             return (v("reg_city") + v("reg_district") + v("reg_address")).strip()
         # 住家詳細地址為空 → 用戶籍地（避免空白）
         if not v("live_address").strip():
             return (v("reg_city") + v("reg_district") + v("reg_address")).strip()
-        # 否則使用住家地址（即使縣市+區與戶籍相同、只要門牌詳細地址不同就是不同地址）
+        # 縣市/區不同 → 用住家地址
         return (v("live_city") + v("live_district") + v("live_address")).strip()
     if field_key == "company_full_address":
         return (v("company_city") + v("company_district") + v("company_address")).strip()
@@ -16542,14 +16545,15 @@ def _fill_qiaomei_pdf(r: dict) -> bytes:
         else:
             co_phone = (co_area + "-" + co_num) if co_area and co_num else co_num
 
-        # 同戶籍判定（喬美）：旗標 "1" 或 兩邊地址字串完全相同；否則視為不同地址、兩行都要印
-        # 同縣市同區但門牌不同 → 不算同戶籍、要印兩行
+        # 同戶籍判定（喬美）：旗標 "1" / 地址字串相同 / 縣市+區相同（業務規則）
         reg_addr = v("reg_city") + v("reg_district") + v("reg_address")
         live_addr_raw = v("live_city") + v("live_district") + v("live_address")
         _flag_same = v("live_same_as_reg") == "1"
         _addr_equal = bool(reg_addr) and reg_addr.replace(" ", "") == live_addr_raw.replace(" ", "")
         _live_empty = not live_addr_raw.strip()
-        live_same = _flag_same or _addr_equal or _live_empty
+        _same_area = (bool(v("reg_city")) and v("reg_city") == v("live_city")
+                      and v("reg_district") == v("live_district"))
+        live_same = _flag_same or _addr_equal or _live_empty or _same_area
         live_addr = reg_addr if live_same else live_addr_raw
 
         # 欄位座標表（PDF 點坐標，原點左下，y 反轉）
@@ -17345,7 +17349,10 @@ def _do_download_excel(request: Request, case_id: str):
         id_place = v("id_issue_place")
         id_type = v("id_issue_type")
         reg_addr = v("reg_city") + v("reg_district") + v("reg_address")
-        live_same = v("live_same_as_reg") == "1"
+        # 同戶籍判定：旗標"1" OR 戶籍縣市+區 == 居住縣市+區（業務規則：同地區視為同戶籍）
+        _same_area = (bool(v("reg_city")) and v("reg_city") == v("live_city")
+                      and v("reg_district") == v("live_district"))
+        live_same = (v("live_same_as_reg") == "1") or _same_area
         live_addr = reg_addr if live_same else (v("live_city") + v("live_district") + v("live_address"))
         # 套 adminB 規則：自有 + 房屋私設=有 → 改填「父母名下」（避免私設）
         _rules = apply_adminb_rules(r)
@@ -18100,7 +18107,10 @@ def _do_download_excel(request: Request, case_id: str):
 
         # ===== 組合常用欄位 =====
         reg_addr = v("reg_city") + v("reg_district") + v("reg_address")
-        live_same = v("live_same_as_reg") == "1"
+        # 同戶籍判定：旗標"1" OR 戶籍縣市+區 == 居住縣市+區
+        _same_area = (bool(v("reg_city")) and v("reg_city") == v("live_city")
+                      and v("reg_district") == v("live_district"))
+        live_same = (v("live_same_as_reg") == "1") or _same_area
         live_addr = reg_addr if live_same else (v("live_city") + v("live_district") + v("live_address"))
         co_area = v("company_phone_area")
         if co_area == "mobile":
