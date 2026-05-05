@@ -14638,14 +14638,14 @@ function csQuick(btn, type) {{
   const ta = row ? row.querySelector('.cs-text') : null;
   if (!ta) return;
   if (type === '已補完') {{
-    const lines = ta.value.split('\n');
+    const lines = ta.value.split('\\n');
     if (lines[0]) {{
       if (lines[0].startsWith('待補')) {{
         lines[0] = '已補' + lines[0].slice(2);
       }} else if (lines[0].startsWith('(缺') && lines[0].endsWith(')')) {{
         lines[0] = '已補' + lines[0].slice(2, -1);
       }}
-      ta.value = lines.join('\n');
+      ta.value = lines.join('\\n');
     }}
     return;
   }}
@@ -14663,7 +14663,7 @@ function csQuick(btn, type) {{
   }}
   if (!marker) return;
   const cur = ta.value.trim();
-  ta.value = marker + (cur ? '\n' + cur : '');
+  ta.value = marker + (cur ? '\\n' + cur : '');
 }}
 
 // 表單送出前：把各家狀態 chip + 缺件 + 同送 + company_status 都同步到 hidden input
