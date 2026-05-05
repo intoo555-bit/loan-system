@@ -12682,13 +12682,26 @@ async def report_batch_close(request: Request):
         return JSONResponse({"ok": False, "message": "未選擇客戶"})
     conn = get_conn(); cur = conn.cursor()
     closed = 0
+    pushed_groups = {}  # gid → [姓名, ...]，最後一次 push（避免同群多次 push）
     for cid in case_ids:
         cur.execute("SELECT * FROM customers WHERE case_id=? AND status='ACTIVE'", (cid,))
         c = cur.fetchone()
         if c:
             update_customer(cid, status="CLOSED", text=f"{c['customer_name']} 網頁批次結案", from_group_id="WEB")
+            gid = c["source_group_id"]
+            if gid:
+                pushed_groups.setdefault(gid, []).append(c["customer_name"])
             closed += 1
     conn.close()
+    # 推到對應業務群（多筆同群整合一條）
+    for gid, names in pushed_groups.items():
+        try:
+            if len(names) == 1:
+                push_text(gid, f"📝 {names[0]} 網頁結案")
+            else:
+                push_text(gid, f"📝 網頁批次結案 {len(names)} 筆：\n" + "、".join(names))
+        except Exception:
+            pass
     return JSONResponse({"ok": True, "message": f"已結案 {closed} 筆"})
 
 
