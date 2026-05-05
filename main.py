@@ -4833,10 +4833,28 @@ def parse_special_command(text: str, group_id: str) -> Optional[Dict]:
     if m:
         return {"type": "reorder_route", "name": m.group(1), "new_order": m.group(2).strip()}
 
+    # 缺件清單（指定公司）：@AI 姓名 公司 缺 身分證+薪轉
+    m = re.match(r"^([\u4e00-\u9fff]{2,6})\s+(\S+?)\s+缺\s+(.+)$", clean)
+    if m:
+        _name, _co, _docs = m.group(1), m.group(2).strip(), m.group(3).strip()
+        _co_canon = COMPANY_ALIAS.get(_co, _co)
+        if _co_canon in _get_valid_company_names():
+            return {"type": "set_missing_docs", "name": _name, "company": _co_canon, "docs": _docs}
+
     # 缺件清單：@AI 姓名 缺 身分證+薪轉+帳單
     m = re.match(r"^([\u4e00-\u9fff]{2,6})\s*缺\s*(.+)$", clean)
     if m:
-        return {"type": "set_missing_docs", "name": m.group(1), "docs": m.group(2).strip()}
+        return {"type": "set_missing_docs", "name": m.group(1), "company": "", "docs": m.group(2).strip()}
+
+    # 已補（指定公司）：@AI 姓名 公司 已補 身分證
+    m = re.match(r"^([\u4e00-\u9fff]{2,6})\s+(\S+?)\s+已補\s+(.+)$", clean)
+    if m:
+        _name, _co, _doc = m.group(1), m.group(2).strip(), m.group(3).strip()
+        _co_canon = COMPANY_ALIAS.get(_co, _co)
+        if _co_canon in _get_valid_company_names():
+            if _doc in ("全部", "完畢", "都好", "好了"):
+                return {"type": "clear_missing_docs", "name": _name, "company": _co_canon}
+            return {"type": "mark_doc_completed", "name": _name, "company": _co_canon, "doc": _doc}
 
     # 已補單項/全清：@AI 姓名 已補 身分證 / @AI 姓名 已補 全部 / @AI 姓名 已補時段 等
     # 時段/申覆/資料/照會 狀態描述 一律走 mark_doc_completed 讓 company_status 刷新
@@ -4844,8 +4862,8 @@ def parse_special_command(text: str, group_id: str) -> Optional[Dict]:
     if m:
         docs = m.group(2).strip()
         if docs in ("", "全部", "完畢", "都好", "好了"):
-            return {"type": "clear_missing_docs", "name": m.group(1)}
-        return {"type": "mark_doc_completed", "name": m.group(1), "doc": docs}
+            return {"type": "clear_missing_docs", "name": m.group(1), "company": ""}
+        return {"type": "mark_doc_completed", "name": m.group(1), "company": "", "doc": docs}
 
     # 加送：@AI 姓名 送公司[+公司] [金額/期數] → 加入同時送件清單，不換掉原本的
     m = re.match(r"^([\u4e00-\u9fff]{2,6})\s*送\s*([^\s]+)(?:\s+(\d+(?:\.\d+)?)\s*萬?\s*[/／]\s*(\d+)\s*期?)?\s*$", clean)
@@ -7826,6 +7844,7 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
     if t == "set_missing_docs":
         name = cmd["name"]
         docs_str = cmd.get("docs", "")
+        cmd_company = cmd.get("company", "").strip()
         target = _resolve_target_strict(cmd, name, group_id, reply_token, "缺件")
         if not target:
             return
@@ -7835,12 +7854,50 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
         if not docs_list:
             reply_text(reply_token, f"❌ 請給缺件，例：@AI {name} 缺 身分證+薪轉+帳單")
             return
+        # Phase detection
+        report_sec = target["report_section"] or ""
+        current_co = target["current_company"] or ""
+        concurrent_str = target["concurrent_companies"] or ""
+        concurrent_list = [c.strip() for c in concurrent_str.split(",") if c.strip()]
+        active_list = ([current_co] if current_co else []) + concurrent_list
+        is_pre_send = (report_sec == "送件") or (not current_co)
+        target_company = cmd_company
+        if not target_company and not is_pre_send:
+            if len(active_list) >= 2:
+                reply_text(reply_token,
+                           f"⚠️ {name} 同送 {'、'.join(active_list)} — 缺件要指定哪家\n"
+                           f"例：@AI {name} {active_list[0]} 缺 {docs_list[0]}")
+                return
+            target_company = current_co
+        if target_company:
+            co_norm = normalize_section(target_company)
+            if not any(normalize_section(c) == co_norm for c in active_list):
+                reply_text(reply_token,
+                           f"⚠️ {target_company} 不在 {name} 目前送件清單裡\n"
+                           f"目前 current={current_co or '無'}、同送={'、'.join(concurrent_list) or '無'}")
+                return
+            try:
+                cs = json.loads(target["company_status"] or "{}")
+            except Exception:
+                cs = {}
+            cs_key = next((k for k in cs.keys() if normalize_section(k) == co_norm), target_company)
+            cs[cs_key] = f"待補{'/'.join(docs_list)}"
+            with db_conn(commit=True) as conn:
+                cur = conn.cursor()
+                cur.execute("UPDATE customers SET company_status=?, updated_at=? WHERE case_id=?",
+                            (json.dumps(cs, ensure_ascii=False), now_iso(), target["case_id"]))
+            update_customer(target["case_id"], text=f"{name} {target_company} 缺件：{'/'.join(docs_list)}",
+                            from_group_id=group_id)
+            reply_text(reply_token,
+                       f"📋 {name} {target_company} 已記缺件：{' / '.join(docs_list)}\n"
+                       f"補完後打：@AI {name} {target_company} 已補 {docs_list[0]}")
+            return
+        # Phase 1（送件區塊或還沒 current）→ pending_docs 全家共用
         pending = ",".join(docs_list)
         new_text = f"{name} 缺件：{'/'.join(docs_list)}"
         update_customer(target["case_id"], pending_docs=pending,
                         text=new_text, from_group_id=group_id)
         _refresh_company_status_after_docs(target["case_id"], new_text)
-        # 記缺件推送：只有 A 群打才回貼業務群；業務群自己打只紀錄不推送
         _a_group_ids = set(get_a_group_ids()) | {A_GROUP_ID}
         if group_id in _a_group_ids and target["source_group_id"] and target["source_group_id"] != group_id:
             push_text(target["source_group_id"],
@@ -7851,28 +7908,57 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
     if t == "mark_doc_completed":
         name = cmd["name"]
         doc = cmd.get("doc", "").strip()
+        cmd_company = cmd.get("company", "").strip()
         target = _resolve_target_strict(cmd, name, group_id, reply_token, "已補")
         if not target:
             return
         if not _check_active_or_warn(target, reply_token, "已補", name):
             return
+        # Phase detection
+        report_sec = target["report_section"] or ""
+        current_co = target["current_company"] or ""
+        concurrent_str = target["concurrent_companies"] or ""
+        concurrent_list = [c.strip() for c in concurrent_str.split(",") if c.strip()]
+        active_list = ([current_co] if current_co else []) + concurrent_list
+        is_pre_send = (report_sec == "送件") or (not current_co)
+        target_company = cmd_company
+        if not target_company and not is_pre_send:
+            if len(active_list) >= 2:
+                reply_text(reply_token,
+                           f"⚠️ {name} 同送 {'、'.join(active_list)} — 已補要指定哪家\n"
+                           f"例：@AI {name} {active_list[0]} 已補 {doc}")
+                return
+            target_company = current_co
+        if target_company:
+            co_norm = normalize_section(target_company)
+            if not any(normalize_section(c) == co_norm for c in active_list):
+                reply_text(reply_token,
+                           f"⚠️ {target_company} 不在 {name} 目前送件清單裡")
+                return
+            try:
+                cs = json.loads(target["company_status"] or "{}")
+            except Exception:
+                cs = {}
+            cs_key = next((k for k in cs.keys() if normalize_section(k) == co_norm), target_company)
+            cs[cs_key] = f"已補{doc}"
+            with db_conn(commit=True) as conn:
+                cur = conn.cursor()
+                cur.execute("UPDATE customers SET company_status=?, updated_at=? WHERE case_id=?",
+                            (json.dumps(cs, ensure_ascii=False), now_iso(), target["case_id"]))
+            update_customer(target["case_id"], text=f"{name} {target_company} 已補{doc}",
+                            from_group_id=group_id)
+            reply_text(reply_token, f"✅ {name} {target_company} 已補 {doc}")
+            return
+        # Phase 1 fallback: pending_docs 邏輯
         old = (target["pending_docs"] or "").strip()
         old_list = [d.strip() for d in old.split(",") if d.strip()]
         was_pending = doc in old_list
         new_list = [d for d in old_list if d != doc]
         new_pending = ",".join(new_list)
-        # 分兩種情況：
-        # (1) doc 是 pending_docs 項目（合照/身分證 等）→ 補完後狀態欄要「清空」
-        #     用內部紀錄文字「缺件補完:XX」，extract_status_summary 會回空
-        # (2) doc 不是 pending_docs 項目（時段/照會/申覆 等狀態更新）→ 狀態欄要「顯示已補XX」
-        #     用「已補XX」文字，extract_status_summary 正確識別
         if was_pending:
             new_text = f"{name} 缺件補完:{doc}"
         else:
             new_text = f"{name} 已補{doc}"
-        # 缺件補完後仍應留在「送件」區塊（業務通知行政可以送、照會還沒回）
-        # 規則：原本是 缺件 case（pending 有值）+ 補完到空（new_list 空）+ 公司還沒回貼（company_status 空）
-        # → 強制 report_section="送件" 直到 A 群實際回貼
         update_kw = {"pending_docs": new_pending}
         if was_pending and not new_list:
             try:
@@ -7888,7 +7974,6 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
             push_msg = f"✅ {name} 已補 {doc}\n還缺：{' / '.join(new_list)}"
         else:
             push_msg = f"✅ {name} 已補 {doc}\n🎉 缺件全部補完！"
-        # 已補推送：業務群打→推 A 群；A 群打→推客戶所屬業務群
         _push_target = _resolve_push_target_for_docs(group_id, target["source_group_id"])
         if _push_target and _push_target != group_id:
             push_text(_push_target, push_msg)
@@ -7897,13 +7982,32 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
 
     if t == "clear_missing_docs":
         name = cmd["name"]
+        cmd_company = cmd.get("company", "").strip()
         target = _resolve_target_strict(cmd, name, group_id, reply_token, "已補")
         if not target:
             return
         if not _check_active_or_warn(target, reply_token, "已補", name):
             return
+        if cmd_company:
+            # 指定公司 → 清掉 cs[公司]
+            co_norm = normalize_section(cmd_company)
+            try:
+                cs = json.loads(target["company_status"] or "{}")
+            except Exception:
+                cs = {}
+            cs_key = next((k for k in cs.keys() if normalize_section(k) == co_norm), None)
+            if cs_key:
+                cs.pop(cs_key, None)
+                with db_conn(commit=True) as conn:
+                    cur = conn.cursor()
+                    cur.execute("UPDATE customers SET company_status=?, updated_at=? WHERE case_id=?",
+                                (json.dumps(cs, ensure_ascii=False), now_iso(), target["case_id"]))
+            update_customer(target["case_id"], text=f"{name} {cmd_company} 缺件已全部補完",
+                            from_group_id=group_id)
+            reply_text(reply_token, f"✅ {name} {cmd_company} 缺件已全部清除")
+            return
+        # 不指定公司 → 清 pending_docs（phase 1 行為）
         new_text = f"{name} 缺件已全部補完"
-        # 缺件全清也保留在送件區塊（直到 A 群實際回貼）
         update_kw = {"pending_docs": ""}
         try:
             _cs_now = json.loads(target["company_status"] or "{}")
@@ -7915,7 +8019,6 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
         update_customer(target["case_id"], text=new_text, from_group_id=group_id, **update_kw)
         _refresh_company_status_after_docs(target["case_id"], new_text)
         push_msg = f"✅ {name} 缺件已全部清除"
-        # 已補推送：業務群打→推 A 群；A 群打→推客戶所屬業務群
         _push_target = _resolve_push_target_for_docs(group_id, target["source_group_id"])
         if _push_target and _push_target != group_id:
             push_text(_push_target, push_msg)
