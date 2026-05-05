@@ -1125,8 +1125,8 @@ PLAN_ELIGIBILITY_RULES = [
         "priority": 55,
         "rules": [
             {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
-            {"type": "manual", "label": "年齡 18~60（55 以上補保人、超過 60 也可試送）",
-             "hint": "硬性：18 歲以上、軟性：60 以上實務上仍會送、有過件機會"},
+            {"type": "simple", "label": "年齡 ≥ 18（自動算）", "field": "age", "op": ">=", "value": 18,
+             "manual_check": "55+ 補保人、60+ 軟性可試送"},
             {"type": "simple", "label": "至少 2 位聯絡人、其中 1 位為二等親屬", "op": "any_contact_2nd_kin"},
             {"type": "manual", "label": "💡 警示戶可送（但需補保人）"},
         ],
@@ -1138,8 +1138,8 @@ PLAN_ELIGIBILITY_RULES = [
         "priority": 53,
         "rules": [
             {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
-            {"type": "manual", "label": "年齡 18~60（55 以上補保人、超過 60 也可試送）",
-             "hint": "硬性：18 歲以上、軟性：60 以上實務上仍會送、有過件機會"},
+            {"type": "simple", "label": "年齡 ≥ 18（自動算）", "field": "age", "op": ">=", "value": 18,
+             "manual_check": "55+ 補保人、60+ 軟性可試送"},
             {"type": "simple", "label": "至少 2 位聯絡人、其中 1 位為二等親屬", "op": "any_contact_2nd_kin"},
             {"type": "simple", "label": "原融（機車無貸款）", "op": "not_has_dynbao",
              "manual_check": "確認要貸的機車本身沒貸款"},
@@ -1161,9 +1161,9 @@ PLAN_ELIGIBILITY_RULES = [
                 {"type": "simple", "label": "3 個月勞保/軍保/公保 或 薪轉",
                  "field": "eval_labor_ins", "op": "in", "value": ["公司保", "軍保", "公保"],
                  "manual_check": "需確認滿 3 個月、或薪轉滿 3 個月"},
-                {"type": "simple", "label": "近一個月內銀行撥款（自動偵測 debt_list 銀行 pa≤1）", "op": "recent_bank_loan"},
-                {"type": "manual", "label": "近一個月內有 中租/和潤/裕融/亞太/21/銀行 撥款",
-                 "hint": "須附撥款明細"},
+                {"type": "simple", "label": "近一個月內有 中租/和潤/裕融/亞太/21/銀行 撥款（自動偵測 pa≤1）",
+                 "op": "recent_loan_from", "value": ["中租", "合迪", "和潤", "裕融", "亞太", "21", "銀行"],
+                 "manual_check": "須附撥款明細"},
                 {"type": "simple", "label": "持有不動產（權狀、不可有私設）",
                  "field": "eval_property", "op": "contains", "value": "不動產",
                  "exclude_field": "eval_alert", "exclude_value": "有",
@@ -2214,6 +2214,19 @@ def _customer_recent_bank_loan(customer):
     except: pass
     return False
 
+def _customer_recent_loan_from(customer, companies):
+    """近月（pa ≤ 1）從指定公司清單之一撥款"""
+    try:
+        debts = json.loads(customer.get("debt_list") or "[]") if customer.get("debt_list") else []
+        for d in debts:
+            co = d.get("co", "") or ""
+            if not any(kw in co for kw in companies): continue
+            try:
+                if int((d.get("pa", "") or "0").strip()) <= 1: return True
+            except: continue
+    except: pass
+    return False
+
 GROUP21_KEYWORDS = ["21", "二十一", "麻吉", "分貝", "分唄", "樂分期", "分期趣", "慢點付"]
 
 def _customer_21group_max_paid(customer):
@@ -2479,6 +2492,12 @@ def _check_rule(rule, customer):
             if _customer_recent_bank_loan(customer):
                 return ("pass", label, "有近月銀行撥款（pa≤1）")
             return ("fail", label, "無近月銀行撥款紀錄")
+        # 近月從指定公司撥款（pa ≤ 1）— value=公司清單
+        if op == "recent_loan_from":
+            cos = value if isinstance(value, list) else [value]
+            if _customer_recent_loan_from(customer, cos):
+                return ("pass", label, f"有近月從 {'/'.join(cos)} 撥款")
+            return ("fail", label, f"無近月從 {'/'.join(cos)} 撥款")
         # 21 體系既有客戶繳 N 期+
         if op == "group21_paid_ge":
             paid = _customer_21group_max_paid(customer)
@@ -15489,6 +15508,9 @@ label{{display:block;font-size:12px;font-weight:700;color:#374151;margin-bottom:
   <button type="button" onclick="previewDailyLine()" style="background:#eef2ff;color:#3730a3;border:1px solid #c7d2fe;padding:11px 22px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;margin-left:10px">🔍 預覽日報那行</button>
   <a href="/edit-pending?case_id={h(case_id)}" class="btn-cancel">改個資</a>
   <a href="/report" class="btn-cancel">回日報</a>
+</div>
+<div style="margin-top:10px">
+  <button type="button" onclick="checkEligibility()" style="background:#fef3c7;color:#854d0e;border:1px solid #fde047;padding:11px 22px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer">📋 對照規則表（看可送哪幾家）</button>
 </div>
 <div id="previewBox" style="display:none;margin-top:14px;padding:14px;background:#fefce8;border:1px solid #fde68a;border-radius:8px;font-family:monospace;font-size:13px"></div>
 <div id="eligibilityBox" style="display:none;margin-top:14px;padding:14px;background:#fff;border:1px solid #e5e7eb;border-radius:8px;font-size:13px"></div>
