@@ -7163,25 +7163,11 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
                     for h in _r_history
                 )
                 if _has_disbursed_history:
-                    if new_concurrent and not promoted_co:
-                        # 升 concurrent 第一家當新 current、保留撥款記錄
-                        promoted_co = new_concurrent.pop(0)
+                    # history 已撥款歸檔：current/concurrent 都不動、只刪 route_plan 內該公司
+                    # 不 promote、不整筆結案
+                    if not disbursed_archived_co:
                         disbursed_archived_co = co
-                        continue
-                    elif not new_concurrent:
-                        # 沒其他家在送 → 整筆結案
-                        close_text = f"{name} {co} 撥款完成、整筆結案"
-                        update_customer(target["case_id"], status="CLOSED",
-                                        text=close_text, from_group_id=group_id)
-                        push_text(target["source_group_id"], close_text)
-                        reply_text(reply_token,
-                                   f"✅ {name} 整筆結案（{co} 已撥款 {approved}、無其他在送）")
-                        return
-                    else:
-                        # 已升過、累加 archived（多家撥款一起歸檔的罕見 case）
-                        if not disbursed_archived_co:
-                            disbursed_archived_co = co
-                        continue
+                    continue
                 skipped_not_in.append(co)
         if removed or disbursed_archived_co:
             update_kw = {
@@ -7189,40 +7175,49 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
                 "from_group_id": group_id,
             }
             if disbursed_archived_co:
-                # current 歸檔：升下一家當新 current、route_plan 內該家所有 entry 徹底移除
-                # 若新 current 已核准未撥款 → 維持「待撥款」區塊、用新 current 的核准金額
-                # 若新 current 還沒核准 → 清「待撥款」、讓日報歸到新 current 區塊
-                update_kw["current_company"] = promoted_co
-                _promoted_norm = normalize_section(promoted_co)
                 _archive_norm = normalize_section(disbursed_archived_co)
                 _promoted_entry = None
-                for h in _r_history:
-                    if (normalize_section(h.get("company", "")) == _promoted_norm
-                            and h.get("amount")
-                            and not h.get("disbursed")):
-                        _promoted_entry = h
-                        break
-                if _promoted_entry:
-                    update_kw["approved_amount"] = _promoted_entry.get("amount", "")
-                    update_kw["report_section"] = "待撥款"
-                    update_kw["disbursement_date"] = ""  # 新 current 還沒撥、清掉
-                else:
-                    update_kw["approved_amount"] = ""
-                    update_kw["report_section"] = ""
-                    update_kw["disbursement_date"] = ""
-                # route_plan 徹底刪除歸檔公司的 history 跟 order entry
+                # route_plan 徹底刪除歸檔公司的 history 跟 order entry（兩種歸檔場景共用）
                 _new_history = [h for h in _r_history
                                 if normalize_section(h.get("company", "")) != _archive_norm]
                 _old_order = _route_data_chk.get("order", []) or []
                 _new_order = [o for o in _old_order
                               if normalize_section(o) != _archive_norm]
-                _new_idx = next((i for i, o in enumerate(_new_order)
-                                 if normalize_section(o) == _promoted_norm), 0)
+                if promoted_co:
+                    # current 歸檔：升下一家當新 current
+                    update_kw["current_company"] = promoted_co
+                    _promoted_norm = normalize_section(promoted_co)
+                    for h in _r_history:
+                        if (normalize_section(h.get("company", "")) == _promoted_norm
+                                and h.get("amount")
+                                and not h.get("disbursed")):
+                            _promoted_entry = h
+                            break
+                    if _promoted_entry:
+                        update_kw["approved_amount"] = _promoted_entry.get("amount", "")
+                        update_kw["report_section"] = "待撥款"
+                        update_kw["disbursement_date"] = ""
+                    else:
+                        update_kw["approved_amount"] = ""
+                        update_kw["report_section"] = ""
+                        update_kw["disbursement_date"] = ""
+                    _new_idx = next((i for i, o in enumerate(_new_order)
+                                     if normalize_section(o) == _promoted_norm), 0)
+                    text_note = f"{name} {disbursed_archived_co} 已刪除（{promoted_co} 接續）"
+                else:
+                    # history 歸檔：current/concurrent 不動、只清 route_plan 該公司 + 撥款日期
+                    update_kw["disbursement_date"] = ""
+                    _new_idx = _route_data_chk.get("current_index", 0)
+                    if 0 <= _new_idx < len(_old_order):
+                        old_co = _old_order[_new_idx]
+                        if normalize_section(old_co) == _archive_norm:
+                            _new_idx = next((i for i, o in enumerate(_new_order)
+                                             if normalize_section(o) == normalize_section(current_co)), 0)
+                    text_note = f"{name} {disbursed_archived_co} 撥款記錄已刪除（current 不動）"
                 _route_data_chk["history"] = _new_history
                 _route_data_chk["order"] = _new_order
                 _route_data_chk["current_index"] = _new_idx
                 update_kw["route_plan"] = json.dumps(_route_data_chk, ensure_ascii=False)
-                text_note = f"{name} {disbursed_archived_co} 已刪除（{promoted_co} 接續）"
                 if removed:
                     text_note += f"；同送移除：{'、'.join(removed)}"
             else:
@@ -7233,10 +7228,13 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
         msgs = []
         if disbursed_archived_co:
             msgs.append(f"✅ {disbursed_archived_co} 已刪除（route_plan 跟撥款記錄都清掉）")
-            if _promoted_entry:
-                msgs.append(f"🆕 {promoted_co} 已核准 {_promoted_entry.get('amount','')}、留在「待撥款」區塊")
+            if promoted_co:
+                if _promoted_entry:
+                    msgs.append(f"🆕 {promoted_co} 已核准 {_promoted_entry.get('amount','')}、留在「待撥款」區塊")
+                else:
+                    msgs.append(f"🆕 接續 current：{promoted_co}")
             else:
-                msgs.append(f"🆕 接續 current：{promoted_co}")
+                msgs.append(f"📌 current 維持 {current_co}（不動）")
             if removed:
                 msgs.append(f"❌ 同送也移除：{'、'.join(removed)}")
             if new_concurrent:
