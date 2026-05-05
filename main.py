@@ -14758,34 +14758,9 @@ async def case_edit_post(request: Request):
     with db_conn(commit=True) as conn:
         cur = conn.cursor()
         cur.execute("UPDATE customers SET company_status=? WHERE case_id=?", (cs_json, case_id))
-        # 自動補 route_plan history：如果改成「待撥款」+ 有金額 + 有 current_company
-        # → 把該家當「核准」寫進 history，避免日報又把客戶顯示在原公司區塊（重複）
-        rsec = (f.get("report_section") or "").strip()
-        amt = (f.get("approved_amount") or "").strip()
-        cur_co = (f.get("current_company") or "").strip()
-        disb = (f.get("disbursement_date") or "").strip()
-        if rsec == "待撥款" and amt and cur_co:
-            cur.execute("SELECT route_plan FROM customers WHERE case_id=?", (case_id,))
-            rp_row = cur.fetchone()
-            try:
-                rp = parse_route_json(rp_row["route_plan"] or "") if rp_row else {"order": [], "current_index": 0, "history": []}
-            except Exception:
-                rp = {"order": [], "current_index": 0, "history": []}
-            history = rp.get("history", [])
-            # 找該公司的核准紀錄
-            found = False
-            for hh in history:
-                if hh.get("company") == cur_co and hh.get("status") == "核准":
-                    hh["amount"] = amt
-                    if disb:
-                        hh["disbursed"] = disb
-                    found = True
-                    break
-            if not found:
-                history.append({"company": cur_co, "status": "核准", "amount": amt, "disbursed": disb})
-            rp["history"] = history
-            cur.execute("UPDATE customers SET route_plan=? WHERE case_id=?",
-                        (json.dumps(rp, ensure_ascii=False), case_id))
+        # 移除自動 inject history 邏輯：太武斷會把 current_company 誤當核准家寫進 history
+        # （例：approved_amount 是 21 的、current 切到和裕、原邏輯會誤把和裕當核准）
+        # 業務要記某家核准請改用 LINE 指令 `@AI 姓名 公司 核准 金額`
     return RedirectResponse(f"/case-edit?case_id={case_id}&saved=1", status_code=303)
 
 
