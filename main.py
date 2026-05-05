@@ -7121,10 +7121,17 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
             co_norm = normalize_section(co)
             if co_norm and co_norm == current_norm:
                 # 該家是 current → 看 history 有沒有撥款記錄
+                # 撥款後的 entry 通常是 status="核准" + disbursed="M/D"（set_disbursed_in_history 不改 status）
+                # 也兼容 status="撥款"（disburse handler 找不到 entry 時新增的）
                 _has_disbursed = any(
-                    normalize_section(h.get("company", "")) == co_norm and h.get("status") == "撥款"
+                    normalize_section(h.get("company", "")) == co_norm and (
+                        h.get("disbursed") or h.get("status") == "撥款"
+                    )
                     for h in _r_history
                 )
+                # 雙保險：history 沒記錄但 customer.disbursement_date 有值（單家撥款常見）
+                if not _has_disbursed and (target["disbursement_date"] or "").strip():
+                    _has_disbursed = True
                 if _has_disbursed:
                     if new_concurrent:
                         # 升 concurrent 第一家當新 current、保留撥款記錄
