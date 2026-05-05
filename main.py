@@ -14475,7 +14475,7 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
       <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
         <button type="submit" class="btn-save">💾 儲存資料</button>
         <a href="/adminb/download-excel?case_id={h(case_id)}" class="btn-dl" onclick="return confirm('將根據勾選的方案下載 Excel/TXT，確定嗎？')">📥 下載EXCEL/TXT</a>
-        <button type="button" onclick="checkEligibilityAdminB()" style="background:#fef3c7;color:#854d0e;border:1px solid #fde047;padding:11px 22px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;">📋 對照規則表</button>
+        {'<button type="button" onclick="checkEligibilityAdminB()" style="background:#fef3c7;color:#854d0e;border:1px solid #fde047;padding:11px 22px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;">📋 對照規則表</button>' if role == 'admin' else ''}
       </div>
       <div style="font-size:12px;color:#8a7a68;margin-top:8px;">請先儲存資料再下載；喬美 PDF 請使用「補充資料」區的「簽名並下載」按鈕</div>
       <div id="eligibilityBoxAdminB" style="display:none;margin-top:14px;padding:14px;background:#fff;border:1px solid #e5e7eb;border-radius:8px;font-size:13px"></div>
