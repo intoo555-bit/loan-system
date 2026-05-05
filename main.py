@@ -7189,11 +7189,12 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
                 "from_group_id": group_id,
             }
             if disbursed_archived_co:
-                # current 歸檔：升下一家當新 current
+                # current 歸檔：升下一家當新 current、route_plan 內該家所有 entry 徹底移除
                 # 若新 current 已核准未撥款 → 維持「待撥款」區塊、用新 current 的核准金額
                 # 若新 current 還沒核准 → 清「待撥款」、讓日報歸到新 current 區塊
                 update_kw["current_company"] = promoted_co
                 _promoted_norm = normalize_section(promoted_co)
+                _archive_norm = normalize_section(disbursed_archived_co)
                 _promoted_entry = None
                 for h in _r_history:
                     if (normalize_section(h.get("company", "")) == _promoted_norm
@@ -7209,7 +7210,19 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
                     update_kw["approved_amount"] = ""
                     update_kw["report_section"] = ""
                     update_kw["disbursement_date"] = ""
-                text_note = f"{name} {disbursed_archived_co} 撥款完成、移除（{promoted_co} 接續）"
+                # route_plan 徹底刪除歸檔公司的 history 跟 order entry
+                _new_history = [h for h in _r_history
+                                if normalize_section(h.get("company", "")) != _archive_norm]
+                _old_order = _route_data_chk.get("order", []) or []
+                _new_order = [o for o in _old_order
+                              if normalize_section(o) != _archive_norm]
+                _new_idx = next((i for i, o in enumerate(_new_order)
+                                 if normalize_section(o) == _promoted_norm), 0)
+                _route_data_chk["history"] = _new_history
+                _route_data_chk["order"] = _new_order
+                _route_data_chk["current_index"] = _new_idx
+                update_kw["route_plan"] = json.dumps(_route_data_chk, ensure_ascii=False)
+                text_note = f"{name} {disbursed_archived_co} 已刪除（{promoted_co} 接續）"
                 if removed:
                     text_note += f"；同送移除：{'、'.join(removed)}"
             else:
@@ -7219,7 +7232,7 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
             push_text(target["source_group_id"], text_note)
         msgs = []
         if disbursed_archived_co:
-            msgs.append(f"✅ {disbursed_archived_co} 已撥款 {approved}、從進行中清單移除（撥款記錄保留）")
+            msgs.append(f"✅ {disbursed_archived_co} 已刪除（route_plan 跟撥款記錄都清掉）")
             if _promoted_entry:
                 msgs.append(f"🆕 {promoted_co} 已核准 {_promoted_entry.get('amount','')}、留在「待撥款」區塊")
             else:
