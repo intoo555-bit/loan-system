@@ -847,3 +847,90 @@ priority   公司           金額  特點
 # 他行代償（有貸款 + 限定前貸公司）
 # 目前 manual、未來可加 op：has_dynbao_from_companies
 ```
+
+---
+
+## 2026/05 新增功能
+
+### 新 DB 欄位（customers）
+
+- `eval_alert_warning` — 警示戶（是/否）
+- `eval_alert_warning_method` — 撥款方式（撥二等親/現金或朋友）— 警示戶用
+- `eval_house_private` — 房屋私設（是/否）— 居住自有時必填
+- `unloan_vehicles` — 無貸款車輛（JSON 陣列、業務評估送件用）
+
+### 新 LINE 指令
+
+#### `@AI 姓名 公司 取消撥款`（line 7646）
+- 把該家在 route_plan history 的「撥款」狀態降回「核准」、清掉 disbursed
+- customer.disbursement_date 沒其他撥款記錄就清空、有就保留
+- 該家還算「核准」、客戶回到「待撥款」區塊
+- 其他家完全不動
+
+### `@AI 姓名 公司 結案` 擴充（已撥款歸檔）
+
+修 commit：4e11820 → 60ff4ef → 3b283c9 → 40f5f3d → ed59234 → bbdf0e1（一系列）
+
+業務心智：「結案」= 把該家從進行中清單移除（不是整筆結案）。已撥款的也可結案、撥款記錄整個刪掉。
+
+**三種行為**（同一個指令）：
+
+| 場景 | 行為 |
+|------|------|
+| current 已撥款 + concurrent 有家 | 升 concurrent 第一家當 current、route_plan 內該公司 entry **徹底刪除** |
+| current 已撥款 + 沒 concurrent | 整筆結案 |
+| current 是別家、要刪的只在 history 已撥款 | route_plan 內該公司 **徹底刪除**、current/concurrent 不動、disbursement_date 清空 |
+| 該家是 concurrent、未撥款 | 從同送清單移除（原行為）|
+| 該家是 current、未撥款 | 提示用「取消核准」（原行為）|
+
+**新 current 接續邏輯**：
+- 新 current 在 history 已核准未撥款 → 用該家金額 + report_section="待撥款" + disbursement_date=""
+- 新 current 還沒核准 → 清 approved_amount/report_section/disbursement_date、讓日報自動歸新 current 區塊
+
+**判斷已撥款**：
+- `h.get("disbursed")` 有值（撥款後 set_disbursed_in_history 只 set disbursed 不改 status）
+- 或 `h.get("status") == "撥款"`（disburse handler 找不到 entry 時新增的）
+- 雙保險：customer.disbursement_date 有值
+
+**route_plan 刪除**：
+- history：移除該公司所有 entry
+- order：移除該公司
+- current_index：重指 promoted_co 位置（current 歸檔）或維持 current（history 歸檔）
+- case_logs 仍保留（audit log 用）
+
+### 網頁日報跟 BOT 對齊（commit a07ccf4）
+
+**問題**：網頁日報待撥款用 `current_company` + `approved_amount` + `disbursement_date` 三個獨立欄位，BOT 從 `route_plan.history` 讀。撥款指令只更新 history 不動 current_company → 不同步。
+
+例：蕭嘉宏 BOT 顯示「亞太 12萬(撥款4/30)」、網頁顯示「和裕 核准12萬(撥款4/30)」。
+
+**修法**：網頁待撥款區塊不論單家/多家都從 history 讀（render_customer_row, line 13066~），跟 BOT 一致。
+
+### 網頁批次結案推 LINE（commit b7e2476）
+
+`/report/batch-close` 結案後 push 訊息到客戶所在業務群（單筆「📝 王小明 網頁結案」、多筆同群「📝 網頁批次結案 N 筆：...」整合一條）。
+
+### COMPANY_ALIAS 修正（commit ef3993f）
+
+移除「歐」→「商品貸」的單字 alias（撞到所有姓歐的客戶被誤判為送商品貸）。單字 alias 風險高、寧缺勿濫。
+
+### PDF / 警示戶 / 房屋私設（commit a4f74ea）
+
+- /customer-pdf 改用 html2pdf.js 自動下載
+- 客戶卡 PDF：加警示戶 banner、房屋私設高亮、欠費總額自動加總、車牌+出廠年月、移除「行業/車輛」row
+- /new-customer + /edit-pending：警示戶（排第一）+ 撥款方式 + 房屋私設（自有必填）+ 無貸款車輛區塊
+- adminB 規則：居住自有 + 房屋私設=有 → 自動填 live_status="父母名下"
+- map_live_status 修正：「父母名下」優先比對「親屬」、不被「名下」keyword 誤判成自有
+- 申請書檔名：亞太商品/亞太機車15萬/亞太機車25萬/亞太工會機車（去掉「範本」字尾）
+- 第一 Y13/Y14：保密/無可知情→「是」、可知情/空→清空
+
+### 申請書照會話術 vs 申請書欄位（規則對齊）
+
+照會話術（generate_notification_text）：
+- **套 adminB 規則**：月薪/年資/居住時間/學歷
+- **不套規則（DB 原值）**：居住狀況（宿舍說宿舍、父母說父母）
+
+申請書填入（_build_cell_map）：仍套 adminB 全部規則（含租屋/宿舍→親屬）。
+
+兩者刻意不同——照會話術要照客戶實際情況、申請書要符合公司審件規則。
+
