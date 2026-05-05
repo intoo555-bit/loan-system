@@ -14679,30 +14679,8 @@ async def case_edit_preview(request: Request):
             r["company_status"] = data["company_status_json"] or "{}"
         except Exception:
             pass
-    # 預覽也要套「待撥款 + 金額 + current → 補 route_plan history 核准」邏輯
-    # （否則預覽會多顯示在原公司區塊、跟實際儲存後的日報不一致）
-    if (r.get("report_section") == "待撥款" and (r.get("approved_amount") or "").strip()
-            and (r.get("current_company") or "").strip()):
-        try:
-            rp = parse_route_json(r.get("route_plan") or "")
-        except Exception:
-            rp = {"order": [], "current_index": 0, "history": []}
-        history = rp.get("history", [])
-        cur_co = r["current_company"]
-        amt = r["approved_amount"]
-        disb = r.get("disbursement_date") or ""
-        found = False
-        for hh in history:
-            if hh.get("company") == cur_co and hh.get("status") == "核准":
-                hh["amount"] = amt
-                if disb:
-                    hh["disbursed"] = disb
-                found = True
-                break
-        if not found:
-            history.append({"company": cur_co, "status": "核准", "amount": amt, "disbursed": disb})
-        rp["history"] = history
-        r["route_plan"] = json.dumps(rp, ensure_ascii=False)
+    # 移除自動 inject history：太武斷會把 current_company 誤當核准家
+    # 預覽就用實際 DB 的 route_plan、跟 case_edit_post 行為一致
     # 用 sqlite Row 的 dict 行為：build_section_map 用 row[key]、需要 dict-like
     # 包成 sqlite3.Row 的替代
     class FakeRow:
