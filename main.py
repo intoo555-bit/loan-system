@@ -14542,7 +14542,6 @@ label{{display:block;font-size:12px;font-weight:700;color:#374151;margin-bottom:
 <div style="margin-top:18px">
   <button type="submit" class="btn-save">💾 儲存</button>
   <button type="button" onclick="previewDailyLine()" style="background:#eef2ff;color:#3730a3;border:1px solid #c7d2fe;padding:11px 22px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;margin-left:10px">🔍 預覽日報那行</button>
-  <button type="button" onclick="checkEligibility()" style="background:#fef3c7;color:#854d0e;border:1px solid #fde047;padding:11px 22px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;margin-left:10px">📋 對照規則表</button>
   <a href="/edit-pending?case_id={h(case_id)}" class="btn-cancel">改個資</a>
   <a href="/report" class="btn-cancel">回日報</a>
 </div>
@@ -14617,11 +14616,11 @@ function addCsRow() {{
   div.className = 'cs-row';
   div.style.cssText = 'display:flex;gap:6px;margin-bottom:8px;align-items:start';
   const quickBtns = '<div style="margin-top:4px;display:flex;gap:4px;flex-wrap:wrap">' +
-    '<button type="button" onclick="csQuick(this,\'缺件\')" style="background:#fef3c7;color:#92400e;border:1px solid #fde047;padding:3px 8px;border-radius:4px;cursor:pointer;font-size:11px">+缺件</button>' +
-    '<button type="button" onclick="csQuick(this,\'補照會\')" style="background:#fef3c7;color:#92400e;border:1px solid #fde047;padding:3px 8px;border-radius:4px;cursor:pointer;font-size:11px">+補照會</button>' +
-    '<button type="button" onclick="csQuick(this,\'補申覆\')" style="background:#fef3c7;color:#92400e;border:1px solid #fde047;padding:3px 8px;border-radius:4px;cursor:pointer;font-size:11px">+補申覆</button>' +
-    '<button type="button" onclick="csQuick(this,\'補資料\')" style="background:#fef3c7;color:#92400e;border:1px solid #fde047;padding:3px 8px;border-radius:4px;cursor:pointer;font-size:11px">+補資料</button>' +
-    '<button type="button" onclick="csQuick(this,\'已補完\')" style="background:#dcfce7;color:#166534;border:1px solid #86efac;padding:3px 8px;border-radius:4px;cursor:pointer;font-size:11px">已補→已補完</button>' +
+    '<button type="button" onclick="csQuick(this,\\\'缺件\\\')" style="background:#fef3c7;color:#92400e;border:1px solid #fde047;padding:3px 8px;border-radius:4px;cursor:pointer;font-size:11px">+缺件</button>' +
+    '<button type="button" onclick="csQuick(this,\\\'補照會\\\')" style="background:#fef3c7;color:#92400e;border:1px solid #fde047;padding:3px 8px;border-radius:4px;cursor:pointer;font-size:11px">+補照會</button>' +
+    '<button type="button" onclick="csQuick(this,\\\'補申覆\\\')" style="background:#fef3c7;color:#92400e;border:1px solid #fde047;padding:3px 8px;border-radius:4px;cursor:pointer;font-size:11px">+補申覆</button>' +
+    '<button type="button" onclick="csQuick(this,\\\'補資料\\\')" style="background:#fef3c7;color:#92400e;border:1px solid #fde047;padding:3px 8px;border-radius:4px;cursor:pointer;font-size:11px">+補資料</button>' +
+    '<button type="button" onclick="csQuick(this,\\\'已補完\\\')" style="background:#dcfce7;color:#166534;border:1px solid #86efac;padding:3px 8px;border-radius:4px;cursor:pointer;font-size:11px">已補→已補完</button>' +
     '</div>';
   div.innerHTML = '<input type="text" class="cs-co fld" placeholder="公司" style="flex:0 0 130px;height:38px">' +
     '<div style="flex:1;display:flex;flex-direction:column">' +
