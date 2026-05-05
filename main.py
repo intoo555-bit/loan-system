@@ -14351,13 +14351,25 @@ def case_edit_get(request: Request, case_id: str = "", saved: str = ""):
     except Exception:
         company_status = {}
     cs_rows_html = ""
+    _cs_quick_btns = (
+        '<div style="margin-top:4px;display:flex;gap:4px;flex-wrap:wrap">'
+        '<button type="button" onclick="csQuick(this,\'缺件\')" style="background:#fef3c7;color:#92400e;border:1px solid #fde047;padding:3px 8px;border-radius:4px;cursor:pointer;font-size:11px">+缺件</button>'
+        '<button type="button" onclick="csQuick(this,\'補照會\')" style="background:#fef3c7;color:#92400e;border:1px solid #fde047;padding:3px 8px;border-radius:4px;cursor:pointer;font-size:11px">+補照會</button>'
+        '<button type="button" onclick="csQuick(this,\'補申覆\')" style="background:#fef3c7;color:#92400e;border:1px solid #fde047;padding:3px 8px;border-radius:4px;cursor:pointer;font-size:11px">+補申覆</button>'
+        '<button type="button" onclick="csQuick(this,\'補資料\')" style="background:#fef3c7;color:#92400e;border:1px solid #fde047;padding:3px 8px;border-radius:4px;cursor:pointer;font-size:11px">+補資料</button>'
+        '<button type="button" onclick="csQuick(this,\'已補完\')" style="background:#dcfce7;color:#166534;border:1px solid #86efac;padding:3px 8px;border-radius:4px;cursor:pointer;font-size:11px">已補→已補完</button>'
+        '</div>'
+    )
     for co_key, status_text in company_status.items():
         # textarea 高度依內容自動調整、最少 2 行
         rows = max(2, status_text.count("\n") + 1)
         cs_rows_html += (
             '<div class="cs-row" style="display:flex;gap:6px;margin-bottom:8px;align-items:start">'
             f'<input type="text" class="cs-co fld" value="{h(co_key)}" style="flex:0 0 130px;height:38px" placeholder="公司">'
-            f'<textarea class="cs-text fld" rows="{rows}" style="flex:1;resize:vertical;min-height:60px" placeholder="第一行 = 日報狀態（如「待補保人」），後面行可寫詳細紀錄">{h(status_text)}</textarea>'
+            '<div style="flex:1;display:flex;flex-direction:column">'
+            f'<textarea class="cs-text fld" rows="{rows}" style="resize:vertical;min-height:60px" placeholder="第一行 = 日報狀態（如「待補保人」），後面行可寫詳細紀錄">{h(status_text)}</textarea>'
+            f'{_cs_quick_btns}'
+            '</div>'
             '<button type="button" class="cs-del" onclick="this.parentElement.remove()" style="background:#fee2e2;color:#dc2626;border:1px solid #fca5a5;padding:9px 12px;border-radius:6px;cursor:pointer;font-size:12px;height:38px">刪</button>'
             '</div>'
         )
@@ -14501,7 +14513,8 @@ label{{display:block;font-size:12px;font-weight:700;color:#374151;margin-bottom:
 </div>
 
 <div class="card">
-  <div class="row"><label>缺件</label>
+  <div class="row"><label>缺件（送件前共用）</label>
+    <p style="font-size:11px;color:#6b7280;margin:0 0 6px">⚠️ 此區是「送件前」全家共用的缺件、開始送件後請改用上面「各家狀態」區塊用 +缺件 鈕記到對應公司、避免每家都標到同樣缺件</p>
     <div id="pendBox" class="chips">{pend_chips}</div>
     <div class="qadd">
       {"".join(f'<button type="button" onclick="quickAddPend(\'{p}\')">+ {p}</button>' for p in pending_common)}
@@ -14592,10 +14605,50 @@ function addCsRow() {{
   const div = document.createElement('div');
   div.className = 'cs-row';
   div.style.cssText = 'display:flex;gap:6px;margin-bottom:8px;align-items:start';
+  const quickBtns = '<div style="margin-top:4px;display:flex;gap:4px;flex-wrap:wrap">' +
+    '<button type="button" onclick="csQuick(this,\'缺件\')" style="background:#fef3c7;color:#92400e;border:1px solid #fde047;padding:3px 8px;border-radius:4px;cursor:pointer;font-size:11px">+缺件</button>' +
+    '<button type="button" onclick="csQuick(this,\'補照會\')" style="background:#fef3c7;color:#92400e;border:1px solid #fde047;padding:3px 8px;border-radius:4px;cursor:pointer;font-size:11px">+補照會</button>' +
+    '<button type="button" onclick="csQuick(this,\'補申覆\')" style="background:#fef3c7;color:#92400e;border:1px solid #fde047;padding:3px 8px;border-radius:4px;cursor:pointer;font-size:11px">+補申覆</button>' +
+    '<button type="button" onclick="csQuick(this,\'補資料\')" style="background:#fef3c7;color:#92400e;border:1px solid #fde047;padding:3px 8px;border-radius:4px;cursor:pointer;font-size:11px">+補資料</button>' +
+    '<button type="button" onclick="csQuick(this,\'已補完\')" style="background:#dcfce7;color:#166534;border:1px solid #86efac;padding:3px 8px;border-radius:4px;cursor:pointer;font-size:11px">已補→已補完</button>' +
+    '</div>';
   div.innerHTML = '<input type="text" class="cs-co fld" placeholder="公司" style="flex:0 0 130px;height:38px">' +
-    '<textarea class="cs-text fld" rows="2" placeholder="第一行 = 日報狀態（如「待補保人」），後面行可寫詳細紀錄" style="flex:1;resize:vertical;min-height:60px"></textarea>' +
+    '<div style="flex:1;display:flex;flex-direction:column">' +
+    '<textarea class="cs-text fld" rows="2" placeholder="第一行 = 日報狀態（如「待補保人」），後面行可寫詳細紀錄" style="resize:vertical;min-height:60px"></textarea>' +
+    quickBtns +
+    '</div>' +
     '<button type="button" onclick="this.parentElement.remove()" style="background:#fee2e2;color:#dc2626;border:1px solid #fca5a5;padding:9px 12px;border-radius:6px;cursor:pointer;font-size:12px;height:38px">刪</button>';
   box.appendChild(div);
+}}
+
+// 各家狀態快捷鈕：把 marker 寫到該家狀態
+function csQuick(btn, type) {{
+  const row = btn.closest('.cs-row');
+  const ta = row ? row.querySelector('.cs-text') : null;
+  if (!ta) return;
+  if (type === '已補完') {{
+    const lines = ta.value.split('\n');
+    if (lines[0] && lines[0].startsWith('待補')) {{
+      lines[0] = '已補' + lines[0].slice(2);
+      ta.value = lines.join('\n');
+    }}
+    return;
+  }}
+  let marker = '';
+  if (type === '缺件') {{
+    const item = prompt('缺什麼？例：勞保、薪轉、身分證');
+    if (!item || !item.trim()) return;
+    marker = '待補' + item.trim();
+  }} else if (type === '補照會') {{
+    marker = '待補照會';
+  }} else if (type === '補申覆') {{
+    marker = '待補申覆';
+  }} else if (type === '補資料') {{
+    marker = '待補資料';
+  }}
+  if (!marker) return;
+  const cur = ta.value.trim();
+  ta.value = marker + (cur ? '\n' + cur : '');
 }}
 
 // 表單送出前：把各家狀態 chip + 缺件 + 同送 + company_status 都同步到 hidden input
