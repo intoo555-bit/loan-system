@@ -4326,25 +4326,24 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
                     if s:
                         return s
                 return _default_sent_for_major(sec_name)
-            # 如果是同時送件的公司但還沒收到A群回貼 → 顯示「已送件」（21/亞太）
+            # 是 concurrent 但無 cs_key → 顯示「已送件」（21/亞太）
             concurrent_list = [c.strip() for c in (row["concurrent_companies"] or "").split(",") if c.strip()]
             is_concurrent = any(normalize_section(c) == sec_name for c in concurrent_list)
-            if is_concurrent:
-                return _default_sent_for_major(sec_name)
-            # 如果客戶已有其他公司的狀態紀錄（例如前一家婉拒後推進），status_short 可能是
-            # 前一家公司的狀態摘要（如「亞太婉拒」），不該顯示在當前送件公司的區塊。
-            if company_status:
-                return _default_sent_for_major(sec_name)
-            # status_short 來自 last_update 第一行：
-            # - 訊息有提公司（如「喬美 婉拒」）→ 只套該家區塊（不污染其他）
-            # - 訊息沒提公司（如「呂布 補申覆」）→ 套所有在送的區塊（泛狀態）
+            # status_short 優先檢查：last_update 提到的公司若 == sec_name → 套
+            # （即使 company_status 有別家紀錄、若 last_update 明確提到該家就要用、避免漏狀態）
             if status_short:
                 mentioned_co = extract_company(first_line) or ""
                 if not mentioned_co:
-                    return status_short  # 泛狀態、所有區塊都套
-                if normalize_section(mentioned_co) == sec_name:
-                    return status_short  # 訊息提到這家 → 套
-                return ""  # 訊息提到別家 → 不套
+                    # 泛狀態（沒提公司）→ 只套到 current 主案、不污染其他
+                    if not company_status:
+                        return status_short
+                elif normalize_section(mentioned_co) == sec_name:
+                    return status_short  # 訊息明確提到這家 → 套
+                # 訊息提到別家 → 不套（fallback 到下面）
+            if is_concurrent:
+                return _default_sent_for_major(sec_name)
+            if company_status:
+                return _default_sent_for_major(sec_name)
             return status_short
 
         # 缺件清單（pending_docs）→ 顯示為「 (缺身分證/薪轉)」
