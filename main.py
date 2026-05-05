@@ -7155,6 +7155,33 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
                     new_concurrent.remove(m)
                     removed.append(m)
             else:
+                # 不在 current 也不在 concurrent → 看 history 是否已撥款（歷史撥款歸檔）
+                _has_disbursed_history = any(
+                    normalize_section(h.get("company", "")) == co_norm and (
+                        h.get("disbursed") or h.get("status") == "撥款"
+                    )
+                    for h in _r_history
+                )
+                if _has_disbursed_history:
+                    if new_concurrent and not promoted_co:
+                        # 升 concurrent 第一家當新 current、保留撥款記錄
+                        promoted_co = new_concurrent.pop(0)
+                        disbursed_archived_co = co
+                        continue
+                    elif not new_concurrent:
+                        # 沒其他家在送 → 整筆結案
+                        close_text = f"{name} {co} 撥款完成、整筆結案"
+                        update_customer(target["case_id"], status="CLOSED",
+                                        text=close_text, from_group_id=group_id)
+                        push_text(target["source_group_id"], close_text)
+                        reply_text(reply_token,
+                                   f"✅ {name} 整筆結案（{co} 已撥款 {approved}、無其他在送）")
+                        return
+                    else:
+                        # 已升過、累加 archived（多家撥款一起歸檔的罕見 case）
+                        if not disbursed_archived_co:
+                            disbursed_archived_co = co
+                        continue
                 skipped_not_in.append(co)
         if removed or disbursed_archived_co:
             update_kw = {
