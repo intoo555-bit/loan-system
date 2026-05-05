@@ -4445,7 +4445,8 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
                         _shown_secs.add(normalize_section(_c.strip()))
             _shown_secs |= approved_sections
             _supp_kw = ["補保人", "補申覆", "補聯徵", "補件", "補資料", "補薪轉",
-                        "補照片", "補時段", "補照會", "補行照", "補在職", "補存摺"]
+                        "補照片", "補時段", "補照會", "補行照", "補在職", "補存摺",
+                        "待補", "申覆", "補上", "補完", "補好", "補繳"]
             for _h in _history:
                 if _h.get("status") != "婉拒":
                     continue
