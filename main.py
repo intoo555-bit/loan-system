@@ -15509,11 +15509,7 @@ label{{display:block;font-size:12px;font-weight:700;color:#374151;margin-bottom:
   <a href="/edit-pending?case_id={h(case_id)}" class="btn-cancel">改個資</a>
   <a href="/report" class="btn-cancel">回日報</a>
 </div>
-<div style="margin-top:10px">
-  <button type="button" onclick="checkEligibility()" style="background:#fef3c7;color:#854d0e;border:1px solid #fde047;padding:11px 22px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer">📋 對照規則表（看可送哪幾家）</button>
-</div>
 <div id="previewBox" style="display:none;margin-top:14px;padding:14px;background:#fefce8;border:1px solid #fde68a;border-radius:8px;font-family:monospace;font-size:13px"></div>
-<div id="eligibilityBox" style="display:none;margin-top:14px;padding:14px;background:#fff;border:1px solid #e5e7eb;border-radius:8px;font-size:13px"></div>
 </form>
 
 <div class="card" style="margin-top:18px">
