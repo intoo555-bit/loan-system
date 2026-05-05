@@ -7162,10 +7162,26 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
                 "from_group_id": group_id,
             }
             if disbursed_archived_co:
-                # current 歸檔：升下一家、清待撥款區塊（讓日報自動歸到新 current 區塊）
+                # current 歸檔：升下一家當新 current
+                # 若新 current 已核准未撥款 → 維持「待撥款」區塊、用新 current 的核准金額
+                # 若新 current 還沒核准 → 清「待撥款」、讓日報歸到新 current 區塊
                 update_kw["current_company"] = promoted_co
-                update_kw["report_section"] = ""
-                update_kw["approved_amount"] = ""  # 清掉、新 current 之後核准重寫
+                _promoted_norm = normalize_section(promoted_co)
+                _promoted_entry = None
+                for h in _r_history:
+                    if (normalize_section(h.get("company", "")) == _promoted_norm
+                            and h.get("amount")
+                            and not h.get("disbursed")):
+                        _promoted_entry = h
+                        break
+                if _promoted_entry:
+                    update_kw["approved_amount"] = _promoted_entry.get("amount", "")
+                    update_kw["report_section"] = "待撥款"
+                    update_kw["disbursement_date"] = ""  # 新 current 還沒撥、清掉
+                else:
+                    update_kw["approved_amount"] = ""
+                    update_kw["report_section"] = ""
+                    update_kw["disbursement_date"] = ""
                 text_note = f"{name} {disbursed_archived_co} 撥款完成、移除（{promoted_co} 接續）"
                 if removed:
                     text_note += f"；同送移除：{'、'.join(removed)}"
@@ -7177,7 +7193,10 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
         msgs = []
         if disbursed_archived_co:
             msgs.append(f"✅ {disbursed_archived_co} 已撥款 {approved}、從進行中清單移除（撥款記錄保留）")
-            msgs.append(f"🆕 接續 current：{promoted_co}")
+            if _promoted_entry:
+                msgs.append(f"🆕 {promoted_co} 已核准 {_promoted_entry.get('amount','')}、留在「待撥款」區塊")
+            else:
+                msgs.append(f"🆕 接續 current：{promoted_co}")
             if removed:
                 msgs.append(f"❌ 同送也移除：{'、'.join(removed)}")
             if new_concurrent:
