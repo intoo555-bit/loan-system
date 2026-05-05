@@ -4218,6 +4218,15 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
                 section = current_co
             else:
                 section = current_co
+        # 補強：route_plan history 有核准未撥款 + 不是「送件」狀態 → 強制歸「待撥款」
+        # （網頁編輯 approved_amount 不會自動同步 report_section、兜底 LINE 日報）
+        if not _is_pre_send and section != "待撥款":
+            try:
+                _appr_check = get_all_approved(row["route_plan"] or "")
+                if _appr_check:
+                    section = "待撥款"
+            except Exception:
+                pass
         section = normalize_section(section)
         created = row["created_at"] or ""
         date_str = created[5:10].replace("-", "/") if created else ""
