@@ -4291,10 +4291,9 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
                 for item in _specific_items:
                     if s.startswith(stage + item):
                         return stage + item
-            if s.startswith("已補") or "已補" == s:
-                return "已補"
-            if s.startswith("待補") or "待補" == s:
-                return "待補"
+            # 「已補/待補/缺/(缺...)」全部保留全文（業務寫的具體項目可能五花八門：繳息/合照/PDF 等）
+            if s.startswith("已補") or s.startswith("待補") or s.startswith("缺") or s.startswith("("):
+                return s.split("\n")[0][:14]
             if s.startswith("補時段") or s.startswith("補照會") or s.startswith("照會時段"):
                 return "補時段"
             return s
@@ -4396,7 +4395,11 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
             # 有缺件時不顯示 sec_status（例：「已送件」被「(缺合照)」取代，
             # 業務補完後下一次會顯示回 sec_status）
             if sec_status and not pending_str:
-                line += f"-{sec_status}"
+                # 「(缺XX)」開頭用空格、其他用 dash
+                if sec_status.startswith("("):
+                    line += f" {sec_status}"
+                else:
+                    line += f"-{sec_status}"
             line += pending_str
         # 今日新進件標記
         if created[:10] == today_str:
@@ -4407,7 +4410,10 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
             extra_status = _compress_status(get_section_status(extra_section))
             extra_line = f"{date_str}-{row['customer_name']}-{company_str}"
             if extra_status and not pending_str:
-                extra_line += f"-{extra_status}"
+                if extra_status.startswith("("):
+                    extra_line += f" {extra_status}"
+                else:
+                    extra_line += f"-{extra_status}"
             extra_line += pending_str
             if created[:10] == today_str:
                 extra_line = "🆕" + extra_line
@@ -4440,7 +4446,10 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
                     co_line = f"{date_str}-{row['customer_name']}-{co_short}"
                     # 有缺件時不顯示 co_status（和主分支一致邏輯）
                     if co_status and not pending_str:
-                        co_line += f"-{co_status}"
+                        if co_status.startswith("("):
+                            co_line += f" {co_status}"
+                        else:
+                            co_line += f"-{co_status}"
                     co_line += pending_str
                     if created[:10] == today_str:
                         co_line = "🆕" + co_line
@@ -4833,28 +4842,30 @@ def parse_special_command(text: str, group_id: str) -> Optional[Dict]:
     if m:
         return {"type": "reorder_route", "name": m.group(1), "new_order": m.group(2).strip()}
 
-    # 缺件清單（指定公司）：@AI 姓名 公司 缺 身分證+薪轉
-    m = re.match(r"^([\u4e00-\u9fff]{2,6})\s+(\S+?)\s+缺\s+(.+)$", clean)
+    # 缺件清單（指定公司）：支援 公司缺項目 / 公司 缺項目 / 公司 缺 項目
+    m = re.match(r"^([\u4e00-\u9fff]{2,6})\s+(.+?)\s*缺\s*(.+)$", clean)
     if m:
         _name, _co, _docs = m.group(1), m.group(2).strip(), m.group(3).strip()
-        _co_canon = COMPANY_ALIAS.get(_co, _co)
-        if _co_canon in _get_valid_company_names():
-            return {"type": "set_missing_docs", "name": _name, "company": _co_canon, "docs": _docs}
+        if _co:
+            _co_canon = COMPANY_ALIAS.get(_co, _co)
+            if _co_canon in _get_valid_company_names():
+                return {"type": "set_missing_docs", "name": _name, "company": _co_canon, "docs": _docs}
 
     # 缺件清單：@AI 姓名 缺 身分證+薪轉+帳單
     m = re.match(r"^([\u4e00-\u9fff]{2,6})\s*缺\s*(.+)$", clean)
     if m:
         return {"type": "set_missing_docs", "name": m.group(1), "company": "", "docs": m.group(2).strip()}
 
-    # 已補（指定公司）：@AI 姓名 公司 已補 身分證
-    m = re.match(r"^([\u4e00-\u9fff]{2,6})\s+(\S+?)\s+已補\s+(.+)$", clean)
+    # 已補（指定公司）：支援 公司已補項目 / 公司 已補項目 / 公司 已補 項目
+    m = re.match(r"^([\u4e00-\u9fff]{2,6})\s+(.+?)\s*已補\s*(.+)$", clean)
     if m:
         _name, _co, _doc = m.group(1), m.group(2).strip(), m.group(3).strip()
-        _co_canon = COMPANY_ALIAS.get(_co, _co)
-        if _co_canon in _get_valid_company_names():
-            if _doc in ("全部", "完畢", "都好", "好了"):
-                return {"type": "clear_missing_docs", "name": _name, "company": _co_canon}
-            return {"type": "mark_doc_completed", "name": _name, "company": _co_canon, "doc": _doc}
+        if _co:
+            _co_canon = COMPANY_ALIAS.get(_co, _co)
+            if _co_canon in _get_valid_company_names():
+                if _doc in ("全部", "完畢", "都好", "好了"):
+                    return {"type": "clear_missing_docs", "name": _name, "company": _co_canon}
+                return {"type": "mark_doc_completed", "name": _name, "company": _co_canon, "doc": _doc}
 
     # 已補單項/全清：@AI 姓名 已補 身分證 / @AI 姓名 已補 全部 / @AI 姓名 已補時段 等
     # 時段/申覆/資料/照會 狀態描述 一律走 mark_doc_completed 讓 company_status 刷新
@@ -7881,7 +7892,7 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
             except Exception:
                 cs = {}
             cs_key = next((k for k in cs.keys() if normalize_section(k) == co_norm), target_company)
-            cs[cs_key] = f"待補{'/'.join(docs_list)}"
+            cs[cs_key] = f"(缺{'/'.join(docs_list)})"
             with db_conn(commit=True) as conn:
                 cur = conn.cursor()
                 cur.execute("UPDATE customers SET company_status=?, updated_at=? WHERE case_id=?",
@@ -14628,8 +14639,12 @@ function csQuick(btn, type) {{
   if (!ta) return;
   if (type === '已補完') {{
     const lines = ta.value.split('\n');
-    if (lines[0] && lines[0].startsWith('待補')) {{
-      lines[0] = '已補' + lines[0].slice(2);
+    if (lines[0]) {{
+      if (lines[0].startsWith('待補')) {{
+        lines[0] = '已補' + lines[0].slice(2);
+      }} else if (lines[0].startsWith('(缺') && lines[0].endsWith(')')) {{
+        lines[0] = '已補' + lines[0].slice(2, -1);
+      }}
       ta.value = lines.join('\n');
     }}
     return;
@@ -14638,7 +14653,7 @@ function csQuick(btn, type) {{
   if (type === '缺件') {{
     const item = prompt('缺什麼？例：勞保、薪轉、身分證');
     if (!item || !item.trim()) return;
-    marker = '待補' + item.trim();
+    marker = '(缺' + item.trim() + ')';
   }} else if (type === '補照會') {{
     marker = '待補照會';
   }} else if (type === '補申覆') {{
