@@ -12286,13 +12286,28 @@ def render_customer_row(row, role="") -> str:
     order = route_data.get("order",[])
     idx = route_data.get("current_index",0)
 
-    # 詳細資料 - 支援多家核准
+    # 詳細資料 - 支援多家核准（從 route_plan history 讀、跟 BOT 日報一致）
     route_history = route_data.get("history", [])
     approved_list = [rh for rh in route_history if rh.get("status") in ("核准","待撥款","撥款") and rh.get("amount")]
     if (row["report_section"] or "") == "待撥款":
         if len(approved_list) > 1:
-            parts = [(rh.get("company") or "") + (rh.get("amount") or "") for rh in approved_list if rh.get("amount")]
-            sub = "多家核准：" + " + ".join(parts) + ("（撥款" + disb + "）" if disb else "（待撥款）")
+            parts = []
+            for rh in approved_list:
+                co_h = rh.get("company") or ""
+                amt_h = rh.get("amount") or ""
+                disb_h = rh.get("disbursed") or ""
+                if disb_h:
+                    parts.append(f"{co_h} {amt_h}(撥款{disb_h})")
+                else:
+                    parts.append(f"{co_h} {amt_h}(待撥款)")
+            sub = "多家核准：" + " / ".join(parts)
+        elif approved_list:
+            # 單一核准：從 history 讀公司/金額/撥款狀態（避免 current_company 不同步）
+            rh = approved_list[0]
+            co_h = rh.get("company") or co
+            amt_h = rh.get("amount") or amt
+            disb_h = rh.get("disbursed") or disb
+            sub = co_h + (f" 核准{amt_h}" if amt_h else "") + (f"（撥款{disb_h}）" if disb_h else "（待撥款）")
         else:
             sub = co + (f" 核准{amt}" if amt else "") + (f"（撥款{disb}）" if disb else "（待撥款）")
     elif order and idx < len(order):
