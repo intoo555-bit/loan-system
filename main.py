@@ -4252,8 +4252,9 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
         company_str = _display_co(current_co) or current_co
 
         # 如果待撥款但還在送其他公司 → 兩個區塊都顯示
+        # 用補強後的 section 判斷（涵蓋網頁修改未同步 report_section 的情況）
         extra_section = None
-        if report_sec == "待撥款" and current_co:
+        if section == "待撥款" and current_co:
             approved_companies = [h.get("company","") for h in get_all_approved(row["route_plan"] or "")]
             still_sending = current_co not in approved_companies and not any(current_co in ac or ac in current_co for ac in approved_companies)
             if still_sending:
