@@ -4402,9 +4402,13 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
         if created[:10] == today_str:
             line = "🆕" + line
         section_map.setdefault(section, []).append(line)
-        # 還在送其他公司 → 也加到該公司區塊（不帶撥款資訊）
+        # 還在送其他公司 → 也加到該公司區塊、套該家的 status（補照會/補件等）
         if extra_section and extra_section != section:
-            extra_line = f"{date_str}-{row['customer_name']}-{company_str}{pending_str}"
+            extra_status = _compress_status(get_section_status(extra_section))
+            extra_line = f"{date_str}-{row['customer_name']}-{company_str}"
+            if extra_status and not pending_str:
+                extra_line += f"-{extra_status}"
+            extra_line += pending_str
             if created[:10] == today_str:
                 extra_line = "🆕" + extra_line
             section_map.setdefault(extra_section, []).append(extra_line)
