@@ -581,7 +581,20 @@
     "report_note": "吳盈學 刷卡換現 核准11.8萬 撥款5/2 + 房地 核准25萬",
     "route_order": "",
     "raw_line": "4/22-吳盈學-信用卡核准11.8萬(5/2) | 4/22-吳盈學-房地核准25萬",
-    "section_label": "核准"
+    "section_label": "核准",
+    "approved_history": [
+      {
+        "company": "刷卡換現",
+        "amount": "11.8萬",
+        "disbursed": "5/2",
+        "status": "撥款"
+      },
+      {
+        "company": "房地",
+        "amount": "25萬",
+        "status": "核准"
+      }
+    ]
   },
   {
     "name": "劉瑤華",

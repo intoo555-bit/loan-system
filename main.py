@@ -12000,8 +12000,23 @@ async def import_chao_confirm(request: Request):
             report_sec = d.get("report_section", "") or ""
             approved = (d.get("approved_amount") or "").strip()
             disb = (d.get("disb_date") or "").strip()
+            # approved_history: 多家核准 schema、優先用此 list 建 route_plan history
+            approved_history = d.get("approved_history") or []
             route_plan = ""
-            if approved and co and report_sec == "待撥款":
+            if approved_history:
+                history = []
+                for h_entry in approved_history:
+                    h_co = h_entry.get("company", "")
+                    if not h_co: continue
+                    h_dict = {"company": h_co, "amount": h_entry.get("amount", ""),
+                              "status": h_entry.get("status", "核准")}
+                    if h_entry.get("disbursed"):
+                        h_dict["disbursed"] = h_entry["disbursed"]
+                    history.append(h_dict)
+                order = [co] + [h_entry.get("company", "") for h_entry in approved_history
+                                if h_entry.get("company") and h_entry.get("company") != co]
+                route_plan = make_route_json(order, 0, history)
+            elif approved and co and report_sec == "待撥款":
                 history = []
                 main_h = {"company": co, "amount": approved, "status": "待撥款" if disb else "核准"}
                 if disb:
