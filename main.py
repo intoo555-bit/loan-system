@@ -7987,15 +7987,28 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
                         promoted_co = new_concurrent.pop(0)
                         disbursed_archived_co = co
                         continue
-                    else:
-                        # 沒其他家在送 → 整筆結案
-                        close_text = f"{name} {co} 撥款完成、整筆結案"
-                        update_customer(target["case_id"], status="CLOSED",
-                                        text=close_text, from_group_id=group_id)
-                        push_text(target["source_group_id"], close_text)
-                        reply_text(reply_token,
-                                   f"✅ {name} 整筆結案（{co} 已撥款 {approved}、無其他在送）")
-                        return
+                    # 沒 concurrent → 再檢查 history 有沒有「核准未撥款」的家（也算還在送）
+                    _other_pending = None
+                    for h in _r_history:
+                        h_co = h.get("company") or ""
+                        h_co_norm = normalize_section(h_co)
+                        if (h_co_norm and h_co_norm != co_norm
+                                and h.get("amount") and not h.get("disbursed")):
+                            _other_pending = h_co
+                            break
+                    if _other_pending:
+                        # 升 history 那家當 current、保留撥款記錄歸檔
+                        promoted_co = _other_pending
+                        disbursed_archived_co = co
+                        continue
+                    # 真的沒其他家在送 → 整筆結案
+                    close_text = f"{name} {co} 撥款完成、整筆結案"
+                    update_customer(target["case_id"], status="CLOSED",
+                                    text=close_text, from_group_id=group_id)
+                    push_text(target["source_group_id"], close_text)
+                    reply_text(reply_token,
+                               f"✅ {name} 整筆結案（{co} 已撥款 {approved}、無其他在送）")
+                    return
                 skipped_current.append(co)
                 continue
             matches = [c for c in new_concurrent if normalize_section(c) == co_norm]
