@@ -570,15 +570,15 @@
   {
     "name": "吳盈學",
     "id_no": "",
-    "current_company": "房地核准25萬",
+    "current_company": "零卡",
     "concurrent": [
-      "信用卡核准11.8萬"
+      "房地"
     ],
-    "approved_amount": "25萬",
-    "disb_date": "",
+    "approved_amount": "11.8萬",
+    "disb_date": "5/2",
     "report_section": "待撥款",
     "build_date": "2026-04-22",
-    "report_note": "信用卡核准11.8萬(5/2)",
+    "report_note": "吳盈學 零卡 核准11.8萬 撥款5/2 + 房地 核准25萬",
     "route_order": "",
     "raw_line": "4/22-吳盈學-信用卡核准11.8萬(5/2) | 4/22-吳盈學-房地核准25萬",
     "section_label": "核准"
@@ -586,13 +586,13 @@
   {
     "name": "劉瑤華",
     "id_no": "R224218976",
-    "current_company": "月付核准3萬",
+    "current_company": "零卡",
     "concurrent": [],
     "approved_amount": "3萬",
     "disb_date": "5/5",
     "report_section": "待撥款",
     "build_date": "2026-04-27",
-    "report_note": "月付核准3萬(5/5)",
+    "report_note": "劉瑤華 月付（零卡）核准3萬 撥款5/5",
     "route_order": "",
     "raw_line": "4/27-劉瑤華-月付核准3萬(5/5)",
     "section_label": "核准"
@@ -600,13 +600,13 @@
   {
     "name": "璐布赫．福漾",
     "id_no": "V221334833",
-    "current_company": "商品核准7萬",
+    "current_company": "商品貸",
     "concurrent": [],
     "approved_amount": "7萬",
     "disb_date": "",
     "report_section": "待撥款",
     "build_date": "2026-04-20",
-    "report_note": "商品核准7萬",
+    "report_note": "璐布赫．福漾 商品貸 核准7萬",
     "route_order": "",
     "raw_line": "4/20-璐布赫．福漾-商品核准7萬",
     "section_label": "核准"
