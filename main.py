@@ -11957,6 +11957,15 @@ async def import_chao_confirm(request: Request):
         id_no = (d.get("id_no") or "").strip()
         try:
             existing = find_active_by_id_no(id_no) if id_no else None
+            # fallback：沒 id_no 用姓名找跨群同名 ACTIVE（排除目標群本身）
+            if not existing:
+                rows = find_active_by_name(name)
+                non_target = [r for r in rows if r["source_group_id"] != SALES_GROUP_ID]
+                if len(non_target) == 1:
+                    existing = non_target[0]
+                elif len(non_target) > 1:
+                    failed.append(f"{name}：跨群有 {len(non_target)} 筆同名、人工確認")
+                    continue
             if existing:
                 old_gid = existing["source_group_id"]
                 if old_gid == SALES_GROUP_ID:
