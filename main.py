@@ -5118,16 +5118,16 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
             concurrent_list = [c.strip() for c in (row["concurrent_companies"] or "").split(",") if c.strip()]
             is_concurrent = any(normalize_section(c) == sec_name for c in concurrent_list)
             # status_short 優先檢查：last_update 提到的公司若 == sec_name → 套
-            # （即使 company_status 有別家紀錄、若 last_update 明確提到該家就要用、避免漏狀態）
             if status_short:
                 mentioned_co = extract_company(first_line) or ""
+                if mentioned_co and normalize_section(mentioned_co) != sec_name:
+                    # 訊息明確提到別家、該 sec 不該污染（直接回空、不 fallback「已送件」）
+                    return ""
                 if not mentioned_co:
-                    # 泛狀態（沒提公司）→ 只套到 current 主案、不污染其他
                     if not company_status:
                         return status_short
-                elif normalize_section(mentioned_co) == sec_name:
-                    return status_short  # 訊息明確提到這家 → 套
-                # 訊息提到別家 → 不套（fallback 到下面）
+                else:
+                    return status_short  # 訊息明確提到這家
             if is_concurrent:
                 return _default_sent_for_major(sec_name)
             if company_status:
