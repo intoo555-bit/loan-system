@@ -4802,8 +4802,7 @@ def extract_status_summary(first_line: str, customer_name: str) -> str:
         if tm:
             return f"補照會{tm.group(1)}"
         return "待補照會"
-    # 補繳（補繳款/補繳息）：specific、放在 generic「照會」前
-    # 業務常打「補繳息+照會」(=兩個都缺)、避免被 generic「照會」搶到 return「已送件」
+    # 補繳（補繳款/補繳息）→ 待補繳XX
     if "補繳" in first_line:
         if "息" in first_line:
             return "待補繳息"
@@ -5039,6 +5038,11 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
         extra_section = None
         if section == "待撥款" and current_co:
             approved_companies = [h.get("company","") for h in get_all_approved(row["route_plan"] or "")]
+            # 主案 approved_amount 也算「current 已核准」（避免 history 空但 column 有值時、
+            # current 被誤判成「還在送」、散到 current section 重複顯示）
+            _main_amt = (row["approved_amount"] or "").strip()
+            if _main_amt and current_co and current_co not in approved_companies:
+                approved_companies.append(current_co)
             still_sending = current_co not in approved_companies and not any(current_co in ac or ac in current_co for ac in approved_companies)
             if still_sending:
                 extra_section = normalize_section(current_co)
