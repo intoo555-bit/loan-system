@@ -1037,6 +1037,7 @@ PLAN_ELIGIBILITY_RULES = [
             {"type": "simple", "label": "原融（單車、機車無動保）", "op": "not_has_dynbao",
              "manual_check": "若有動保 → 應送 15 萬版本（二車貸款）"},
             {"type": "simple", "label": "代償專案：前貸須是 中租/合迪/和潤/裕融（自動偵測）", "op": "dynbao_from_apt_legit"},
+            {"type": "simple", "label": "名下有可用機車（不能機車滿貸）", "op": "motorcycle_has_space"},
             {"type": "simple", "label": "🚫 警示戶不做（自動偵測）", "op": "no_warning_account"},
         ],
         "required_docs": ["身分證正反", "第二證件", "機車合照", "行照", "強制險截圖"],
@@ -1057,6 +1058,7 @@ PLAN_ELIGIBILITY_RULES = [
             {"type": "simple", "label": "車齡 ≤ 15 年", "field": "vehicle_year", "op": "year_age_le", "value": 15},
             {"type": "simple", "label": "客戶名下有動保（二車貸款情境）", "op": "has_dynbao",
              "manual_check": "確認要貸的是另一台沒貸款的車（前車有動保 + 新車無貸款）"},
+            {"type": "simple", "label": "名下有可用機車（不能機車滿貸）", "op": "motorcycle_has_space"},
             {"type": "simple", "label": "🚫 警示戶不做（自動偵測）", "op": "no_warning_account"},
         ],
         "required_docs": ["身分證正反", "第二證件", "機車合照", "行照", "強制險截圖"],
@@ -1071,6 +1073,7 @@ PLAN_ELIGIBILITY_RULES = [
             {"type": "simple", "label": "聯絡人 1 為二等親屬", "op": "contact1_2nd_kin"},
             {"type": "simple", "label": "工會投保滿半年", "field": "eval_labor_ins", "op": "=", "value": "工會保", "manual_check": "需確認滿半年"},
             {"type": "simple", "label": "車齡 ≤ 15 年", "field": "vehicle_year", "op": "year_age_le", "value": 15},
+            {"type": "simple", "label": "名下有可用機車（不能機車滿貸）", "op": "motorcycle_has_space"},
             {"type": "simple", "label": "🚫 警示戶不做（自動偵測）", "op": "no_warning_account"},
         ],
         "required_docs": ["身分證正反", "第二證件", "機車合照", "行照", "強制險截圖", "半年內存摺明細"],
@@ -1116,6 +1119,7 @@ PLAN_ELIGIBILITY_RULES = [
                 {"type": "manual", "label": "負責人有營登、設立 1 年以上",
                  "hint": "須提供營利事業登記表或網站截圖"},
             ]},
+            {"type": "simple", "label": "名下有可用機車（不能機車滿貸）", "op": "motorcycle_has_space"},
         ],
         "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面", "機車合照（要有時間相機）", "行照"],
     },
@@ -1144,6 +1148,7 @@ PLAN_ELIGIBILITY_RULES = [
             {"type": "simple", "label": "原融（機車無貸款）", "op": "not_has_dynbao",
              "manual_check": "確認要貸的機車本身沒貸款"},
             {"type": "manual", "label": "💡 警示戶可送（但需補保人）"},
+            {"type": "simple", "label": "名下有可用機車（不能機車滿貸）", "op": "motorcycle_has_space"},
         ],
         "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面", "機車合照（要有時間相機）", "行照"],
     },
@@ -1405,6 +1410,7 @@ PLAN_ELIGIBILITY_RULES = [
             {"type": "manual", "label": "💡 適用情境：21 剛貸款第一期還沒繳 → 麻吉",
              "hint": "客戶若才在 21 撥款、第一期還沒到、不能再送 21、改送麻吉"},
             {"type": "manual", "label": "💡 警示戶可送（但需補保人）"},
+            {"type": "simple", "label": "名下有可用機車（不能機車滿貸）", "op": "motorcycle_has_space"},
         ],
         "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面", "機車行照"],
     },
@@ -1481,6 +1487,7 @@ PLAN_ELIGIBILITY_RULES = [
             ]},
             {"type": "manual", "label": "⚠️ 排序提醒：亞太婉拒過 → 不送和裕、跳過此方案",
              "hint": "若客戶亞太已婉拒、行政應改送其他家、不再送和裕"},
+            {"type": "simple", "label": "名下有可用機車（不能機車滿貸）", "op": "motorcycle_has_space"},
             {"type": "simple", "label": "🚫 警示戶不做（自動偵測）", "op": "no_warning_account"},
         ],
         "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面", "勞保/工會保（紙本或 PDF）", "機車正反合照", "行照"],
@@ -1513,6 +1520,7 @@ PLAN_ELIGIBILITY_RULES = [
             {"type": "simple", "label": "21 體系（麻吉/21/分貝/樂分期/分期趣/慢點付）含利息剩餘 < 25 萬",
              "op": "group21_remain_lt", "value": 250000},
             {"type": "manual", "label": "💡 警示戶可送（但撥款要撥到二等親帳戶）"},
+            {"type": "simple", "label": "名下有可用機車（不能機車滿貸）", "op": "motorcycle_has_space"},
         ],
         "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面", "機車行照"],
     },
@@ -1530,6 +1538,7 @@ PLAN_ELIGIBILITY_RULES = [
             {"type": "simple", "label": "年齡 18~65", "field": "age", "op": "between", "value": [18, 65]},
             {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
             {"type": "simple", "label": "客戶必須有汽車（看 eval_property 含「汽」）", "op": "has_car"},
+            {"type": "simple", "label": "名下有可用汽車（不能汽車滿貸）", "op": "car_has_space"},
             {"type": "simple", "label": "🚫 警示戶不做（自動偵測）", "op": "no_warning_account"},
             {"type": "manual", "label": "車輛須在天書/權威鑑價（外匯車可認權威）",
              "hint": "書本查無 → 不予承作。車價 ≤ 10 萬亦不做"},
@@ -1555,6 +1564,7 @@ PLAN_ELIGIBILITY_RULES = [
             {"type": "simple", "label": "年齡 18~65", "field": "age", "op": "between", "value": [18, 65]},
             {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
             {"type": "simple", "label": "客戶必須有汽車（看 eval_property 含「汽」）", "op": "has_car"},
+            {"type": "simple", "label": "名下有可用汽車（不能汽車滿貸）", "op": "car_has_space"},
             {"type": "simple", "label": "🚫 警示戶不做（自動偵測）", "op": "no_warning_account"},
             {"type": "manual", "label": "車輛須在天書/權威鑑價（外匯車可認權威）",
              "hint": "書本查無 → 不予承作。車價 ≤ 10 萬亦不做"},
@@ -1578,6 +1588,7 @@ PLAN_ELIGIBILITY_RULES = [
             {"type": "simple", "label": "年齡 18~65", "field": "age", "op": "between", "value": [18, 65]},
             {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
             {"type": "simple", "label": "客戶必須有汽車（看 eval_property 含「汽」）", "op": "has_car"},
+            {"type": "simple", "label": "名下有可用汽車（不能汽車滿貸）", "op": "car_has_space"},
             {"type": "simple", "label": "🚫 警示戶不做（自動偵測）", "op": "no_warning_account"},
             {"type": "manual", "label": "車輛須在天書/權威鑑價（外匯車可認權威）",
              "hint": "書本查無 → 不予承作。車價 ≤ 10 萬亦不做"},
@@ -2102,6 +2113,57 @@ def _customer_unknown_dynbao_companies(customer):
     return unknown
 
 
+def _customer_has_motorcycle_with_space(customer):
+    """檢查客戶有沒有可用機車（能用做新貸抵押）
+    True 條件（任一）：
+    1. unloan_vehicles 有「機車」
+    2. debt_list 中有機車且 sp="有"
+    3. debt_list 中有機車但無動保/公路（銀行查不到、可當沒貸款）
+    """
+    try:
+        uv = json.loads(customer.get("unloan_vehicles") or "[]") if customer.get("unloan_vehicles") else []
+        for v in uv:
+            if (v.get("type") or "") == "機車":
+                return True
+    except Exception:
+        pass
+    try:
+        debts = json.loads(customer.get("debt_list") or "[]") if customer.get("debt_list") else []
+        for d in debts:
+            co = (d.get("co", "") or "")
+            if "機車" not in co: continue
+            sp = (d.get("sp", "") or "").strip()
+            dy = (d.get("dy", "") or "").strip()
+            if sp == "有": return True
+            if "動保" not in dy and "公路" not in dy: return True
+    except Exception:
+        pass
+    return False
+
+
+def _customer_has_car_with_space(customer):
+    """檢查客戶有沒有可用汽車（能用做新貸抵押）"""
+    try:
+        uv = json.loads(customer.get("unloan_vehicles") or "[]") if customer.get("unloan_vehicles") else []
+        for v in uv:
+            if (v.get("type") or "") == "汽車":
+                return True
+    except Exception:
+        pass
+    try:
+        debts = json.loads(customer.get("debt_list") or "[]") if customer.get("debt_list") else []
+        for d in debts:
+            co = (d.get("co", "") or "")
+            if "汽車" not in co: continue
+            sp = (d.get("sp", "") or "").strip()
+            dy = (d.get("dy", "") or "").strip()
+            if sp == "有": return True
+            if "動保" not in dy and "公路" not in dy: return True
+    except Exception:
+        pass
+    return False
+
+
 def _customer_motorcycle_loan_remaining(customer):
     """從 debt_list 計算機車前貸剩餘總額（元）
     識別：co 含「機車」字眼 + dy 含「動保」或「公路」（系統/銀行查得到）
@@ -2516,6 +2578,16 @@ def _check_rule(rule, customer):
             if _customer_recent_loan_from(customer, cos):
                 return ("pass", label, f"有近月從 {'/'.join(cos)} 撥款")
             return ("fail", label, f"無近月從 {'/'.join(cos)} 撥款")
+        # 機車有空間（debt_list 機車 sp=有 or 無動保 / unloan_vehicles 有機車）
+        if op == "motorcycle_has_space":
+            if _customer_has_motorcycle_with_space(customer):
+                return ("pass", label, "名下有可用機車")
+            return ("fail", label, "名下機車滿貸/無空間、不能送機車類")
+        # 汽車有空間
+        if op == "car_has_space":
+            if _customer_has_car_with_space(customer):
+                return ("pass", label, "名下有可用汽車")
+            return ("fail", label, "名下汽車滿貸/無空間、不能送汽車類")
         # 21 體系既有客戶繳 N 期+
         if op == "group21_paid_ge":
             paid = _customer_21group_max_paid(customer)
@@ -2758,9 +2830,19 @@ def evaluate_case(customer):
             "bonus_items": plan.get("bonus_items", COMMON_BONUS_ITEMS),
             "private_blocked": private_blocked,
         })
+    # 21 vs 麻吉：21 系列任一可送 → 麻吉系列降級（CLAUDE.md 規則 #3）
+    has_21_passed = any(
+        r["eligible"] is True and r["company"].startswith("21")
+        for r in results
+    )
+    if has_21_passed:
+        for r in results:
+            if r["company"].startswith("麻吉") and r["eligible"] is True:
+                r["eligible"] = "demoted"
+                r["summary"] = "21 已可送、麻吉備案不排"
     # 排序：可送（含 manual）→ 不可送、金額大優先、priority 高優先
     def sort_key(r):
-        eligible_score = {True: 0, "manual": 1, False: 2}[r["eligible"]]
+        eligible_score = {True: 0, "manual": 1, "demoted": 2, False: 3}[r["eligible"]]
         return (eligible_score, -r["max_amount"], -r["priority"])
     results.sort(key=sort_key)
     return {
