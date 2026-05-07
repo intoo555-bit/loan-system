@@ -4743,13 +4743,9 @@ def extract_status_summary(first_line: str, customer_name: str) -> str:
     # A 群請業務補時段：「請提供XX可照會時間」「請提供照會時段」→ 待補時段
     if ("請提供" in first_line or "再麻煩" in first_line) and ("照會" in first_line or "時段" in first_line or "時間" in first_line):
         return "待補時段"
-    # 婉拒 + 冒號理由保留（例「婉拒: 信用風險戶」→ 「婉拒 信用風險戶」全段保留）
+    # 婉拒 → 「婉拒」短形式（婉拒後客戶通常已轉下一家、不需要在原家 section 留理由）
     if "婉拒" in first_line:
-        # 保留完整婉拒+理由、只砍掉姓名前綴
-        _fl = first_line.strip()
-        if customer_name and _fl.startswith(customer_name):
-            _fl = _fl[len(customer_name):].strip()
-        return _fl[:40]  # 最多 40 字避免太長
+        return "婉拒"
     # 「待核准/待核準」：明確還沒核准 → 保留完整備註（含金額/補件資訊），不要繼續往下誤判成「已補」
     if "待核准" in first_line or "待核準" in first_line:
         import re as _re
@@ -4814,8 +4810,7 @@ def extract_status_summary(first_line: str, customer_name: str) -> str:
         if "款" in first_line:
             return "待補繳款"
         return "待補繳"
-    if "照會" in first_line:
-        return "已送件"
+    # 「照會」 generic = 已送件 → 移除（讓 generic fallback 抓真實 status text、避免吃掉 compound 狀態）
     # 補件/申覆判斷：
     # - 明確「已補」/「待補」關鍵字優先
     # - 業務主動語氣（業務說/我補/幫補/補好/補完）→ 已補
