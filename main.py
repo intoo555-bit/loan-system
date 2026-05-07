@@ -4806,6 +4806,14 @@ def extract_status_summary(first_line: str, customer_name: str) -> str:
         if tm:
             return f"補照會{tm.group(1)}"
         return "待補照會"
+    # 補繳（補繳款/補繳息）：specific、放在 generic「照會」前
+    # 業務常打「補繳息+照會」(=兩個都缺)、避免被 generic「照會」搶到 return「已送件」
+    if "補繳" in first_line:
+        if "息" in first_line:
+            return "待補繳息"
+        if "款" in first_line:
+            return "待補繳款"
+        return "待補繳"
     if "照會" in first_line:
         return "已送件"
     # 補件/申覆判斷：
