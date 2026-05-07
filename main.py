@@ -5071,19 +5071,11 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
             - 其他保持原樣
             """
             if not s: return s
-            # 已補/待補：申覆/資料/照會/時段 + 具體補件項目（保人/聯徵/薪轉等）保留
-            _specific_items = ("申覆", "資料", "照會", "時段", "保人", "聯徵", "JCIC",
-                              "薪轉", "在職", "存摺", "勞保", "駕照", "身分證", "行照", "照片")
-            for stage in ("已補", "待補"):
-                for item in _specific_items:
-                    if s.startswith(stage + item):
-                        return stage + item
-            if s.startswith("已補") or "已補" == s:
-                return "已補"
-            if s.startswith("待補") or "待補" == s:
-                return "待補"
+            # 「已補/待補/缺/(缺...)」全文保留（最多 14 字、業務寫的具體項目保留）
+            if s.startswith("已補") or s.startswith("待補") or s.startswith("缺") or s.startswith("("):
+                return s.split("\n")[0][:14]
             if s.startswith("補時段") or s.startswith("補照會") or s.startswith("照會時段"):
-                return "補時段"
+                return s.split("\n")[0][:14]
             return s
 
         def get_section_status(sec_name):
@@ -5118,10 +5110,11 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
             concurrent_list = [c.strip() for c in (row["concurrent_companies"] or "").split(",") if c.strip()]
             is_concurrent = any(normalize_section(c) == sec_name for c in concurrent_list)
             # status_short 優先檢查：last_update 提到的公司若 == sec_name → 套
+            # （即使 company_status 有別家紀錄、若 last_update 明確提到該家就要用、避免漏狀態）
             if status_short:
                 mentioned_co = extract_company(first_line) or ""
                 if mentioned_co and normalize_section(mentioned_co) != sec_name:
-                    # 訊息明確提到別家、該 sec 不該污染（直接回空、不 fallback「已送件」）
+                    # 訊息明確提到別家、該 sec 不該污染（直接回空、不 fallback 已送件）
                     return ""
                 if not mentioned_co:
                     if not company_status:
