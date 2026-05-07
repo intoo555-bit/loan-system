@@ -1169,10 +1169,8 @@ PLAN_ELIGIBILITY_RULES = [
                 {"type": "simple", "label": "近一個月內有 中租/和潤/裕融/亞太/21/銀行 撥款（自動偵測 pa≤1）",
                  "op": "recent_loan_from", "value": ["中租", "合迪", "和潤", "裕融", "亞太", "21", "銀行"],
                  "manual_check": "須附撥款明細"},
-                {"type": "simple", "label": "持有不動產（權狀、不可有私設）",
-                 "field": "eval_property", "op": "contains", "value": "不動產",
-                 "exclude_field": "eval_alert", "exclude_value": "有",
-                 "manual_check": "須提供權狀"},
+                {"type": "simple", "label": "持有不動產（自動：eval_property 含不動產 或 居住自有）",
+                 "op": "has_real_estate", "manual_check": "須提供權狀"},
             ]},
             {"type": "manual", "label": "商品 2 選 1：手機（型號+IMEI+合照）或 機車（行照+前後合照）"},
             {"type": "simple", "label": "🚫 警示戶不做（自動偵測）", "op": "no_warning_account"},
@@ -2582,6 +2580,19 @@ def _check_rule(rule, customer):
             if _customer_has_motorcycle_with_space(customer):
                 return ("pass", label, "名下有可用機車")
             return ("fail", label, "名下機車滿貸/無空間、不能送機車類")
+        # 有不動產：eval_property 含「不動產」 OR 居住狀況「自有」
+        if op == "has_real_estate":
+            prop = (customer.get("eval_property", "") or "").strip()
+            live = (customer.get("live_status", "") or "").strip()
+            alert = (customer.get("eval_alert", "") or "").strip()
+            # 私設當鋪排除
+            if "有" in alert:
+                return ("fail", label, f"當鋪私設=有、不算不動產")
+            if "不動產" in prop:
+                return ("pass", label, f"eval_property: {prop}")
+            if live == "自有":
+                return ("pass", label, "居住狀況：自有（視為有不動產）")
+            return ("fail", label, f"eval_property={prop or '未填'}、居住={live or '未填'}")
         # 汽車有空間
         if op == "car_has_space":
             if _customer_has_car_with_space(customer):
