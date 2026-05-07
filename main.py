@@ -4735,6 +4735,10 @@ def extract_status_summary(first_line: str, customer_name: str) -> str:
     # 內部動作（@AI 指令產生的記錄文字）不顯示為業務狀態
     if any(kw in first_line for kw in _INTERNAL_ACTION_KEYWORDS):
         return ""
+    # 照會話術指令格式：「{姓名} 照會 {公司}」 = 業務觸發話術、不是 status
+    # 兼容舊版（last_update 寫「照會」沒「話術」字尾）
+    if re.match(r"^[\u3400-\u9fff\uf900-\ufaff.．·•・‧]{2,12}\s+照會\s+", first_line):
+        return ""
     # 對保好（不簽不收 / 不收不簽）→ 「對好」
     if "對好" in first_line or "不簽不收" in first_line or "不收不簽" in first_line:
         return "對好"
@@ -8523,7 +8527,7 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
         # 照會時如果在送件區塊，移到公司區塊
         if (target["report_section"] or "") == "送件":
             update_customer(target["case_id"], report_section="",
-                            text=f"{name} 照會", from_group_id=group_id)
+                            text=f"{name} 照會話術", from_group_id=group_id)
         # 存同時送件公司（只存純公司名）+ 記錄第一家金額
         # 修：沒帶新金額時清掉舊 notify_amount（避免上次送件的金額污染這次照會）
         update_kw = {}
