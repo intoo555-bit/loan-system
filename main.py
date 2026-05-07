@@ -4375,17 +4375,36 @@ def find_all_active_by_id_no(id_no):
         return cur.fetchall()
 
 
+_NAME_DOT_VARIANTS = (".", "．", "·", "•", "・", "‧")
+
+def _name_variants(name):
+    """產生姓名的所有點變體（原住民名常用各種中間點、normalize_ai_text 把全形轉半形也會撞）"""
+    name = (name or "").strip()
+    if not name:
+        return [""]
+    variants = {name}
+    for dot in _NAME_DOT_VARIANTS:
+        if dot in name:
+            for replacement in _NAME_DOT_VARIANTS:
+                variants.add(name.replace(dot, replacement))
+    return list(variants)
+
+
 def find_active_by_name(name):
+    variants = _name_variants(name)
     with db_conn() as conn:
         cur = conn.cursor()
-        cur.execute("SELECT * FROM customers WHERE customer_name=? AND status='ACTIVE' ORDER BY updated_at DESC", (name,))
+        placeholders = ",".join("?" * len(variants))
+        cur.execute(f"SELECT * FROM customers WHERE customer_name IN ({placeholders}) AND status='ACTIVE' ORDER BY updated_at DESC", tuple(variants))
         return cur.fetchall()
 
 
 def find_any_by_name(name):
+    variants = _name_variants(name)
     with db_conn() as conn:
         cur = conn.cursor()
-        cur.execute("SELECT * FROM customers WHERE customer_name=? ORDER BY updated_at DESC", (name,))
+        placeholders = ",".join("?" * len(variants))
+        cur.execute(f"SELECT * FROM customers WHERE customer_name IN ({placeholders}) ORDER BY updated_at DESC", tuple(variants))
         return cur.fetchall()
 
 
