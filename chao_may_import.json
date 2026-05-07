@@ -1,7 +1,7 @@
 [
   {
     "name": "王靜宜",
-    "id_no": "K222559808",
+    "id_no": "",
     "current_company": "麻吉機車",
     "concurrent": [],
     "approved_amount": "",
@@ -15,7 +15,7 @@
   },
   {
     "name": "郭建宏",
-    "id_no": "A125982602",
+    "id_no": "",
     "current_company": "亞太機車25萬",
     "concurrent": [],
     "approved_amount": "",
@@ -29,7 +29,7 @@
   },
   {
     "name": "吳淑琬",
-    "id_no": "A231197522",
+    "id_no": "",
     "current_company": "亞太機車25萬",
     "concurrent": [],
     "approved_amount": "",
@@ -99,7 +99,7 @@
   },
   {
     "name": "呂珮瑜",
-    "id_no": "A231197522",
+    "id_no": "",
     "current_company": "和裕機車",
     "concurrent": [
       "21"
@@ -143,7 +143,7 @@
   },
   {
     "name": "楊一志",
-    "id_no": "P123478625",
+    "id_no": "",
     "current_company": "21",
     "concurrent": [],
     "approved_amount": "",
@@ -157,7 +157,7 @@
   },
   {
     "name": "彭元君",
-    "id_no": "P123478625",
+    "id_no": "",
     "current_company": "21",
     "concurrent": [],
     "approved_amount": "",
@@ -215,7 +215,7 @@
   },
   {
     "name": "黃宣富",
-    "id_no": "K222559808",
+    "id_no": "",
     "current_company": "21",
     "concurrent": [
       "和裕機車"
@@ -245,7 +245,7 @@
   },
   {
     "name": "蕭惠馨",
-    "id_no": "U221119719",
+    "id_no": "",
     "current_company": "21",
     "concurrent": [],
     "approved_amount": "",
@@ -259,7 +259,7 @@
   },
   {
     "name": "楊芷庭",
-    "id_no": "K222559808",
+    "id_no": "",
     "current_company": "喬美",
     "concurrent": [
       "21"
@@ -387,7 +387,7 @@
   },
   {
     "name": "呂亜璇",
-    "id_no": "A125982602",
+    "id_no": "",
     "current_company": "21",
     "concurrent": [],
     "approved_amount": "25萬",
@@ -457,7 +457,7 @@
   },
   {
     "name": "林詠韓",
-    "id_no": "V221334833",
+    "id_no": "",
     "current_company": "21",
     "concurrent": [],
     "approved_amount": "9萬",
@@ -485,7 +485,7 @@
   },
   {
     "name": "林佳鋒",
-    "id_no": "U221119719",
+    "id_no": "",
     "current_company": "21",
     "concurrent": [],
     "approved_amount": "7萬",
@@ -513,7 +513,7 @@
   },
   {
     "name": "游智盛",
-    "id_no": "U221119719",
+    "id_no": "",
     "current_company": "亞太機車25萬",
     "concurrent": [],
     "approved_amount": "12萬",
@@ -612,7 +612,7 @@
   },
   {
     "name": "璐布赫．福漾",
-    "id_no": "V221334833",
+    "id_no": "",
     "current_company": "商品貸",
     "concurrent": [],
     "approved_amount": "7萬",
