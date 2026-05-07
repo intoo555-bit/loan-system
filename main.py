@@ -1038,7 +1038,6 @@ PLAN_ELIGIBILITY_RULES = [
              "manual_check": "若有動保 → 應送 15 萬版本（二車貸款）"},
             {"type": "simple", "label": "代償專案：前貸須是 中租/合迪/和潤/裕融（自動偵測）", "op": "dynbao_from_apt_legit"},
             {"type": "simple", "label": "名下有可用機車（不能機車滿貸）", "op": "motorcycle_has_space"},
-            {"type": "simple", "label": "勞保不可工會保（工會請改送亞太工會機車）", "field": "eval_labor_ins", "op": "!=", "value": "工會保"},
             {"type": "simple", "label": "🚫 警示戶不做（自動偵測）", "op": "no_warning_account"},
         ],
         "required_docs": ["身分證正反", "第二證件", "機車合照", "行照", "強制險截圖"],
@@ -1060,7 +1059,6 @@ PLAN_ELIGIBILITY_RULES = [
             {"type": "simple", "label": "客戶名下有動保（二車貸款情境）", "op": "has_dynbao",
              "manual_check": "確認要貸的是另一台沒貸款的車（前車有動保 + 新車無貸款）"},
             {"type": "simple", "label": "名下有可用機車（不能機車滿貸）", "op": "motorcycle_has_space"},
-            {"type": "simple", "label": "勞保不可工會保（工會請改送亞太工會機車）", "field": "eval_labor_ins", "op": "!=", "value": "工會保"},
             {"type": "simple", "label": "🚫 警示戶不做（自動偵測）", "op": "no_warning_account"},
         ],
         "required_docs": ["身分證正反", "第二證件", "機車合照", "行照", "強制險截圖"],
@@ -1093,7 +1091,6 @@ PLAN_ELIGIBILITY_RULES = [
                 {"type": "simple", "label": "有不動產（不能有私設）", "field": "eval_property", "op": "contains", "value": "不動產", "exclude_field": "eval_alert", "exclude_value": "有"},
                 {"type": "manual", "label": "負責人有營登、設立 1 年以上"},
             ]},
-            {"type": "simple", "label": "勞保不可工會保（工會請改送亞太工會機車）", "field": "eval_labor_ins", "op": "!=", "value": "工會保"},
             {"type": "simple", "label": "🚫 警示戶不做（自動偵測）", "op": "no_warning_account"},
         ],
         "required_docs": ["身分證正反", "第二證件", "手機型號", "imei", "手機合照"],
@@ -1266,8 +1263,8 @@ PLAN_ELIGIBILITY_RULES = [
         "rules": [
             {"type": "simple", "label": "年齡 18 歲以上（學生也可送）", "field": "age", "op": ">=", "value": 18},
             {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
-            {"type": "simple", "label": "限警示戶才送", "field": "eval_alert_warning", "op": "=", "value": "是",
-             "manual_check": "手機分期 = 警示戶專案、其他客戶不送"},
+            {"type": "manual", "label": "💡 適用情境：客戶條件很差、其他方案都送不過時才送",
+             "hint": "核准金額超低、不是警示戶基本不會排、警示戶用其他民間方案"},
             {"type": "manual", "label": "以買手機的名義貸款"},
         ],
         "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面", "手機帳單"],
@@ -1833,7 +1830,6 @@ PLAN_ELIGIBILITY_RULES = [
             {"type": "manual", "label": "✅ 接受三種情境：他行代償、借新還舊、原車融資"},
             {"type": "manual", "label": "💡 可貸金額 = 天書/權威/鑑價 × 1.3（例 50萬×1.3=65萬）"},
             {"type": "manual", "label": "💡 最長分 72 期"},
-            {"type": "simple", "label": "汽車有空間（自動偵測 sp 欄位）", "op": "car_has_space"},
             {"type": "simple", "label": "🚫 警示戶不做（警示戶送和潤）", "op": "no_warning_account"},
         ],
         "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面",
@@ -1851,7 +1847,6 @@ PLAN_ELIGIBILITY_RULES = [
             {"type": "manual", "label": "✅ 接受三種情境：他行代償、借新還舊、原車融資"},
             {"type": "manual", "label": "💡 可貸金額 = 天書/權威/鑑價 × 1.3"},
             {"type": "manual", "label": "💡 最長分 84 期"},
-            {"type": "simple", "label": "汽車有空間（自動偵測 sp 欄位）", "op": "car_has_space"},
             {"type": "simple", "label": "🚫 警示戶不做（警示戶送和潤）", "op": "no_warning_account"},
         ],
         "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面",
@@ -1869,7 +1864,6 @@ PLAN_ELIGIBILITY_RULES = [
             {"type": "manual", "label": "✅ 接受三種情境：他行代償、借新還舊、原車融資"},
             {"type": "manual", "label": "💡 可貸金額 = 天書/權威/鑑價 × 1.3"},
             {"type": "manual", "label": "💡 最長分 60 期"},
-            {"type": "simple", "label": "汽車有空間（自動偵測 sp 欄位）", "op": "car_has_space"},
             {"type": "simple", "label": "🚫 警示戶不做（警示戶送和潤）", "op": "no_warning_account"},
         ],
         "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面",
@@ -1886,7 +1880,6 @@ PLAN_ELIGIBILITY_RULES = [
             {"type": "manual", "label": "需符合 1 項條件以上"},
             {"type": "manual", "label": "✅ 接受三種情境：他行代償、借新還舊、原車融資"},
             {"type": "manual", "label": "💡 可貸金額 = 天書/權威/鑑價 × 1.3；無天書/權威/鑑價 → 老車專案最高 10 萬"},
-            {"type": "simple", "label": "汽車有空間（自動偵測 sp 欄位）", "op": "car_has_space"},
             {"type": "simple", "label": "🚫 警示戶不做（警示戶送和潤）", "op": "no_warning_account"},
         ],
         "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面",
@@ -1905,7 +1898,6 @@ PLAN_ELIGIBILITY_RULES = [
             {"type": "manual", "label": "💡 可貸金額 = 天書/權威/鑑價 × 1.3（同裕融邏輯）"},
             {"type": "manual", "label": "✅ 警示戶可送（警示戶優先送和潤、不送裕融）"},
             {"type": "manual", "label": "⚠️ 警示戶撥款須撥到二等親帳戶"},
-            {"type": "simple", "label": "汽車有空間（自動偵測 sp 欄位）", "op": "car_has_space"},
         ],
         "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面",
                           "汽車行照", "8891 等網站車價截圖", "天書/權威/鑑價（如有）"],
@@ -2510,22 +2502,21 @@ def _check_rule(rule, customer):
     if rt == "oneof":
         sub_results = []
         any_pass = False
-        any_manual_or_unknown = False
+        any_manual = False  # 真實「auto ✓ + manual_check」才算
         for opt in rule.get("options", []):
             s, l, a = _check_rule(opt, customer)
             sub_results.append((s, l, a))
             if s == "pass":
                 any_pass = True
                 break
-            elif s in ("manual", "unknown"):
-                any_manual_or_unknown = True
+            elif s == "manual":
+                any_manual = True
+            # unknown 視同 fail（沒填資料 ≠ 可能通過、不該升級 manual）
         if any_pass:
             return ("pass", label + " — 至少一項符合", "")
-        # 至少一項 auto OK 但需確認（manual_check / unknown）→ 擇一可能通過、標 manual
-        if any_manual_or_unknown:
+        if any_manual:
             return ("manual", label + " — 至少一項可能符合（需人工確認）", "")
-        # 全 fail → 真的擇一都不符
-        return ("fail", label + " — 各項都不符合", "")
+        return ("fail", label + " — 各項都不符合（含未填資料）", "")
     if rt == "simple":
         field = rule.get("field", "")
         op = rule.get("op", "")
@@ -2711,9 +2702,6 @@ def _check_rule(rule, customer):
                     actual_str = str(actual) or "未填"
             elif op == "=":
                 ok = str(actual) == str(value)
-                actual_str = str(actual)
-            elif op == "!=":
-                ok = str(actual) != str(value)
                 actual_str = str(actual)
             elif op == ">=":
                 # 數字比較、空值視為 0
