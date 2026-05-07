@@ -2782,31 +2782,31 @@ IGNORE_NAME_SET = {
     "NA", "RE", "JCIC", "ID", "CCIS", "TAC", "EGO",
 }
 
-CHINESE_NAME_RE = re.compile(r"[\u3400-\u9fff\uf900-\ufaff]{2,6}")
+CHINESE_NAME_RE = re.compile(r"[\u3400-\u9fff\uf900-\ufaff.．·•・‧]{2,12}")
 ID_RE = re.compile(r"[A-Z][A-Z0-9]\d{8}")
 
 # 支援有無 - 的日期格式，如 115/3/2廖俊宏 或 115/3/2-廖俊宏
 DATE_NAME_ID_INLINE_RE = re.compile(
-    r"^\s*(\d{2,6}/\d{1,2}/\d{1,2})\s*[-－]?\s*([\u3400-\u9fff\uf900-\ufaff]{2,6})\s*([A-Z][A-Z0-9]\d{8})",
+    r"^\s*(\d{2,6}/\d{1,2}/\d{1,2})\s*[-－]?\s*([\u3400-\u9fff\uf900-\ufaff.．·•・‧]{2,12})\s*([A-Z][A-Z0-9]\d{8})",
     re.IGNORECASE,
 )
 DATE_NAME_ONLY_RE = re.compile(
-    r"^\s*(\d{2,6}/\d{1,2}/\d{1,2})\s*[-－]?\s*([\u3400-\u9fff\uf900-\ufaff]{2,6})(?:\s*$|\s*[-－/\u3400-\u9fff\uf900-\ufaff])",
+    r"^\s*(\d{2,6}/\d{1,2}/\d{1,2})\s*[-－]?\s*([\u3400-\u9fff\uf900-\ufaff.．·•・‧]{2,12})(?:\s*$|\s*[-－/\u3400-\u9fff\uf900-\ufaff])",
     re.IGNORECASE,
 )
 # 短日期：3/2廖俊宏 或 3/2-廖俊宏（有無-都支援）
 SHORT_DATE_NAME_RE = re.compile(
-    r"^\s*(\d{1,2}/\d{1,2})\s*[-－]?\s*([\u3400-\u9fff\uf900-\ufaff]{2,6})"
+    r"^\s*(\d{1,2}/\d{1,2})\s*[-－]?\s*([\u3400-\u9fff\uf900-\ufaff.．·•・‧]{2,12})"
 )
 # 送件順序格式：4/1-高郡惠-喬美/亞太/和裕
 ROUTE_ORDER_RE = re.compile(
-    r"^\s*(\d{1,4}/\d{1,2}(?:/\d{1,2})?)\s*[-－]\s*([\u3400-\u9fff\uf900-\ufaff]{2,6})\s*[-－]\s*((?:[^\s/\n]+/)*[^\s/\n@]+)(?:\s*@AI)?\s*$",
+    r"^\s*(\d{1,4}/\d{1,2}(?:/\d{1,2})?)\s*[-－]\s*([\u3400-\u9fff\uf900-\ufaff.．·•・‧]{2,12})\s*[-－]\s*((?:[^\s/\n]+/)*[^\s/\n@]+)(?:\s*@AI)?\s*$",
     re.IGNORECASE,
 )
 # 單公司核准/婉拒格式：03/04-黃娫柔-房地核准20萬 / 03/04-黃娫柔-新鑫核准20萬
 # 用 negative lookbehind 排除「待核准」「待核準」誤判為核准
 SINGLE_APPROVAL_RE = re.compile(
-    r"^\s*(\d{1,4}/\d{1,2}(?:/\d{1,2})?)\s*[-－]\s*([\u3400-\u9fff\uf900-\ufaff]{2,6})\s*[-－]\s*([^\s/\n@-]+?)(?<!待)(核准|核準|婉拒)(\d+(?:\.\d+)?萬)?(?:\s*@AI)?\s*$",
+    r"^\s*(\d{1,4}/\d{1,2}(?:/\d{1,2})?)\s*[-－]\s*([\u3400-\u9fff\uf900-\ufaff.．·•・‧]{2,12})\s*[-－]\s*([^\s/\n@-]+?)(?<!待)(核准|核準|婉拒)(\d+(?:\.\d+)?萬)?(?:\s*@AI)?\s*$",
     re.IGNORECASE,
 )
 
@@ -2815,7 +2815,7 @@ NOTIFICATION_TRIGGER_RE = re.compile(r"照會注意事項")
 EXTRA_COMPANY_RE = re.compile(r"[+＋]\s*([\u3400-\u9fff\uf900-\ufaff0-9]{1,8}?)\s*一起")
 # 轉送格式：8/5-戴君哲-轉21 或 8/11-林曉薇-轉麻吉 6/18
 TRANSFER_RE = re.compile(
-    r"^\s*(\d{1,4}/\d{1,2}(?:/\d{1,2})?)\s*[-－]\s*([\u3400-\u9fff\uf900-\ufaff]{2,6})\s*[-－]\s*轉\s*([^\s@]+)(?:\s.*)?(?:\s*@AI)?\s*$",
+    r"^\s*(\d{1,4}/\d{1,2}(?:/\d{1,2})?)\s*[-－]\s*([\u3400-\u9fff\uf900-\ufaff.．·•・‧]{2,12})\s*[-－]\s*轉\s*([^\s@]+)(?:\s.*)?(?:\s*@AI)?\s*$",
     re.IGNORECASE,
 )
 
@@ -2829,7 +2829,7 @@ def is_notification_briefing(text: str) -> bool:
         return False
     # 第一行：純中文姓名 2-4 字
     name = lines[0]
-    if not re.fullmatch(r"[\u3400-\u9fff\uf900-\ufaff]{2,6}", name):
+    if not re.fullmatch(r"[\u3400-\u9fff\uf900-\ufaff.．·•・‧]{2,12}", name):
         return False
     # 第二行：照會注意事項
     if "照會注意事項" not in lines[1]:
@@ -3329,7 +3329,7 @@ def get_a_group_for_sales(sales_group_id: str) -> str:
 def parse_route_order_line(line: str) -> Dict:
     """解析「4/1-高郡惠-喬美/亞太/和裕」，回傳 dict 或 {}"""
     # Bug 1: 攔截「轉XXX」格式
-    if re.match(r"^\s*\d{1,4}/\d{1,2}(?:/\d{1,2})?\s*[-－]\s*[\u3400-\u9fff\uf900-\ufaff]{2,6}\s*[-－]\s*轉", line.strip()):
+    if re.match(r"^\s*\d{1,4}/\d{1,2}(?:/\d{1,2})?\s*[-－]\s*[\u3400-\u9fff\uf900-\ufaff.．·•・‧]{2,12}\s*[-－]\s*轉", line.strip()):
         return {}
     m = ROUTE_ORDER_RE.match(line.strip())
     if not m:
@@ -5604,17 +5604,17 @@ def parse_special_command(text: str, group_id: str) -> Optional[Dict]:
         return {"type": "search", "name": m.group(1)}
 
     # 轉下一家 / 轉下家（同義）
-    m = re.match(r"^([\u3400-\u9fff\uf900-\ufaff]{2,6})\s*轉下(?:一)?家$", clean)
+    m = re.match(r"^([\u3400-\u9fff\uf900-\ufaff.．·•・‧]{2,12})\s*轉下(?:一)?家$", clean)
     if m:
         return {"type": "advance", "name": m.group(1), "target": None}
 
     # 改順序：@AI 姓名 改順序 A/B/C/D → 覆寫 current 之後的 route，保留 history/current
-    m = re.match(r"^([\u3400-\u9fff\uf900-\ufaff]{2,6})\s*改順序\s+(.+)$", clean)
+    m = re.match(r"^([\u3400-\u9fff\uf900-\ufaff.．·•・‧]{2,12})\s*改順序\s+(.+)$", clean)
     if m:
         return {"type": "reorder_route", "name": m.group(1), "new_order": m.group(2).strip()}
 
     # 缺件清單（指定公司）：@AI 姓名 公司 缺 身分證+薪轉
-    m = re.match(r"^([\u3400-\u9fff\uf900-\ufaff]{2,6})\s+(\S+?)\s+缺\s+(.+)$", clean)
+    m = re.match(r"^([\u3400-\u9fff\uf900-\ufaff.．·•・‧]{2,12})\s+(\S+?)\s+缺\s+(.+)$", clean)
     if m:
         _name, _co, _docs = m.group(1), m.group(2).strip(), m.group(3).strip()
         _co_canon = COMPANY_ALIAS.get(_co, _co)
@@ -5622,12 +5622,12 @@ def parse_special_command(text: str, group_id: str) -> Optional[Dict]:
             return {"type": "set_missing_docs", "name": _name, "company": _co_canon, "docs": _docs}
 
     # 缺件清單：@AI 姓名 缺 身分證+薪轉+帳單
-    m = re.match(r"^([\u3400-\u9fff\uf900-\ufaff]{2,6})\s*缺\s*(.+)$", clean)
+    m = re.match(r"^([\u3400-\u9fff\uf900-\ufaff.．·•・‧]{2,12})\s*缺\s*(.+)$", clean)
     if m:
         return {"type": "set_missing_docs", "name": m.group(1), "company": "", "docs": m.group(2).strip()}
 
     # 已補（指定公司）：@AI 姓名 公司 已補 身分證
-    m = re.match(r"^([\u3400-\u9fff\uf900-\ufaff]{2,6})\s+(\S+?)\s+已補\s+(.+)$", clean)
+    m = re.match(r"^([\u3400-\u9fff\uf900-\ufaff.．·•・‧]{2,12})\s+(\S+?)\s+已補\s+(.+)$", clean)
     if m:
         _name, _co, _doc = m.group(1), m.group(2).strip(), m.group(3).strip()
         _co_canon = COMPANY_ALIAS.get(_co, _co)
@@ -5638,7 +5638,7 @@ def parse_special_command(text: str, group_id: str) -> Optional[Dict]:
 
     # 已補單項/全清：@AI 姓名 已補 身分證 / @AI 姓名 已補 全部 / @AI 姓名 已補時段 等
     # 時段/申覆/資料/照會 狀態描述 一律走 mark_doc_completed 讓 company_status 刷新
-    m = re.match(r"^([\u3400-\u9fff\uf900-\ufaff]{2,6})\s*已補\s*(.*)$", clean)
+    m = re.match(r"^([\u3400-\u9fff\uf900-\ufaff.．·•・‧]{2,12})\s*已補\s*(.*)$", clean)
     if m:
         docs = m.group(2).strip()
         if docs in ("", "全部", "完畢", "都好", "好了"):
@@ -5646,19 +5646,19 @@ def parse_special_command(text: str, group_id: str) -> Optional[Dict]:
         return {"type": "mark_doc_completed", "name": m.group(1), "company": "", "doc": docs}
 
     # 加送：@AI 姓名 送公司[+公司] [金額/期數] → 加入同時送件清單，不換掉原本的
-    m = re.match(r"^([\u3400-\u9fff\uf900-\ufaff]{2,6})\s*送\s*([^\s]+)(?:\s+(\d+(?:\.\d+)?)\s*萬?\s*[/／]\s*(\d+)\s*期?)?\s*$", clean)
+    m = re.match(r"^([\u3400-\u9fff\uf900-\ufaff.．·•・‧]{2,12})\s*送\s*([^\s]+)(?:\s+(\d+(?:\.\d+)?)\s*萬?\s*[/／]\s*(\d+)\s*期?)?\s*$", clean)
     if m and "下一家" not in m.group(2) and "轉" not in m.group(2):
         return {"type": "add_concurrent", "name": m.group(1), "company": m.group(2).strip(),
                 "notify_amount": m.group(3) or "", "notify_period": m.group(4) or ""}
 
     # 轉指定公司（支援多家同送「轉A+B」、可帶送件金額「轉A+B 100萬/24期」）
-    m = re.match(r"^([\u3400-\u9fff\uf900-\ufaff]{2,6})\s*轉([^\s]+)(?:\s+(\d+(?:\.\d+)?)\s*萬?\s*[/／]\s*(\d+)\s*期?)?\s*$", clean)
+    m = re.match(r"^([\u3400-\u9fff\uf900-\ufaff.．·•・‧]{2,12})\s*轉([^\s]+)(?:\s+(\d+(?:\.\d+)?)\s*萬?\s*[/／]\s*(\d+)\s*期?)?\s*$", clean)
     if m and m.group(2).strip() != "下一家":
         return {"type": "advance", "name": m.group(1), "target": m.group(2).strip(),
                 "notify_amount": m.group(3) or "", "notify_period": m.group(4) or ""}
 
     # 取消核准：@AI 姓名 公司 取消核准
-    m = re.match(r"^([\u3400-\u9fff\uf900-\ufaff]{2,6})\s*(.+?)\s*取消核准$", clean)
+    m = re.match(r"^([\u3400-\u9fff\uf900-\ufaff.．·•・‧]{2,12})\s*(.+?)\s*取消核准$", clean)
     if m:
         return {"type": "cancel_approval", "name": m.group(1), "company": m.group(2).strip()}
 
@@ -5669,67 +5669,67 @@ def parse_special_command(text: str, group_id: str) -> Optional[Dict]:
 
     # 修改核准金額：@AI 姓名 公司 核准 金額（姓名和公司之間必須有空格）
     # 異體字（核準→核准）由 normalize_command_text 統一；用 lookbehind 排除「待核准」
-    m = re.match(r"^([\u3400-\u9fff\uf900-\ufaff]{2,6})\s+(.+?)\s*(?<!待)核准\s*(.+)$", clean)
+    m = re.match(r"^([\u3400-\u9fff\uf900-\ufaff.．·•・‧]{2,12})\s+(.+?)\s*(?<!待)核准\s*(.+)$", clean)
     if m:
         return {"type": "update_amount", "name": m.group(1), "company": m.group(2).strip(), "amount": m.group(3).strip()}
 
     # 核准金額（未指定公司 → 用當前 current_company）：姓名核准 金額
-    m = re.match(r"^([\u3400-\u9fff\uf900-\ufaff]{2,6})\s*(?<!待)核准\s*(.+)$", clean)
+    m = re.match(r"^([\u3400-\u9fff\uf900-\ufaff.．·•・‧]{2,12})\s*(?<!待)核准\s*(.+)$", clean)
     if m:
         return {"type": "update_amount", "name": m.group(1), "company": "", "amount": m.group(2).strip()}
 
     # 撥款（日期在前、有公司）：@AI 姓名 公司 M/D 撥款
     # 排除「結案/違約金/取消核准」等動詞字被當公司名
-    m = re.match(r"^([\u3400-\u9fff\uf900-\ufaff]{2,6})\s+(?!結案|違約金|取消核准)(\S+)\s+(\d{1,2}/\d{1,2})\s*撥款$", clean)
+    m = re.match(r"^([\u3400-\u9fff\uf900-\ufaff.．·•・‧]{2,12})\s+(?!結案|違約金|取消核准)(\S+)\s+(\d{1,2}/\d{1,2})\s*撥款$", clean)
     if m:
         return {"type": "disbursed", "name": m.group(1),
                 "company": m.group(2).strip(), "date": m.group(3)}
 
     # 撥款（公司+金額、沒日期）：@AI 姓名 公司 N萬 撥款 [M/D]
     # 例：江淑芳 慢點付 2萬 撥款
-    m = re.match(r"^([\u3400-\u9fff\uf900-\ufaff]{2,6})\s+(?!結案|違約金|取消核准)(\S+)\s+(\d+(?:\.\d+)?)\s*萬\s*撥款\s*(\d{1,2}/\d{1,2})?$", clean)
+    m = re.match(r"^([\u3400-\u9fff\uf900-\ufaff.．·•・‧]{2,12})\s+(?!結案|違約金|取消核准)(\S+)\s+(\d+(?:\.\d+)?)\s*萬\s*撥款\s*(\d{1,2}/\d{1,2})?$", clean)
     if m:
         return {"type": "disbursed", "name": m.group(1),
                 "company": m.group(2).strip(), "date": m.group(4) or "",
                 "amount": m.group(3).strip()}
 
     # 撥款（日期在前、無公司）：@AI 姓名 M/D 撥款
-    m = re.match(r"^([\u3400-\u9fff\uf900-\ufaff]{2,6})\s+(\d{1,2}/\d{1,2})\s*撥款$", clean)
+    m = re.match(r"^([\u3400-\u9fff\uf900-\ufaff.．·•・‧]{2,12})\s+(\d{1,2}/\d{1,2})\s*撥款$", clean)
     if m:
         return {"type": "disbursed", "name": m.group(1),
                 "company": "", "date": m.group(2)}
 
     # 撥款指定公司（日期在後）：@AI 姓名 公司 撥款 M/D
     # 排除「結案 已撥款」等會被誤判（「結案 已」當公司）
-    m = re.match(r"^([\u3400-\u9fff\uf900-\ufaff]{2,6})\s+(?!結案|違約金|取消核准)(.+?)\s*撥款\s*(\d{1,2}/\d{1,2})?$", clean)
+    m = re.match(r"^([\u3400-\u9fff\uf900-\ufaff.．·•・‧]{2,12})\s+(?!結案|違約金|取消核准)(.+?)\s*撥款\s*(\d{1,2}/\d{1,2})?$", clean)
     if m:
         return {"type": "disbursed", "name": m.group(1),
                 "company": m.group(2).strip(), "date": m.group(3) or ""}
 
     # 撥款（無公司、日期在後或省略）：@AI 姓名 撥款 M/D
     # 要先於 missing_verb，否則 4/19 會被誤判為 4萬/19期
-    m = re.match(r"^([\u3400-\u9fff\uf900-\ufaff]{2,6})\s*撥款\s*(\d{1,2}/\d{1,2})?$", clean)
+    m = re.match(r"^([\u3400-\u9fff\uf900-\ufaff.．·•・‧]{2,12})\s*撥款\s*(\d{1,2}/\d{1,2})?$", clean)
     if m:
         return {"type": "disbursed", "name": m.group(1),
                 "company": "", "date": m.group(2) or ""}
 
     # 防錯：看起來像「姓名 公司 金額/期數」但缺動詞（轉/送/同送/核准）
     # handler 內會判斷：動詞字、亂公司、合法公司 三種情境分別提示
-    m = re.match(r"^([\u3400-\u9fff\uf900-\ufaff]{2,6})\s+([^\s@]+?)\s*(\d+(?:\.\d+)?)\s*萬?\s*[/／]\s*(\d+)\s*期?\s*$", clean)
+    m = re.match(r"^([\u3400-\u9fff\uf900-\ufaff.．·•・‧]{2,12})\s+([^\s@]+?)\s*(\d+(?:\.\d+)?)\s*萬?\s*[/／]\s*(\d+)\s*期?\s*$", clean)
     if m:
         return {"type": "missing_verb", "name": m.group(1), "companies_raw": m.group(2),
                 "amount": m.group(3), "period": m.group(4)}
 
     # 防錯：金額期數沒用「/」分隔（空白或其他符號）
     # 例：「周馮鈺婷 轉喬美 100 24」→ 提示使用者用「N萬/N期」
-    m = re.match(r"^([\u3400-\u9fff\uf900-\ufaff]{2,6})\s*(轉|送)([^\s]+)\s+(\d+(?:\.\d+)?)\s*萬?\s+(\d+)\s*期?\s*$", clean)
+    m = re.match(r"^([\u3400-\u9fff\uf900-\ufaff.．·•・‧]{2,12})\s*(轉|送)([^\s]+)\s+(\d+(?:\.\d+)?)\s*萬?\s+(\d+)\s*期?\s*$", clean)
     if m:
         return {"type": "bad_amount_format", "name": m.group(1), "verb": m.group(2),
                 "target": m.group(3), "n1": m.group(4), "n2": m.group(5)}
 
     # 缺日期的送件順序：姓名-公司/公司/...（沒前綴日期）
     # 例：「郭富城-第一/亞太機/21機/銀行」
-    m = re.match(r"^([\u3400-\u9fff\uf900-\ufaff]{2,6})-([^\s]+)$", clean)
+    m = re.match(r"^([\u3400-\u9fff\uf900-\ufaff.．·•・‧]{2,12})-([^\s]+)$", clean)
     if m and "/" in m.group(2):
         cos = [c.strip() for c in m.group(2).split("/") if c.strip()]
         valid = _get_valid_company_names()
@@ -5742,31 +5742,31 @@ def parse_special_command(text: str, group_id: str) -> Optional[Dict]:
         return {"type": "no_space_hint", "raw": clean}
 
     # 改名：@AI 舊名 改名 新名
-    m = re.match(r"^([\u3400-\u9fff\uf900-\ufaff]{2,6})\s*改名\s*([\u3400-\u9fff\uf900-\ufaff]{2,6})$", clean)
+    m = re.match(r"^([\u3400-\u9fff\uf900-\ufaff.．·•・‧]{2,12})\s*改名\s*([\u3400-\u9fff\uf900-\ufaff.．·•・‧]{2,12})$", clean)
     if m:
         return {"type": "rename", "old_name": m.group(1), "new_name": m.group(2)}
 
     # 改身分證：@AI 姓名 改身分證 新ID（尾巴可加備註）
-    m = re.match(r"^([\u3400-\u9fff\uf900-\ufaff]{2,6})\s*改身分證\s*([A-Z][A-Z0-9]\d{8})(?:\s+.*)?$", clean, re.IGNORECASE)
+    m = re.match(r"^([\u3400-\u9fff\uf900-\ufaff.．·•・‧]{2,12})\s*改身分證\s*([A-Z][A-Z0-9]\d{8})(?:\s+.*)?$", clean, re.IGNORECASE)
     if m:
         return {"type": "change_id", "name": m.group(1), "new_id": m.group(2).upper()}
     # 改身分證 + ID 格式錯（例如少一位、打錯字）→ 提示格式，不落到新客戶建立
-    m = re.match(r"^([\u3400-\u9fff\uf900-\ufaff]{2,6})\s*改身分證\s*(.+)$", clean, re.IGNORECASE)
+    m = re.match(r"^([\u3400-\u9fff\uf900-\ufaff.．·•・‧]{2,12})\s*改身分證\s*(.+)$", clean, re.IGNORECASE)
     if m:
         return {"type": "bad_id_format", "name": m.group(1), "raw_id": m.group(2).strip()}
 
     # 重啟：@AI 姓名 重啟
-    m = re.match(r"^([\u3400-\u9fff\uf900-\ufaff]{2,6})\s*重啟$", clean)
+    m = re.match(r"^([\u3400-\u9fff\uf900-\ufaff.．·•・‧]{2,12})\s*重啟$", clean)
     if m:
         return {"type": "reopen", "name": m.group(1)}
 
     # 查歷史：@AI 姓名 歷史
-    m = re.match(r"^([\u3400-\u9fff\uf900-\ufaff]{2,6})\s*歷史$", clean)
+    m = re.match(r"^([\u3400-\u9fff\uf900-\ufaff.．·•・‧]{2,12})\s*歷史$", clean)
     if m:
         return {"type": "history", "name": m.group(1)}
 
     # 還原：@AI 姓名 還原 N（N 預設 1 = 最近一筆）
-    m = re.match(r"^([\u3400-\u9fff\uf900-\ufaff]{2,6})\s*還原\s*(\d+)?$", clean)
+    m = re.match(r"^([\u3400-\u9fff\uf900-\ufaff.．·•・‧]{2,12})\s*還原\s*(\d+)?$", clean)
     if m:
         try:
             idx = int(m.group(2) or "1")
@@ -5869,15 +5869,15 @@ def parse_special_command(text: str, group_id: str) -> Optional[Dict]:
             out.append(item)
         return "".join(out).strip()
     # @AI 照會 王小明 亞太+和裕
-    m = re.match(r"^照會\s*([\u3400-\u9fff\uf900-\ufaff]{2,6})(?:\s+(.+))?$", clean)
+    m = re.match(r"^照會\s*([\u3400-\u9fff\uf900-\ufaff.．·•・‧]{2,12})(?:\s+(.+))?$", clean)
     if m:
         return {"type": "notification", "name": m.group(1), "company": _strip_verb((m.group(2) or "").strip())}
     # @AI 王小明 照會 亞太+和裕
-    m = re.match(r"^([\u3400-\u9fff\uf900-\ufaff]{2,6})\s*照會(?:\s+(.+))?$", clean)
+    m = re.match(r"^([\u3400-\u9fff\uf900-\ufaff.．·•・‧]{2,12})\s*照會(?:\s+(.+))?$", clean)
     if m:
         return {"type": "notification", "name": m.group(1), "company": _strip_verb((m.group(2) or "").strip())}
     # @AI 王小明 亞太+和裕 照會   (含「送喬美+21 照會」)
-    m = re.match(r"^([\u3400-\u9fff\uf900-\ufaff]{2,6})\s+(.+?)\s*照會$", clean)
+    m = re.match(r"^([\u3400-\u9fff\uf900-\ufaff.．·•・‧]{2,12})\s+(.+?)\s*照會$", clean)
     if m:
         return {"type": "notification", "name": m.group(1), "company": _strip_verb(m.group(2).strip())}
 
@@ -5904,7 +5904,7 @@ def parse_special_command(text: str, group_id: str) -> Optional[Dict]:
     lines_b = [ln.strip() for ln in clean.splitlines() if ln.strip()]
     if lines_b and len(lines_b) >= 2 and ("時間" in clean or "地點" in clean):
         # 舊格式
-        m = re.match(r"^對保\s+([\u3400-\u9fff\uf900-\ufaff]{2,6})\s+(.+?)對保\s*$", lines_b[0])
+        m = re.match(r"^對保\s+([\u3400-\u9fff\uf900-\ufaff.．·•・‧]{2,12})\s+(.+?)對保\s*$", lines_b[0])
         if m:
             salesperson = m.group(1)
             signing_co = m.group(2).strip()
@@ -5926,7 +5926,7 @@ def parse_special_command(text: str, group_id: str) -> Optional[Dict]:
                 "location": loc_str,
             }
         # 新格式：第一行「姓名 公司/方案」、下面有 時間/地點
-        m2 = re.match(r"^([\u3400-\u9fff\uf900-\ufaff]{2,6})\s+([\u3400-\u9fff\uf900-\ufaff0-9A-Z()（）/]+?)(\s+改時間)?\s*$", lines_b[0])
+        m2 = re.match(r"^([\u3400-\u9fff\uf900-\ufaff.．·•・‧]{2,12})\s+([\u3400-\u9fff\uf900-\ufaff0-9A-Z()（）/]+?)(\s+改時間)?\s*$", lines_b[0])
         if m2 and any(ln.startswith("時間") or ln.startswith("地點") for ln in lines_b[1:]):
             name = m2.group(1)
             signing_co = m2.group(2).strip()
@@ -5951,43 +5951,43 @@ def parse_special_command(text: str, group_id: str) -> Optional[Dict]:
 
     # ===== 常見錯誤格式防錯（給正確範例提示）=====
     # 轉但沒指定公司
-    m = re.match(r"^([\u3400-\u9fff\uf900-\ufaff]{2,6})\s*轉\s*$", clean)
+    m = re.match(r"^([\u3400-\u9fff\uf900-\ufaff.．·•・‧]{2,12})\s*轉\s*$", clean)
     if m:
         return {"type": "format_hint", "hint": f"轉哪家？\n例：@AI {m.group(1)} 轉喬美\n帶金額：@AI {m.group(1)} 轉喬美 50萬/24期"}
     # 送但沒指定公司
-    m = re.match(r"^([\u3400-\u9fff\uf900-\ufaff]{2,6})\s*送\s*$", clean)
+    m = re.match(r"^([\u3400-\u9fff\uf900-\ufaff.．·•・‧]{2,12})\s*送\s*$", clean)
     if m:
         return {"type": "format_hint", "hint": f"送哪家？\n例：@AI {m.group(1)} 送第一\n帶金額：@AI {m.group(1)} 送第一 30萬/24期"}
     # 核准但沒公司沒金額
-    m = re.match(r"^([\u3400-\u9fff\uf900-\ufaff]{2,6})\s*核准\s*$", clean)
+    m = re.match(r"^([\u3400-\u9fff\uf900-\ufaff.．·•・‧]{2,12})\s*核准\s*$", clean)
     if m:
         return {"type": "format_hint", "hint": f"哪家核准？金額多少？\n例：@AI {m.group(1)} 第一 核准 30萬"}
     # 違約金沒金額
-    m = re.match(r"^([\u3400-\u9fff\uf900-\ufaff]{2,6})\s*違約金[已支付]*\s*$", clean)
+    m = re.match(r"^([\u3400-\u9fff\uf900-\ufaff.．·•・‧]{2,12})\s*違約金[已支付]*\s*$", clean)
     if m:
         return {"type": "format_hint", "hint": f"違約金多少？\n例：@AI {m.group(1)} 違約金已支付30000"}
     # 改名沒新名
-    m = re.match(r"^([\u3400-\u9fff\uf900-\ufaff]{2,6})\s*改名\s*$", clean)
+    m = re.match(r"^([\u3400-\u9fff\uf900-\ufaff.．·•・‧]{2,12})\s*改名\s*$", clean)
     if m:
         return {"type": "format_hint", "hint": f"改成什麼名字？\n例：@AI {m.group(1)} 改名 新名字"}
     # 改身分證沒 ID
-    m = re.match(r"^([\u3400-\u9fff\uf900-\ufaff]{2,6})\s*改身分證\s*$", clean)
+    m = re.match(r"^([\u3400-\u9fff\uf900-\ufaff.．·•・‧]{2,12})\s*改身分證\s*$", clean)
     if m:
         return {"type": "format_hint", "hint": f"新身分證？\n例：@AI {m.group(1)} 改身分證 A123456789"}
     # 取消核准沒指定公司
-    m = re.match(r"^([\u3400-\u9fff\uf900-\ufaff]{2,6})\s*取消核准\s*$", clean)
+    m = re.match(r"^([\u3400-\u9fff\uf900-\ufaff.．·•・‧]{2,12})\s*取消核准\s*$", clean)
     if m:
         return {"type": "format_hint", "hint": f"要取消哪家的核准？\n例：@AI {m.group(1)} 第一 取消核准"}
     # 撥款動詞在前（順序錯）
-    m = re.match(r"^撥款\s+([\u3400-\u9fff\uf900-\ufaff]{2,6})", clean)
+    m = re.match(r"^撥款\s+([\u3400-\u9fff\uf900-\ufaff.．·•・‧]{2,12})", clean)
     if m:
         return {"type": "format_hint", "hint": f"撥款指令格式：姓名在前\n例：@AI {m.group(1)} 撥款 4/18\n或：@AI {m.group(1)} 裕融 撥款 4/18"}
     # 結案動詞在前
-    m = re.match(r"^結案\s+([\u3400-\u9fff\uf900-\ufaff]{2,6})", clean)
+    m = re.match(r"^結案\s+([\u3400-\u9fff\uf900-\ufaff.．·•・‧]{2,12})", clean)
     if m:
         return {"type": "format_hint", "hint": f"結案指令格式：姓名在前\n例：@AI {m.group(1)} 結案"}
     # 婉拒動詞在前
-    m = re.match(r"^婉拒\s+([\u3400-\u9fff\uf900-\ufaff]{2,6})", clean)
+    m = re.match(r"^婉拒\s+([\u3400-\u9fff\uf900-\ufaff.．·•・‧]{2,12})", clean)
     if m:
         return {"type": "format_hint", "hint": f"婉拒指令格式：姓名在前\n例：@AI {m.group(1)} 婉拒"}
 
