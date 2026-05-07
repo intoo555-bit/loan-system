@@ -4715,6 +4715,7 @@ _INTERNAL_ACTION_KEYWORDS = [
     "缺件：",            # @AI 姓名 缺 XX
     "缺件已全部補完",    # @AI 姓名 已補 全部
     "缺件補完:",         # mark_doc_completed 針對 pending_docs 項目的內部紀錄
+    "照會話術",          # @AI 姓名 公司 照會（觸發話術指令、不是 status）
 ]
 
 
@@ -8573,7 +8574,7 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
             update_kw["notify_amount"] = ""
             update_kw["notify_period"] = ""
         update_customer(target["case_id"],
-                        text=f"{name} 照會 {company}", from_group_id=group_id, **update_kw)
+                        text=f"{name} 照會話術 {company}", from_group_id=group_id, **update_kw)
         r = dict(target)
         # 重新讀更新後的資料（才有最新 notify_amount）
         conn_re = get_conn(); cur_re = conn_re.cursor()
