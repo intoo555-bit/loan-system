@@ -15503,12 +15503,14 @@ def case_edit_get(request: Request, case_id: str = "", saved: str = ""):
     conn.close()
     def v(k): return r.get(k, "") or ""
 
-    # 公司下拉：COMPANY_LIST + 常用 alias 主名
-    company_choices = sorted(set(COMPANY_LIST + ["第一", "亞太", "和裕", "21", "21機車12萬", "21機車25萬",
-                                  "21商品", "21汽車", "麻吉", "喬美", "分貝機車", "分貝汽車",
-                                  "貸救補", "鄉民", "手機分期", "預付手機分期",
-                                  "慢點付", "大哥付", "新鑫", "元大", "渣打", "估房",
-                                  "裕融", "和潤", "中租", "創鉅", "合信", "興達", "鼎多"]))
+    # 公司下拉：只列「公司」名（不帶方案、避免下拉太長 + 業務心智一致）
+    # 方案資訊存在 各家狀態 文字裡（如「核准 25萬」）、不靠公司名表達
+    company_choices = sorted(["21", "亞太", "和裕", "喬美", "貸救補", "第一", "麻吉",
+                              "分貝", "分唄", "鄉民", "銀行", "零卡", "商品貸", "代書", "當舖",
+                              "刷卡換現", "信用卡", "月付", "手機分期", "預付手機分期",
+                              "慢點付", "大哥付", "新鑫", "元大", "渣打", "估房", "房地",
+                              "裕融", "和潤", "中租", "合迪", "創鉅", "合信", "興達",
+                              "鼎多", "融易", "預付資融", "維力"])
     sec_choices = ["", "送件", "待撥款"] + [s for s in REPORT_SECTIONS if s not in ("送件", "待撥款")]
     # 案件狀態：常用只放 3 個。其他狀態（違約金/放棄/全數婉拒/已刪除）保留現值但不下拉
     status_label_common = {
@@ -15559,6 +15561,24 @@ def case_edit_get(request: Request, case_id: str = "", saved: str = ""):
         company_status = json.loads(v("company_status") or "{}")
     except Exception:
         company_status = {}
+    # 從 route_plan history 抓每家的核准金額/撥款日（顯示用）
+    try:
+        _rp_for_cs = parse_route_json(v("route_plan") or "")
+    except Exception:
+        _rp_for_cs = {"history": []}
+    _hist_by_co = {}
+    for _h in _rp_for_cs.get("history", []) or []:
+        _hco = _h.get("company", "")
+        if not _hco: continue
+        _hist_by_co[_hco] = _h
+        _hist_by_co.setdefault(normalize_section(_hco), _h)
+    # 收集所有要顯示的公司：company_status keys ∪ history companies
+    _all_cs_cos = list(company_status.keys())
+    for _h in _rp_for_cs.get("history", []) or []:
+        _hco = _h.get("company", "")
+        if _hco and _hco not in _all_cs_cos:
+            _all_cs_cos.append(_hco)
+
     cs_rows_html = ""
     _cs_quick_btns = (
         '<div style="margin-top:4px;display:flex;gap:4px;flex-wrap:wrap">'
@@ -15569,13 +15589,18 @@ def case_edit_get(request: Request, case_id: str = "", saved: str = ""):
         '<button type="button" onclick="csQuick(this,\'已補完\')" style="background:#dcfce7;color:#166534;border:1px solid #86efac;padding:3px 8px;border-radius:4px;cursor:pointer;font-size:11px">已補→已補完</button>'
         '</div>'
     )
-    for co_key, status_text in company_status.items():
-        # textarea 高度依內容自動調整、最少 2 行
+    for co_key in _all_cs_cos:
+        status_text = company_status.get(co_key, "")
+        _hist_entry = _hist_by_co.get(co_key) or _hist_by_co.get(normalize_section(co_key)) or {}
+        _amt = _hist_entry.get("amount", "")
+        _disb = _hist_entry.get("disbursed", "")
         rows = max(2, status_text.count("\n") + 1)
         cs_rows_html += (
-            '<div class="cs-row" style="display:flex;gap:6px;margin-bottom:8px;align-items:start">'
+            '<div class="cs-row" style="display:flex;gap:6px;margin-bottom:8px;align-items:start;flex-wrap:wrap">'
             f'<input type="text" class="cs-co fld" value="{h(co_key)}" style="flex:0 0 130px;height:38px" placeholder="公司">'
-            '<div style="flex:1;display:flex;flex-direction:column">'
+            f'<input type="text" class="cs-amt fld" value="{h(_amt)}" style="flex:0 0 100px;height:38px" placeholder="核准 N萬">'
+            f'<input type="text" class="cs-disb fld" value="{h(_disb)}" style="flex:0 0 90px;height:38px" placeholder="撥 M/D">'
+            '<div style="flex:1;min-width:200px;display:flex;flex-direction:column">'
             f'<textarea class="cs-text fld" rows="{rows}" style="resize:vertical;min-height:60px" placeholder="第一行 = 日報狀態（如「待補保人」），後面行可寫詳細紀錄">{h(status_text)}</textarea>'
             f'{_cs_quick_btns}'
             '</div>'
@@ -15717,6 +15742,7 @@ label{{display:block;font-size:12px;font-weight:700;color:#374151;margin-bottom:
     <div id="csBox">{cs_rows_html}</div>
     <button type="button" onclick="addCsRow()" style="background:#f3f4f6;border:1px solid #d1d5db;padding:6px 14px;border-radius:6px;font-size:12px;cursor:pointer;margin-top:6px">+ 加一家</button>
     <input type="hidden" name="company_status_json" id="csVal">
+    <input type="hidden" name="cs_history_json" id="csHistVal">
     <p style="font-size:11px;color:#6b7280;margin:4px 0 0">例：第一 → 「核准 28萬-待撥款」、亞太 → 「補保人」</p>
   </div>
 </div>
@@ -15811,7 +15837,7 @@ function addCsRow() {{
   const box = document.getElementById('csBox');
   const div = document.createElement('div');
   div.className = 'cs-row';
-  div.style.cssText = 'display:flex;gap:6px;margin-bottom:8px;align-items:start';
+  div.style.cssText = 'display:flex;gap:6px;margin-bottom:8px;align-items:start;flex-wrap:wrap';
   const quickBtns = '<div style="margin-top:4px;display:flex;gap:4px;flex-wrap:wrap">' +
     '<button type="button" onclick="csQuick(this,\\'缺件\\')" style="background:#fef3c7;color:#92400e;border:1px solid #fde047;padding:3px 8px;border-radius:4px;cursor:pointer;font-size:11px">+缺件</button>' +
     '<button type="button" onclick="csQuick(this,\\'補照會\\')" style="background:#fef3c7;color:#92400e;border:1px solid #fde047;padding:3px 8px;border-radius:4px;cursor:pointer;font-size:11px">+補照會</button>' +
@@ -15820,7 +15846,9 @@ function addCsRow() {{
     '<button type="button" onclick="csQuick(this,\\'已補完\\')" style="background:#dcfce7;color:#166534;border:1px solid #86efac;padding:3px 8px;border-radius:4px;cursor:pointer;font-size:11px">已補→已補完</button>' +
     '</div>';
   div.innerHTML = '<input type="text" class="cs-co fld" placeholder="公司" style="flex:0 0 130px;height:38px">' +
-    '<div style="flex:1;display:flex;flex-direction:column">' +
+    '<input type="text" class="cs-amt fld" placeholder="核准 N萬" style="flex:0 0 100px;height:38px">' +
+    '<input type="text" class="cs-disb fld" placeholder="撥 M/D" style="flex:0 0 90px;height:38px">' +
+    '<div style="flex:1;min-width:200px;display:flex;flex-direction:column">' +
     '<textarea class="cs-text fld" rows="2" placeholder="第一行 = 日報狀態（如「待補保人」），後面行可寫詳細紀錄" style="resize:vertical;min-height:60px"></textarea>' +
     quickBtns +
     '</div>' +
@@ -15864,14 +15892,26 @@ function csQuick(btn, type) {{
 document.querySelector('form[action="/case-edit"]').addEventListener('submit', function() {{
   syncVal('conc'); syncVal('pend');
   const obj = {{}};
+  const histArr = [];
   document.querySelectorAll('#csBox .cs-row').forEach(r => {{
     const coEl = r.querySelector('.cs-co');
     const txEl = r.querySelector('.cs-text');
+    const amtEl = r.querySelector('.cs-amt');
+    const disbEl = r.querySelector('.cs-disb');
     const co = coEl ? coEl.value.trim() : '';
     const tx = txEl ? txEl.value.trim() : '';
+    const amt = amtEl ? amtEl.value.trim() : '';
+    const disb = disbEl ? disbEl.value.trim() : '';
     if (co) obj[co] = tx;
+    if (co && (amt || disb)) {{
+      const entry = {{company: co, amount: amt}};
+      if (disb) entry.disbursed = disb;
+      entry.status = disb ? '撥款' : '核准';
+      histArr.push(entry);
+    }}
   }});
   document.getElementById('csVal').value = JSON.stringify(obj);
+  document.getElementById('csHistVal').value = JSON.stringify(histArr);
 }});
 
 // 切 status 自動顯示 / 隱藏違約金卡
@@ -16115,12 +16155,33 @@ async def case_edit_post(request: Request):
         json.loads(cs_json)  # 驗 JSON
     except Exception:
         cs_json = "{}"
+    # 各家核准 history（從 csHistVal 來）→ 替換 route_plan["history"]、保留 order/idx
+    cs_hist_json = f.get("cs_history_json") or "[]"
+    try:
+        cs_hist_list = json.loads(cs_hist_json)
+        if not isinstance(cs_hist_list, list):
+            cs_hist_list = []
+    except Exception:
+        cs_hist_list = []
     with db_conn(commit=True) as conn:
         cur = conn.cursor()
         cur.execute("UPDATE customers SET company_status=? WHERE case_id=?", (cs_json, case_id))
-        # 移除自動 inject history 邏輯：太武斷會把 current_company 誤當核准家寫進 history
-        # （例：approved_amount 是 21 的、current 切到和裕、原邏輯會寫和裕核准）
-        # 業務要記某家核准請改用 LINE 指令 `@AI 姓名 公司 核准 金額`
+        # 各家核准 history：替換 route_plan["history"]
+        if cs_hist_list:
+            cur.execute("SELECT route_plan FROM customers WHERE case_id=?", (case_id,))
+            _rp_row = cur.fetchone()
+            try:
+                _rp = parse_route_json(_rp_row["route_plan"] or "") if _rp_row else {"order": [], "current_index": 0, "history": []}
+            except Exception:
+                _rp = {"order": [], "current_index": 0, "history": []}
+            new_hist = []
+            for e in cs_hist_list:
+                if not isinstance(e, dict): continue
+                if not e.get("company") or not e.get("amount"): continue
+                new_hist.append({k: v for k, v in e.items() if v})
+            _rp["history"] = new_hist
+            cur.execute("UPDATE customers SET route_plan=? WHERE case_id=?",
+                        (json.dumps(_rp, ensure_ascii=False), case_id))
     # 推到對應業務群、讓群組成員看到「網頁修改案件狀態」訊息
     try:
         with db_conn() as _conn2:
