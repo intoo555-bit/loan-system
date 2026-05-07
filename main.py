@@ -5596,10 +5596,10 @@ def parse_special_command(text: str, group_id: str) -> Optional[Dict]:
 
     # 查詢：支援所有格式
     # @AI 查 彭駿為 / 彭駿為 查@AI / 彭駿為@AI 查
-    m = re.match(r"^查\s*([\u3400-\u9fff\uf900-\ufaff]{2,6})$", clean)
+    m = re.match(r"^查\s*([\u3400-\u9fff\uf900-\ufaff.．·•・‧]{2,12})$", clean)
     if m:
         return {"type": "search", "name": m.group(1)}
-    m = re.match(r"^([\u3400-\u9fff\uf900-\ufaff]{2,6})\s*查$", clean)
+    m = re.match(r"^([\u3400-\u9fff\uf900-\ufaff.．·•・‧]{2,12})\s*查$", clean)
     if m:
         return {"type": "search", "name": m.group(1)}
 
