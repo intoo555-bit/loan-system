@@ -1038,6 +1038,7 @@ PLAN_ELIGIBILITY_RULES = [
              "manual_check": "若有動保 → 應送 15 萬版本（二車貸款）"},
             {"type": "simple", "label": "代償專案：前貸須是 中租/合迪/和潤/裕融（自動偵測）", "op": "dynbao_from_apt_legit"},
             {"type": "simple", "label": "名下有可用機車（不能機車滿貸）", "op": "motorcycle_has_space"},
+            {"type": "simple", "label": "勞保不可工會保（工會請改送亞太工會機車）", "field": "eval_labor_ins", "op": "!=", "value": "工會保"},
             {"type": "simple", "label": "🚫 警示戶不做（自動偵測）", "op": "no_warning_account"},
         ],
         "required_docs": ["身分證正反", "第二證件", "機車合照", "行照", "強制險截圖"],
@@ -1059,6 +1060,7 @@ PLAN_ELIGIBILITY_RULES = [
             {"type": "simple", "label": "客戶名下有動保（二車貸款情境）", "op": "has_dynbao",
              "manual_check": "確認要貸的是另一台沒貸款的車（前車有動保 + 新車無貸款）"},
             {"type": "simple", "label": "名下有可用機車（不能機車滿貸）", "op": "motorcycle_has_space"},
+            {"type": "simple", "label": "勞保不可工會保（工會請改送亞太工會機車）", "field": "eval_labor_ins", "op": "!=", "value": "工會保"},
             {"type": "simple", "label": "🚫 警示戶不做（自動偵測）", "op": "no_warning_account"},
         ],
         "required_docs": ["身分證正反", "第二證件", "機車合照", "行照", "強制險截圖"],
@@ -1091,6 +1093,7 @@ PLAN_ELIGIBILITY_RULES = [
                 {"type": "simple", "label": "有不動產（不能有私設）", "field": "eval_property", "op": "contains", "value": "不動產", "exclude_field": "eval_alert", "exclude_value": "有"},
                 {"type": "manual", "label": "負責人有營登、設立 1 年以上"},
             ]},
+            {"type": "simple", "label": "勞保不可工會保（工會請改送亞太工會機車）", "field": "eval_labor_ins", "op": "!=", "value": "工會保"},
             {"type": "simple", "label": "🚫 警示戶不做（自動偵測）", "op": "no_warning_account"},
         ],
         "required_docs": ["身分證正反", "第二證件", "手機型號", "imei", "手機合照"],
@@ -1263,8 +1266,8 @@ PLAN_ELIGIBILITY_RULES = [
         "rules": [
             {"type": "simple", "label": "年齡 18 歲以上（學生也可送）", "field": "age", "op": ">=", "value": 18},
             {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
-            {"type": "manual", "label": "💡 適用情境：客戶條件很差、其他方案都送不過時才送",
-             "hint": "核准金額超低、不是警示戶基本不會排、警示戶用其他民間方案"},
+            {"type": "simple", "label": "限警示戶才送", "field": "eval_alert_warning", "op": "=", "value": "是",
+             "manual_check": "手機分期 = 警示戶專案、其他客戶不送"},
             {"type": "manual", "label": "以買手機的名義貸款"},
         ],
         "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面", "手機帳單"],
@@ -1830,6 +1833,7 @@ PLAN_ELIGIBILITY_RULES = [
             {"type": "manual", "label": "✅ 接受三種情境：他行代償、借新還舊、原車融資"},
             {"type": "manual", "label": "💡 可貸金額 = 天書/權威/鑑價 × 1.3（例 50萬×1.3=65萬）"},
             {"type": "manual", "label": "💡 最長分 72 期"},
+            {"type": "simple", "label": "汽車有空間（自動偵測 sp 欄位）", "op": "car_has_space"},
             {"type": "simple", "label": "🚫 警示戶不做（警示戶送和潤）", "op": "no_warning_account"},
         ],
         "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面",
@@ -1847,6 +1851,7 @@ PLAN_ELIGIBILITY_RULES = [
             {"type": "manual", "label": "✅ 接受三種情境：他行代償、借新還舊、原車融資"},
             {"type": "manual", "label": "💡 可貸金額 = 天書/權威/鑑價 × 1.3"},
             {"type": "manual", "label": "💡 最長分 84 期"},
+            {"type": "simple", "label": "汽車有空間（自動偵測 sp 欄位）", "op": "car_has_space"},
             {"type": "simple", "label": "🚫 警示戶不做（警示戶送和潤）", "op": "no_warning_account"},
         ],
         "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面",
@@ -1864,6 +1869,7 @@ PLAN_ELIGIBILITY_RULES = [
             {"type": "manual", "label": "✅ 接受三種情境：他行代償、借新還舊、原車融資"},
             {"type": "manual", "label": "💡 可貸金額 = 天書/權威/鑑價 × 1.3"},
             {"type": "manual", "label": "💡 最長分 60 期"},
+            {"type": "simple", "label": "汽車有空間（自動偵測 sp 欄位）", "op": "car_has_space"},
             {"type": "simple", "label": "🚫 警示戶不做（警示戶送和潤）", "op": "no_warning_account"},
         ],
         "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面",
@@ -1880,6 +1886,7 @@ PLAN_ELIGIBILITY_RULES = [
             {"type": "manual", "label": "需符合 1 項條件以上"},
             {"type": "manual", "label": "✅ 接受三種情境：他行代償、借新還舊、原車融資"},
             {"type": "manual", "label": "💡 可貸金額 = 天書/權威/鑑價 × 1.3；無天書/權威/鑑價 → 老車專案最高 10 萬"},
+            {"type": "simple", "label": "汽車有空間（自動偵測 sp 欄位）", "op": "car_has_space"},
             {"type": "simple", "label": "🚫 警示戶不做（警示戶送和潤）", "op": "no_warning_account"},
         ],
         "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面",
@@ -1898,6 +1905,7 @@ PLAN_ELIGIBILITY_RULES = [
             {"type": "manual", "label": "💡 可貸金額 = 天書/權威/鑑價 × 1.3（同裕融邏輯）"},
             {"type": "manual", "label": "✅ 警示戶可送（警示戶優先送和潤、不送裕融）"},
             {"type": "manual", "label": "⚠️ 警示戶撥款須撥到二等親帳戶"},
+            {"type": "simple", "label": "汽車有空間（自動偵測 sp 欄位）", "op": "car_has_space"},
         ],
         "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面",
                           "汽車行照", "8891 等網站車價截圖", "天書/權威/鑑價（如有）"],
@@ -2118,7 +2126,7 @@ def _customer_has_motorcycle_with_space(customer):
     True 條件（任一）：
     1. unloan_vehicles 有「機車」
     2. debt_list 中有機車且 sp="有"
-    3. debt_list 中有機車但無動保/公路（銀行查不到、可當沒貸款）
+    3. debt_list 中有機車但 dy="無" 或無動保/公路（銀行查不到、可當沒貸款）
     """
     try:
         uv = json.loads(customer.get("unloan_vehicles") or "[]") if customer.get("unloan_vehicles") else []
@@ -2703,6 +2711,9 @@ def _check_rule(rule, customer):
                     actual_str = str(actual) or "未填"
             elif op == "=":
                 ok = str(actual) == str(value)
+                actual_str = str(actual)
+            elif op == "!=":
+                ok = str(actual) != str(value)
                 actual_str = str(actual)
             elif op == ">=":
                 # 數字比較、空值視為 0
@@ -4819,7 +4830,7 @@ def extract_status_summary(first_line: str, customer_name: str) -> str:
         return ""
     # 照會話術指令格式：「{姓名} 照會 {公司}」 = 業務觸發話術、不是 status
     # 兼容舊版（last_update 寫「照會」沒「話術」字尾）
-    if re.match(r"^[\u3400-\u9fff\uf900-\ufaff.．·•・‧]{2,12}\s+照會\s+", first_line):
+    if re.match(r"^[㐀-鿿豈-﫿.．·•・‧]{2,12}\s+照會\s+", first_line):
         return ""
     # 對保好（不簽不收 / 不收不簽）→ 「對好」
     if "對好" in first_line or "不簽不收" in first_line or "不收不簽" in first_line:
@@ -8622,7 +8633,7 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
         # 照會時如果在送件區塊，移到公司區塊
         if (target["report_section"] or "") == "送件":
             update_customer(target["case_id"], report_section="",
-                            text=f"{name} 照會話術", from_group_id=group_id)
+                            text=f"{name} 照會", from_group_id=group_id)
         # 存同時送件公司（只存純公司名）+ 記錄第一家金額
         # 修：沒帶新金額時清掉舊 notify_amount（避免上次送件的金額污染這次照會）
         update_kw = {}
