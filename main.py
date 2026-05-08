@@ -4904,15 +4904,8 @@ def extract_status_summary(first_line: str, customer_name: str) -> str:
         if tm:
             return f"補照會{tm.group(1)}"
         return "待補照會"
-    # 補繳（補繳款/補繳息）→ 看「已補」prefix 決定已補/待補
-    if "補繳" in first_line:
-        _has_done = "已補" in first_line or "補好" in first_line or "補完" in first_line
-        prefix = "已補" if _has_done else "待補"
-        if "息" in first_line:
-            return f"{prefix}繳息"
-        if "款" in first_line:
-            return f"{prefix}繳款"
-        return f"{prefix}繳"
+    # 補繳款/補繳息：移除 specific check、讓 generic fallback 抓「公司之後」全文
+    # （業務寫「已補繳息 時段」/「待補繳息」/「補繳息+照會」都讓 generic 處理）
     # 「照會」 generic = 已送件 → 移除（讓 generic fallback 抓真實 status text、避免吃掉 compound 狀態）
     # 補件/申覆判斷：
     # - 明確「已補」/「待補」關鍵字優先
@@ -5001,7 +4994,7 @@ def extract_status_summary(first_line: str, customer_name: str) -> str:
     # 改由 _INTERNAL_ACTION_KEYWORDS 處理「缺件：」吞掉、自然語氣留下
 
     # 只取前20字
-    return text[:20] if text else ""
+    return text[:12] if text else ""
 
 
 # =========================
