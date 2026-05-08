@@ -8906,13 +8906,22 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
                 cs = {}
             cs_key = next((k for k in cs.keys() if normalize_section(k) == co_norm), target_company)
             cs[cs_key] = f"已補{doc}"
+            # 同步從 pending_docs 移除該項（含 fuzzy match：「合照」 ↔ 「手機合照」）
+            old_pend = (target["pending_docs"] or "").strip()
+            old_list = [d.strip() for d in old_pend.split(",") if d.strip()]
+            new_list = [d for d in old_list if doc not in d and d not in doc]
+            new_pending = ",".join(new_list)
             with db_conn(commit=True) as conn:
                 cur = conn.cursor()
-                cur.execute("UPDATE customers SET company_status=?, updated_at=? WHERE case_id=?",
-                            (json.dumps(cs, ensure_ascii=False), now_iso(), target["case_id"]))
+                cur.execute("UPDATE customers SET company_status=?, pending_docs=?, updated_at=? WHERE case_id=?",
+                            (json.dumps(cs, ensure_ascii=False), new_pending, now_iso(), target["case_id"]))
             update_customer(target["case_id"], text=f"{name} {target_company} 已補{doc}",
                             from_group_id=group_id)
-            reply_text(reply_token, f"✅ {name} {target_company} 已補 {doc}")
+            msg = f"✅ {name} {target_company} 已補 {doc}"
+            if old_list and len(new_list) < len(old_list):
+                removed = [d for d in old_list if d not in new_list]
+                msg += f"\n（pending_docs 也清掉：{'、'.join(removed)}）"
+            reply_text(reply_token, msg)
             return
         # Phase 1 fallback: pending_docs 邏輯
         old = (target["pending_docs"] or "").strip()
