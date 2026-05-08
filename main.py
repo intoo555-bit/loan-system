@@ -8502,6 +8502,17 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
         target = _resolve_target_strict(cmd, name, group_id, reply_token, "婉拒轉")
         if not target:
             return
+        # 防呆：沒指定要拒的公司 + 同送 ≥ 2 家 → 擋下、避免默默拒到 current（業務未必想拒那家）
+        if not reject_company:
+            _curr = (target["current_company"] or "").strip()
+            _concur = [c.strip() for c in (target["concurrent_companies"] or "").split(",") if c.strip()]
+            _active = ([_curr] if _curr else []) + _concur
+            if len(_active) >= 2:
+                reply_text(reply_token,
+                           f"⚠️ {name} 目前同送 {'、'.join(_active)}\n"
+                           f"要拒哪家再轉？請明確指定：\n"
+                           f"  @AI {name} {_active[0]} 婉拒轉{target_raw}")
+                return
         # 支援「亞太+21」多家同送：拆 +、套 alias、第一家當 current、其餘 concurrent
         target_items = [t.strip() for t in re.split(r"[+＋]", target_raw) if t.strip()]
         target_cos = [COMPANY_ALIAS.get(t, t) for t in target_items]
