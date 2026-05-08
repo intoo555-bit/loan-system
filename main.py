@@ -8537,9 +8537,14 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
         data["current_index"] = order.index(target_co)
         data["history"] = history
         new_route = json.dumps(data, ensure_ascii=False)
+        # 清 report_section、讓客戶歸到新 current 對應的 section
+        # （避免之前是「21」/「送件」、轉送後還停留在錯的 section）
+        _existing_rsec = (target["report_section"] or "").strip()
+        _new_rsec = "" if _existing_rsec != "待撥款" else "待撥款"
         update_customer(target["case_id"], route_plan=new_route,
                         current_company=target_co,
                         concurrent_companies=new_concurrent,
+                        report_section=_new_rsec,
                         text=f"{name} {reject_co} 婉拒，轉送 {'+'.join(target_cos)}",
                         from_group_id=group_id)
         # 清 company_status[reject_co] 避免日報該家區塊還顯示這客戶
