@@ -3691,11 +3691,19 @@ def is_format_trigger(block: str) -> bool:
     return "->" in first
 
 
+_CASE_START_BLOCKLIST = (
+    "貸款", "未作", "需補", "申請", "審核", "請補", "請提供",
+    "案件", "資融", "繳款", "繳息",
+)
+
 def looks_like_case_start(line: str) -> bool:
     line = line.strip()
     if not line or re.match(r"^[\[【(（]\d+[\]】)）]", line):
         return False
     if line.startswith("@") or line.startswith("#") or line in {"助理", "AI助理"}:
+        return False
+    # 含業務描述字 → 不視為 case start（避免「4/7資融貸款未作」這類被誤切）
+    if any(w in line for w in _CASE_START_BLOCKLIST):
         return False
     compact = re.sub(r"\s+", "", line)
     if DATE_NAME_ID_INLINE_RE.search(compact) or DATE_NAME_ONLY_RE.search(line):
