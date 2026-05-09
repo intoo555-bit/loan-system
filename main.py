@@ -5108,7 +5108,8 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
         # 補強：route_plan history 有核准未撥款 + 不是「送件」狀態 → 強制歸「待撥款」
         # （網頁編輯 approved_amount 不會自動同步 report_section、兜底 LINE 日報）
         # 房地家族特例：核准 → 歸「核准(房地)」、不歸待撥款（房地核准後仍要顯示在房地區塊下）
-        if not _is_pre_send and section != "待撥款":
+        # 注意：此處 section 即使已是「待撥款」也要重判（舊客戶在修前 set 過「待撥款」、要 reroute 到房地）
+        if not _is_pre_send:
             try:
                 _appr_check = get_all_approved(row["route_plan"] or "")
                 if _appr_check:
@@ -5116,7 +5117,7 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
                     _appr_norm = normalize_section(_appr_co) if _appr_co else ""
                     if _appr_norm == "房地":
                         section = "核准(房地)"
-                    else:
+                    elif section != "待撥款":
                         section = "待撥款"
             except Exception:
                 pass
