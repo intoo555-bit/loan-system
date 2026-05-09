@@ -5107,11 +5107,17 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
                 section = current_co
         # 補強：route_plan history 有核准未撥款 + 不是「送件」狀態 → 強制歸「待撥款」
         # （網頁編輯 approved_amount 不會自動同步 report_section、兜底 LINE 日報）
+        # 房地家族特例：核准 → 歸「核准(房地)」、不歸待撥款（房地核准後仍要顯示在房地區塊下）
         if not _is_pre_send and section != "待撥款":
             try:
                 _appr_check = get_all_approved(row["route_plan"] or "")
                 if _appr_check:
-                    section = "待撥款"
+                    _appr_co = (_appr_check[0].get("company") or "").strip() if _appr_check else ""
+                    _appr_norm = normalize_section(_appr_co) if _appr_co else ""
+                    if _appr_norm == "房地":
+                        section = "核准(房地)"
+                    else:
+                        section = "待撥款"
             except Exception:
                 pass
         section = normalize_section(section)
@@ -5275,6 +5281,21 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
                 amount_str = ""
             # 待撥款行不附 pending_str（核准資訊已夠、缺件給其他公司區塊顯示）
             line = f"{created_date}-{row['customer_name']}{amount_str}"
+        elif section == "核准(房地)":
+            # 房地核准專屬格式：日期-姓名-民間房地核准N萬
+            # 例：3/02-黃月美-民間房地核准20萬
+            created = row["created_at"] or ""
+            created_date = created[5:10].replace("-", "/") if created else date_str
+            approved_list = get_all_approved(row["route_plan"] or "")
+            amt = ""
+            co_show = current_co or "房地"
+            if approved_list:
+                _ap = approved_list[0]
+                amt = _ap.get('amount') or ''
+                co_show = _ap.get('company') or co_show
+            elif (row["approved_amount"] or "").strip():
+                amt = row["approved_amount"]
+            line = f"{created_date}-{row['customer_name']}-民間{co_show}核准{amt}"
         else:
             sec_status = _compress_status(get_section_status(section))
             line = f"{date_str}-{row['customer_name']}-{company_str}"
@@ -5381,7 +5402,8 @@ def build_segment(sections: List[str], section_map: Dict, shown: set) -> str:
     lines = []
     for sec in sections:
         if sec in section_map:
-            lines.append(sec)
+            # 「核准(房地)」顯示成「核准」（精簡標題）
+            lines.append("核准" if sec == "核准(房地)" else sec)
             lines.extend(section_map[sec])
             lines.append("——————————————")
             shown.add(sec)
@@ -7965,14 +7987,17 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
             # 原 current 降到 concurrent（除非已存在同公司）
             if not any(normalize_section(c) == normalize_section(old_current) for c in new_concurrent):
                 new_concurrent.insert(0, old_current)
+        # 房地家族核准 → 留「核准(房地)」區塊、其他歸「待撥款」
+        _new_section = "核准(房地)" if company_norm == "房地" else "待撥款"
         update_customer(target["case_id"], route_plan=new_route,
                         current_company=company,
                         concurrent_companies=",".join(new_concurrent),
                         approved_amount=amount,
-                        report_section="待撥款",
+                        report_section=_new_section,
                         text=f"{name} {company} 核准金額修改為 {amount}",
                         from_group_id=group_id)
-        reply_text(reply_token, f"✅ {name} {company} 核准金額已更新為 {amount}，已移到待撥款")
+        _section_label = "核准（房地）" if _new_section == "核准(房地)" else "待撥款"
+        reply_text(reply_token, f"✅ {name} {company} 核准金額已更新為 {amount}，已移到{_section_label}")
         return
 
     if t == "missing_date_hint":
@@ -9476,7 +9501,9 @@ def _handle_a_case_block_locked(block_text, reply_token, id_no, name, forced_cas
             new_route = update_company_amount_in_history(new_route, company, quick_amount)
         else:
             ai_amount_needed = True
-        new_report_section = "待撥款"
+        # 房地家族核准 → 留在「核准(房地)」區塊、不歸待撥款
+        _co_norm_check = normalize_section(company) if company else ""
+        new_report_section = "核准(房地)" if _co_norm_check == "房地" else "待撥款"
 
     # 核准或婉拒時，從同時送件移除該公司
     concurrent = customer["concurrent_companies"] or ""
@@ -9487,6 +9514,22 @@ def _handle_a_case_block_locked(block_text, reply_token, id_no, name, forced_cas
         conn3 = get_conn(); cur3 = conn3.cursor()
         cur3.execute("UPDATE customers SET concurrent_companies=? WHERE case_id=?", (concurrent, customer["case_id"]))
         conn3.commit(); conn3.close()
+    # Bug 1 修：核准時、若 current 不是被核准那家 → 把原 current 降到 concurrent、current 升成核准那家
+    # 例：current=和裕、concurrent=[21]、A群報「21 核准5萬」 → 核准後應該 current=21、concurrent=[和裕]
+    if is_approved and company:
+        _cur_co = (customer["current_company"] or "").strip()
+        _co_norm = normalize_section(company)
+        _cur_norm = normalize_section(_cur_co) if _cur_co else ""
+        if _cur_co and _cur_norm != _co_norm:
+            # 原 current 降到 concurrent 開頭
+            _new_concur = [c.strip() for c in concurrent.split(",") if c.strip()]
+            if not any(normalize_section(c) == _cur_norm for c in _new_concur):
+                _new_concur.insert(0, _cur_co)
+            concurrent = ",".join(_new_concur)
+            conn_sw = get_conn(); cur_sw = conn_sw.cursor()
+            cur_sw.execute("UPDATE customers SET current_company=?, concurrent_companies=? WHERE case_id=?",
+                           (company, concurrent, customer["case_id"]))
+            conn_sw.commit(); conn_sw.close()
 
     # 更新該公司的狀態（每家公司各存一份）
     if company:
@@ -16376,6 +16419,18 @@ async def case_edit_post(request: Request):
             if not e.get("company") or not e.get("amount"): continue
             new_hist.append({k: v for k, v in e.items() if v})
         _rp["history"] = new_hist
+        # 同步 route_plan 的 order / current_index 跟新 current_company / concurrent_companies
+        # 修 bug：之前改 current 下拉儲存後 route_plan 沒同步、後續 LINE 指令會用 route_plan 的舊 current
+        _new_cur = (f.get("current_company") or "").strip()
+        _new_concur_str = (f.get("concurrent_companies") or "").strip()
+        _new_concur = [c.strip() for c in _new_concur_str.split(",") if c.strip()]
+        if _new_cur:
+            _new_order = [_new_cur] + [c for c in _new_concur if c != _new_cur]
+            _rp["order"] = _new_order
+            _rp["current_index"] = 0
+        elif _new_concur:
+            _rp["order"] = _new_concur
+            _rp["current_index"] = 0
         cur.execute("UPDATE customers SET route_plan=? WHERE case_id=?",
                     (json.dumps(_rp, ensure_ascii=False), case_id))
     # 推到對應業務群、讓群組成員看到「網頁修改案件狀態」訊息
