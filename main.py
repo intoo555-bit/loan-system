@@ -5149,10 +5149,11 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
         extra_section = None
         if section == "待撥款" and current_co:
             approved_companies = [h.get("company","") for h in get_all_approved(row["route_plan"] or "")]
-            # 主案 approved_amount 也算「current 已核准」（避免 history 空但 column 有值時、
-            # current 被誤判成「還在送」、散到 current section 重複顯示）
+            # fallback：history 真的空（無核准記錄）但 approved_amount 有值 → 把 current 當核准家
+            # 修：限定「history 空」才 fallback、避免「current 跟 approved_amount 不對應」
+            #     同送家被誤判成核准（潘順隆案：current=和裕、approved 實際是 21）
             _main_amt = (row["approved_amount"] or "").strip()
-            if _main_amt and current_co and current_co not in approved_companies:
+            if not approved_companies and _main_amt and current_co:
                 approved_companies.append(current_co)
             still_sending = current_co not in approved_companies and not any(current_co in ac or ac in current_co for ac in approved_companies)
             if still_sending:
