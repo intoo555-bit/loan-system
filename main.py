@@ -2528,9 +2528,22 @@ def _check_creditcard_status(customer):
     return ("good", text)
 
 
+def _ensure_4tuple(fn):
+    """裝飾器：把 _check_rule 的 3-tuple return 補成 4-tuple、第 4 項是 sub list（預設空）。
+    Oneof 自己回 4-tuple、其他 return 不用改、由此補。"""
+    def wrapper(*args, **kwargs):
+        result = fn(*args, **kwargs)
+        if isinstance(result, tuple) and len(result) == 3:
+            return result + ([],)
+        return result
+    return wrapper
+
+
+@_ensure_4tuple
 def _check_rule(rule, customer):
-    """單條規則比對、回 (status, label, actual_str)
-    status: 'pass' / 'fail' / 'manual' / 'unknown'"""
+    """單條規則比對、回 (status, label, actual_str, sub) 4-tuple
+    status: 'pass' / 'fail' / 'manual' / 'unknown'
+    sub: oneof 才有值（list of {status, label, actual} dict）、其他空 list"""
     rt = rule.get("type", "simple")
     label = rule.get("label", "")
     if rt == "manual":
@@ -2541,8 +2554,8 @@ def _check_rule(rule, customer):
         any_manual = False  # 真實「auto ✓ + manual_check」才算
         any_unknown = False  # 沒填資料 → 升級成 manual（業務沒填 ≠ 客戶沒有）
         for opt in rule.get("options", []):
-            s, l, a = _check_rule(opt, customer)
-            sub_results.append((s, l, a))
+            s, l, a, _ = _check_rule(opt, customer)
+            sub_results.append({"status": s, "label": l, "actual": a})
             if s == "pass":
                 any_pass = True
                 break
@@ -2551,12 +2564,12 @@ def _check_rule(rule, customer):
             elif s == "unknown":
                 any_unknown = True
         if any_pass:
-            return ("pass", label + " — 至少一項符合", "")
+            return ("pass", label + " — 至少一項符合", "", sub_results)
         if any_manual:
-            return ("manual", label + " — 至少一項可能符合（需人工確認）", "")
+            return ("manual", label + " — 至少一項可能符合（需人工確認）", "", sub_results)
         if any_unknown:
-            return ("manual", label + " — 有未填資料、需人工確認", "")
-        return ("fail", label + " — 各項都不符合", "")
+            return ("manual", label + " — 有未填資料、需人工確認", "", sub_results)
+        return ("fail", label + " — 各項都不符合", "", sub_results)
     if rt == "simple":
         field = rule.get("field", "")
         op = rule.get("op", "")
@@ -2824,8 +2837,8 @@ def evaluate_case(customer):
         has_oneof_fail = False   # 擇一條件失敗
         manual_count = 0
         for rule in plan["rules"]:
-            status, label, actual = _check_rule(rule, customer)
-            checks.append({"status": status, "label": label, "actual": actual})
+            status, label, actual, sub = _check_rule(rule, customer)
+            checks.append({"status": status, "label": label, "actual": actual, "sub": sub})
             if status == "fail":
                 rt = rule.get("type", "")
                 if rt == "simple":
@@ -15050,7 +15063,18 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
         r.checks.forEach(function(c) {{
           var mark = c.status === 'pass' ? '✅' : (c.status === 'fail' ? '❌' : (c.status === 'manual' ? '⚠️' : '❓'));
           var act = c.actual ? ('（' + c.actual + '）') : '';
-          detail += '<li>' + mark + ' ' + c.label + act + '</li>';
+          detail += '<li>' + mark + ' ' + c.label + act;
+          // oneof 規則展開列每一個 option（菜鳥看得懂要確認哪一項）
+          if (c.sub && c.sub.length) {{
+            detail += '<ul style="margin:3px 0 0;padding-left:18px;font-size:11px;color:#52525b">';
+            c.sub.forEach(function(s) {{
+              var sm = s.status === 'pass' ? '✅' : (s.status === 'fail' ? '❌' : (s.status === 'manual' ? '⚠️' : '❓'));
+              var sa = s.actual ? ('（' + s.actual + '）') : '';
+              detail += '<li>' + sm + ' ' + s.label + sa + '</li>';
+            }});
+            detail += '</ul>';
+          }}
+          detail += '</li>';
         }});
         detail += '</ul>';
       }}
@@ -16308,7 +16332,18 @@ function checkEligibility() {{
           r.checks.forEach(c => {{
             let mark = c.status === 'pass' ? '✅' : (c.status === 'fail' ? '❌' : (c.status === 'manual' ? '⚠️' : '❓'));
             let act = c.actual ? ('（' + c.actual + '）') : '';
-            html += '<li>' + mark + ' ' + c.label + act + '</li>';
+            html += '<li>' + mark + ' ' + c.label + act;
+            // oneof 規則展開列每一個 option
+            if (c.sub && c.sub.length) {{
+              html += '<ul style="margin:3px 0 0;padding-left:18px;font-size:11px;color:#52525b">';
+              c.sub.forEach(s => {{
+                let sm = s.status === 'pass' ? '✅' : (s.status === 'fail' ? '❌' : (s.status === 'manual' ? '⚠️' : '❓'));
+                let sa = s.actual ? ('（' + s.actual + '）') : '';
+                html += '<li>' + sm + ' ' + s.label + sa + '</li>';
+              }});
+              html += '</ul>';
+            }}
+            html += '</li>';
           }});
           html += '</ul>';
         }}
