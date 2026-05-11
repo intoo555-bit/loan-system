@@ -2505,6 +2505,7 @@ def _check_rule(rule, customer):
         sub_results = []
         any_pass = False
         any_manual = False  # 真實「auto ✓ + manual_check」才算
+        any_unknown = False  # 沒填資料 → 升級成 manual（業務沒填 ≠ 客戶沒有）
         for opt in rule.get("options", []):
             s, l, a = _check_rule(opt, customer)
             sub_results.append((s, l, a))
@@ -2513,12 +2514,15 @@ def _check_rule(rule, customer):
                 break
             elif s == "manual":
                 any_manual = True
-            # unknown 視同 fail（沒填資料 ≠ 可能通過、不該升級 manual）
+            elif s == "unknown":
+                any_unknown = True
         if any_pass:
             return ("pass", label + " — 至少一項符合", "")
         if any_manual:
             return ("manual", label + " — 至少一項可能符合（需人工確認）", "")
-        return ("fail", label + " — 各項都不符合（含未填資料）", "")
+        if any_unknown:
+            return ("manual", label + " — 有未填資料、需人工確認", "")
+        return ("fail", label + " — 各項都不符合", "")
     if rt == "simple":
         field = rule.get("field", "")
         op = rule.get("op", "")
