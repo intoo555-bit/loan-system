@@ -1247,13 +1247,13 @@ PLAN_ELIGIBILITY_RULES = [
         "rules": [
             {"type": "simple", "label": "年齡 18~59", "field": "age", "op": "between", "value": [18, 59]},
             {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
-            {"type": "manual", "label": "💡 警示戶專案可辦理（須提供二等親存封）"},
+            {"type": "simple", "label": "🚨 必須是警示戶（警示戶專案）", "field": "eval_alert_warning", "op": "=", "value": "是"},
             {"type": "simple", "label": "至少 1 位聯絡人知情（1 親 1 友其 1 須知情）", "op": "any_contact_known"},
         ],
-        "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面", "二等親存封（警示戶才需要）"],
+        "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面", "二等親存封"],
     },
     # ===== 手機分期 =====
-    # 業務備註：核准金額超低、通常條件很差才會排（警示戶基本不送）
+    # 業務備註：警示戶專案（沒警示戶不送）
     {
         "company": "手機分期",
         "max_amount": 6,
@@ -1261,8 +1261,7 @@ PLAN_ELIGIBILITY_RULES = [
         "rules": [
             {"type": "simple", "label": "年齡 18 歲以上（學生也可送）", "field": "age", "op": ">=", "value": 18},
             {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
-            {"type": "manual", "label": "💡 適用情境：客戶條件很差、其他方案都送不過時才送",
-             "hint": "核准金額超低、不是警示戶基本不會排、警示戶用其他民間方案"},
+            {"type": "simple", "label": "🚨 必須是警示戶（警示戶專案）", "field": "eval_alert_warning", "op": "=", "value": "是"},
             {"type": "manual", "label": "以買手機的名義貸款"},
         ],
         "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面", "手機帳單"],
@@ -16287,10 +16286,12 @@ function revertLog(logId) {{
 
 @app.get("/api/check-eligibility")
 def api_check_eligibility(request: Request, case_id: str = ""):
-    """跑案件判別、回 JSON 給 /case-edit、/adminb 顯示"""
+    """跑案件判別、回 JSON 給 /adminb 顯示（限最高權限管理員）"""
     role = check_auth(request)
     if not role:
         return JSONResponse({"ok": False, "message": "請先登入"})
+    if role != "admin":
+        return JSONResponse({"ok": False, "message": "需要最高權限管理員"}, status_code=403)
     if not case_id:
         return JSONResponse({"ok": False, "message": "缺 case_id"})
     conn = get_conn(); cur = conn.cursor()
