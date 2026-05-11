@@ -4821,6 +4821,8 @@ _INTERNAL_ACTION_KEYWORDS = [
     "缺件已全部補完",    # @AI 姓名 已補 全部
     "缺件補完:",         # mark_doc_completed 針對 pending_docs 項目的內部紀錄
     "照會話術",          # @AI 姓名 公司 照會（觸發話術指令、不是 status）
+    "[網頁編輯]",        # /case-edit 預設 last_update 標記、不是 status
+    "網頁修改案件狀態",  # 推到群組的網頁編輯通知、不是 status
 ]
 
 
