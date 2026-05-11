@@ -1513,10 +1513,10 @@ PLAN_ELIGIBILITY_RULES = [
         "rules": [
             {"type": "simple", "label": "年齡 20~65", "field": "age", "op": "between", "value": [20, 65]},
             {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
-            {"type": "manual", "label": "機車有貸款或無貸款都可送（不用附繳息）"},
+            {"type": "simple", "label": "✅ 機車有/無貸款都可送（不用附繳息）", "op": "always_pass"},
             {"type": "simple", "label": "21 體系（麻吉/21/分貝/樂分期/分期趣/慢點付）含利息剩餘 < 25 萬",
              "op": "group21_remain_lt", "value": 250000},
-            {"type": "manual", "label": "💡 警示戶可送（但撥款要撥到二等親帳戶）"},
+            {"type": "simple", "label": "警示戶可送（撥二等親、自動偵測）", "op": "alert_warning_handler"},
             {"type": "simple", "label": "名下有可用機車（不能機車滿貸）", "op": "motorcycle_has_space"},
         ],
         "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面", "機車行照"],
@@ -1944,12 +1944,13 @@ def _calc_age_from_birth(birth_str):
 
 
 def _calc_vehicle_age(year_str):
-    """從車輛出廠年份算車齡。支援 2019 或 108（民國）"""
+    """從車輛出廠年份算車齡。支援 2019、108（民國）、2019/05、108/12 等格式"""
     if not year_str:
         return None
     try:
         s = str(year_str).strip()
-        m = re.match(r"^(\d+)$", s)
+        # 接受「2019」「108」「2019/05」「108/12」等格式、只取前段年份
+        m = re.match(r"^(\d+)", s)
         if m:
             year = int(m.group(1))
             if year < 200:
@@ -1958,6 +1959,34 @@ def _calc_vehicle_age(year_str):
     except Exception:
         pass
     return None
+
+
+def _customer_best_vehicle_age(customer):
+    """找客戶最年輕車的車齡（取年份最大、車齡最小）
+    來源優先順序：customer.vehicle_year → debt_list[*].yr → unloan_vehicles[*].year
+    回傳: int 車齡 or None（都沒填）
+    """
+    candidates = []
+    main_age = _calc_vehicle_age(customer.get("vehicle_year") or "")
+    if main_age is not None:
+        candidates.append(main_age)
+    try:
+        debt_list = json.loads(customer.get("debt_list") or "[]")
+        for d in debt_list:
+            age = _calc_vehicle_age(d.get("yr") or "")
+            if age is not None:
+                candidates.append(age)
+    except Exception:
+        pass
+    try:
+        unloans = json.loads(customer.get("unloan_vehicles") or "[]")
+        for u in unloans:
+            age = _calc_vehicle_age(u.get("year") or "")
+            if age is not None:
+                candidates.append(age)
+    except Exception:
+        pass
+    return min(candidates) if candidates else None
 
 
 def _customer_has_dynbao(customer):
@@ -2652,6 +2681,21 @@ def _check_rule(rule, customer):
                 ok = c1_ok or c2_ok
                 actual_str = f"聯絡人1：{c1 or '未填'}、聯絡人2：{c2 or '未填'}"
             return ("pass" if ok else "fail", label, actual_str)
+        # 特殊 op：總是通過（表達「無限制」、純標籤用、不打 manual）
+        if op == "always_pass":
+            return ("pass", label, "")
+        # 特殊 op：警示戶處理（警示戶 → manual 提示撥款方式、非警示戶 → pass、未填 → unknown）
+        if op == "alert_warning_handler":
+            aw = (customer.get("eval_alert_warning", "") or "").strip()
+            if aw == "是":
+                method = (customer.get("eval_alert_warning_method", "") or "").strip()
+                if method:
+                    return ("manual", label + f"（警示戶、撥款方式：{method}）", "是")
+                return ("manual", label + "（警示戶、需確認撥款方式 = 撥二等親）", "是")
+            elif aw == "否":
+                return ("pass", label + "（非警示戶）", "否")
+            else:
+                return ("unknown", label, "未填警示戶欄位")
         # 特殊 op：信用卡狀況（直接從 eval_credit_card 文字判）
         if op == "creditcard_good":
             status, detail = _check_creditcard_status(customer)
@@ -2671,13 +2715,17 @@ def _check_rule(rule, customer):
         if field == "age":
             actual = _calc_age_from_birth(customer.get("birth_date", "") or "")
         elif field == "vehicle_year":
-            actual = _calc_vehicle_age(customer.get("vehicle_year", "") or "")
+            # 優先用 customer.vehicle_year、否則 fallback 到 debt_list / unloan_vehicles 取最年輕車
+            actual = _customer_best_vehicle_age(customer)
         else:
             actual = (customer.get(field, "") or "").strip()
-        # 空值處理：數字類比對（<= / >=）視為 0、其他類型視為「資料不齊」
+        # 空值處理：數字類比對（<= / >=）視為 0、not_contains 空白 = 沒送過 = pass、其他類型視為「資料不齊」
         if actual is None or actual == "":
             if op in ("<=", ">="):
                 actual = "0"
+            elif op == "not_contains":
+                # 空白 = 沒送過任何家 = not_contains 必 pass（例：「近三月沒送過亞太」未填 = 沒送過）
+                return ("pass", label, "未送過")
             else:
                 return ("unknown", label, "資料不齊")
         # 比對
