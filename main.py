@@ -9646,10 +9646,20 @@ def _handle_a_case_block_locked(block_text, reply_token, id_no, name, forced_cas
                 prompt = f"⚠️ {customer['customer_name']} 的 {company} 已婉拒/不在路線，收到補件訊息，請選擇："
             reply_quick_reply(reply_token, prompt, items)
             return "QUICK_REPLY_SENT"
+    _promoted_from_concurrent = ""  # 婉拒後從 concurrent 升上來的家（給後面 concurrent 處理用）
     if is_reject and route and not is_in_concurrent and not is_unknown_company:
         # 不在同送、也非「額外公司婉拒」→ 正常推進 route
         next_co = get_next_company(route)
         new_route = advance_route(route, "婉拒")
+        # 修：若 route 沒下一家、改用 concurrent 第一家當下家（避免「已無下家」誤判）
+        # 例：羅雅芳 current=亞太、concurrent=[第一]、A群報「亞太婉拒」
+        # → route 只有亞太一家、advance 後無下一家；但 concurrent 有第一、要升上來
+        if not next_co:
+            _existing_concur = [c.strip() for c in (customer["concurrent_companies"] or "").split(",") if c.strip()]
+            _existing_concur = [c for c in _existing_concur if company not in c and c not in company]
+            if _existing_concur:
+                next_co = _existing_concur[0]
+                _promoted_from_concurrent = next_co
 
     # A群回貼時，如果客戶在「送件」區塊，清掉讓它移到公司區塊
     cur_report_sec = customer["report_section"] or ""
@@ -9673,6 +9683,9 @@ def _handle_a_case_block_locked(block_text, reply_token, id_no, name, forced_cas
     if concurrent and (is_approved or is_reject):
         parts = [c.strip() for c in concurrent.split(",") if c.strip()]
         parts = [c for c in parts if company not in c and c not in company]
+        # 若婉拒後從 concurrent 升上來當新 current、那家也要從 concurrent 移除（避免重複）
+        if _promoted_from_concurrent:
+            parts = [c for c in parts if c != _promoted_from_concurrent]
         concurrent = ",".join(parts)
         conn3 = get_conn(); cur3 = conn3.cursor()
         cur3.execute("UPDATE customers SET concurrent_companies=? WHERE case_id=?", (concurrent, customer["case_id"]))
