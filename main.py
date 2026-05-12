@@ -13835,6 +13835,7 @@ def render_customer_row(row, role="") -> str:
     # 共用 helper：拿 status / company_short / pending_str / section（跟 LINE 日報 build_section_map 同邏輯）
     _disp = compute_customer_display(row)
     status_summary = _disp["status"]
+    first_line = _disp["first_line"]
     created = row["created_at"] or ""
     date_str = created[5:10].replace("-","/") if created else ""
     co = row["current_company"] or row["company"] or ""
