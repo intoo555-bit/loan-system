@@ -8155,7 +8155,12 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
         if not _check_active_or_warn(target, reply_token, "結案", name):
             return
         close_text = f"{name} 結案（{reason}）" if reason else f"{name} 結案"
+        # 結案防呆：清 report_section / approved_amount / disbursement_date
+        # 萬一某條 query 漏過濾 status='ACTIVE'、結案客戶才不會在待撥款區塊殘留
         update_customer(target["case_id"], status="CLOSED",
+                        report_section="",
+                        approved_amount="",
+                        disbursement_date="",
                         text=close_text, from_group_id=group_id)
         push_text(target["source_group_id"], close_text)
         reply_text(reply_token, f"✅ {name} 已結案，從日報移除" + (f"\n原因：{reason}" if reason else ""))
