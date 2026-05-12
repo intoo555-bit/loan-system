@@ -5139,265 +5139,294 @@ def normalize_section(section: str) -> str:
     return section
 
 
-def build_section_map(all_rows) -> Dict[str, List[str]]:
-    """把客戶列表轉成 section_map"""
-    section_map: Dict[str, List[str]] = {}
-    today_str = now_tw().strftime("%Y-%m-%d")
-    for row in all_rows:
-        report_sec = row["report_section"] or ""
-        current_co = row["current_company"] or row["company"] or ""
-        # 防呆：current_company 不該含「(...)」（缺件、狀態等）→ 剝掉、避免日報 section 帶括號
-        current_co = re.sub(r"\s*\([^)]*\)\s*", "", current_co).strip()
-        section = report_sec or current_co or "送件"
-        # 預先讀 pending_docs 跟 company_status（給「送件區塊保留」邏輯判斷用）
-        try:
-            _row_pend_check = (row["pending_docs"] or "").strip()
-        except (IndexError, KeyError):
-            _row_pend_check = ""
-        try:
-            _row_cs_check = json.loads(row["company_status"] or "{}")
-        except Exception:
-            _row_cs_check = {}
-        # 「還沒送件」判定：有缺件 + company_status 空 + 不是待撥款
-        # 或 report_section 明確設「送件」（如張宇鋒：送件順序設了但還沒被 A 群處理）
-        _is_pre_send = (
-            (bool(_row_pend_check) and not _row_cs_check and report_sec != "待撥款")
-            or report_sec == "送件"
-        )
-        if _is_pre_send:
-            section = "送件"
-        elif section == "送件" and current_co:
-            # 「送件」fallback：
-            # 規則 1：民間方案（房地/銀行/零卡 等）→ 跳對應公司區塊（熊高玲情境）
-            # 規則 2：其他 → 跳對應公司區塊
-            _cur_norm_pre = normalize_section(current_co)
-            _private_secs = {"房地", "銀行", "零卡", "商品貸", "代書", "當舖", "鄉民"}
-            if _cur_norm_pre in _private_secs:
-                section = current_co
-            else:
-                section = current_co
-        # 補強：route_plan history 有核准未撥款 + 不是「送件」狀態 → 強制歸「待撥款」
-        # （網頁編輯 approved_amount 不會自動同步 report_section、兜底 LINE 日報）
-        # 房地家族特例：核准 → 歸「核准(房地)」、不歸待撥款（房地核准後仍要顯示在房地區塊下）
-        # 注意：此處 section 即使已是「待撥款」也要重判（舊客戶在修前 set 過「待撥款」、要 reroute 到房地）
-        if not _is_pre_send:
-            try:
-                _appr_check = get_all_approved(row["route_plan"] or "")
-                if _appr_check:
-                    _appr_co = (_appr_check[0].get("company") or "").strip() if _appr_check else ""
-                    _appr_norm = normalize_section(_appr_co) if _appr_co else ""
-                    if _appr_norm == "房地":
-                        section = "核准(房地)"
-                    elif section != "待撥款":
-                        section = "待撥款"
-            except Exception:
-                pass
-        section = normalize_section(section)
-        created = row["created_at"] or ""
-        date_str = created[5:10].replace("-", "/") if created else ""
-        # 日報公司名簡化：貸款方案（21/亞太/和裕/麻吉/分貝/興達/合信）才簡化
-        # 民間方案（慢點付/大哥付/元大/新鑫 等）保留原名避免失去辨識度
-        _shorten_sections = {"21", "亞太", "和裕", "麻吉", "分貝", "興達", "合信"}
-        # 民間 section 名本身縮成短代號（零卡→C、銀行→銀、商品貸→商 等）
-        # 特定產品（慢點付、元大、新鑫）不受影響、保留原名
-        _section_short_code = {
-            "零卡": "C", "銀行": "銀", "商品貸": "商",
-            "代書": "代", "當舖": "當", "鄉民": "鄉",
-        }
-        def _display_co(co_raw):
-            if not co_raw:
-                return co_raw
-            # section 名本身 → 縮成短代號
-            if co_raw in _section_short_code:
-                return _section_short_code[co_raw]
-            norm = normalize_section(co_raw)
-            if norm in _shorten_sections and co_raw != norm:
-                return norm
-            return co_raw
-        company_str = _display_co(current_co) or current_co
+# =========================================================================
+# 日報顯示共用 helper（LINE 日報 + 網頁日報共用、確保兩邊永遠一致）
+# =========================================================================
+_DISPLAY_SHORTEN_SECTIONS = {"21", "亞太", "和裕", "麻吉", "分貝", "興達", "合信"}
+_DISPLAY_SECTION_SHORT_CODE = {
+    "零卡": "C", "銀行": "銀", "商品貸": "商",
+    "代書": "代", "當舖": "當", "鄉民": "鄉",
+}
+_DISPLAY_FAMILY_CS_KEY = {"分貝機車": "分貝", "分貝汽車": "分貝"}
 
-        # 如果待撥款但還在送其他公司 → 兩個區塊都顯示
-        # 用補強後的 section 判斷（涵蓋網頁修改未同步 report_section 的情況）
+
+def _display_co_short(co_raw):
+    """日報公司名簡化：貸款方案才簡寫、民間方案保留原名"""
+    if not co_raw:
+        return co_raw
+    if co_raw in _DISPLAY_SECTION_SHORT_CODE:
+        return _DISPLAY_SECTION_SHORT_CODE[co_raw]
+    norm = normalize_section(co_raw)
+    if norm in _DISPLAY_SHORTEN_SECTIONS and co_raw != norm:
+        return norm
+    return co_raw
+
+
+def _compress_status_short(s):
+    """日報狀態壓縮：已補/待補/缺/補時段 全文保留 14 字、其他原樣"""
+    if not s:
+        return s
+    if s.startswith("已補") or s.startswith("待補") or s.startswith("缺") or s.startswith("("):
+        return s.split("\n")[0][:14]
+    if s.startswith("補時段") or s.startswith("補照會") or s.startswith("照會時段"):
+        return s.split("\n")[0][:14]
+    return s
+
+
+def _default_sent_for_major_section(sn):
+    """21/亞太 系列在送、無具體狀態 → 顯示「已送件」"""
+    return "已送件" if sn in ("21", "亞太") else ""
+
+
+def _get_cs_key_for_section(cs, sec_name):
+    """找 company_status 內對應 section 的 key
+    優先順序：家族主公司 → 精確 → normalize → prefix 雙向"""
+    if not sec_name or not cs:
+        return None
+    _family_main = _DISPLAY_FAMILY_CS_KEY.get(sec_name)
+    if _family_main and _family_main in cs:
+        return _family_main
+    if sec_name in cs:
+        return sec_name
+    for k in cs.keys():
+        if normalize_section(k) == sec_name:
+            return k
+    for k in cs.keys():
+        if k and sec_name and (sec_name.startswith(k) or k.startswith(sec_name)):
+            return k
+    return None
+
+
+def _get_section_status_for_row(row, sec_name, cs=None, first_line=None):
+    """取得該客戶在某 section 的狀態文字（共用邏輯、LINE/網頁都用此）
+    - cs/first_line 可預先傳入避免重複算
+    - 優先 cs[sec] → fallback last_update → 21/亞太 fallback「已送件」
+    """
+    if cs is None:
+        try:
+            cs = json.loads(row["company_status"] or "{}")
+        except Exception:
+            cs = {}
+    if first_line is None:
+        last = row["last_update"] or ""
+        first_line = last.splitlines()[0].strip() if last.strip() else ""
+    customer_name = row["customer_name"]
+    cs_key = _get_cs_key_for_section(cs, sec_name)
+    if cs_key is not None:
+        cs_text = cs[cs_key]
+        for ln in cs_text.splitlines():
+            ln = ln.strip()
+            if not ln:
+                continue
+            s = extract_status_summary(ln, customer_name)
+            if s:
+                return s
+        return _default_sent_for_major_section(sec_name)
+    # 是 concurrent 但無 cs_key → 顯示「已送件」（21/亞太）
+    concurrent_list = [c.strip() for c in (row["concurrent_companies"] or "").split(",") if c.strip()]
+    is_concurrent = any(normalize_section(c) == sec_name for c in concurrent_list)
+    status_short = extract_status_summary(first_line, customer_name)
+    # status_short 優先：last_update 提到的公司若 == sec_name → 套
+    if status_short:
+        mentioned_co = extract_company(first_line) or ""
+        if mentioned_co and normalize_section(mentioned_co) != sec_name:
+            # 訊息明確提到別家、該 sec 不該污染
+            return ""
+        if not mentioned_co:
+            if not cs:
+                return status_short
+        else:
+            return status_short
+    if is_concurrent:
+        return _default_sent_for_major_section(sec_name)
+    if cs:
+        return _default_sent_for_major_section(sec_name)
+    return status_short
+
+
+def compute_customer_display(row):
+    """單一客戶的日報主要顯示資訊（LINE 日報跟網頁日報共用核心）
+
+    回 dict：
+      - section: 該歸的日報區（21 / 亞太 / 待撥款 / 核准(房地) / ...）
+      - current_co: 原 current_company（剝括號後）
+      - company_short: 簡寫公司名（給日報顯示用）
+      - status: 已壓縮狀態文字（已送件 / 已補資料 / 待補保人 / ...）
+      - pending_str: 缺件提示（如「 (缺合照)」）
+      - amount_display: 待撥款/核准(房地) 的金額顯示行（其他空）
+      - date_str: 建案日期（M/D 格式）
+      - is_today: 今天進件 → 加 🆕
+      - is_pre_send: 是否「送件區塊」（還沒實際送）
+      - cs: 已 parse 的 company_status dict（給 extras 重用）
+      - first_line: last_update 第一行（給 extras 重用）
+    """
+    report_sec = row["report_section"] or ""
+    current_co_raw = row["current_company"] or row["company"] or ""
+    # 防呆：剝掉括號內容（缺件、狀態等）
+    current_co = re.sub(r"\s*\([^)]*\)\s*", "", current_co_raw).strip()
+    section = report_sec or current_co or "送件"
+
+    try:
+        pend = (row["pending_docs"] or "").strip()
+    except (IndexError, KeyError):
+        pend = ""
+    try:
+        cs = json.loads(row["company_status"] or "{}")
+    except Exception:
+        cs = {}
+
+    # 「還沒送件」判定
+    is_pre_send = (
+        (bool(pend) and not cs and report_sec != "待撥款")
+        or report_sec == "送件"
+    )
+    if is_pre_send:
+        section = "送件"
+    elif section == "送件" and current_co:
+        section = current_co
+
+    # 核准補強（房地特例 → 核准(房地) 區塊、其他 → 待撥款）
+    if not is_pre_send:
+        try:
+            appr = get_all_approved(row["route_plan"] or "")
+            if appr:
+                appr_co = (appr[0].get("company") or "").strip()
+                appr_norm = normalize_section(appr_co) if appr_co else ""
+                if appr_norm == "房地":
+                    section = "核准(房地)"
+                elif section != "待撥款":
+                    section = "待撥款"
+        except Exception:
+            pass
+    section = normalize_section(section)
+
+    company_short = _display_co_short(current_co) or current_co
+
+    last = row["last_update"] or ""
+    first_line = last.splitlines()[0].strip() if last.strip() else ""
+
+    status = _compress_status_short(_get_section_status_for_row(row, section, cs, first_line))
+
+    pending_str = ""
+    if pend:
+        docs = [d.strip() for d in pend.split(",") if d.strip()]
+        if docs:
+            pending_str = " (缺" + "/".join(docs) + ")"
+
+    created = row["created_at"] or ""
+    date_str = created[5:10].replace("-", "/") if created else ""
+    today_str = now_tw().strftime("%Y-%m-%d")
+    is_today = created[:10] == today_str
+
+    amount_display = ""
+    if section == "待撥款":
+        amount = row["approved_amount"] or ""
+        signing_time = (row["signing_time"] or "").strip()
+        signing_date = signing_time.split()[0] if signing_time else ""
+        pending_tag = f"(對保{signing_date})" if signing_date else "(待撥款)"
+        approved_list = get_all_approved(row["route_plan"] or "")
+        if approved_list:
+            parts = []
+            for ap in approved_list:
+                co = ap.get('company') or ''
+                co_s = _display_co_short(co) or co
+                amt = ap.get('amount') or ''
+                disb = ap.get('disbursed') or ''
+                if disb:
+                    parts.append(f"{co_s} {amt}(撥款{disb})")
+                else:
+                    parts.append(f"{co_s} {amt}{pending_tag}")
+            amount_display = "-核准" + "/".join(parts)
+        elif amount:
+            disb_date = row["disbursement_date"] or ""
+            disb_str = f"(撥款{disb_date})" if disb_date else pending_tag
+            co_s = _display_co_short(current_co) or current_co
+            co_prefix = f"-{co_s}" if co_s else ""
+            amount_display = f"{co_prefix}-核准{amount}{disb_str}"
+    elif section == "核准(房地)":
+        approved_list = get_all_approved(row["route_plan"] or "")
+        amt = ""
+        co_show = current_co or "房地"
+        if approved_list:
+            _ap = approved_list[0]
+            amt = _ap.get('amount') or ''
+            co_show = _ap.get('company') or co_show
+        elif (row["approved_amount"] or "").strip():
+            amt = row["approved_amount"]
+        amount_display = f"-民間{co_show}核准{amt}"
+
+    return {
+        "section": section,
+        "current_co": current_co,
+        "company_short": company_short,
+        "status": status,
+        "pending_str": pending_str,
+        "amount_display": amount_display,
+        "date_str": date_str,
+        "is_today": is_today,
+        "is_pre_send": is_pre_send,
+        "cs": cs,
+        "first_line": first_line,
+    }
+
+
+def build_section_map(all_rows) -> Dict[str, List[str]]:
+    """把客戶列表轉成 section_map（LINE 日報用）"""
+    section_map: Dict[str, List[str]] = {}
+    for row in all_rows:
+        info = compute_customer_display(row)
+        section = info["section"]
+        date_str = info["date_str"]
+        company_short = info["company_short"]
+        status = info["status"]
+        pending_str = info["pending_str"]
+        amount_display = info["amount_display"]
+        is_today = info["is_today"]
+        current_co = info["current_co"]
+        cs = info["cs"]
+        first_line = info["first_line"]
+        customer_name = row["customer_name"]
+        created = row["created_at"] or ""
+
+        # === 主行 ===
+        if section == "待撥款":
+            created_date = created[5:10].replace("-", "/") if created else date_str
+            line = f"{created_date}-{customer_name}{amount_display}"
+        elif section == "核准(房地)":
+            created_date = created[5:10].replace("-", "/") if created else date_str
+            line = f"{created_date}-{customer_name}{amount_display}"
+        else:
+            line = f"{date_str}-{customer_name}-{company_short}"
+            if status and not pending_str:
+                line += f"-{status}"
+            line += pending_str
+        if is_today:
+            line = "🆕" + line
+        section_map.setdefault(section, []).append(line)
+
+        # === extra_section（待撥款時、原 current 還在送 → 也歸自己區塊）===
         extra_section = None
         if section == "待撥款" and current_co:
-            approved_companies = [h.get("company","") for h in get_all_approved(row["route_plan"] or "")]
-            # fallback：history 真的空（無核准記錄）但 approved_amount 有值 → 把 current 當核准家
-            # 修：限定「history 空」才 fallback、避免「current 跟 approved_amount 不對應」
-            #     同送家被誤判成核准（潘順隆案：current=和裕、approved 實際是 21）
+            approved_companies = [h.get("company", "") for h in get_all_approved(row["route_plan"] or "")]
             _main_amt = (row["approved_amount"] or "").strip()
             if not approved_companies and _main_amt and current_co:
                 approved_companies.append(current_co)
-            still_sending = current_co not in approved_companies and not any(current_co in ac or ac in current_co for ac in approved_companies)
+            still_sending = current_co not in approved_companies and not any(
+                current_co in ac or ac in current_co for ac in approved_companies
+            )
             if still_sending:
                 extra_section = normalize_section(current_co)
-
-        last_update = row["last_update"] or ""
-        first_line = last_update.splitlines()[0].strip() if last_update.strip() else ""
-        status_short = extract_status_summary(first_line, row["customer_name"])
-
-        # 讀取每家公司各自的狀態
-        try:
-            company_status = json.loads(row["company_status"] or "{}")
-        except Exception:
-            company_status = {}
-
-        def _default_sent_for_major(sn):
-            """21/亞太 系列當前在送（未有補件/婉拒等具體狀態）→ 日報顯示「已送件」
-            避免日報只秀「21機車25萬」或「亞太機車15萬」等冗長方案名、狀態欄空白"""
-            return "已送件" if sn in ("21", "亞太") else ""
-
-        def _compress_status(s):
-            """日報狀態壓縮、減少長度（手機看不用捲）：
-            - 已補申覆/已補資料/已補照會 保留完整（分辨申覆 vs 資料 vs 照會）
-            - 待補申覆/待補資料/待補照會 保留完整
-            - 待補保人/已補保人/待補聯徵 等具體項目也保留
-            - 補時段 HH:MM-HH:MM → 補時段（不帶時間）
-            - 其他保持原樣
-            """
-            if not s: return s
-            # 「已補/待補/缺/(缺...)」全文保留（最多 14 字、業務寫的具體項目保留）
-            if s.startswith("已補") or s.startswith("待補") or s.startswith("缺") or s.startswith("("):
-                return s.split("\n")[0][:14]
-            if s.startswith("補時段") or s.startswith("補照會") or s.startswith("照會時段"):
-                return s.split("\n")[0][:14]
-            return s
-
-        def get_section_status(sec_name):
-            """取得該區塊對應公司的狀態（各家獨立，沒有就不顯示）"""
-            # 家族主公司 cs key fallback（避免 cs["分貝機車"]/cs["分貝"] 兩 key 並存時抓錯舊的）
-            # 同公司多方案（如分貝有「分貝機車」「分貝汽車」）、cs 統一用主公司「分貝」當 key
-            _FAMILY_CS_KEY = {"分貝機車": "分貝", "分貝汽車": "分貝"}
-            _family_main = _FAMILY_CS_KEY.get(sec_name)
-            # key 比對：家族主公司優先 → 直接 → normalize → prefix（「分貝」對「分貝汽車」）
-            cs_key = None
-            if _family_main and _family_main in company_status:
-                cs_key = _family_main
-            elif sec_name in company_status:
-                cs_key = sec_name
-            else:
-                for k in company_status.keys():
-                    if normalize_section(k) == sec_name:
-                        cs_key = k
-                        break
-                if cs_key is None:
-                    # prefix 雙向匹配：「分貝」對「分貝汽車」、「21」對「21機車25萬」
-                    for k in company_status.keys():
-                        if k and sec_name and (sec_name.startswith(k) or k.startswith(sec_name)):
-                            cs_key = k
-                            break
-            if cs_key is not None:
-                cs_text = company_status[cs_key]
-                # 從所有行找有意義的狀態（第一行通常是姓名+公司，狀態常在第二行）
-                for ln in cs_text.splitlines():
-                    ln = ln.strip()
-                    if not ln:
-                        continue
-                    s = extract_status_summary(ln, row["customer_name"])
-                    if s:
-                        return s
-                return _default_sent_for_major(sec_name)
-            # 是 concurrent 但無 cs_key → 顯示「已送件」（21/亞太）
-            concurrent_list = [c.strip() for c in (row["concurrent_companies"] or "").split(",") if c.strip()]
-            is_concurrent = any(normalize_section(c) == sec_name for c in concurrent_list)
-            # status_short 優先檢查：last_update 提到的公司若 == sec_name → 套
-            # （即使 company_status 有別家紀錄、若 last_update 明確提到該家就要用、避免漏狀態）
-            if status_short:
-                mentioned_co = extract_company(first_line) or ""
-                if mentioned_co and normalize_section(mentioned_co) != sec_name:
-                    # 訊息明確提到別家、該 sec 不該污染（直接回空、不 fallback 已送件）
-                    return ""
-                if not mentioned_co:
-                    if not company_status:
-                        return status_short
-                else:
-                    return status_short  # 訊息明確提到這家
-            if is_concurrent:
-                return _default_sent_for_major(sec_name)
-            if company_status:
-                return _default_sent_for_major(sec_name)
-            return status_short
-
-        # 缺件清單（pending_docs）→ 顯示為「 (缺身分證/薪轉)」
-        try:
-            _pend = (row["pending_docs"] or "").strip()
-        except (IndexError, KeyError):
-            _pend = ""
-        pending_str = ""
-        if _pend:
-            _docs = [d.strip() for d in _pend.split(",") if d.strip()]
-            if _docs:
-                pending_str = " (缺" + "/".join(_docs) + ")"
-
-        if section == "待撥款":
-            created = row["created_at"] or ""
-            created_date = created[5:10].replace("-", "/") if created else date_str
-            amount = row["approved_amount"] or ""
-            # 對保時間（已排定對保的待撥款案件）
-            signing_time = (row["signing_time"] or "").strip()
-            signing_date = signing_time.split()[0] if signing_time else ""
-            pending_tag = f"(對保{signing_date})" if signing_date else "(待撥款)"
-            # 從 route_plan 歷史找核准公司（每家各自顯示撥款狀態）
-            approved_list = get_all_approved(row["route_plan"] or "")
-            if approved_list:
-                parts = []
-                for ap in approved_list:
-                    co = ap.get('company') or ''
-                    co_short = _display_co(co) or co
-                    amt = ap.get('amount') or ''
-                    disb = ap.get('disbursed') or ''
-                    if disb:
-                        parts.append(f"{co_short} {amt}(撥款{disb})")
-                    else:
-                        parts.append(f"{co_short} {amt}{pending_tag}")
-                amount_str = "-核准" + "/".join(parts)
-            elif amount:
-                disb_date = row["disbursement_date"] or ""
-                disb_str = f"(撥款{disb_date})" if disb_date else pending_tag
-                co_short = _display_co(current_co) or current_co
-                co_prefix = f"-{co_short}" if co_short else ""
-                amount_str = f"{co_prefix}-核准{amount}{disb_str}"
-            else:
-                amount_str = ""
-            # 待撥款行不附 pending_str（核准資訊已夠、缺件給其他公司區塊顯示）
-            line = f"{created_date}-{row['customer_name']}{amount_str}"
-        elif section == "核准(房地)":
-            # 房地核准專屬格式：日期-姓名-民間房地核准N萬
-            # 例：3/02-黃月美-民間房地核准20萬
-            created = row["created_at"] or ""
-            created_date = created[5:10].replace("-", "/") if created else date_str
-            approved_list = get_all_approved(row["route_plan"] or "")
-            amt = ""
-            co_show = current_co or "房地"
-            if approved_list:
-                _ap = approved_list[0]
-                amt = _ap.get('amount') or ''
-                co_show = _ap.get('company') or co_show
-            elif (row["approved_amount"] or "").strip():
-                amt = row["approved_amount"]
-            line = f"{created_date}-{row['customer_name']}-民間{co_show}核准{amt}"
-        else:
-            sec_status = _compress_status(get_section_status(section))
-            line = f"{date_str}-{row['customer_name']}-{company_str}"
-            # 有缺件時不顯示 sec_status（例：「已送件」被「(缺合照)」取代，
-            # 業務補完後下一次會顯示回 sec_status）
-            if sec_status and not pending_str:
-                line += f"-{sec_status}"
-            line += pending_str
-        # 今日新進件標記
-        if created[:10] == today_str:
-            line = "🆕" + line
-        section_map.setdefault(section, []).append(line)
-        # 還在送其他公司 → 也加到該公司區塊、套該家的 status（補照會/補件等）
         if extra_section and extra_section != section:
-            extra_status = _compress_status(get_section_status(extra_section))
-            extra_line = f"{date_str}-{row['customer_name']}-{company_str}"
+            extra_status = _compress_status_short(_get_section_status_for_row(row, extra_section, cs, first_line))
+            extra_line = f"{date_str}-{customer_name}-{company_short}"
             if extra_status and not pending_str:
                 extra_line += f"-{extra_status}"
             extra_line += pending_str
-            if created[:10] == today_str:
+            if is_today:
                 extra_line = "🆕" + extra_line
             section_map.setdefault(extra_section, []).append(extra_line)
-        # 已核准的公司 section set（避免公司區再重複顯示、已在待撥款區）
+
+        # === 已核准 sections（concurrent 散開時跳過、避免重複）===
         approved_sections = set()
         try:
             for ap in get_all_approved(row["route_plan"] or ""):
@@ -5406,9 +5435,8 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
                     approved_sections.add(normalize_section(ap_co))
         except Exception:
             pass
-        # 同時送件的公司也要顯示
-        # concurrent_companies 是業務明確打「@AI 姓名 送 X」寫入、表達加送意圖
-        # → 那家公司就該顯示在對應區塊（即使主案還在送件區）
+
+        # === concurrent 散開：同送公司也要顯示在自己區塊 ===
         concurrent_str = row["concurrent_companies"] or ""
         if concurrent_str:
             for co in concurrent_str.split(","):
@@ -5417,22 +5445,19 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
                     continue
                 co_section = normalize_section(co)
                 if co_section in approved_sections:
-                    continue  # 已在待撥款區顯示過、不重複
+                    continue
                 if co_section != section:
-                    co_status = _compress_status(get_section_status(co_section))
-                    # 日報顯示用簡化名（貸款方案簡化、民間方案保留原名）
-                    co_short = _display_co(co) or co
-                    co_line = f"{date_str}-{row['customer_name']}-{co_short}"
-                    # 有缺件時不顯示 co_status（和主分支一致邏輯）
+                    co_status = _compress_status_short(_get_section_status_for_row(row, co_section, cs, first_line))
+                    co_short = _display_co_short(co) or co
+                    co_line = f"{date_str}-{customer_name}-{co_short}"
                     if co_status and not pending_str:
                         co_line += f"-{co_status}"
                     co_line += pending_str
-                    if created[:10] == today_str:
+                    if is_today:
                         co_line = "🆕" + co_line
                     section_map.setdefault(co_section, []).append(co_line)
 
-        # 婉拒'd 公司若 company_status 有「補件」類紀錄 → 也顯示在那家區塊
-        # （業務後來補保人/補申覆，雖然推進到下一家但原家還在等申覆）
+        # === 婉拒'd 公司若 cs 有補件紀錄 → 也顯示在那區塊 ===
         try:
             _route_data = parse_route_json(row["route_plan"] or "")
             _history = _route_data.get("history", []) or []
@@ -5454,20 +5479,19 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
                 _rej_sec = normalize_section(_rej_co)
                 if _rej_sec in _shown_secs:
                     continue
-                _cs_text = company_status.get(_rej_sec, "")
+                _cs_text = cs.get(_rej_sec, "")
                 if not _cs_text or not any(k in _cs_text for k in _supp_kw):
                     continue
-                # 排除「婉拒」字眼（婉拒理由含「補保人」「補資料」等只是說明原因、不是真的補件）
-                # 例：「婉拒 55歲以上需補保人」應該 skip、不顯示在該家區塊
                 if "婉拒" in _cs_text:
                     continue
-                _rej_status = _compress_status(extract_status_summary(_cs_text.splitlines()[0] if _cs_text else "", row["customer_name"]))
-                _rej_short = _display_co(_rej_co) or _rej_co
-                _rej_line = f"{date_str}-{row['customer_name']}-{_rej_short}"
+                _rej_status = _compress_status_short(
+                    extract_status_summary(_cs_text.splitlines()[0] if _cs_text else "", customer_name))
+                _rej_short = _display_co_short(_rej_co) or _rej_co
+                _rej_line = f"{date_str}-{customer_name}-{_rej_short}"
                 if _rej_status and not pending_str:
                     _rej_line += f"-{_rej_status}"
                 _rej_line += pending_str
-                if created[:10] == today_str:
+                if is_today:
                     _rej_line = "🆕" + _rej_line
                 section_map.setdefault(_rej_sec, []).append(_rej_line)
                 _shown_secs.add(_rej_sec)
@@ -13782,58 +13806,17 @@ def classify_rows(rows):
 
 _report_role = ""  # 暫存日報頁面的角色
 
-def _row_cs_status(row, section):
-    """從 company_status 抓某 section 的 status、跟 build_section_map.get_section_status 同邏輯"""
-    if not section:
-        return ""
-    try:
-        cs = json.loads(row.get("company_status", "") or "{}")
-    except Exception:
-        cs = {}
-    # 家族主公司 cs key fallback（同 build_section_map.get_section_status 邏輯）
-    _FAMILY_CS_KEY = {"分貝機車": "分貝", "分貝汽車": "分貝"}
-    _family_main = _FAMILY_CS_KEY.get(section)
-    cs_key = None
-    if _family_main and _family_main in cs:
-        cs_key = _family_main
-    elif section in cs:
-        cs_key = section
-    else:
-        snorm = normalize_section(section)
-        for k in cs.keys():
-            if normalize_section(k) == snorm:
-                cs_key = k
-                break
-    if not cs_key:
-        return ""
-    cs_text = cs[cs_key] or ""
-    for ln in cs_text.splitlines():
-        ln = ln.strip()
-        if not ln:
-            continue
-        s = extract_status_summary(ln, row.get("customer_name", "") or "")
-        if s:
-            return s
-    return ""
-
 
 def render_customer_row(row, role="") -> str:
     role = role or _report_role
     """產生單一客戶列"""
     row = dict(row)
+    # 共用 helper：拿 status / company_short / pending_str / section（跟 LINE 日報 build_section_map 同邏輯）
+    _disp = compute_customer_display(row)
+    status_summary = _disp["status"]
     created = row["created_at"] or ""
     date_str = created[5:10].replace("-","/") if created else ""
-    last = row["last_update"] or ""
-    first_line = last.splitlines()[0].strip() if last.strip() else ""
-    status_summary = extract_status_summary(first_line, row["customer_name"])
     co = row["current_company"] or row["company"] or ""
-    # 跟 LINE 日報 build_section_map 對齊：優先用 cs[section]、再 fallback last_update、最後 21/亞太「已送件」
-    _co_norm_for_status = normalize_section(co) if co else ""
-    _cs_status = _row_cs_status(row, _co_norm_for_status)
-    if _cs_status:
-        status_summary = _cs_status
-    elif not status_summary and _co_norm_for_status in ("21", "亞太"):
-        status_summary = "已送件"
     amt = row["approved_amount"] or ""
     disb = row["disbursement_date"] or ""
     route_data = parse_route_json(row["route_plan"] or "")
