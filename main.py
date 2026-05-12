@@ -13971,6 +13971,7 @@ def render_customer_row(row, role="") -> str:
         'style="background:#f3f4f6;color:#374151;font-size:12px;padding:6px 14px;border-radius:6px;text-decoration:none;font-weight:600;border:1px solid #d1d5db">✏️ 改個資</a>'
         + '</div>'
     )
+    cname = row["customer_name"]
     detail_html = (
         '<div style="background:#f0ebe4;padding:12px 16px;border-top:1px solid #ddd5ca;">'
         + '<div style="font-size:15px;font-weight:700;color:#1a1208;margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid #ddd5ca">👤 ' + h(cname or "(無名)") + '</div>'
@@ -13990,7 +13991,6 @@ def render_customer_row(row, role="") -> str:
     )
 
     cid = row["case_id"]
-    cname = row["customer_name"]
     expand_js = "var e=document.getElementById('dd-" + h(cid) + "');e.style.display=e.style.display==='block'?'none':'block';"
     return (
         '<div class="cust-wrap" data-name="' + h(cname) + '" data-cid="' + h(cid) + '" onclick="' + expand_js + '" style="border-bottom:1px solid #ddd5ca;cursor:pointer">'
