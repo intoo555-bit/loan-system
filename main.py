@@ -5300,6 +5300,21 @@ def compute_customer_display(row):
             pass
     section = normalize_section(section)
 
+    # 婉拒 reroute：如果主 section 的 cs 內容含「婉拒」、嘗試切換到 concurrent 內非婉拒的家
+    # （user 要求 2026-05-12：婉拒的家不該出現在日報主行）
+    if section not in ("待撥款", "核准(房地)", "送件") and cs:
+        _section_cs_key = _get_cs_key_for_section(cs, section)
+        if _section_cs_key and "婉拒" in cs.get(_section_cs_key, ""):
+            _concur_list = [c.strip() for c in (row["concurrent_companies"] or "").split(",") if c.strip()]
+            for _alt_co in _concur_list:
+                _alt_sec = normalize_section(_alt_co)
+                _alt_cs_key = _get_cs_key_for_section(cs, _alt_sec)
+                _alt_cs_text = cs.get(_alt_cs_key, "") if _alt_cs_key else ""
+                if "婉拒" not in _alt_cs_text:
+                    section = _alt_sec
+                    current_co = _alt_co
+                    break
+
     company_short = _display_co_short(current_co) or current_co
 
     last = row["last_update"] or ""
