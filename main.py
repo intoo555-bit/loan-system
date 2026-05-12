@@ -5448,6 +5448,9 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
                     continue
                 if co_section != section:
                     co_status = _compress_status_short(_get_section_status_for_row(row, co_section, cs, first_line))
+                    # 婉拒的家不顯示（cs 裡有「婉拒」狀態 → 跳過、user 要求 2026-05-12）
+                    if co_status == "婉拒":
+                        continue
                     co_short = _display_co_short(co) or co
                     co_line = f"{date_str}-{customer_name}-{co_short}"
                     if co_status and not pending_str:
