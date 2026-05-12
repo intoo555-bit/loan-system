@@ -13858,50 +13858,25 @@ def render_customer_row(row, role="") -> str:
     order = route_data.get("order",[])
     idx = route_data.get("current_index",0)
 
-    # 詳細資料 - 支援多家核准（從 route_plan history 讀、跟 BOT 日報一致）
+    # sub 改用 _disp 算結果、跟 LINE 日報 build_section_map 同格式（user 要求 2026-05-12）
     route_history = route_data.get("history", [])
-    approved_list = [rh for rh in route_history if rh.get("status") in ("核准","待撥款","撥款") and rh.get("amount")]
-    if (row["report_section"] or "") == "待撥款":
-        if len(approved_list) > 1:
-            parts = []
-            for rh in approved_list:
-                co_h = rh.get("company") or ""
-                amt_h = rh.get("amount") or ""
-                disb_h = rh.get("disbursed") or ""
-                if disb_h:
-                    parts.append(f"{co_h} {amt_h}(撥款{disb_h})")
-                else:
-                    parts.append(f"{co_h} {amt_h}(待撥款)")
-            sub = "多家核准：" + " / ".join(parts)
-        elif approved_list:
-            # 單一核准：從 history 讀公司/金額/撥款狀態（避免 current_company 不同步）
-            rh = approved_list[0]
-            co_h = rh.get("company") or co
-            amt_h = rh.get("amount") or amt
-            disb_h = rh.get("disbursed") or disb
-            sub = co_h + (f" 核准{amt_h}" if amt_h else "") + (f"（撥款{disb_h}）" if disb_h else "（待撥款）")
-        else:
-            sub = co + (f" 核准{amt}" if amt else "") + (f"（撥款{disb}）" if disb else "（待撥款）")
-    elif order and idx < len(order):
-        next_co = order[idx+1] if idx+1 < len(order) else ""
-        # 顯示各家進度摘要
-        progress_parts = []
-        for rh in route_history[-3:]:
-            hco = rh.get("company","")
-            hst = rh.get("status","")
-            hamt = rh.get("amount","")
-            if hst == "核准":
-                progress_parts.append(hco + "核准" + hamt)
-            elif hst == "婉拒":
-                progress_parts.append(hco + "婉拒")
-        sub = co + (f" → {next_co}" if next_co else f"（第{idx+1}/{len(order)}家）")
-        if progress_parts:
-            sub += "　" + " / ".join(progress_parts[-2:])
-        # 補 status：跟 LINE 日報對齊（cs[section] 優先、否則 last_update、最後 21/亞太「已送件」）
-        if status_summary:
-            sub += f" · {status_summary}"
+    _section_disp = _disp["section"]
+    _company_short = _disp["company_short"]
+    _status_disp = _disp["status"]
+    _pending_str_disp = _disp["pending_str"]
+    _amount_display_disp = _disp["amount_display"]
+    if _section_disp == "待撥款":
+        # LINE 格式：「日期-姓名-核准 21 5萬(待撥款)」、網頁 sub 去掉日期姓名、保留核准資訊
+        sub = (_amount_display_disp.lstrip("-") if _amount_display_disp else (co or "")).strip() or "(待撥款)"
+    elif _section_disp == "核准(房地)":
+        # LINE 格式：「日期-姓名-民間房地核准20萬」、網頁 sub 同邏輯
+        sub = (_amount_display_disp.lstrip("-") if _amount_display_disp else (co or "")).strip() or "民間房地核准"
     else:
-        sub = co + (f" · {status_summary}" if status_summary else "")
+        # 一般：公司-狀態（同 LINE「日期-姓名-公司-狀態」格式去掉日期姓名）
+        sub = _company_short or co
+        if _status_disp and not _pending_str_disp:
+            sub += f"-{_status_disp}"
+        sub += _pending_str_disp
 
     # 缺件清單（跟在 sub 後）
     _pending = (row.get("pending_docs", "") or "").strip()
