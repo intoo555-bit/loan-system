@@ -8198,8 +8198,13 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
 
     if t == "remove_concurrent_or_close":
         # 【A 方案】姓名 公司 結案（支援多家：第一/亞太、第一+亞太 等）
-        # 客戶已核准 → 從同送清單移除這些公司（不動客戶狀態）
-        # 客戶未核准 → 退回普通結案並提示
+        # 規則（user 確認 2026-05-12）：
+        # - 帶公司名 = 只結那家、不整筆結案
+        # - 該家是 current 已撥款 → 歸檔、升下家上來
+        # - 該家是 current 未撥款 → 升下家上來、該家從 route_plan 移除
+        # - 該家是 concurrent → 從同送移除
+        # - 完全沒在送該家 → 提示
+        # - 移除後沒任何在送 → 提示「要整筆結案請打 @AI 姓名 結案」
         name = cmd["name"]
         co_raw = cmd["company"]
         target = _resolve_target_strict(cmd, name, group_id, reply_token, "結案")
@@ -8215,15 +8220,6 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
         current_co = target["current_company"] or ""
         concurrent_str = target["concurrent_companies"] or ""
         concurrent_list = [c.strip() for c in concurrent_str.split(",") if c.strip()]
-        if not approved:
-            close_text = f"{name} 結案"
-            update_customer(target["case_id"], status="CLOSED",
-                            text=close_text, from_group_id=group_id)
-            push_text(target["source_group_id"], close_text)
-            reply_text(reply_token,
-                       f"⚠️ {name} 尚未核准，「{co_raw} 結案」已視為整筆結案\n"
-                       f"若要只取消某家送件，請先該家核准後再打此指令")
-            return
         removed = []
         skipped_current = []
         skipped_not_in = []
@@ -8231,6 +8227,7 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
         # current 已撥款歸檔：把該家從 current 移除、升 concurrent 第一家上來、保留撥款記錄
         disbursed_archived_co = None  # 從 current 歸檔的公司名（已撥款）
         promoted_co = None            # 從 concurrent 升上 current 的公司名
+        unapproved_removed_co = None  # 未撥款的 current 被移除（不歸檔、純刪）
         # 用 normalize_section 做模糊比對：「亞太」對應「亞太機車15萬/25萬、亞太商品」等同系列
         current_norm = normalize_section(current_co) if current_co else ""
         # 解析 route_plan history 一次（判斷 current 是否已撥款）
@@ -8281,13 +8278,22 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
                     # 真的沒其他家在送 → 整筆結案
                     close_text = f"{name} {co} 撥款完成、整筆結案"
                     update_customer(target["case_id"], status="CLOSED",
+                                    report_section="", approved_amount="", disbursement_date="",
                                     text=close_text, from_group_id=group_id)
                     push_text(target["source_group_id"], close_text)
                     reply_text(reply_token,
                                f"✅ {name} 整筆結案（{co} 已撥款 {approved}、無其他在送）")
                     return
-                skipped_current.append(co)
-                continue
+                # 未撥款的 current 被結案 → 升下家上來、不整筆結案（user 規則）
+                if new_concurrent:
+                    promoted_co = new_concurrent.pop(0)
+                    unapproved_removed_co = co
+                    continue
+                # 沒 concurrent → 不自動整筆結案、提示用戶
+                reply_text(reply_token,
+                           f"⚠️ {name} 目前只在送 {co}、結案後沒其他家在送\n"
+                           f"確定要整筆結案請打：@AI {name} 結案")
+                return
             matches = [c for c in new_concurrent if normalize_section(c) == co_norm]
             if matches:
                 for m in matches:
@@ -8308,22 +8314,22 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
                         disbursed_archived_co = co
                     continue
                 skipped_not_in.append(co)
-        if removed or disbursed_archived_co:
+        if removed or disbursed_archived_co or unapproved_removed_co:
             update_kw = {
                 "concurrent_companies": ",".join(new_concurrent),
                 "from_group_id": group_id,
             }
-            if disbursed_archived_co:
-                _archive_norm = normalize_section(disbursed_archived_co)
+            # 處理 current 被移除（已撥款歸檔 or 未撥款純刪）→ 升下家上來
+            _current_removed_co = disbursed_archived_co or unapproved_removed_co
+            if _current_removed_co:
+                _archive_norm = normalize_section(_current_removed_co)
                 _promoted_entry = None
-                # route_plan 徹底刪除歸檔公司的 history 跟 order entry（兩種歸檔場景共用）
                 _new_history = [h for h in _r_history
                                 if normalize_section(h.get("company", "")) != _archive_norm]
                 _old_order = _route_data_chk.get("order", []) or []
                 _new_order = [o for o in _old_order
                               if normalize_section(o) != _archive_norm]
                 if promoted_co:
-                    # current 歸檔：升下一家當新 current
                     update_kw["current_company"] = promoted_co
                     _promoted_norm = normalize_section(promoted_co)
                     for h in _r_history:
@@ -8337,17 +8343,20 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
                         update_kw["report_section"] = "待撥款"
                         update_kw["disbursement_date"] = ""
                     else:
+                        # 升上來的家還沒核准 → 清核准資訊、歸新 current 對應 section
                         update_kw["approved_amount"] = ""
                         update_kw["report_section"] = ""
                         update_kw["disbursement_date"] = ""
                     _new_idx = next((i for i, o in enumerate(_new_order)
                                      if normalize_section(o) == _promoted_norm), 0)
-                    text_note = f"{name} {disbursed_archived_co} 已刪除（{promoted_co} 接續）"
+                    if unapproved_removed_co:
+                        text_note = f"{name} {unapproved_removed_co} 結案（{promoted_co} 接續）"
+                    else:
+                        text_note = f"{name} {disbursed_archived_co} 已刪除（{promoted_co} 接續）"
                 else:
                     # history 歸檔：current/concurrent 不動、只清 route_plan 該公司 + 撥款日期
                     update_kw["disbursement_date"] = ""
                     _new_idx = _route_data_chk.get("current_index", 0)
-                    # idx 修正：若舊 idx 指向的公司被刪、idx 重指 current
                     if 0 <= _new_idx < len(_old_order):
                         old_co = _old_order[_new_idx]
                         if normalize_section(old_co) == _archive_norm:
@@ -8361,12 +8370,23 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
                 if removed:
                     text_note += f"；同送移除：{'、'.join(removed)}"
             else:
-                text_note = f"{name} 不送：{'、'.join(removed)}（留 {current_co} 核准 {approved}）"
+                if approved:
+                    text_note = f"{name} 不送：{'、'.join(removed)}（留 {current_co} 核准 {approved}）"
+                else:
+                    text_note = f"{name} 不送：{'、'.join(removed)}"
             update_kw["text"] = text_note
             update_customer(target["case_id"], **update_kw)
             push_text(target["source_group_id"], text_note)
         msgs = []
-        if disbursed_archived_co:
+        if unapproved_removed_co:
+            msgs.append(f"✅ {unapproved_removed_co} 已結案（從送件清單移除）")
+            if promoted_co:
+                msgs.append(f"🆕 接續 current：{promoted_co}")
+            if removed:
+                msgs.append(f"❌ 同送也移除：{'、'.join(removed)}")
+            if new_concurrent:
+                msgs.append(f"還在送：{'、'.join(new_concurrent)}")
+        elif disbursed_archived_co:
             msgs.append(f"✅ {disbursed_archived_co} 已刪除（route_plan 跟撥款記錄都清掉）")
             if promoted_co:
                 if _promoted_entry:
@@ -8386,8 +8406,9 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
                 msgs.append(f"⚠️ {current_co} 是核准那家，沒處理\n　 （作廢核准用：@AI {name} {current_co} 取消核准）")
             if skipped_not_in:
                 msgs.append(f"⚠️ 同送清單裡沒有：{'、'.join(skipped_not_in)}")
-            msgs.append(f"核准保留：{current_co} {approved}")
-            msgs.append(f"還在送：{'、'.join(new_concurrent) if new_concurrent else '無'}")
+            if approved:
+                msgs.append(f"核准保留：{current_co} {approved}")
+            msgs.append(f"還在送：{current_co or '-'}" + (f"、{('、'.join(new_concurrent))}" if new_concurrent else ""))
         reply_text(reply_token, "\n".join(msgs))
         return
 
