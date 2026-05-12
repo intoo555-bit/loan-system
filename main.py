@@ -8213,9 +8213,16 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
                     )
                     for h in _r_history
                 )
-                # 雙保險：history 沒記錄但 customer.disbursement_date 有值（單家撥款常見）
+                # 雙保險：history 沒記錄該家撥款、但 customer.disbursement_date 有值
+                # 嚴格化（修李詠晴 bug）：只在 history 完全沒其他家撥款時才用
+                # 否則 disbursement_date 可能是別家的、誤判「該家也撥款」
                 if not _has_disbursed and (target["disbursement_date"] or "").strip():
-                    _has_disbursed = True
+                    _any_other_disbursed = any(
+                        h.get("disbursed") or h.get("status") == "撥款"
+                        for h in _r_history
+                    )
+                    if not _any_other_disbursed:
+                        _has_disbursed = True
                 if _has_disbursed:
                     if new_concurrent:
                         # 升 concurrent 第一家當新 current、保留撥款記錄
@@ -8755,6 +8762,31 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
         if (target["report_section"] or "") == "送件":
             update_customer(target["case_id"], report_section="",
                             text=f"{name} 照會", from_group_id=group_id)
+        # 照會時若 pending_docs 有值、轉到 cs[該公司] = "待補X/Y" 並清 pending_docs
+        # 避免 _is_pre_send 條件（有 pending_docs + cs 空 → 歸送件區塊）把客戶留在送件區
+        # 注意：only 在 cs[該公司] 還沒記錄狀態時才轉、避免覆蓋已有狀態
+        _pend_to_migrate = (target["pending_docs"] or "").strip()
+        if _pend_to_migrate and company:
+            try:
+                _cs_now = json.loads(target["company_status"] or "{}")
+            except Exception:
+                _cs_now = {}
+            _co_norm = normalize_section(company)
+            _cs_key = next((k for k in _cs_now.keys() if normalize_section(k) == _co_norm), None)
+            if not _cs_key:  # 該公司還沒記錄狀態 → 把 pending_docs 轉過去
+                _docs_list = [d.strip() for d in _pend_to_migrate.split(",") if d.strip()]
+                if _docs_list:
+                    _cs_now[company] = f"待補{'/'.join(_docs_list)}"
+                    with db_conn(commit=True) as _cn:
+                        _cn.cursor().execute(
+                            "UPDATE customers SET company_status=?, pending_docs=? WHERE case_id=?",
+                            (json.dumps(_cs_now, ensure_ascii=False), "", target["case_id"]))
+                    # reload target 讓後續邏輯讀到最新值
+                    with db_conn() as _cn2:
+                        _r = _cn2.cursor().execute("SELECT * FROM customers WHERE case_id=?",
+                                                    (target["case_id"],)).fetchone()
+                        if _r:
+                            target = _r
         # 存同時送件公司（只存純公司名）+ 記錄第一家金額
         # 修：沒帶新金額時清掉舊 notify_amount（避免上次送件的金額污染這次照會）
         update_kw = {}
