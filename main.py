@@ -5447,8 +5447,13 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
                 if co_section in approved_sections:
                     continue
                 if co_section != section:
+                    # 婉拒的家不顯示（cs 內容含「婉拒」就跳過、user 要求 2026-05-12）
+                    _cs_key_chk = _get_cs_key_for_section(cs, co_section)
+                    _cs_text_chk = cs.get(_cs_key_chk, "") if _cs_key_chk else ""
+                    if "婉拒" in _cs_text_chk:
+                        continue
                     co_status = _compress_status_short(_get_section_status_for_row(row, co_section, cs, first_line))
-                    # 婉拒的家不顯示（cs 裡有「婉拒」狀態 → 跳過、user 要求 2026-05-12）
+                    # 雙重保險：extract 後 status 是「婉拒」也擋
                     if co_status == "婉拒":
                         continue
                     co_short = _display_co_short(co) or co
