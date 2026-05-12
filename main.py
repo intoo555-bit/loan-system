@@ -13973,6 +13973,7 @@ def render_customer_row(row, role="") -> str:
     )
     detail_html = (
         '<div style="background:#f0ebe4;padding:12px 16px;border-top:1px solid #ddd5ca;">'
+        + '<div style="font-size:15px;font-weight:700;color:#1a1208;margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid #ddd5ca">👤 ' + h(cname or "(無名)") + '</div>'
         + quick_buttons
         + '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:6px">'
         '<div><div style="font-size:11px;color:#6a5e4e;font-weight:600">身分證</div><div style="font-size:13px;color:#2c2820;font-weight:500">' + h(id_no or "-") + '</div></div>'
