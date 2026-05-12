@@ -5264,9 +5264,15 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
 
         def get_section_status(sec_name):
             """取得該區塊對應公司的狀態（各家獨立，沒有就不顯示）"""
-            # key 比對三層：直接 → normalize → prefix（「分貝」對「分貝汽車」）
+            # 家族主公司 cs key fallback（避免 cs["分貝機車"]/cs["分貝"] 兩 key 並存時抓錯舊的）
+            # 同公司多方案（如分貝有「分貝機車」「分貝汽車」）、cs 統一用主公司「分貝」當 key
+            _FAMILY_CS_KEY = {"分貝機車": "分貝", "分貝汽車": "分貝"}
+            _family_main = _FAMILY_CS_KEY.get(sec_name)
+            # key 比對：家族主公司優先 → 直接 → normalize → prefix（「分貝」對「分貝汽車」）
             cs_key = None
-            if sec_name in company_status:
+            if _family_main and _family_main in company_status:
+                cs_key = _family_main
+            elif sec_name in company_status:
                 cs_key = sec_name
             else:
                 for k in company_status.keys():
@@ -13784,8 +13790,13 @@ def _row_cs_status(row, section):
         cs = json.loads(row.get("company_status", "") or "{}")
     except Exception:
         cs = {}
+    # 家族主公司 cs key fallback（同 build_section_map.get_section_status 邏輯）
+    _FAMILY_CS_KEY = {"分貝機車": "分貝", "分貝汽車": "分貝"}
+    _family_main = _FAMILY_CS_KEY.get(section)
     cs_key = None
-    if section in cs:
+    if _family_main and _family_main in cs:
+        cs_key = _family_main
+    elif section in cs:
         cs_key = section
     else:
         snorm = normalize_section(section)
