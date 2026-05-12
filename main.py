@@ -8664,14 +8664,16 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
                         text=f"{name} {reject_co} 婉拒，轉送 {'+'.join(target_cos)}",
                         from_group_id=group_id)
         # 清 company_status[reject_co] 避免日報該家區塊還顯示這客戶
-        # （history-rejected display loop 會檢查 cs 內容、有「補件」keyword 就顯示）
+        # 用 normalize_section 比對 keys（避免 cs 內 key 是「貸就補」normalize 後才是「貸救補」漏刪）
         if reject_co:
             try:
                 cs_raw = target["company_status"] or "{}"
                 cs = json.loads(cs_raw)
                 rej_norm = normalize_section(reject_co)
-                if rej_norm in cs:
-                    del cs[rej_norm]
+                keys_to_del = [k for k in cs.keys() if normalize_section(k) == rej_norm]
+                if keys_to_del:
+                    for k in keys_to_del:
+                        del cs[k]
                     with db_conn(commit=True) as _cn:
                         _cn.cursor().execute("UPDATE customers SET company_status=? WHERE case_id=?",
                                              (json.dumps(cs, ensure_ascii=False), target["case_id"]))
@@ -13769,6 +13771,36 @@ def classify_rows(rows):
 
 _report_role = ""  # 暫存日報頁面的角色
 
+def _row_cs_status(row, section):
+    """從 company_status 抓某 section 的 status、跟 build_section_map.get_section_status 同邏輯"""
+    if not section:
+        return ""
+    try:
+        cs = json.loads(row.get("company_status", "") or "{}")
+    except Exception:
+        cs = {}
+    cs_key = None
+    if section in cs:
+        cs_key = section
+    else:
+        snorm = normalize_section(section)
+        for k in cs.keys():
+            if normalize_section(k) == snorm:
+                cs_key = k
+                break
+    if not cs_key:
+        return ""
+    cs_text = cs[cs_key] or ""
+    for ln in cs_text.splitlines():
+        ln = ln.strip()
+        if not ln:
+            continue
+        s = extract_status_summary(ln, row.get("customer_name", "") or "")
+        if s:
+            return s
+    return ""
+
+
 def render_customer_row(row, role="") -> str:
     role = role or _report_role
     """產生單一客戶列"""
@@ -13779,6 +13811,13 @@ def render_customer_row(row, role="") -> str:
     first_line = last.splitlines()[0].strip() if last.strip() else ""
     status_summary = extract_status_summary(first_line, row["customer_name"])
     co = row["current_company"] or row["company"] or ""
+    # 跟 LINE 日報 build_section_map 對齊：優先用 cs[section]、再 fallback last_update、最後 21/亞太「已送件」
+    _co_norm_for_status = normalize_section(co) if co else ""
+    _cs_status = _row_cs_status(row, _co_norm_for_status)
+    if _cs_status:
+        status_summary = _cs_status
+    elif not status_summary and _co_norm_for_status in ("21", "亞太"):
+        status_summary = "已送件"
     amt = row["approved_amount"] or ""
     disb = row["disbursement_date"] or ""
     route_data = parse_route_json(row["route_plan"] or "")
