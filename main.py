@@ -13879,6 +13879,9 @@ def render_customer_row(row, role="") -> str:
         sub = co + (f" → {next_co}" if next_co else f"（第{idx+1}/{len(order)}家）")
         if progress_parts:
             sub += "　" + " / ".join(progress_parts[-2:])
+        # 補 status：跟 LINE 日報對齊（cs[section] 優先、否則 last_update、最後 21/亞太「已送件」）
+        if status_summary:
+            sub += f" · {status_summary}"
     else:
         sub = co + (f" · {status_summary}" if status_summary else "")
 
