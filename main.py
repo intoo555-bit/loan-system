@@ -21025,6 +21025,23 @@ def admin_templates_edit(request: Request, plan: str = ""):
     is_new_mapping = not mapping
     if is_new_mapping:
         mapping = get_default_mapping(plan)
+    # 對齊 mapping 內 sheet 名到 template 實際 sheet 名（修：上傳新範本 sheet 改名時、edit UI 也對齊）
+    # 例：mapping 用「工作表3」、新範本是「進件表格」→ 把 mapping 內 key 改成「進件表格」
+    _actual_sheets = [s["name"] for s in scan.get("sheets", [])]
+    _primary_aliases = set(PRIMARY_SHEET_NAMES.get(plan, []))
+    if mapping and _actual_sheets:
+        _new_mapping = {}
+        for _mp_sheet, _mp_cells in mapping.items():
+            _final_name = _mp_sheet
+            if _mp_sheet not in _actual_sheets:
+                # 若是主表 alias、找 template 內任一個 primary alias
+                if _mp_sheet in _primary_aliases:
+                    for alias in _primary_aliases:
+                        if alias in _actual_sheets:
+                            _final_name = alias
+                            break
+            _new_mapping[_final_name] = _mp_cells
+        mapping = _new_mapping
 
     # 建立欄位下拉選項（中文）
     field_options_html = ['<option value="">（不填入資料）</option>']
