@@ -5434,13 +5434,21 @@ def compute_customer_display(row):
         approved_list = get_all_approved(row["route_plan"] or "")
         amt = ""
         co_show = current_co or "房地"
+        disb = ""
         if approved_list:
             _ap = approved_list[0]
             amt = _ap.get('amount') or ''
             co_show = _ap.get('company') or co_show
+            disb = _ap.get('disbursed') or ''
         elif (row["approved_amount"] or "").strip():
             amt = row["approved_amount"]
-        amount_display = f"-民間{co_show}核准{amt}"
+        # fallback：history 沒撥款日、用 customer.disbursement_date
+        if not disb:
+            disb = (row["disbursement_date"] or "").strip()
+        if disb:
+            amount_display = f"-民間{co_show}核准{amt}(撥款{disb})"
+        else:
+            amount_display = f"-民間{co_show}核准{amt}"
 
     return {
         "section": section,
