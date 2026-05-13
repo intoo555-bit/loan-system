@@ -5324,21 +5324,47 @@ def compute_customer_display(row):
         _history_has_reject = _section_norm in _rejected_secs
         if _cs_has_reject or _history_has_reject:
             _rerouted = False
-            # 1. 先找 concurrent 非婉拒的家
-            _concur_list = [c.strip() for c in (row["concurrent_companies"] or "").split(",") if c.strip()]
-            for _alt_co in _concur_list:
-                _alt_sec = normalize_section(_alt_co)
-                if _alt_sec in _rejected_secs:
-                    continue
-                _alt_cs_key = _get_cs_key_for_section(cs, _alt_sec) if cs else None
-                _alt_cs_text = cs.get(_alt_cs_key, "") if _alt_cs_key else ""
-                if "婉拒" in _alt_cs_text:
-                    continue
-                section = _alt_sec
-                current_co = _alt_co
-                _rerouted = True
-                break
-            # 2. concurrent 找不到 → 找 cs 其他 key 內非婉拒的家
+            # 1. 優先用 route_plan order 內「current 之後的第一個非婉拒家」（user 規則：沒指定就跳下一家）
+            try:
+                _rp_data = parse_route_json(row["route_plan"] or "")
+                _order = _rp_data.get("order", []) or []
+                _rp_idx = _rp_data.get("current_index", 0)
+                if not isinstance(_rp_idx, int) or _rp_idx < 0:
+                    _rp_idx = 0
+                # 先試 current_index 之後
+                for _i in range(_rp_idx, len(_order)):
+                    _o_co = _order[_i]
+                    _o_sec = normalize_section(_o_co)
+                    if _o_sec == _section_norm:
+                        continue  # skip 婉拒那家
+                    if _o_sec in _rejected_secs:
+                        continue
+                    # cs 內這家若是婉拒、也 skip
+                    _o_cs_key = _get_cs_key_for_section(cs, _o_sec) if cs else None
+                    if _o_cs_key and "婉拒" in cs.get(_o_cs_key, ""):
+                        continue
+                    section = _o_sec
+                    current_co = _o_co
+                    _rerouted = True
+                    break
+            except Exception:
+                pass
+            # 2. route_plan 找不到 → 找 concurrent 非婉拒的家
+            if not _rerouted:
+                _concur_list = [c.strip() for c in (row["concurrent_companies"] or "").split(",") if c.strip()]
+                for _alt_co in _concur_list:
+                    _alt_sec = normalize_section(_alt_co)
+                    if _alt_sec in _rejected_secs:
+                        continue
+                    _alt_cs_key = _get_cs_key_for_section(cs, _alt_sec) if cs else None
+                    _alt_cs_text = cs.get(_alt_cs_key, "") if _alt_cs_key else ""
+                    if "婉拒" in _alt_cs_text:
+                        continue
+                    section = _alt_sec
+                    current_co = _alt_co
+                    _rerouted = True
+                    break
+            # 3. 還找不到 → 找 cs 其他 key 內非婉拒的家
             if not _rerouted and cs:
                 for _cs_k, _cs_v in cs.items():
                     if _cs_k == _section_cs_key:
@@ -5352,22 +5378,6 @@ def compute_customer_display(row):
                     current_co = _cs_k
                     _rerouted = True
                     break
-            # 3. cs 找不到 → 找 route_plan order 內非婉拒的家
-            if not _rerouted:
-                try:
-                    _rp_data = parse_route_json(row["route_plan"] or "")
-                    for _o_co in _rp_data.get("order", []) or []:
-                        _o_sec = normalize_section(_o_co)
-                        if _o_sec == _section_norm:
-                            continue
-                        if _o_sec in _rejected_secs:
-                            continue
-                        section = _o_sec
-                        current_co = _o_co
-                        _rerouted = True
-                        break
-                except Exception:
-                    pass
 
     company_short = _display_co_short(current_co) or current_co
 
