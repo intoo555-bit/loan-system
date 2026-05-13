@@ -20308,6 +20308,7 @@ def _do_download_excel(request: Request, case_id: str):
                 custom_mapping = load_template_mapping(plan)
                 # 合併 DEFAULT_MAPPINGS 內多出來的 cell（user 沒手動編輯到的新增 cell 也要填）
                 # 例：B30/D30/B34 在 default 有、user 的 saved mapping 沒、自動補上
+                # 也支援 saved mapping 完全沒某 sheet（擔保品資訊）→ 整個 sheet 加進去
                 if custom_mapping:
                     _default_for_merge = DEFAULT_MAPPINGS.get(plan, {})
                     for _ds_name, _ds_cells in _default_for_merge.items():
@@ -20326,6 +20327,9 @@ def _do_download_excel(request: Request, case_id: str):
                             for _cell, _field in _ds_cells.items():
                                 if _cell not in custom_mapping[_target_sheet]:
                                     custom_mapping[_target_sheet][_cell] = _field
+                        else:
+                            # saved mapping 完全沒這個 sheet（例：沒「擔保品資訊」）→ 從 DEFAULT 整個加進去
+                            custom_mapping[_ds_name] = dict(_ds_cells)
                 if custom_mapping:
                     # 取得 plan-aware 處理過的 cell 值（民國年/月薪萬/縣市短碼/智能判別等）
                     processed_cells = _build_cell_map(plan, r) or {}
