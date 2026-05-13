@@ -5300,36 +5300,74 @@ def compute_customer_display(row):
             pass
     section = normalize_section(section)
 
-    # 婉拒 reroute：如果主 section 的 cs 內容含「婉拒」、找非婉拒的家當新 section
-    # 找的順序：concurrent → cs 其他 key 內非婉拒的家
-    # （user 要求 2026-05-12：婉拒的家不該出現在日報主行）
-    if section not in ("待撥款", "核准(房地)", "送件") and cs:
-        _section_cs_key = _get_cs_key_for_section(cs, section)
-        if _section_cs_key and "婉拒" in cs.get(_section_cs_key, ""):
+    # 婉拒 reroute：如果主 section 是「已婉拒」的家、找非婉拒的家當新 section
+    # 判定「已婉拒」的依據：
+    #   (1) route_plan history 內有 {co: section, status: 婉拒} entry
+    #   (2) cs[section] 內容含「婉拒」字眼
+    # 找新 section 的順序：concurrent → cs 其他 key → route_plan history 其他家
+    # （user 要求 2026-05-12 / 13：婉拒的家不該出現在日報主行）
+    if section not in ("待撥款", "核准(房地)", "送件"):
+        _section_norm = section
+        # 抓 route_plan history 內所有婉拒過的家
+        _rejected_secs = set()
+        try:
+            _hist_for_chk = parse_route_json(row["route_plan"] or "").get("history", []) or []
+            for _h in _hist_for_chk:
+                if _h.get("status") == "婉拒":
+                    _r_co = _h.get("company") or ""
+                    if _r_co:
+                        _rejected_secs.add(normalize_section(_r_co))
+        except Exception:
+            pass
+        _section_cs_key = _get_cs_key_for_section(cs, section) if cs else None
+        _cs_has_reject = bool(_section_cs_key) and "婉拒" in cs.get(_section_cs_key, "")
+        _history_has_reject = _section_norm in _rejected_secs
+        if _cs_has_reject or _history_has_reject:
             _rerouted = False
-            # 先找 concurrent
+            # 1. 先找 concurrent 非婉拒的家
             _concur_list = [c.strip() for c in (row["concurrent_companies"] or "").split(",") if c.strip()]
             for _alt_co in _concur_list:
                 _alt_sec = normalize_section(_alt_co)
-                _alt_cs_key = _get_cs_key_for_section(cs, _alt_sec)
+                if _alt_sec in _rejected_secs:
+                    continue
+                _alt_cs_key = _get_cs_key_for_section(cs, _alt_sec) if cs else None
                 _alt_cs_text = cs.get(_alt_cs_key, "") if _alt_cs_key else ""
-                if "婉拒" not in _alt_cs_text:
-                    section = _alt_sec
-                    current_co = _alt_co
-                    _rerouted = True
-                    break
-            # concurrent 找不到 → 找 cs 其他 key 內非婉拒的家（21 加送過、cs[21] 有狀態）
-            if not _rerouted:
+                if "婉拒" in _alt_cs_text:
+                    continue
+                section = _alt_sec
+                current_co = _alt_co
+                _rerouted = True
+                break
+            # 2. concurrent 找不到 → 找 cs 其他 key 內非婉拒的家
+            if not _rerouted and cs:
                 for _cs_k, _cs_v in cs.items():
                     if _cs_k == _section_cs_key:
                         continue
                     if "婉拒" in (_cs_v or ""):
                         continue
-                    # 找到非婉拒 key、用它當新 section
                     _alt_sec = normalize_section(_cs_k)
+                    if _alt_sec in _rejected_secs:
+                        continue
                     section = _alt_sec
                     current_co = _cs_k
+                    _rerouted = True
                     break
+            # 3. cs 找不到 → 找 route_plan order 內非婉拒的家
+            if not _rerouted:
+                try:
+                    _rp_data = parse_route_json(row["route_plan"] or "")
+                    for _o_co in _rp_data.get("order", []) or []:
+                        _o_sec = normalize_section(_o_co)
+                        if _o_sec == _section_norm:
+                            continue
+                        if _o_sec in _rejected_secs:
+                            continue
+                        section = _o_sec
+                        current_co = _o_co
+                        _rerouted = True
+                        break
+                except Exception:
+                    pass
 
     company_short = _display_co_short(current_co) or current_co
 
