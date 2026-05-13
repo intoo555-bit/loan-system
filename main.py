@@ -232,9 +232,12 @@ DEFAULT_MAPPINGS = {
             "B18": "company_phone_area", "C18": "company_phone_num", "E18": "company_phone_ext",
             "G18": "company_years", "H18": "company_salary",
             "B19": "company_city", "C19": "company_district", "D19": "company_address",
-            # 客戶聯絡人 2（2026/05 新範本確認位置）
-            "B21": "contact2_name", "D21": "contact2_relation",
-            "B25": "contact2_phone",
+            # 聯絡人 1（B21/D21/B25）
+            "B21": "contact1_name", "D21": "contact1_relation",
+            "B25": "contact1_phone",
+            # 聯絡人 2（B30/D30/B34、2026/05 新範本加）
+            "B30": "contact2_name", "D30": "contact2_relation",
+            "B34": "contact2_phone",
         },
         "擔保品資訊": {
             "B2": "__CLEAR__", "B3": "__CLEAR__", "B4": "__CLEAR__",
@@ -258,9 +261,12 @@ DEFAULT_MAPPINGS = {
             "B18": "company_phone_area", "C18": "company_phone_num", "E18": "company_phone_ext",
             "G18": "company_years", "H18": "company_salary",
             "B19": "company_city", "C19": "company_district", "D19": "company_address",
-            # 客戶聯絡人 2（2026/05 新範本確認位置）
-            "B21": "contact2_name", "D21": "contact2_relation",
-            "B25": "contact2_phone",
+            # 聯絡人 1（B21/D21/B25）
+            "B21": "contact1_name", "D21": "contact1_relation",
+            "B25": "contact1_phone",
+            # 聯絡人 2（B30/D30/B34、2026/05 新範本加）
+            "B30": "contact2_name", "D30": "contact2_relation",
+            "B34": "contact2_phone",
             "K2": "adminb_brand", "K3": "vehicle_plate",
         },
         "擔保品資訊": {
