@@ -232,8 +232,12 @@ DEFAULT_MAPPINGS = {
             "B18": "company_phone_area", "C18": "company_phone_num", "E18": "company_phone_ext",
             "G18": "company_years", "H18": "company_salary",
             "B19": "company_city", "C19": "company_district", "D19": "company_address",
+            # 連帶保證人 1
             "B21": "contact1_name", "D21": "contact1_relation",
             "B25": "contact1_phone",
+            # 連帶保證人 2（2026/05 新範本加）
+            "B30": "contact2_name", "D30": "contact2_relation",
+            "B34": "contact2_phone",
         },
         "擔保品資訊": {
             "B2": "__CLEAR__", "B3": "__CLEAR__", "B4": "__CLEAR__",
@@ -257,8 +261,12 @@ DEFAULT_MAPPINGS = {
             "B18": "company_phone_area", "C18": "company_phone_num", "E18": "company_phone_ext",
             "G18": "company_years", "H18": "company_salary",
             "B19": "company_city", "C19": "company_district", "D19": "company_address",
+            # 連帶保證人 1
             "B21": "contact1_name", "D21": "contact1_relation",
             "B25": "contact1_phone",
+            # 連帶保證人 2（2026/05 新範本加）
+            "B30": "contact2_name", "D30": "contact2_relation",
+            "B34": "contact2_phone",
             "K2": "adminb_brand", "K3": "vehicle_plate",
         },
         "擔保品資訊": {
@@ -15041,7 +15049,7 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
       <div class="ab-block" data-plans="亞太商品,亞太機車15萬,亞太工會機車,亞太機車25萬" style="background:#e0f2fe;">
         <div style="font-size:12px;font-weight:700;color:#0369a1;margin-bottom:10px;">亞太（商品／機車／工會）</div>
         <div class="ab-g3" style="margin-bottom:10px;">
-          <div><div class="ab-lbl">資金用途</div><select name="at_fund" class="ab-sel"><option value="">請選擇</option>{"".join(f'<option value="{o}" {"selected" if customer.get("adminb_fund_use","")==o else ""}>{o}</option>' for o in ["I-1教育費","I-2醫藥費","I-3出國旅遊","I-4創業","II-1購買交通工具","II-2購買手機","II-3購買3C產品","III-1交友","III-2健身&醫美","III-3美容課程","IV-1個人理財投資(含不動產、裝修、理財商品)","V-1生活周轉金","V-2整合負債(償還銀行/融資等)"])}</select></div>
+          <div><div class="ab-lbl">資金用途</div><select name="at_fund" class="ab-sel"><option value="">請選擇</option>{"".join(f'<option value="{o}" {"selected" if customer.get("adminb_fund_use","")==o else ""}>{o}</option>' for o in ["I-1教育費","I-2醫藥費","I-3出國旅遊","I-4創業","II-1購買交通工具","II-2購買手機","II-3購買3C產品"])}</select></div>
           <div><div class="ab-lbl">行業類別</div><select name="at_industry" class="ab-sel"><option value="">請選擇</option>{"".join(f'<option {"selected" if customer.get("adminb_industry","")==o else ""}>{o}</option>' for o in ["餐飲與服務業","製造業","建築與營造","軍警與公教","科技與資訊","運輸與物流","金融與保險業","批發與零售業","醫療與教育","農林漁牧業","自由職業","其他"])}</select></div>
           <div><div class="ab-lbl">職務</div><select name="at_role" class="ab-sel"><option value="">請選擇</option>{"".join(f'<option {"selected" if customer.get("adminb_role","")==o else ""}>{o}</option>' for o in ["行政與內勤","勞力與現場","銷售與業務","財務與專業","技術與工程","教學與醫護","管理與經營","自營與自由"])}</select></div>
         </div>
@@ -19555,7 +19563,7 @@ def _do_download_excel(request: Request, case_id: str):
 
             # === 資金用途（B5）從 adminB 補充資料 ===
             fund_use = v("adminb_fund_use")
-            valid_funds = ["I-1教育費","I-2醫藥費","I-3出國旅遊","I-4創業","II-1購買交通工具","II-2購買手機","II-3購買3C產品","III-1交友","III-2健身&醫美","III-3美容課程","IV-1個人理財投資(含不動產、裝修、理財商品)","V-1生活周轉金","V-2整合負債(償還銀行/融資等)"]
+            valid_funds = ["I-1教育費","I-2醫藥費","I-3出國旅遊","I-4創業","II-1購買交通工具","II-2購買手機","II-3購買3C產品"]
             fund_val = fund_use if fund_use in valid_funds else ""
 
             # === 婚姻（B10）===
