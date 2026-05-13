@@ -5300,11 +5300,14 @@ def compute_customer_display(row):
             pass
     section = normalize_section(section)
 
-    # 婉拒 reroute：如果主 section 的 cs 內容含「婉拒」、嘗試切換到 concurrent 內非婉拒的家
+    # 婉拒 reroute：如果主 section 的 cs 內容含「婉拒」、找非婉拒的家當新 section
+    # 找的順序：concurrent → cs 其他 key 內非婉拒的家
     # （user 要求 2026-05-12：婉拒的家不該出現在日報主行）
     if section not in ("待撥款", "核准(房地)", "送件") and cs:
         _section_cs_key = _get_cs_key_for_section(cs, section)
         if _section_cs_key and "婉拒" in cs.get(_section_cs_key, ""):
+            _rerouted = False
+            # 先找 concurrent
             _concur_list = [c.strip() for c in (row["concurrent_companies"] or "").split(",") if c.strip()]
             for _alt_co in _concur_list:
                 _alt_sec = normalize_section(_alt_co)
@@ -5313,6 +5316,19 @@ def compute_customer_display(row):
                 if "婉拒" not in _alt_cs_text:
                     section = _alt_sec
                     current_co = _alt_co
+                    _rerouted = True
+                    break
+            # concurrent 找不到 → 找 cs 其他 key 內非婉拒的家（21 加送過、cs[21] 有狀態）
+            if not _rerouted:
+                for _cs_k, _cs_v in cs.items():
+                    if _cs_k == _section_cs_key:
+                        continue
+                    if "婉拒" in (_cs_v or ""):
+                        continue
+                    # 找到非婉拒 key、用它當新 section
+                    _alt_sec = normalize_section(_cs_k)
+                    section = _alt_sec
+                    current_co = _cs_k
                     break
 
     company_short = _display_co_short(current_co) or current_co
