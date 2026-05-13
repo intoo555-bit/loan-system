@@ -20294,6 +20294,25 @@ def _do_download_excel(request: Request, case_id: str):
                     sheet_cell_maps = {}
                     primary_sheet_aliases = set(PRIMARY_SHEET_NAMES.get(plan, []))
                     authoritative_cells = PLAN_AUTHORITATIVE_CELLS.get(plan, set())
+                    # 抓 template 實際的 sheet 名（為了把 mapping 內舊 sheet 名對齊到新的、user 上傳新範本時 sheet 改名）
+                    _actual_sheets_in_template = []
+                    try:
+                        import zipfile as _zip_tpl, re as _re_tpl
+                        with _zip_tpl.ZipFile(template_path) as _zf_tpl:
+                            _wb_xml = _zf_tpl.read('xl/workbook.xml').decode('utf-8')
+                            _actual_sheets_in_template = _re_tpl.findall(r'<sheet name="([^"]+)"', _wb_xml)
+                    except Exception:
+                        pass
+                    def _resolve_sheet_name(sn):
+                        """把 mapping 內 sheet 名對齊到 template 實際 sheet 名（亞太「工作表3」<->「進件表格」 等）"""
+                        if sn in _actual_sheets_in_template:
+                            return sn
+                        # 若是主表 alias、找 template 內任一個 primary alias
+                        if sn in primary_sheet_aliases:
+                            for alias in primary_sheet_aliases:
+                                if alias in _actual_sheets_in_template:
+                                    return alias
+                        return sn
                     for sheet_name, cell_field_map in custom_mapping.items():
                         if not isinstance(cell_field_map, dict):
                             continue
@@ -20315,7 +20334,9 @@ def _do_download_excel(request: Request, case_id: str):
                                 if pc_cell not in sheet_cm and pc_val is not None:
                                     sheet_cm[pc_cell] = str(pc_val) if not isinstance(pc_val, str) else pc_val
                         if sheet_cm:
-                            sheet_cell_maps[sheet_name] = sheet_cm
+                            # 對齊 template 實際 sheet 名（避免「工作表3」mapping 對「進件表格」新範本時找不到 sheet）
+                            _final_sheet_name = _resolve_sheet_name(sheet_name)
+                            sheet_cell_maps[_final_sheet_name] = sheet_cm
                     # 亞太機車：擔保品 B7=年、C7=月，若來源是「YYYY/MM」格式自動拆開
                     if plan in ("亞太機車15萬", "亞太機車25萬", "亞太工會機車"):
                         for sname, cmap in sheet_cell_maps.items():
