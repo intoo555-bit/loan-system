@@ -20302,6 +20302,26 @@ def _do_download_excel(request: Request, case_id: str):
             else:
                 # 若存在自訂映射 → 使用動態多 sheet 填入（階段 2）
                 custom_mapping = load_template_mapping(plan)
+                # 合併 DEFAULT_MAPPINGS 內多出來的 cell（user 沒手動編輯到的新增 cell 也要填）
+                # 例：B30/D30/B34 在 default 有、user 的 saved mapping 沒、自動補上
+                if custom_mapping:
+                    _default_for_merge = DEFAULT_MAPPINGS.get(plan, {})
+                    for _ds_name, _ds_cells in _default_for_merge.items():
+                        # 找 custom_mapping 內對應 sheet（含 alias）
+                        _target_sheet = None
+                        if _ds_name in custom_mapping:
+                            _target_sheet = _ds_name
+                        else:
+                            _aliases = PRIMARY_SHEET_NAMES.get(plan, [])
+                            if _ds_name in _aliases:
+                                for _a in _aliases:
+                                    if _a in custom_mapping:
+                                        _target_sheet = _a
+                                        break
+                        if _target_sheet and isinstance(custom_mapping.get(_target_sheet), dict):
+                            for _cell, _field in _ds_cells.items():
+                                if _cell not in custom_mapping[_target_sheet]:
+                                    custom_mapping[_target_sheet][_cell] = _field
                 if custom_mapping:
                     # 取得 plan-aware 處理過的 cell 值（民國年/月薪萬/縣市短碼/智能判別等）
                     processed_cells = _build_cell_map(plan, r) or {}
