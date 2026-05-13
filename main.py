@@ -282,8 +282,9 @@ DEFAULT_MAPPINGS = {
             "C12": "birth_date", "F12": "id_issue_date",
             "C13": "marriage", "F13": "id_issue_place",
             "C14": "education", "F14": "phone",
-            "C15": "reg_full_address", "G15": "reg_phone",
-            "C16": "live_full_address", "G16": "live_phone",
+            # 和裕電話：G15/G16 是標籤不動、H15/H16 才是值（修 2026-05-13）
+            "C15": "reg_full_address", "H15": "reg_phone",
+            "C16": "live_full_address", "H16": "live_phone",
             "C17": "line_id",
             "C18": "company_name_detail", "G18": "company_role",
             "H17": "company_full_phone",
@@ -3684,7 +3685,13 @@ def advance_route_to(route_plan: str, target: str, status: str):
     """轉到指定公司，回傳 (新json, ok, err)"""
     data = parse_route_json(route_plan)
     order, idx, history = data.get("order", []), data.get("current_index", 0), data.get("history", [])
-    target_idx = next((i for i, c in enumerate(order) if target in c or c in target), None)
+    # normalize_section 比對（修 2026-05-13）：target=「和裕商品」、order 內「和裕機車」要對得到
+    target_norm = normalize_section(target)
+    target_idx = next(
+        (i for i, c in enumerate(order)
+         if normalize_section(c) == target_norm or target in c or c in target),
+        None
+    )
     if target_idx is None:
         return route_plan, False, f"找不到 {target} 在送件順序中"
     for i in range(idx, target_idx):
