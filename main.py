@@ -247,8 +247,7 @@ DEFAULT_MAPPINGS = {
     "亞太機車15萬": {
         "進件表格": {
             "B5": "adminb_fund_use",
-            "B7": "adminb_vehicle_type", "D7": "adminb_engine_no",
-            "F7": "adminb_displacement", "H7": "adminb_color",
+            # 機車資料（車輛型式/引擎/排氣量/顏色）改填到「擔保品資訊」、進件表格不填（user 2026-05-13）
             "B9": "customer_name", "D9": "id_no", "F9": "birth_date",
             "B10": "marriage", "D10": "education",
             "B11": "id_issue_date", "D11": "id_issue_place", "F11": "id_issue_type",
@@ -274,6 +273,7 @@ DEFAULT_MAPPINGS = {
             "B4": "adminb_vehicle_type", "B5": "adminb_engine_no",
             "B6": "adminb_body_no", "B7": "adminb_mfg_date",
             "B8": "adminb_displacement",
+            "B9": "adminb_color",
         }
     },
     "和裕機車": {
@@ -19758,12 +19758,9 @@ def _do_download_excel(request: Request, case_id: str):
             # 行業/職務：有值填入，無值清空
             result["E17"] = industry_val if industry_val else ""
             result["G17"] = role_val if role_val else ""
-            # 車輛資料：只有機車範本才填，亞太商品不填寫車輛欄位
+            # 車輛資料（廠牌/車牌）只有機車範本才填、其餘 (型式/引擎/排氣量/顏色) 移到擔保品資訊
+            # （user 2026-05-13：進件表格 row 7 不填、擔保品資訊 B2-B9 才是正確位置）
             if plan_name in ("亞太機車15萬", "亞太工會機車", "亞太機車25萬"):
-                result["B7"] = v("adminb_vehicle_type") or ""   # 車輛型式
-                result["D7"] = v("adminb_engine_no") or ""      # 引擎號碼
-                result["F7"] = v("adminb_displacement") or ""   # 排氣量
-                result["H7"] = v("adminb_color") or ""          # 顏色
                 result["K2"] = v("adminb_brand") or ""          # 廠牌
                 result["K3"] = v("vehicle_plate") or ""         # 牌照號碼
             return result
