@@ -9688,6 +9688,13 @@ def _handle_a_case_block_locked(block_text, reply_token, id_no, name, forced_cas
     _promoted_from_concurrent = ""  # 婉拒後從 concurrent 升上來的家（給後面 concurrent 處理用）
     if is_reject and route and not is_in_concurrent and not is_unknown_company:
         # 不在同送、也非「額外公司婉拒」→ 正常推進 route
+        # 修（蔡輔倫 case）：若被婉拒的 company 在 route 內但不是 current、
+        # 先 advance_route_to 推 idx 到 company 那家、再 advance(婉拒) 標婉拒並 idx+1
+        # 避免 advance_route 把 current 那家誤標成婉拒（業務還在送 current 沒婉拒）
+        if company_norm and current_co and normalize_section(current_co) != company_norm:
+            _adv_route, _ok, _ = advance_route_to(route, company, "跳過")
+            if _ok:
+                route = _adv_route
         next_co = get_next_company(route)
         new_route = advance_route(route, "婉拒")
         # 修：若 route 沒下一家、改用 concurrent 第一家當下家（避免「已無下家」誤判）
