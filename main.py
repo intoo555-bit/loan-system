@@ -19662,6 +19662,7 @@ def _do_download_excel(request: Request, case_id: str):
                     if k in raw: return "朋友"
                 return ""
             c1_rel_val = map_relation(c1_rel)
+            c2_rel_val = map_relation(c2_rel)  # 聯絡人 2 也套智能判別
 
             # === 公司電話區碼（B18）===
             valid_areas = ["0","02","03","037","04","049","05","06","07","08","089","082","083"]
@@ -19743,6 +19744,9 @@ def _do_download_excel(request: Request, case_id: str):
                 "B19": co_city_full, "C19": v("company_district"), "D19": v("company_address"),
                 "B21": c1_name, "D21": c1_rel_val,
                 "B25": c1_phone,
+                # 聯絡人 2（2026/05 新範本加）
+                "B30": c2_name, "D30": c2_rel_val,
+                "B34": c2_phone,
             }
             # 行業/職務：有值填入，無值清空
             result["E17"] = industry_val if industry_val else ""
