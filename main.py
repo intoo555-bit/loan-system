@@ -5734,11 +5734,20 @@ def search_customer_info(name: str, group_id: str) -> str:
     route_data = parse_route_json(r["route_plan"] or "")
     order, idx = route_data.get("order", []), route_data.get("current_index", 0)
     history = route_data.get("history", [])
+    # 用 compute_customer_display 拿 reroute 後的 current（避免婉拒的家還當「目前送件」顯示）
+    _disp = compute_customer_display(dict(r))
+    display_current_co = _disp.get("current_co") or r["current_company"] or r["company"] or ""
+    # 重算 idx：用顯示用 current 在 order 內的位置
+    if display_current_co and order:
+        for _i, _co in enumerate(order):
+            if normalize_section(_co) == normalize_section(display_current_co):
+                idx = _i
+                break
     lines = [f"👤 {name}"]
     if r["id_no"]:
         lines.append(f"身分證：{r['id_no']}")
     lines.append(f"所屬群組：{get_group_name(r['source_group_id'])}")
-    current_co = r["current_company"] or r["company"] or ""
+    current_co = display_current_co
     if current_co:
         lines.append(f"目前送件：{current_co}")
     # 同送其他家 concurrent
