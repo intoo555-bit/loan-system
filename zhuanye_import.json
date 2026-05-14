@@ -1,0 +1,434 @@
+[
+  {
+    "name": "余淑馨",
+    "id_no": "",
+    "current_company": "亞太",
+    "concurrent": [],
+    "approved_amount": "",
+    "disb_date": "",
+    "report_section": "",
+    "build_date": "2026-05-13",
+    "report_note": "轉亞太",
+    "company_notes": {},
+    "raw_line": "",
+    "section_label": "亞太"
+  },
+  {
+    "name": "葉信緯",
+    "id_no": "",
+    "current_company": "21",
+    "concurrent": [],
+    "approved_amount": "",
+    "disb_date": "",
+    "report_section": "",
+    "build_date": "2026-05-08",
+    "report_note": "補申覆",
+    "company_notes": {},
+    "raw_line": "",
+    "section_label": "21"
+  },
+  {
+    "name": "林岱瑩",
+    "id_no": "",
+    "current_company": "21",
+    "concurrent": [],
+    "approved_amount": "",
+    "disb_date": "",
+    "report_section": "",
+    "build_date": "2026-05-11",
+    "report_note": "已更正聯",
+    "company_notes": {},
+    "raw_line": "",
+    "section_label": "21"
+  },
+  {
+    "name": "沈得愷",
+    "id_no": "",
+    "current_company": "21",
+    "concurrent": [],
+    "approved_amount": "",
+    "disb_date": "",
+    "report_section": "",
+    "build_date": "2026-05-12",
+    "report_note": "補申覆",
+    "company_notes": {},
+    "raw_line": "",
+    "section_label": "21"
+  },
+  {
+    "name": "劉俊宏",
+    "id_no": "",
+    "current_company": "21",
+    "concurrent": [],
+    "approved_amount": "",
+    "disb_date": "",
+    "report_section": "",
+    "build_date": "2026-05-12",
+    "report_note": "",
+    "company_notes": {},
+    "raw_line": "",
+    "section_label": "21"
+  },
+  {
+    "name": "林志遠",
+    "id_no": "",
+    "current_company": "21",
+    "concurrent": [],
+    "approved_amount": "",
+    "disb_date": "",
+    "report_section": "",
+    "build_date": "2026-05-13",
+    "report_note": "轉21",
+    "company_notes": {},
+    "raw_line": "",
+    "section_label": "21"
+  },
+  {
+    "name": "黃思瑋",
+    "id_no": "",
+    "current_company": "21",
+    "concurrent": [],
+    "approved_amount": "",
+    "disb_date": "",
+    "report_section": "",
+    "build_date": "2026-05-13",
+    "report_note": "轉21",
+    "company_notes": {},
+    "raw_line": "",
+    "section_label": "21"
+  },
+  {
+    "name": "蘇英瑞",
+    "id_no": "",
+    "current_company": "21",
+    "concurrent": [],
+    "approved_amount": "",
+    "disb_date": "",
+    "report_section": "",
+    "build_date": "2026-05-08",
+    "report_note": "轉21",
+    "company_notes": {},
+    "raw_line": "",
+    "section_label": "21"
+  },
+  {
+    "name": "莊曉芬",
+    "id_no": "",
+    "current_company": "21",
+    "concurrent": [
+      "亞太"
+    ],
+    "approved_amount": "",
+    "disb_date": "",
+    "report_section": "",
+    "build_date": "2026-05-13",
+    "report_note": "21 補更生結清證明、亞太 轉送中",
+    "company_notes": {
+      "21": "莊曉芬 21 補更生結清證明",
+      "亞太": "莊曉芬 亞太 轉送"
+    },
+    "raw_line": "",
+    "section_label": "21"
+  },
+  {
+    "name": "許哲銘",
+    "id_no": "",
+    "current_company": "21",
+    "concurrent": [
+      "喬美"
+    ],
+    "approved_amount": "",
+    "disb_date": "",
+    "report_section": "",
+    "build_date": "2026-05-14",
+    "report_note": "21 轉送、喬美 補台新+和潤繳款紀錄",
+    "company_notes": {
+      "21": "許哲銘 21 轉送",
+      "喬美": "許哲銘 喬美 補台新帳單繳款紀錄+和潤近6期繳款紀錄"
+    },
+    "raw_line": "",
+    "section_label": "21"
+  },
+  {
+    "name": "吳珆嫻",
+    "id_no": "",
+    "current_company": "鄉民",
+    "concurrent": [],
+    "approved_amount": "",
+    "disb_date": "",
+    "report_section": "",
+    "build_date": "2026-04-15",
+    "report_note": "轉鄉民",
+    "company_notes": {},
+    "raw_line": "",
+    "section_label": "鄉民"
+  },
+  {
+    "name": "周佩怡",
+    "id_no": "",
+    "current_company": "鄉民",
+    "concurrent": [],
+    "approved_amount": "",
+    "disb_date": "",
+    "report_section": "",
+    "build_date": "2026-05-13",
+    "report_note": "轉鄉民",
+    "company_notes": {},
+    "raw_line": "",
+    "section_label": "鄉民"
+  },
+  {
+    "name": "張益榮",
+    "id_no": "",
+    "current_company": "喬美",
+    "concurrent": [
+      "貸救補"
+    ],
+    "approved_amount": "",
+    "disb_date": "",
+    "report_section": "",
+    "build_date": "2026-05-13",
+    "report_note": "喬美 + 貸救補 同送",
+    "company_notes": {
+      "喬美": "張益榮 喬美 送件中",
+      "貸救補": "張益榮 貸救補 送件中"
+    },
+    "raw_line": "",
+    "section_label": "喬美"
+  },
+  {
+    "name": "吳家旗",
+    "id_no": "",
+    "current_company": "貸救補",
+    "concurrent": [],
+    "approved_amount": "",
+    "disb_date": "",
+    "report_section": "",
+    "build_date": "2026-04-13",
+    "report_note": "補遠信繳息+職電+母時段",
+    "company_notes": {},
+    "raw_line": "",
+    "section_label": "貸救補"
+  },
+  {
+    "name": "潘致和",
+    "id_no": "",
+    "current_company": "貸救補",
+    "concurrent": [],
+    "approved_amount": "",
+    "disb_date": "",
+    "report_section": "",
+    "build_date": "2026-05-05",
+    "report_note": "已補職電/友時段",
+    "company_notes": {},
+    "raw_line": "",
+    "section_label": "貸救補"
+  },
+  {
+    "name": "余芷淇",
+    "id_no": "",
+    "current_company": "21",
+    "concurrent": [],
+    "approved_amount": "",
+    "disb_date": "",
+    "report_section": "送件",
+    "build_date": "2026-05-15",
+    "report_note": "",
+    "company_notes": {},
+    "raw_line": "",
+    "section_label": "21"
+  },
+  {
+    "name": "汪志軍",
+    "id_no": "",
+    "current_company": "21",
+    "concurrent": [],
+    "approved_amount": "7萬",
+    "disb_date": "5/11",
+    "report_section": "待撥款",
+    "build_date": "2026-04-17",
+    "report_note": "轉21 核准 7萬",
+    "company_notes": {},
+    "raw_line": "",
+    "section_label": "21"
+  },
+  {
+    "name": "陳宣汎",
+    "id_no": "",
+    "current_company": "亞太",
+    "concurrent": [],
+    "approved_amount": "12萬",
+    "disb_date": "5/13",
+    "report_section": "待撥款",
+    "build_date": "2026-04-29",
+    "report_note": "亞太 核准 12萬",
+    "company_notes": {},
+    "raw_line": "",
+    "section_label": "亞太"
+  },
+  {
+    "name": "張惠雲",
+    "id_no": "",
+    "current_company": "21",
+    "concurrent": [],
+    "approved_amount": "6萬",
+    "disb_date": "5/13",
+    "report_section": "待撥款",
+    "build_date": "2026-04-27",
+    "report_note": "轉21 核准 6萬",
+    "company_notes": {},
+    "raw_line": "",
+    "section_label": "21"
+  },
+  {
+    "name": "楊斯雅",
+    "id_no": "",
+    "current_company": "21",
+    "concurrent": [
+      "零卡"
+    ],
+    "approved_amount": "7萬",
+    "disb_date": "5/13",
+    "report_section": "待撥款",
+    "build_date": "2026-04-30",
+    "report_note": "轉21 核准 7萬、零卡同送",
+    "company_notes": {
+      "21": "楊斯雅 21 核准 7萬(撥款5/13)",
+      "零卡": "楊斯雅 零卡 送件中"
+    },
+    "raw_line": "",
+    "section_label": "21"
+  },
+  {
+    "name": "梁瑞隆",
+    "id_no": "",
+    "current_company": "21",
+    "concurrent": [],
+    "approved_amount": "10萬",
+    "disb_date": "",
+    "report_section": "待撥款",
+    "build_date": "2026-05-11",
+    "report_note": "21 核准 10萬",
+    "company_notes": {},
+    "raw_line": "",
+    "section_label": "21"
+  },
+  {
+    "name": "吳敏華",
+    "id_no": "",
+    "current_company": "21",
+    "concurrent": [],
+    "approved_amount": "7萬",
+    "disb_date": "",
+    "report_section": "待撥款",
+    "build_date": "2026-05-06",
+    "report_note": "轉21 核准 7萬",
+    "company_notes": {},
+    "raw_line": "",
+    "section_label": "21"
+  },
+  {
+    "name": "黃煌欽",
+    "id_no": "",
+    "current_company": "21",
+    "concurrent": [],
+    "approved_amount": "10萬",
+    "disb_date": "",
+    "report_section": "待撥款",
+    "build_date": "2026-05-12",
+    "report_note": "21 核准 10萬",
+    "company_notes": {},
+    "raw_line": "",
+    "section_label": "21"
+  },
+  {
+    "name": "林怡慈",
+    "id_no": "",
+    "current_company": "亞太",
+    "concurrent": [
+      "21"
+    ],
+    "approved_amount": "12萬",
+    "disb_date": "5/12",
+    "report_section": "待撥款",
+    "build_date": "2026-05-08",
+    "report_note": "亞太 核准 12萬、21 同送",
+    "company_notes": {
+      "亞太": "林怡慈 亞太 核准 12萬(撥款5/12)",
+      "21": "林怡慈 21 轉送中"
+    },
+    "raw_line": "",
+    "section_label": "亞太"
+  },
+  {
+    "name": "林耘耘",
+    "id_no": "",
+    "current_company": "喬美",
+    "concurrent": [
+      "21"
+    ],
+    "approved_amount": "6萬",
+    "disb_date": "5/12",
+    "report_section": "待撥款",
+    "build_date": "2026-04-29",
+    "report_note": "喬美 核准 6萬、21 補申覆",
+    "company_notes": {
+      "喬美": "林耘耘 喬美 核准 6萬(撥款5/12)",
+      "21": "林耘耘 21 補申覆"
+    },
+    "raw_line": "",
+    "section_label": "喬美"
+  },
+  {
+    "name": "謝燕庭",
+    "id_no": "",
+    "current_company": "和裕",
+    "concurrent": [
+      "21"
+    ],
+    "approved_amount": "5萬",
+    "disb_date": "",
+    "report_section": "待撥款",
+    "build_date": "2026-05-11",
+    "report_note": "和裕 核准 5萬、21 婉拒/已補申覆",
+    "company_notes": {
+      "和裕": "謝燕庭 和裕 核准 5萬-已補聯+公司時段",
+      "21": "謝燕庭 21 婉拒/已補申覆"
+    },
+    "raw_line": "",
+    "section_label": "和裕"
+  },
+  {
+    "name": "陳韋雯",
+    "id_no": "",
+    "current_company": "和裕",
+    "concurrent": [
+      "21"
+    ],
+    "approved_amount": "5萬",
+    "disb_date": "5/13",
+    "report_section": "待撥款",
+    "build_date": "2026-05-07",
+    "report_note": "和裕核准5萬/21核准5萬、撥款5/13（多家核准）",
+    "company_notes": {
+      "和裕": "陳韋雯 和裕 核准 5萬(撥款5/13)",
+      "21": "陳韋雯 21 核准 5萬(撥款5/13)"
+    },
+    "raw_line": "",
+    "section_label": "和裕"
+  },
+  {
+    "name": "張志瑜",
+    "id_no": "",
+    "current_company": "新鑫",
+    "concurrent": [],
+    "approved_amount": "",
+    "disb_date": "",
+    "report_section": "",
+    "build_date": "2026-05-06",
+    "report_note": "房地-新鑫",
+    "company_notes": {},
+    "raw_line": "",
+    "section_label": "新鑫"
+  }
+]
