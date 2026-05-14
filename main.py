@@ -6013,6 +6013,11 @@ def parse_special_command(text: str, group_id: str) -> Optional[Dict]:
     if m:
         return {"type": "cancel_approval", "name": m.group(1), "company": m.group(2).strip()}
 
+    # 取消婉拒：@AI 姓名 公司 取消婉拒（清 cs[公司] + route_plan history 內該公司婉拒記錄）
+    m = re.match(r"^([㐀-鿿豈-﫿.．·•・‧]{2,12})\s*(.+?)\s*取消婉拒$", clean)
+    if m:
+        return {"type": "cancel_reject", "name": m.group(1), "company": m.group(2).strip()}
+
     # 取消撥款：@AI 姓名 公司 取消撥款（保留核准、清掉撥款日期）
     m = re.match(r"^([㐀-鿿豈-﫿]{2,6})\s*(.+?)\s*取消撥款$", clean)
     if m:
@@ -8096,6 +8101,61 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
                    f"    打 → @AI {name} {company} 結案\n"
                    f"  【情況 B】{company} 還要繼續送（例如要談新金額）\n"
                    f"    不用動作、日報繼續顯示、等新核准")
+        return
+
+    if t == "cancel_reject":
+        # 取消婉拒：清 cs[公司] + route_plan history 內該公司婉拒記錄
+        # 用於業務手滑誤送婉拒、要把客戶救回去送該家
+        name = cmd["name"]
+        company = cmd["company"].strip()
+        if not company:
+            reply_text(reply_token, f"⚠️ 要取消哪家的婉拒？\n例：@AI {name} 亞太 取消婉拒")
+            return
+        target = _resolve_target_strict(cmd, name, group_id, reply_token, "取消婉拒")
+        if not target:
+            return
+        if not _check_active_or_warn(target, reply_token, "取消婉拒", name):
+            return
+        co_canon = COMPANY_ALIAS.get(company, company)
+        co_norm = normalize_section(co_canon)
+        # 1. 清 cs[co]（含 alias key）
+        try:
+            cs = json.loads(target["company_status"] or "{}")
+        except Exception:
+            cs = {}
+        keys_to_del = [k for k in cs.keys() if normalize_section(k) == co_norm]
+        for k in keys_to_del:
+            del cs[k]
+        # 2. 清 route_plan history 內該公司「婉拒」/「跳過」entries
+        route_data = parse_route_json(target["route_plan"] or "") if target["route_plan"] else {"order": [], "current_index": 0, "history": []}
+        _history = route_data.get("history", []) or []
+        new_history = [h for h in _history
+                       if not (normalize_section(h.get("company", "")) == co_norm
+                               and h.get("status") in ("婉拒", "跳過"))]
+        route_data["history"] = new_history
+        # 3. 若該公司在 order、把 current_index 推回該公司位置（業務想重送這家）
+        _order = route_data.get("order", []) or []
+        _target_idx = next((i for i, c in enumerate(_order)
+                            if normalize_section(c) == co_norm), None)
+        if _target_idx is not None:
+            route_data["current_index"] = _target_idx
+        new_route_plan = json.dumps(route_data, ensure_ascii=False)
+        # 4. 更新 customer
+        update_kw = {
+            "route_plan": new_route_plan,
+            "company_status": json.dumps(cs, ensure_ascii=False),
+            "text": f"{name} {co_canon} 取消婉拒",
+            "from_group_id": group_id,
+        }
+        if _target_idx is not None:
+            update_kw["current_company"] = co_canon
+            update_kw["report_section"] = ""
+        update_customer(target["case_id"], **update_kw)
+        push_text(target["source_group_id"], f"{name} {co_canon} 取消婉拒")
+        reply_text(reply_token,
+                   f"✅ {name} {co_canon} 取消婉拒\n"
+                   f"已清掉婉拒記錄、回到該家送件中" +
+                   (f"\n📌 current 設回：{co_canon}" if _target_idx is not None else ""))
         return
 
     if t == "cancel_disbursement":
