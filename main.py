@@ -9758,9 +9758,9 @@ def _handle_a_case_block_locked(block_text, reply_token, id_no, name, forced_cas
         "這件不行", "不可送", "失聯可刪", "堅持不申辦", "黑名單",
         "審核未通過", "審核不通過", "未通過", "不通過",
     ])
-    # 若第 1 行沒結論、整段有婉拒也算（備註很多、結論在後的情況）
-    if not is_approved and not is_reject and "婉拒" in block_text:
-        is_reject = True
+    # 註：原本有「若第 1 行沒結論、整段有婉拒也算」fallback
+    # user 規則（2026-05-15）：狀態只看第一行、第二行以後是詳細備註、不算狀態
+    # 已拿掉此 fallback、避免「亞太補申覆\n之前婉拒原因」誤判成婉拒
     # 但若第 1 行明確是「補申覆/補保人/補件」等補件動作 → 視為補件、不推 route
     # 例：A 群打「張惠德 維力商品貸 補申覆\n（前次婉拒原因 X）」
     #     → 補件動作、不要因為說明文的「婉拒」就把客戶推下家
@@ -9863,7 +9863,9 @@ def _handle_a_case_block_locked(block_text, reply_token, id_no, name, forced_cas
                 for _cs_k, _cs_v in _cs.items():
                     if normalize_section(_cs_k) == company_norm:
                         continue
-                    if "婉拒" in (_cs_v or ""):
+                    # 狀態只看第一行
+                    _cs_v_first = (_cs_v or "").splitlines()[0] if _cs_v else ""
+                    if "婉拒" in _cs_v_first:
                         continue
                     next_co = _cs_k
                     break
