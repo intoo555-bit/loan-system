@@ -1,0 +1,344 @@
+[
+  {
+    "name": "陳錦慧",
+    "id_no": "",
+    "current_company": "亞太",
+    "concurrent": [],
+    "approved_amount": "",
+    "disb_date": "",
+    "report_section": "",
+    "build_date": "2026-04-27",
+    "report_note": "補聯徵",
+    "company_notes": {
+      "亞太": "陳錦慧 亞太 補聯徵"
+    },
+    "pending_docs": "",
+    "raw_line": "",
+    "section_label": "亞太"
+  },
+  {
+    "name": "陳宜庭",
+    "id_no": "",
+    "current_company": "21",
+    "concurrent": [],
+    "approved_amount": "",
+    "disb_date": "",
+    "report_section": "",
+    "build_date": "2026-05-13",
+    "report_note": "轉21",
+    "company_notes": {
+      "21": "陳宜庭 21 轉送"
+    },
+    "pending_docs": "",
+    "raw_line": "",
+    "section_label": "21"
+  },
+  {
+    "name": "呂耀得",
+    "id_no": "",
+    "current_company": "21",
+    "concurrent": [],
+    "approved_amount": "",
+    "disb_date": "",
+    "report_section": "",
+    "build_date": "2026-05-11",
+    "report_note": "轉21",
+    "company_notes": {
+      "21": "呂耀得 21 轉送"
+    },
+    "pending_docs": "",
+    "raw_line": "",
+    "section_label": "21"
+  },
+  {
+    "name": "林冠宏",
+    "id_no": "",
+    "current_company": "分貝汽車",
+    "concurrent": [],
+    "approved_amount": "",
+    "disb_date": "",
+    "report_section": "",
+    "build_date": "2026-04-21",
+    "report_note": "轉分貝汽",
+    "company_notes": {
+      "分貝汽車": "林冠宏 分貝汽車 缺繳息+勞保"
+    },
+    "pending_docs": "繳息,勞保",
+    "raw_line": "",
+    "section_label": "分貝汽車"
+  },
+  {
+    "name": "陳姿廷",
+    "id_no": "",
+    "current_company": "分貝機車",
+    "concurrent": [],
+    "approved_amount": "",
+    "disb_date": "",
+    "report_section": "",
+    "build_date": "2026-04-20",
+    "report_note": "補職電時段或在職證明+1知聯",
+    "company_notes": {
+      "分貝機車": "陳姿廷 分貝機車 補職電時段或在職證明+1知聯"
+    },
+    "pending_docs": "",
+    "raw_line": "",
+    "section_label": "分貝機車"
+  },
+  {
+    "name": "廖逸豐",
+    "id_no": "",
+    "current_company": "貸救補",
+    "concurrent": [],
+    "approved_amount": "",
+    "disb_date": "",
+    "report_section": "",
+    "build_date": "2026-04-27",
+    "report_note": "補職電+父+友時段+協商一年繳息",
+    "company_notes": {
+      "貸救補": "廖逸豐 貸救補 補職電+父+友時段+協商一年繳息"
+    },
+    "pending_docs": "",
+    "raw_line": "",
+    "section_label": "貸救補"
+  },
+  {
+    "name": "張玉琳",
+    "id_no": "",
+    "current_company": "貸救補",
+    "concurrent": [],
+    "approved_amount": "",
+    "disb_date": "",
+    "report_section": "",
+    "build_date": "2026-05-04",
+    "report_note": "已更換二等親聯",
+    "company_notes": {
+      "貸救補": "張玉琳 貸救補 已更換二等親聯"
+    },
+    "pending_docs": "",
+    "raw_line": "",
+    "section_label": "貸救補"
+  },
+  {
+    "name": "潘宥丞",
+    "id_no": "",
+    "current_company": "第一",
+    "concurrent": [
+      "喬美"
+    ],
+    "approved_amount": "",
+    "disb_date": "",
+    "report_section": "送件",
+    "build_date": "2026-04-23",
+    "report_note": "第一+喬美 同送",
+    "company_notes": {},
+    "pending_docs": "繳息",
+    "raw_line": "",
+    "section_label": "第一"
+  },
+  {
+    "name": "王耀賢",
+    "id_no": "",
+    "current_company": "第一",
+    "concurrent": [
+      "喬美"
+    ],
+    "approved_amount": "",
+    "disb_date": "",
+    "report_section": "送件",
+    "build_date": "2026-05-07",
+    "report_note": "第一+喬美 同送",
+    "company_notes": {},
+    "pending_docs": "勞保",
+    "raw_line": "",
+    "section_label": "第一"
+  },
+  {
+    "name": "洪莉敏",
+    "id_no": "",
+    "current_company": "第一",
+    "concurrent": [
+      "喬美"
+    ],
+    "approved_amount": "",
+    "disb_date": "",
+    "report_section": "送件",
+    "build_date": "2026-05-11",
+    "report_note": "第一+喬美 同送",
+    "company_notes": {},
+    "pending_docs": "撥款紀錄,信用卡,勞保PDF",
+    "raw_line": "",
+    "section_label": "第一"
+  },
+  {
+    "name": "陳娟娟",
+    "id_no": "",
+    "current_company": "第一",
+    "concurrent": [
+      "亞太"
+    ],
+    "approved_amount": "",
+    "disb_date": "",
+    "report_section": "送件",
+    "build_date": "2026-05-12",
+    "report_note": "第一+亞太 同送",
+    "company_notes": {},
+    "pending_docs": "繳息",
+    "raw_line": "",
+    "section_label": "第一"
+  },
+  {
+    "name": "王思妮",
+    "id_no": "",
+    "current_company": "貸救補",
+    "concurrent": [],
+    "approved_amount": "5萬",
+    "disb_date": "5/12",
+    "report_section": "待撥款",
+    "build_date": "2026-05-04",
+    "report_note": "轉貸救補 核准 5萬",
+    "company_notes": {},
+    "pending_docs": "",
+    "raw_line": "",
+    "section_label": "貸救補"
+  },
+  {
+    "name": "陳達慶",
+    "id_no": "",
+    "current_company": "21",
+    "concurrent": [],
+    "approved_amount": "8萬",
+    "disb_date": "5/13",
+    "report_section": "待撥款",
+    "build_date": "2026-05-06",
+    "report_note": "21 核准 8萬",
+    "company_notes": {},
+    "pending_docs": "",
+    "raw_line": "",
+    "section_label": "21"
+  },
+  {
+    "name": "石黃如",
+    "id_no": "",
+    "current_company": "21",
+    "concurrent": [],
+    "approved_amount": "7萬",
+    "disb_date": "5/14",
+    "report_section": "待撥款",
+    "build_date": "2026-04-27",
+    "report_note": "轉21 核准 7萬",
+    "company_notes": {},
+    "pending_docs": "",
+    "raw_line": "",
+    "section_label": "21"
+  },
+  {
+    "name": "黃建忠",
+    "id_no": "",
+    "current_company": "21",
+    "concurrent": [
+      "零卡"
+    ],
+    "approved_amount": "7萬",
+    "disb_date": "5/13",
+    "report_section": "待撥款",
+    "build_date": "2026-05-05",
+    "report_note": "轉21 核准 7萬、零卡同送",
+    "company_notes": {
+      "21": "黃建忠 21 核准 7萬(撥款5/13)",
+      "零卡": "黃建忠 零卡 送件中"
+    },
+    "pending_docs": "",
+    "raw_line": "",
+    "section_label": "21"
+  },
+  {
+    "name": "郭育慈",
+    "id_no": "",
+    "current_company": "21",
+    "concurrent": [],
+    "approved_amount": "7萬",
+    "disb_date": "5/14",
+    "report_section": "待撥款",
+    "build_date": "2026-04-24",
+    "report_note": "轉21 核准 7萬",
+    "company_notes": {},
+    "pending_docs": "",
+    "raw_line": "",
+    "section_label": "21"
+  },
+  {
+    "name": "吳穎榛",
+    "id_no": "",
+    "current_company": "星展",
+    "concurrent": [],
+    "approved_amount": "",
+    "disb_date": "",
+    "report_section": "",
+    "build_date": "2026-05-12",
+    "report_note": "銀行-星展",
+    "company_notes": {},
+    "pending_docs": "",
+    "raw_line": "",
+    "section_label": "星展"
+  },
+  {
+    "name": "薛心瑀",
+    "id_no": "",
+    "current_company": "零卡",
+    "concurrent": [],
+    "approved_amount": "",
+    "disb_date": "",
+    "report_section": "",
+    "build_date": "2026-04-27",
+    "report_note": "C",
+    "company_notes": {},
+    "pending_docs": "",
+    "raw_line": "",
+    "section_label": "零卡"
+  },
+  {
+    "name": "林榮宥",
+    "id_no": "",
+    "current_company": "零卡",
+    "concurrent": [],
+    "approved_amount": "",
+    "disb_date": "",
+    "report_section": "",
+    "build_date": "2026-05-11",
+    "report_note": "C",
+    "company_notes": {},
+    "pending_docs": "",
+    "raw_line": "",
+    "section_label": "零卡"
+  },
+  {
+    "name": "楊絜雯",
+    "id_no": "",
+    "current_company": "零卡",
+    "concurrent": [],
+    "approved_amount": "",
+    "disb_date": "",
+    "report_section": "",
+    "build_date": "2026-05-11",
+    "report_note": "C",
+    "company_notes": {},
+    "pending_docs": "",
+    "raw_line": "",
+    "section_label": "零卡"
+  },
+  {
+    "name": "黃雅君",
+    "id_no": "",
+    "current_company": "商品貸",
+    "concurrent": [],
+    "approved_amount": "",
+    "disb_date": "",
+    "report_section": "",
+    "build_date": "2026-05-04",
+    "report_note": "商品貸",
+    "company_notes": {},
+    "pending_docs": "",
+    "raw_line": "",
+    "section_label": "商品貸"
+  }
+]

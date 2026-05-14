@@ -12846,6 +12846,201 @@ async def import_zhuanye_confirm(request: Request):
     return HTMLResponse(summary)
 
 
+# ========== 快樂貸 5/14 匯入 ==========
+KUAILE_GROUP_ID = "C8e457f901b4a18f3d99f4047781c71c3"
+KUAILE_GROUP_NAME = "快樂貸"
+
+
+@app.get("/admin/import-kuaile", response_class=HTMLResponse)
+def import_kuaile_preview(request: Request):
+    from fastapi.responses import RedirectResponse
+    role = check_auth(request)
+    if role != "admin":
+        return RedirectResponse("/login")
+    _base = os.path.dirname(os.path.abspath(__file__))
+    jpath = os.path.join(_base, "kuaile_import.json")
+    if not os.path.exists(jpath):
+        return HTMLResponse("<div style='padding:40px'>找不到 kuaile_import.json</div>")
+    with open(jpath, encoding="utf-8") as f:
+        data = json.load(f)
+    rows_html = ""
+    for d in data:
+        concurrent = "+".join(d.get("concurrent", []))
+        co_str = d.get("current_company", "") + (f"+{concurrent}" if concurrent else "")
+        amt_str = d.get("approved_amount", "") or ""
+        disb_str = d.get("disb_date", "") or ""
+        if d.get("report_section") == "待撥款":
+            tag = "💰待撥款"
+        elif d.get("report_section") == "送件":
+            tag = "📤送件"
+        else:
+            tag = ""
+        rows_html += f'''<tr>
+          <td style="padding:6px 10px">{h(tag)}</td>
+          <td style="padding:6px 10px;font-weight:600">{h(d["name"])}</td>
+          <td style="padding:6px 10px;font-family:monospace;font-size:12px">{h(d.get("id_no","") or "❌")}</td>
+          <td style="padding:6px 10px">{h(co_str)}</td>
+          <td style="padding:6px 10px">{h(amt_str)}</td>
+          <td style="padding:6px 10px">{h(disb_str)}</td>
+          <td style="padding:6px 10px;font-size:11px;color:#6b7280">{h(d.get("report_note","-") or "-")}</td>
+        </tr>'''
+    return HTMLResponse(f"""<!DOCTYPE html><html><head>{PAGE_CSS}<title>匯入快樂貸 5/14 案件</title></head><body>
+    {make_topnav(role, "admin")}
+    <div class="page">
+      <h2>匯入快樂貸 5/14 案件（共 {len(data)} 筆）</h2>
+      <div style="font-size:13px;color:#6b7280;margin-bottom:12px">
+        目標業務群：<b>快樂貸</b>（{KUAILE_GROUP_ID}）<br>
+        身分證已存在於別群會搬到快樂貸群、本群有的跳過、新的建立。<br>
+        群組未存在會自動建立為 SALES_GROUP。
+      </div>
+      <div style="background:#fff;border:1px solid #e5e7eb;border-radius:10px;overflow:auto;margin-bottom:16px">
+        <table style="width:100%;border-collapse:collapse;font-size:13px">
+          <thead style="background:#f9fafb;border-bottom:1px solid #e5e7eb;position:sticky;top:0">
+            <tr>
+              <th style="padding:8px;text-align:left">狀態</th>
+              <th style="padding:8px;text-align:left">姓名</th>
+              <th style="padding:8px;text-align:left">身分證</th>
+              <th style="padding:8px;text-align:left">current + concurrent</th>
+              <th style="padding:8px;text-align:left">核准金額</th>
+              <th style="padding:8px;text-align:left">撥款日</th>
+              <th style="padding:8px;text-align:left">備註</th>
+            </tr>
+          </thead>
+          <tbody>{rows_html}</tbody>
+        </table>
+      </div>
+      <div style="display:flex;gap:12px;align-items:center">
+        <form method="post" action="/admin/import-kuaile/confirm" onsubmit="return confirm('確定匯入 {len(data)} 筆到「快樂貸」業務群嗎？')">
+          <button type="submit" class="btn btn-primary" style="padding:10px 24px;font-size:15px">✅ 確認匯入 {len(data)} 筆</button>
+        </form>
+        <form method="post" action="/admin/clear-group" onsubmit="return confirm('確定要清空「快樂貸」群的所有客戶嗎？')">
+          <input type="hidden" name="group_id" value="{KUAILE_GROUP_ID}">
+          <button type="submit" style="padding:10px 18px;font-size:14px;background:#b91c1c;color:#fff;border:none;border-radius:7px;cursor:pointer">🗑 先清空快樂貸群</button>
+        </form>
+      </div>
+    </div></body></html>""")
+
+
+@app.post("/admin/import-kuaile/confirm")
+async def import_kuaile_confirm(request: Request):
+    role = check_auth(request)
+    if role != "admin":
+        return HTMLResponse("無權限", status_code=403)
+    _base = os.path.dirname(os.path.abspath(__file__))
+    jpath = os.path.join(_base, "kuaile_import.json")
+    with open(jpath, encoding="utf-8") as f:
+        data = json.load(f)
+    SALES_GROUP_ID = KUAILE_GROUP_ID
+    with db_conn(commit=True) as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT 1 FROM groups WHERE group_id=?", (SALES_GROUP_ID,))
+        if not cur.fetchone():
+            cur.execute(
+                "INSERT INTO groups (group_id, group_name, group_type, is_active) VALUES (?, ?, ?, 1)",
+                (SALES_GROUP_ID, KUAILE_GROUP_NAME, "SALES_GROUP"),
+            )
+    created, transferred, skipped, failed = [], [], [], []
+    for d in data:
+        name = d["name"]
+        id_no = (d.get("id_no") or "").strip()
+        try:
+            existing = find_active_by_id_no(id_no) if id_no else None
+            if not existing:
+                rows = find_active_by_name(name)
+                non_target = [r for r in rows if r["source_group_id"] != SALES_GROUP_ID]
+                if len(non_target) == 1:
+                    existing = non_target[0]
+                elif len(non_target) > 1:
+                    failed.append(f"{name}：跨群有 {len(non_target)} 筆同名、人工確認")
+                    continue
+            if existing:
+                old_gid = existing["source_group_id"]
+                if old_gid == SALES_GROUP_ID:
+                    skipped.append(f"{name}（已在快樂貸群）")
+                    continue
+                old_gname = get_group_name(old_gid) or old_gid[:8]
+                approved = (d.get("approved_amount") or "").strip()
+                disb = (d.get("disb_date") or "").strip()
+                report_sec = d.get("report_section", "") or ""
+                concurrent_str = ",".join(d.get("concurrent", []))
+                merge_kwargs = {"source_group_id": SALES_GROUP_ID,
+                                "text": f"已從【{old_gname}】搬到【{KUAILE_GROUP_NAME}】",
+                                "from_group_id": SALES_GROUP_ID}
+                if approved and not (existing["approved_amount"] or "").strip():
+                    merge_kwargs["approved_amount"] = approved
+                if disb and not (existing["disbursement_date"] or "").strip():
+                    merge_kwargs["disbursement_date"] = disb
+                if report_sec and not (existing["report_section"] or "").strip():
+                    merge_kwargs["report_section"] = report_sec
+                if concurrent_str and not (existing["concurrent_companies"] or "").strip():
+                    merge_kwargs["concurrent_companies"] = concurrent_str
+                co_import = d.get("current_company", "") or ""
+                if co_import and not (existing["current_company"] or "").strip():
+                    merge_kwargs["current_company"] = co_import
+                update_customer(existing["case_id"], **merge_kwargs)
+                transferred.append(f"{name}（從 {old_gname}）")
+                continue
+            co = d.get("current_company", "") or ""
+            note = (d.get("report_note") or "").strip()
+            text = note if note else (f"{name} {co}" if co else name)
+            concurrent_str = ",".join(d.get("concurrent", []))
+            report_sec = d.get("report_section", "") or ""
+            approved = (d.get("approved_amount") or "").strip()
+            disb = (d.get("disb_date") or "").strip()
+            route_plan = ""
+            if approved and co and report_sec == "待撥款":
+                history = []
+                main_h = {"company": co, "amount": approved, "status": "待撥款" if disb else "核准"}
+                if disb:
+                    main_h["disbursed"] = disb
+                history.append(main_h)
+                order = [co] + d.get("concurrent", [])
+                route_plan = make_route_json(order, 0, history)
+            case_id = create_customer_record(
+                name=name, id_no=id_no, company=co,
+                source_group_id=SALES_GROUP_ID, text=text,
+                route_plan=route_plan, current_company=co,
+                report_section=report_sec,
+            )
+            build_date = (d.get("build_date") or "").strip()
+            if build_date:
+                try:
+                    iso_date = build_date + "T00:00:00" if len(build_date) == 10 else build_date
+                    with db_conn(commit=True) as conn:
+                        _c = conn.cursor()
+                        _c.execute("UPDATE customers SET created_at=? WHERE case_id=?", (iso_date, case_id))
+                except Exception:
+                    pass
+            update_kwargs = {}
+            if approved:
+                update_kwargs["approved_amount"] = approved
+            if disb:
+                update_kwargs["disbursement_date"] = disb
+            if concurrent_str:
+                update_kwargs["concurrent_companies"] = concurrent_str
+            pending_docs = (d.get("pending_docs") or "").strip()
+            if pending_docs:
+                update_kwargs["pending_docs"] = pending_docs
+            cnotes = d.get("company_notes") or {}
+            if cnotes:
+                cs_dict = {normalize_section(k): v for k, v in cnotes.items()}
+                update_kwargs["company_status"] = json.dumps(cs_dict, ensure_ascii=False)
+            if update_kwargs:
+                update_customer(case_id, text=None, from_group_id=SALES_GROUP_ID, **update_kwargs)
+            created.append(name)
+        except Exception as e:
+            failed.append(f"{name}：{e}")
+    summary = f"""<div style="padding:40px;font-family:sans-serif">
+      <h2>快樂貸匯入完成</h2>
+      <p>✅ 新建：{len(created)} 筆 — {', '.join(created[:30])}{'...' if len(created)>30 else ''}</p>
+      <p>🔀 搬到快樂貸群：{len(transferred)} 筆 — {', '.join(transferred)}</p>
+      <p>⚠️ 跳過：{len(skipped)} 筆 — {', '.join(skipped)}</p>
+      <p>❌ 失敗：{len(failed)} 筆 — {'; '.join(failed)}</p>
+      <a href="/admin/groups">回群組管理</a> | <a href="/history">看歷史</a> | <a href="/report">看日報</a>
+    </div>"""
+    return HTMLResponse(summary)
+
+
 @app.post("/admin/cleanup-company-paren", response_class=HTMLResponse)
 def cleanup_company_paren(request: Request):
     """一次性清掉 current_company 裡誤存的「(...)」括號內容（admin 限定）。
