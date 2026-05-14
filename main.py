@@ -4460,7 +4460,7 @@ def update_customer(case_id, company=None, text=None, from_group_id="", status=N
                     signing_company=None, signing_time=None, signing_location=None,
                     notify_amount=None, notify_period=None, concurrent_companies=None,
                     id_no=None, penalty_amount=None, penalty_date=None, penalty_pending=None,
-                    pending_docs=None):
+                    pending_docs=None, company_status=None):
     """更新客戶（Bug 5/6 修復：context manager + transaction）
 
     UPDATE + INSERT case_logs 包在同一交易內，確保原子性。
@@ -4507,7 +4507,8 @@ def update_customer(case_id, company=None, text=None, from_group_id="", status=N
                          ("penalty_amount", penalty_amount),
                          ("penalty_date", penalty_date),
                          ("penalty_pending", penalty_pending),
-                         ("pending_docs", pending_docs)]:
+                         ("pending_docs", pending_docs),
+                         ("company_status", company_status)]:
             if val is not None:
                 fields.append(f"{col} = ?"); values.append(val)
         # 核准金額從空→有值 → 記 approved_at（用於待撥款超過 N 天計算）
@@ -4524,7 +4525,8 @@ def update_customer(case_id, company=None, text=None, from_group_id="", status=N
                            "notify_amount", "notify_period", "disbursement_date",
                            "status", "id_no", "customer_name", "source_group_id",
                            "signing_area", "signing_salesperson", "signing_company",
-                           "signing_time", "signing_location"]
+                           "signing_time", "signing_location", "company_status",
+                           "pending_docs"]
             snapshot = json.dumps({k: before_row[k] for k in snap_fields if k in before_row.keys()},
                                   ensure_ascii=False)
         cur.execute(f"UPDATE customers SET {', '.join(fields)} WHERE case_id=?", values)
@@ -6546,7 +6548,7 @@ def update_with_verify(case_id: str, changes: Dict, from_group_id: str = "", tex
                     "disbursement_date", "signing_area", "signing_salesperson",
                     "signing_company", "signing_time", "signing_location",
                     "notify_amount", "notify_period", "concurrent_companies",
-                    "id_no", "name"}
+                    "id_no", "name", "company_status", "pending_docs"}
     filtered = {}
     for k, v in changes.items():
         # None 一律轉 "" 才能真正清空欄位（update_customer 對 None 的語意是「不動」）
