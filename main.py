@@ -5318,11 +5318,11 @@ def compute_customer_display(row):
     section = normalize_section(section)
 
     # 婉拒 reroute：如果主 section 是「已婉拒」的家、找非婉拒的家當新 section
-    # 判定「已婉拒」的依據：
-    #   (1) route_plan history 內有 {co: section, status: 婉拒} entry
-    #   (2) cs[section] 內容含「婉拒」字眼
-    # 找新 section 的順序：concurrent → cs 其他 key → route_plan history 其他家
-    # （user 要求 2026-05-12 / 13：婉拒的家不該出現在日報主行）
+    # 判定「已婉拒」（user 要求 2026-05-14 收緊）：
+    #   (1) cs[section] 內容含「婉拒」字眼 → fire
+    #   (2) cs[section] 為空（沒人重新處理）+ history 有 {co: section, status: 婉拒} → fire
+    #   (3) cs[section] 內容是補件/已補等（業務已恢復）→ 不 fire、繼續顯示該家
+    # 找新 section 的順序：route_plan order 下一家 → concurrent → cs 其他 key
     if section not in ("待撥款", "核准(房地)", "送件"):
         _section_norm = section
         # 抓 route_plan history 內所有婉拒過的家
@@ -5337,9 +5337,12 @@ def compute_customer_display(row):
         except Exception:
             pass
         _section_cs_key = _get_cs_key_for_section(cs, section) if cs else None
-        _cs_has_reject = bool(_section_cs_key) and "婉拒" in cs.get(_section_cs_key, "")
+        _cs_value = cs.get(_section_cs_key, "") if _section_cs_key else ""
+        _cs_has_reject = bool(_cs_value) and "婉拒" in _cs_value
+        _cs_empty = not _cs_value  # cs 沒記錄該家（沒人重新處理）
         _history_has_reject = _section_norm in _rejected_secs
-        if _cs_has_reject or _history_has_reject:
+        # cs 有非婉拒內容（補件/已補/補申覆）→ 業務已重新處理、不 reroute
+        if _cs_has_reject or (_history_has_reject and _cs_empty):
             _rerouted = False
             # 1. 優先用 route_plan order 內「current 之後的第一個非婉拒家」（user 規則：沒指定就跳下一家）
             try:
@@ -5569,46 +5572,8 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
                         co_line = "🆕" + co_line
                     section_map.setdefault(co_section, []).append(co_line)
 
-        # === 婉拒'd 公司若 cs 有補件紀錄 → 也顯示在那區塊 ===
-        try:
-            _route_data = parse_route_json(row["route_plan"] or "")
-            _history = _route_data.get("history", []) or []
-            _shown_secs = {section}
-            if concurrent_str:
-                for _c in concurrent_str.split(","):
-                    if _c.strip():
-                        _shown_secs.add(normalize_section(_c.strip()))
-            _shown_secs |= approved_sections
-            _supp_kw = ["補保人", "補申覆", "補聯徵", "補件", "補資料", "補薪轉",
-                        "補照片", "補時段", "補照會", "補行照", "補在職", "補存摺",
-                        "待補", "申覆", "補上", "補完", "補好", "補繳"]
-            for _h in _history:
-                if _h.get("status") != "婉拒":
-                    continue
-                _rej_co = _h.get("company") or ""
-                if not _rej_co:
-                    continue
-                _rej_sec = normalize_section(_rej_co)
-                if _rej_sec in _shown_secs:
-                    continue
-                _cs_text = cs.get(_rej_sec, "")
-                if not _cs_text or not any(k in _cs_text for k in _supp_kw):
-                    continue
-                if "婉拒" in _cs_text:
-                    continue
-                _rej_status = _compress_status_short(
-                    extract_status_summary(_cs_text.splitlines()[0] if _cs_text else "", customer_name))
-                _rej_short = _display_co_short(_rej_co) or _rej_co
-                _rej_line = f"{date_str}-{customer_name}-{_rej_short}"
-                if _rej_status and not pending_str:
-                    _rej_line += f"-{_rej_status}"
-                _rej_line += pending_str
-                if is_today:
-                    _rej_line = "🆕" + _rej_line
-                section_map.setdefault(_rej_sec, []).append(_rej_line)
-                _shown_secs.add(_rej_sec)
-        except Exception:
-            pass
+        # 註：先前有「婉拒'd 公司若 cs 有補件 → 也顯示」邏輯、user 2026-05-14 要求拿掉
+        # 婉拒 = 消失、要恢復用「@AI 姓名 公司 取消婉拒」指令。
     return section_map
 
 
