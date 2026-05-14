@@ -5338,7 +5338,10 @@ def compute_customer_display(row):
             pass
         _section_cs_key = _get_cs_key_for_section(cs, section) if cs else None
         _cs_value = cs.get(_section_cs_key, "") if _section_cs_key else ""
-        _cs_has_reject = bool(_cs_value) and "婉拒" in _cs_value
+        # 狀態只看「第一行」、第二行以後是詳細備註（user 規則）
+        # 避免「補申覆\n【1】之前婉拒原因...」誤抓第 2 行「婉拒」當狀態
+        _cs_first_line = _cs_value.splitlines()[0] if _cs_value else ""
+        _cs_has_reject = bool(_cs_first_line) and "婉拒" in _cs_first_line
         _cs_empty = not _cs_value  # cs 沒記錄該家（沒人重新處理）
         _history_has_reject = _section_norm in _rejected_secs
         # cs 有非婉拒內容（補件/已補/補申覆）→ 業務已重新處理、不 reroute
@@ -5359,9 +5362,10 @@ def compute_customer_display(row):
                         continue  # skip 婉拒那家
                     if _o_sec in _rejected_secs:
                         continue
-                    # cs 內這家若是婉拒、也 skip
+                    # cs 內這家若是婉拒、也 skip（只看第一行）
                     _o_cs_key = _get_cs_key_for_section(cs, _o_sec) if cs else None
-                    if _o_cs_key and "婉拒" in cs.get(_o_cs_key, ""):
+                    _o_cs_first = (cs.get(_o_cs_key, "") or "").splitlines()[0] if _o_cs_key else ""
+                    if "婉拒" in _o_cs_first:
                         continue
                     section = _o_sec
                     current_co = _o_co
@@ -5378,18 +5382,20 @@ def compute_customer_display(row):
                         continue
                     _alt_cs_key = _get_cs_key_for_section(cs, _alt_sec) if cs else None
                     _alt_cs_text = cs.get(_alt_cs_key, "") if _alt_cs_key else ""
-                    if "婉拒" in _alt_cs_text:
+                    _alt_cs_first = _alt_cs_text.splitlines()[0] if _alt_cs_text else ""
+                    if "婉拒" in _alt_cs_first:
                         continue
                     section = _alt_sec
                     current_co = _alt_co
                     _rerouted = True
                     break
-            # 3. 還找不到 → 找 cs 其他 key 內非婉拒的家
+            # 3. 還找不到 → 找 cs 其他 key 內非婉拒的家（只看第一行）
             if not _rerouted and cs:
                 for _cs_k, _cs_v in cs.items():
                     if _cs_k == _section_cs_key:
                         continue
-                    if "婉拒" in (_cs_v or ""):
+                    _cs_v_first = (_cs_v or "").splitlines()[0] if _cs_v else ""
+                    if "婉拒" in _cs_v_first:
                         continue
                     _alt_sec = normalize_section(_cs_k)
                     if _alt_sec in _rejected_secs:
@@ -5554,10 +5560,11 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
                 if co_section in approved_sections:
                     continue
                 if co_section != section:
-                    # 婉拒的家不顯示（cs 內容含「婉拒」就跳過、user 要求 2026-05-12）
+                    # 婉拒的家不顯示（只看 cs 第一行、避免第 2 行詳細備註誤抓）
                     _cs_key_chk = _get_cs_key_for_section(cs, co_section)
                     _cs_text_chk = cs.get(_cs_key_chk, "") if _cs_key_chk else ""
-                    if "婉拒" in _cs_text_chk:
+                    _cs_first_chk = _cs_text_chk.splitlines()[0] if _cs_text_chk else ""
+                    if "婉拒" in _cs_first_chk:
                         continue
                     co_status = _compress_status_short(_get_section_status_for_row(row, co_section, cs, first_line))
                     # 雙重保險：extract 後 status 是「婉拒」也擋
