@@ -8790,7 +8790,29 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
                        f"現在在送：{'、'.join(all_active) if all_active else '無'}")
             return
         # 情況 3：兩邊都沒有 — 但 company_status 可能有殘留紀錄、清掉避免日報還顯示
-        all_active = ([current_co] if current_co else []) + concurrent_list
+        # all_active 過濾掉已婉拒過的家（cs 第一行含「婉拒」or history 有婉拒）
+        try:
+            _cs_now = json.loads(target["company_status"] or "{}")
+        except Exception:
+            _cs_now = {}
+        try:
+            _hist_now = parse_route_json(target["route_plan"] or "").get("history", []) or []
+        except Exception:
+            _hist_now = []
+        _rej_norms_now = {normalize_section(h.get("company", ""))
+                          for h in _hist_now if h.get("status") == "婉拒"}
+        def _is_rejected_active(c):
+            _cn = normalize_section(c)
+            if _cn in _rej_norms_now:
+                return True
+            for _k, _v in _cs_now.items():
+                if normalize_section(_k) == _cn and _v:
+                    _first = _v.splitlines()[0] if _v else ""
+                    if "婉拒" in _first:
+                        return True
+            return False
+        _raw_active = ([current_co] if current_co else []) + concurrent_list
+        all_active = [c for c in _raw_active if not _is_rejected_active(c)]
         cs_cleared = False
         try:
             cs_raw = target["company_status"] or "{}"
