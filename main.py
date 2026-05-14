@@ -6633,6 +6633,40 @@ def _resolve_target(name: str, group_id: str, reply_token: str):
     return None
 
 
+def _require_company_when_multi(target, cmd_company, action_name, reply_token,
+                                example_suffix="", example_template=None):
+    """同送 ≥ 2 家 + 沒指定公司 → 擋下回提示、回 True（呼叫端要 return）。
+    破壞性指令通用 helper、避免 8 個指令各自寫重複防呆。
+    參數：
+      cmd_company: 業務打的公司名（空字串 = 沒指定）
+      action_name: 動作中文（婉拒/核准/照會/缺/已補/婉拒轉/撥款）
+      example_suffix: 範例尾巴（如 "50萬" / "5/13" / "身分證+薪轉"）
+      example_template: 自訂範例（@AI {name} {active0} ... 格式、覆蓋預設）
+    """
+    if cmd_company:
+        return False
+    if not target:
+        return False
+    curr = (target["current_company"] or "").strip() if target["current_company"] else ""
+    concur_raw = target["concurrent_companies"] or ""
+    concur = [c.strip() for c in concur_raw.split(",") if c.strip()]
+    active = ([curr] if curr else []) + concur
+    if len(active) < 2:
+        return False
+    name = target["customer_name"] if "customer_name" in target.keys() else "客戶"
+    if example_template:
+        example = example_template.format(name=name, active0=active[0],
+                                          active1=active[1] if len(active) > 1 else active[0])
+    else:
+        suffix = f" {example_suffix}" if example_suffix else ""
+        example = f"@AI {name} {active[0]} {action_name}{suffix}"
+    reply_text(reply_token,
+               f"⚠️ {name} 目前同送 {'、'.join(active)}\n"
+               f"要{action_name}哪家？請明確指定：\n"
+               f"  {example}")
+    return True
+
+
 def _check_active_or_warn(target, reply_token, action_label: str, customer_name: str = ""):
     """破壞性指令前檢查 target 是否為 ACTIVE；非 ACTIVE 則警告並回 False"""
     if not target:
@@ -8191,15 +8225,8 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
             return
         # 未指定公司 → 用當前 current_company（防錯：使用者常忘了打公司）
         if not company:
-            # 同送 2 家以上時強制要求指定、避免核准錯家
-            _curr0 = (target["current_company"] or "").strip()
-            _concur0 = [c.strip() for c in (target["concurrent_companies"] or "").split(",") if c.strip()]
-            _active0 = ([_curr0] if _curr0 else []) + _concur0
-            if len(_active0) >= 2:
-                reply_text(reply_token,
-                           f"⚠️ {name} 目前同送 {'、'.join(_active0)}\n"
-                           f"要核准哪家？請明確指定：\n"
-                           f"  @AI {name} {_active0[0]} 核准 {amount}")
+            if _require_company_when_multi(target, company, "核准", reply_token,
+                                            example_suffix=str(amount)):
                 return
             company = target["current_company"] or target["company"] or ""
         if not company:
@@ -8572,15 +8599,8 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
             return
         if not _check_active_or_warn(target, reply_token, "婉拒", name):
             return
-        # 防錯：沒指定公司 + 有 2 家（含）以上在送 → 跳提示要業務明確指定
-        curr = (target["current_company"] or "").strip()
-        concur = [c.strip() for c in (target["concurrent_companies"] or "").split(",") if c.strip()]
-        active_list = ([curr] if curr else []) + concur
-        if len(active_list) >= 2:
-            reply_text(reply_token,
-                       f"⚠️ {name} 目前同送 {'、'.join(active_list)}\n"
-                       f"要婉拒哪家？請明確指定：\n"
-                       f"  @AI {name} {active_list[0]} 婉拒")
+        # 防錯：沒指定公司 + 有 2 家以上在送 → 擋下要求指定
+        if _require_company_when_multi(target, "", "婉拒", reply_token):
             return
         route = target["route_plan"] or ""
         current, next_co = get_current_company(route), get_next_company(route)
@@ -8839,16 +8859,10 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
         if not target:
             return
         # 防呆：沒指定要拒的公司 + 同送 ≥ 2 家 → 擋下、避免默默拒到 current（業務未必想拒那家）
-        if not reject_company:
-            _curr = (target["current_company"] or "").strip()
-            _concur = [c.strip() for c in (target["concurrent_companies"] or "").split(",") if c.strip()]
-            _active = ([_curr] if _curr else []) + _concur
-            if len(_active) >= 2:
-                reply_text(reply_token,
-                           f"⚠️ {name} 目前同送 {'、'.join(_active)}\n"
-                           f"要拒哪家再轉？請明確指定：\n"
-                           f"  @AI {name} {_active[0]} 婉拒轉{target_raw}")
-                return
+        if _require_company_when_multi(
+                target, reject_company, "婉拒轉", reply_token,
+                example_template=f"@AI {{name}} {{active0}} 婉拒轉{target_raw}"):
+            return
         # 支援「亞太+21」多家同送：拆 +、套 alias、第一家當 current、其餘 concurrent
         target_items = [t.strip() for t in re.split(r"[+＋]", target_raw) if t.strip()]
         target_cos = [COMPANY_ALIAS.get(t, t) for t in target_items]
@@ -8959,17 +8973,11 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
         target = same[0] if same else (rows[0] if rows else None)
         if not target:
             reply_text(reply_token, f"❌ 找不到客戶：{name}"); return
-        # 防錯：沒指定公司 + 有 2 家（含）以上在送 → 跳提示要業務明確指定哪家照會
-        if not company:
-            curr = (target["current_company"] or "").strip()
-            concur = [c.strip() for c in (target["concurrent_companies"] or "").split(",") if c.strip()]
-            active = ([curr] if curr else []) + concur
-            if len(active) >= 2:
-                reply_text(reply_token,
-                           f"⚠️ {name} 目前同送 {'、'.join(active)}\n"
-                           f"要照會哪家？請明確指定：\n"
-                           f"  @AI {name} {active[0]}+{active[1]} 照會")
-                return
+        # 防錯：沒指定公司 + 有 2 家以上在送 → 擋下要求指定（範例用「公司A+公司B 照會」多家格式）
+        if _require_company_when_multi(
+                target, company, "照會", reply_token,
+                example_template="@AI {name} {active0}+{active1} 照會"):
+            return
         # 處理同時送件（+ 分隔）：每個 item 拆公司名和金額
         concurrent_names = []      # 純公司名（給 concurrent_companies 存）
         concurrent_with_amt = []   # (公司, 金額, 期數) tuple（給照會訊息顯示）
@@ -9207,10 +9215,9 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
         is_pre_send = (report_sec == "送件") or (not current_co)
         target_company = cmd_company
         if not target_company and not is_pre_send:
-            if len(active_list) >= 2:
-                reply_text(reply_token,
-                           f"⚠️ {name} 同送 {'、'.join(active_list)} — 缺件要指定哪家\n"
-                           f"例：@AI {name} {active_list[0]} 缺 {docs_list[0]}")
+            if _require_company_when_multi(
+                    target, "", "缺", reply_token,
+                    example_suffix=docs_list[0] if docs_list else ""):
                 return
             target_company = current_co
         if target_company:
@@ -9267,10 +9274,8 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
         is_pre_send = (report_sec == "送件") or (not current_co)
         target_company = cmd_company
         if not target_company and not is_pre_send:
-            if len(active_list) >= 2:
-                reply_text(reply_token,
-                           f"⚠️ {name} 同送 {'、'.join(active_list)} — 已補要指定哪家\n"
-                           f"例：@AI {name} {active_list[0]} 已補 {doc}")
+            if _require_company_when_multi(
+                    target, "", "已補", reply_token, example_suffix=doc):
                 return
             target_company = current_co
         if target_company:
