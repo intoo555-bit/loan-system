@@ -950,3 +950,230 @@ priority   公司           金額  特點
 
 兩者刻意不同——照會話術要照客戶實際情況、申請書要符合公司審件規則。
 
+---
+
+## 2026/05 重大更新（日報重構 + 規則）
+
+### ⭐ 黃金規則：日報狀態只看「第一行」
+
+**規則**：
+```
+姓名 公司 狀態  ← 日報抓這個（第一行）
+詳細內容        ← 第二行以後是備註、不算狀態
+```
+
+**所有「婉拒」判定都只看 cs[公司] 第一行**：
+- reroute fire 條件
+- reroute fallback (route / concurrent / cs)
+- concurrent 散開 filter
+- A 群 reject 偵測（拿掉「整段含婉拒也算」fallback）
+- BOT 回覆「現在在送」過濾
+
+避免「亞太 補申覆\n之前婉拒原因 X」誤判第二行的「婉拒」當狀態。
+
+### 日報顯示邏輯統一（重構）
+
+LINE 日報跟網頁日報用**同一個 helper** `compute_customer_display(row)`：
+- 算 section / current_co / status / pending_str / amount_display / is_today
+- LINE `build_section_map` 跟網頁 `render_customer_row` 都呼叫
+
+未來改顯示邏輯一處改、兩邊同步、不會再「LINE 對網頁錯」。
+
+### 婉拒 reroute 規則（compute_customer_display）
+
+判定「該家已婉拒」：
+1. **cs[section] 第一行含「婉拒」** → fire
+2. **cs[section] 為空 + history 有婉拒** → fire（沒人重新處理）
+3. **cs[section] 有非婉拒內容（補件/已補/補申覆）** → 不 fire（業務已恢復）
+
+找新 section 順序：
+1. route_plan order 內 current_index 之後第一個非婉拒家
+2. concurrent 非婉拒家
+3. cs 其他 key 非婉拒家
+
+### A 群婉拒「下一家」4 層 fallback
+
+1. `route order idx+1`（自然下家）
+2. `concurrent` 第一家
+3. `route order` 內非婉拒家（跳過所有婉拒過的）
+4. `cs` 其他 key 非婉拒家
+
+跟日報 reroute 對齊、不會再「日報有下家、BOT 回沒下家」。
+
+### A 群 reject company 不是 current 時、先 advance_route_to
+
+蔡輔倫 case：current=喬美、業務報「亞太婉拒」（亞太 in route 但不是 current）。
+之前 advance_route 會把 current（喬美）誤標婉拒。
+修：先 `advance_route_to(route, company, "跳過")` 推 idx 到亞太、再 advance(婉拒) 標亞太婉拒、idx+1。
+
+### 房地核准專屬區塊「核准(房地)」
+
+- 一般核准 → `report_section="待撥款"`
+- **房地核准 → `report_section="核准(房地)"`**（不歸待撥款）
+- 顯示格式：`日期-姓名-民間房地核准N萬(撥款M/D)`
+- `build_segment` 印 sec 名時、「核准(房地)」顯示成「核准」
+
+### A 群核准同步 current_company（Bug 1）
+
+之前 A 群報「21 核准 5萬」、只寫 approved_amount、沒同步 current。
+- 例：current=和裕、concurrent=[21]、報「21 核准」
+- 結果：current 還是和裕、和裕從日報消失（誤判已核准）
+
+修：A 群核准時、若 current 不是被核准那家 → 升被核准家當 current、原 current 降到 concurrent。
+
+### 新指令
+
+| 指令 | 用途 |
+|------|------|
+| `@AI 姓名 公司 取消婉拒` | 業務手滑誤送婉拒救急、清 cs[公司] + history 婉拒 entry、current 設回該公司 |
+| `@AI 姓名 公司 缺 X+Y` | 指定公司缺件（已送出後）|
+| `@AI 姓名 公司 已補 X` | 指定公司已補（已送出後）|
+
+### 同送多家防呆 helper
+
+8 個破壞性指令的「沒指定公司 + 同送 ≥ 2 家 → 擋下要求指定」邏輯抽 helper：
+`_require_company_when_multi(target, cmd_company, action_name, reply_token, ...)`
+
+涵蓋：婉拒 / 核准金額 / 婉拒轉 X / 照會 / 缺件 / 已補。
+（cancel_approval / cancel_disbursement parse 階段強制公司必填、不需要 helper。）
+
+未來加新破壞性指令、寫一行呼叫就好、不會忘記擋下。
+
+### 公司結案邏輯改
+
+`@AI 姓名 公司 結案`：
+- **舊**：未核准 → 整筆結案
+- **新**：未核准 → 升下家上來、不整筆結案（除非沒下家、提示用「@AI 姓名 結案」）
+
+### 結案防呆
+
+`close` handler 清掉：
+- `report_section`（避免結案客戶殘留在待撥款區）
+- `approved_amount`
+- `disbursement_date`
+
+### snapshot / 還原 包含 company_status / pending_docs
+
+之前 update_customer snapshot 沒記 cs、還原時 cs 不會回到當下、reroute 仍誤判。
+- snap_fields 加 company_status + pending_docs
+- update_with_verify allowed_keys 加同
+
+### `@AI 查 姓名` 用 reroute 後 current
+
+之前查的「目前送件」用 raw `current_company`、被婉拒的家仍顯示。
+改用 `compute_customer_display` 拿 reroute 後 current、跟日報一致。
+
+### case-edit 同步 route_plan
+
+case-edit POST 改 current_company / concurrent 時、同步更新 route_plan order/current_index。
+避免後續 LINE 指令用 route_plan 的舊 current 不一致。
+
+### 網頁日報 sub 格式跟 LINE 對齊
+
+`render_customer_row` sub 改用 LINE 同格式：
+- 一般：`21-已送件`
+- 待撥款：`核准 21 5萬(待撥款)`
+- 核准(房地)：`民間房地核准20萬`
+
+去 next_co 箭頭 / 進度提示、跟 LINE 格式一致。
+
+### 內部動作 keywords 擴充
+
+`_INTERNAL_ACTION_KEYWORDS` 加：
+- `[網頁編輯]` / `網頁修改案件狀態`（避免被當 status）
+- `照會話術`（@AI 公司 照會 觸發話術、不是 status）
+
+---
+
+## 2026/05 規則表（PLAN_ELIGIBILITY_RULES）改進
+
+### 新 op
+
+| op | 用法 |
+|----|------|
+| `always_pass` | 「機車有/無貸款都可」這種無紅線、顯示 ✓ 直接通過、不打 manual |
+| `alert_warning_handler` | 警示戶自動判斷（非警示戶 pass、警示戶 manual 提示撥款方式）|
+| `creditcard_no_bad` | 只要無紅線（卡循/協商/停卡）即 pass、可無卡 |
+| `motorcycle_has_space` / `car_has_space` | debt_list sp 欄位偵測「有空間」|
+| `not_has_dynbao` / `has_dynbao` | 機車有/無動保偵測 |
+| `dynbao_from_apt_legit` | 亞太代償專案：動保前貸來自合法資融 |
+| `group21_remain_lt` / `group21_paid_ge` | 21 體系剩餘額度/最大繳期數 |
+| `has_real_estate` | 不動產偵測（eval_property 含「不動產」或 居住「自有」+無私設）|
+| `no_warning_account` | 警示戶不送（自動偵測）|
+| `no_drunk_drug` | 無酒駕/毒駕（manual）|
+| `recent_bank_loan` / `recent_loan_from` | 近月撥款偵測 |
+| `contact1_2nd_kin` / `any_contact_2nd_kin` | 聯絡人二等親偵測 |
+| `any_contact_known` | 聯絡人至少 1 位知情 |
+| `has_car` / `has_heavy_bike` / `has_car_loan` | 車輛/車貸偵測 |
+| `motorcycle_loan_remaining_lt` | 機車前貸剩餘額度 |
+| `has_property_no_private` | 有不動產且無私設 |
+| `year_age_le` | 車齡 ≤ N（支援 vehicle_year、fallback 到 debt_list/unloan_vehicles 出廠年月）|
+
+### oneof 規則改進
+
+- **未填資料 → manual**（升 manual、不再硬 fail）
+- **「擇一」展開列每一項**：UI 顯示每個 option 的 ✓/⚠️/❌ 狀態（菜鳥看得懂）
+- `_check_rule` 回 4-tuple `(status, label, actual, sub)`、sub 是 list of dict
+
+### 規則表汽車/重機不顯示固定金額
+
+裕融 / 和潤 系列：金額依鑑價 × 1.3、不秀「最高可貸 150 萬」誤導。
+改顯示：「💰 實際可貸金額依天書/權威/鑑價申請、無固定上限」。
+
+### 規則表內容修正
+
+- 麻吉手機/手機分期/手機無卡分期 → 「必須警示戶」auto rule（警示戶專案）
+- 麻吉U質手機/麻吉手機 oneof「擇一」5 選 1（勞保/不動產/21體系/信用報告/近半年21汽車）
+- 亞太機車 25/15/工會 加「持有期」manual（25=1 年、15=1 年、工會=3 個月）
+- 亞太工會機車 加「無動保」auto（單車情境）
+- 21 vs 麻吉 demote：21 任一可送 → 麻吉降級「備案不排」
+
+### `/api/check-eligibility` 限管理員
+
+之前任何登入角色都能呼叫、改為 admin 限定（跟 /adminb「對照規則表」按鈕一致）。
+
+---
+
+## 2026/05 範本 / 申請書更新
+
+### 亞太新範本（sheet 改名 / row 7 移位）
+
+- sheet 名從「工作表3」→「進件表格」、PRIMARY_SHEET_NAMES alias 自動對齊
+- **進件表格 row 7 不填**（B7/D7/F7/H7 車輛型式/引擎/排氣量/顏色）
+- **擔保品資訊 B2-B9**：廠牌/牌照/車輛型式/引擎/車身/出廠年月/排氣量/**顏色**（B9 新增）
+- **資金用途下拉縮成 7 個**（I-1 教育費 ~ II-3 購買 3C 產品）、不再 13 個
+- **聯絡人 1 + 聯絡人 2 都填**：B21/D21/B25=contact1、B30/D30/B34=contact2（兩個 map_relation 智能判別）
+
+### Fill 邏輯改進
+
+- **sheet 名對齊**：fill 前讀 template 實際 sheet 名、把 mapping 內舊 sheet 名（如「工作表3」）用 PRIMARY_SHEET_NAMES alias 對齊到新的（「進件表格」）
+- **auto-merge DEFAULT_MAPPINGS**：user saved mapping 沒對應 sheet（如沒設過擔保品）→ 自動從 DEFAULT 整個加進去、不漏 cell
+- **edit UI sheet 名對齊**：admin/templates/edit 顯示 mapping 時、用 alias 對齊到 template 實際 sheet 名
+
+### 和裕電話寫對欄位（Bug fix）
+
+G15/G16 是**標籤**不動、**H15/H16** 才是值欄位（戶籍電話/住家電話）。
+之前 mapping 寫到 G15/G16 會覆蓋「戶籍電話」/「住家電話」字。
+
+---
+
+## 2026/05 新群組匯入
+
+新增匯入頁面（複製優勢/勞工的 pattern）：
+
+| 路徑 | 群組 | 群組 ID |
+|------|------|---------|
+| `/admin/import-zhuanye` | 專業貸 | `Cb9ccbaec29bdf5218a24711273870d3d` |
+| `/admin/import-kuaile` | 快樂貸 | `C8e457f901b4a18f3d99f4047781c71c3` |
+
+匯入流程：
+1. parse 腳本（`_import_xxx_parse.py`）hardcode 客戶資料、產生 JSON
+2. `/admin/import-xxx` 預覽
+3. confirm 寫進指定群組
+4. 身分證已存在跨群 → 自動搬群
+5. 身分證後續用 `/edit-pending` 補
+
+### 匯入支援 company_notes（cs JSON）
+
+JSON 內 `company_notes: {公司: 狀態}` 會匯入到 `customer.company_status`、給日報顯示各家獨立狀態。例：陳韋雯 和裕核准5萬 + 21核准5萬、兩家狀態分開顯示。
+
