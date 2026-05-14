@@ -9777,15 +9777,42 @@ def _handle_a_case_block_locked(block_text, reply_token, id_no, name, forced_cas
                 route = _adv_route
         next_co = get_next_company(route)
         new_route = advance_route(route, "婉拒")
-        # 修：若 route 沒下一家、改用 concurrent 第一家當下家（避免「已無下家」誤判）
-        # 例：羅雅芳 current=亞太、concurrent=[第一]、A群報「亞太婉拒」
-        # → route 只有亞太一家、advance 後無下一家；但 concurrent 有第一、要升上來
+        # fallback 1（羅雅芳 case）：route 沒下家、concurrent 有家、升上來
         if not next_co:
             _existing_concur = [c.strip() for c in (customer["concurrent_companies"] or "").split(",") if c.strip()]
             _existing_concur = [c for c in _existing_concur if company not in c and c not in company]
             if _existing_concur:
                 next_co = _existing_concur[0]
                 _promoted_from_concurrent = next_co
+        # fallback 2（呂哲弘/馮柏翰 case）：route 跟 concurrent 都沒、找 route_plan order 內非婉拒的家
+        if not next_co:
+            try:
+                _new_route_data = parse_route_json(new_route)
+                _new_history = _new_route_data.get("history", []) or []
+                _rejected_in_hist = {normalize_section(h.get("company", ""))
+                                     for h in _new_history if h.get("status") == "婉拒"}
+                _new_order = _new_route_data.get("order", []) or []
+                for _o_co in _new_order:
+                    _o_norm = normalize_section(_o_co)
+                    if not _o_norm or _o_norm == company_norm or _o_norm in _rejected_in_hist:
+                        continue
+                    next_co = _o_co
+                    break
+            except Exception:
+                pass
+        # fallback 3：cs 內找非婉拒的家
+        if not next_co:
+            try:
+                _cs = json.loads(customer["company_status"] or "{}")
+                for _cs_k, _cs_v in _cs.items():
+                    if normalize_section(_cs_k) == company_norm:
+                        continue
+                    if "婉拒" in (_cs_v or ""):
+                        continue
+                    next_co = _cs_k
+                    break
+            except Exception:
+                pass
 
     # A群回貼時，如果客戶在「送件」區塊，清掉讓它移到公司區塊
     cur_report_sec = customer["report_section"] or ""
