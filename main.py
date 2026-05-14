@@ -15293,7 +15293,7 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
       var detail = '';
       // 汽車/重機特別註記
       if (isCarOrBike) {{
-        detail += '<div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:4px;padding:6px 8px;margin-bottom:6px;font-size:11px;color:#9a3412">💰 最高可貸 ' + r.max_amount + ' 萬 — 實際可貸金額須<b>參照天書/權威/鑑價</b>申請（鑑價 × 1.3）</div>';
+        detail += '<div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:4px;padding:6px 8px;margin-bottom:6px;font-size:11px;color:#9a3412">💰 實際可貸金額依<b>天書/權威/鑑價</b>申請（鑑價 × 1.3）、無固定上限</div>';
       }}
       if (r.checks && r.checks.length) {{
         detail += '<ul style="margin:4px 0 0;padding-left:22px;font-size:12px;color:#374151">';
