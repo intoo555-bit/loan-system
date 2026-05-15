@@ -2045,6 +2045,7 @@ LEGIT_LENDERS = [
     "東元騰",
     "台灣福斯財務",
     "台灣賓士資融",
+    "遠信",
 ]
 
 # 私設資融公司清單 — 動保由這些公司設定的 = 私設、多數方案不可送
@@ -2501,12 +2502,15 @@ def _21group_remaining(customer):
 
 
 def _customer_has_car_loan(customer):
-    """檢查 debt_list 裡是否有汽車貸款（dy 含「動保」或「公路」+ 商家名含「車」）
-    或從 dy 動保標記簡化判別（車貸通常有動保）
+    """檢查 debt_list 裡是否有汽車貸款（co 含「汽車」+ dy 含「動保」或「公路」）
+    重要：co 必須含「汽車」、不可只看 dy（機車動保會誤判成汽車貸款）
     """
     try:
         debt_list = json.loads(customer.get("debt_list") or "[]") if customer.get("debt_list") else []
         for d in debt_list:
+            co = (d.get("co", "") or "")
+            if "汽車" not in co:
+                continue
             dy = (d.get("dy", "") or "")
             if "動保" in dy or "公路" in dy:
                 return True
@@ -16398,6 +16402,11 @@ async def edit_pending_post(request: Request):
     f = dict(form)
     case_id = f.get("case_id","")
     if not case_id: return RedirectResponse("/pending-customers")
+    # 居住=自有 → 房屋私設必填（server-side 防呆、前端 JS 已有但可被繞）
+    if (f.get("lstatus","") or "").strip() == "自有" and not (f.get("hprivate","") or "").strip():
+        return HTMLResponse(
+            """<!DOCTYPE html><html><head><meta charset="UTF-8"><style>body{font-family:'Microsoft JhengHei',sans-serif;background:#ece8e2;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;}.box{background:#faf7f4;border:1px solid #ddd5ca;border-radius:12px;padding:32px;max-width:480px;}.title{font-size:18px;font-weight:700;color:#991b1b;margin-bottom:12px;}.btn{background:#6a5e4e;color:#fff;border:none;padding:10px 24px;border-radius:8px;font-size:14px;cursor:pointer;text-decoration:none;display:inline-block;margin-top:16px;}</style></head><body><div class="box"><div class="title">⚠️ 居住「自有」時、房屋私設必填（有 / 無）</div><a href="javascript:history.back()" class="btn">← 返回修正</a></div></body></html>""",
+            status_code=400)
     live_same = "1" if f.get("sameck") else "0"
     now = now_iso()
     conn = get_conn(); cur = conn.cursor()
@@ -18282,6 +18291,9 @@ async def new_customer_post(request: Request):
     lyear_str = f.get("lyear","").strip()
     if not lyear_str: errs.append("居住年數不可空白")
     if not f.get("lstatus","").strip(): errs.append("居住狀況不可空白")
+    # 居住=自有 → 房屋私設必填
+    if f.get("lstatus","").strip() == "自有" and not f.get("hprivate","").strip():
+        errs.append("⚠️ 居住「自有」時、房屋私設必填（有 / 無）")
     # 居住年數 vs 年齡檢查
     if lyear_str and f.get("birth","").strip():
         try:
