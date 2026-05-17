@@ -1121,7 +1121,7 @@ PLAN_ELIGIBILITY_RULES = [
             {"type": "simple", "label": "車齡 ≤ 15 年", "field": "vehicle_year", "op": "year_age_le", "value": 15},
             {"type": "simple", "label": "原融（機車無貸款）", "op": "not_has_dynbao",
              "manual_check": "確認要貸的機車本身沒貸款"},
-            {"type": "manual", "label": "💡 警示戶可送（但需補保人）"},
+            {"type": "simple", "label": "警示戶需補保人（自動偵測）", "op": "alert_warning_need_guarantor"},
             {"type": "oneof", "label": "財務能力（擇一）", "options": [
                 {"type": "simple", "label": "勞保/軍保/公保滿半年（不可部分工時、勞保須一週內）",
                  "field": "eval_labor_ins", "op": "in", "value": ["公司保", "軍保", "公保"],
@@ -1146,7 +1146,7 @@ PLAN_ELIGIBILITY_RULES = [
             {"type": "simple", "label": "年齡 ≥ 18（自動算）", "field": "age", "op": ">=", "value": 18,
              "manual_check": "55+ 補保人、60+ 軟性可試送"},
             {"type": "simple", "label": "至少 2 位聯絡人、其中 1 位為二等親屬", "op": "any_contact_2nd_kin"},
-            {"type": "manual", "label": "💡 警示戶可送（但需補保人）"},
+            {"type": "simple", "label": "警示戶需補保人（自動偵測）", "op": "alert_warning_need_guarantor"},
         ],
         "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面", "手機型號", "imei", "手機合照"],
     },
@@ -1161,7 +1161,7 @@ PLAN_ELIGIBILITY_RULES = [
             {"type": "simple", "label": "至少 2 位聯絡人、其中 1 位為二等親屬", "op": "any_contact_2nd_kin"},
             {"type": "simple", "label": "原融（機車無貸款）", "op": "not_has_dynbao",
              "manual_check": "確認要貸的機車本身沒貸款"},
-            {"type": "manual", "label": "💡 警示戶可送（但需補保人）"},
+            {"type": "simple", "label": "警示戶需補保人（自動偵測）", "op": "alert_warning_need_guarantor"},
             {"type": "simple", "label": "名下有可用機車（不能機車滿貸）", "op": "motorcycle_has_space"},
         ],
         "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面", "機車合照（要有時間相機）", "行照"],
@@ -1420,7 +1420,7 @@ PLAN_ELIGIBILITY_RULES = [
              "manual_check": "確認要貸的機車本身沒貸款"},
             {"type": "manual", "label": "💡 適用情境：21 剛貸款第一期還沒繳 → 麻吉",
              "hint": "客戶若才在 21 撥款、第一期還沒到、不能再送 21、改送麻吉"},
-            {"type": "manual", "label": "💡 警示戶可送（但需補保人）"},
+            {"type": "simple", "label": "警示戶需補保人（自動偵測）", "op": "alert_warning_need_guarantor"},
             {"type": "simple", "label": "名下有可用機車（不能機車滿貸）", "op": "motorcycle_has_space"},
         ],
         "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面", "機車行照"],
@@ -1445,7 +1445,7 @@ PLAN_ELIGIBILITY_RULES = [
                  "hint": "客戶須提供信用報告、不能完全沒信用紀錄（小白）"},
                 {"type": "manual", "label": "近半年有 21 汽車核准紀錄"},
             ]},
-            {"type": "manual", "label": "💡 警示戶可送（但需補保人）"},
+            {"type": "simple", "label": "警示戶需補保人（自動偵測）", "op": "alert_warning_need_guarantor"},
         ],
         "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面", "手機型號", "imei", "手機合照"],
     },
@@ -1468,7 +1468,7 @@ PLAN_ELIGIBILITY_RULES = [
                 {"type": "manual", "label": "提供信用報告（聯徵/JCIC、信用正常、不可小白）"},
                 {"type": "manual", "label": "近半年有 21 汽車核准紀錄"},
             ]},
-            {"type": "manual", "label": "💡 警示戶可送（但需補保人）"},
+            {"type": "simple", "label": "警示戶需補保人（自動偵測）", "op": "alert_warning_need_guarantor"},
         ],
         "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面", "手機型號", "imei", "手機合照"],
     },
@@ -1516,7 +1516,7 @@ PLAN_ELIGIBILITY_RULES = [
              "manual_check": "汽車貸款需繳息至少 1 期、確認動保資訊"},
             {"type": "simple", "label": "21 體系（麻吉/21/分貝/樂分期/分期趣/慢點付）含利息剩餘 < 25 萬",
              "op": "group21_remain_lt", "value": 250000},
-            {"type": "manual", "label": "💡 警示戶可送（但撥款要撥到二等親帳戶）"},
+            {"type": "simple", "label": "警示戶可送（撥二等親、自動偵測）", "op": "alert_warning_handler"},
         ],
         "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面", "汽車行照"],
     },
@@ -2725,6 +2725,15 @@ def _check_rule(rule, customer):
                 return ("manual", label + "（警示戶、需確認撥款方式 = 撥二等親）", "是")
             elif aw == "否":
                 return ("pass", label + "（非警示戶）", "否")
+            else:
+                return ("unknown", label, "未填警示戶欄位")
+        # 特殊 op：警示戶需補保人（警示戶 → manual 提示需補保人、非警示戶 → pass、未填 → unknown）
+        if op == "alert_warning_need_guarantor":
+            aw = (customer.get("eval_alert_warning", "") or "").strip()
+            if aw == "是":
+                return ("manual", label + "（警示戶、需補保人、請確認）", "是")
+            elif aw == "否":
+                return ("pass", label + "（非警示戶、此條件不適用）", "否")
             else:
                 return ("unknown", label, "未填警示戶欄位")
         # 特殊 op：信用卡狀況（直接從 eval_credit_card 文字判）
