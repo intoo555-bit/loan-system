@@ -16503,11 +16503,11 @@ def case_edit_get(request: Request, case_id: str = "", saved: str = ""):
     # 公司下拉：只列「公司」名（不帶方案、避免下拉太長 + 業務心智一致）
     # 方案資訊存在 各家狀態 文字裡（如「核准 25萬」）、不靠公司名表達
     company_choices = sorted(["21", "亞太", "和裕", "喬美", "貸救補", "第一", "麻吉",
-                              "分貝", "分唄", "鄉民", "銀行", "零卡", "商品貸", "代書", "當舖",
+                              "分貝", "分唄", "鄉民", "銀行", "零卡", "銀角", "商品貸", "代書", "當舖",
                               "刷卡換現", "信用卡", "月付", "手機分期", "預付手機分期",
-                              "慢點付", "大哥付", "新鑫", "元大", "渣打", "估房", "房地",
+                              "慢點付", "分期趣", "大哥付", "新鑫", "元大", "渣打", "估房", "房地",
                               "裕融", "和潤", "中租", "合迪", "創鉅", "合信", "興達",
-                              "鼎多", "融易", "預付資融", "維力"])
+                              "鼎多", "融易", "預付資融", "預付手機", "維力"])
     sec_choices = ["", "送件", "待撥款"] + [s for s in REPORT_SECTIONS if s not in ("送件", "待撥款")]
     # 案件狀態：常用只放 3 個。其他狀態（違約金/放棄/全數婉拒/已刪除）保留現值但不下拉
     status_label_common = {
@@ -17178,12 +17178,23 @@ async def case_edit_post(request: Request):
     # 寫入：用 update_customer 走標準 case_logs（含 snapshot_json）保留還原能力
     # text 參數會被寫入 last_update + 記到 case_logs
     last_update_text = f.get("last_update") or "[網頁編輯]"
+    # 金額欄被污染防呆：抽「+撥款M/D」回填 disbursement_date、清「已」前綴
+    _raw_amt = (f.get("approved_amount") or "").strip()
+    _raw_disb = (f.get("disbursement_date") or "").strip()
+    if _raw_amt:
+        _amt_s = _raw_amt.lstrip("已 ").strip()
+        _m_dat = re.search(r"\+?\s*撥款\s*(\d{1,2}/\d{1,2})", _amt_s)
+        if _m_dat:
+            if not _raw_disb:
+                _raw_disb = _m_dat.group(1)
+            _amt_s = re.sub(r"\+?\s*撥款\s*\d{1,2}/\d{1,2}", "", _amt_s).strip()
+        _raw_amt = _amt_s
     update_customer(case_id,
                     status=f.get("status") or "ACTIVE",
                     current_company=f.get("current_company") or "",
                     concurrent_companies=f.get("concurrent_companies") or "",
-                    approved_amount=f.get("approved_amount") or "",
-                    disbursement_date=f.get("disbursement_date") or "",
+                    approved_amount=_raw_amt,
+                    disbursement_date=_raw_disb,
                     report_section=f.get("report_section") or "",
                     pending_docs=f.get("pending_docs") or "",
                     signing_area=f.get("signing_area") or "",
@@ -17208,6 +17219,20 @@ async def case_edit_post(request: Request):
             ap_hist_list = []
     except Exception:
         ap_hist_list = []
+
+    def _clean_amount_field(amt_raw, disb_raw=""):
+        """清理金額欄被污染的 case（業務貼了 BOT 回覆訊息 "已 1萬+撥款5/18" 整段進去）
+        回傳 (clean_amount, extracted_disb) — 撥款日期若在金額裡會抽出來"""
+        s = (amt_raw or "").strip()
+        extracted_disb = ""
+        if not s: return ("", extracted_disb)
+        s = s.lstrip("已 ").strip()
+        m = re.search(r"\+?\s*撥款\s*(\d{1,2}/\d{1,2})", s)
+        if m:
+            extracted_disb = m.group(1)
+            s = re.sub(r"\+?\s*撥款\s*\d{1,2}/\d{1,2}", "", s).strip()
+        return (s, extracted_disb)
+
     with db_conn(commit=True) as conn:
         cur = conn.cursor()
         cur.execute("UPDATE customers SET company_status=? WHERE case_id=?", (cs_json, case_id))
@@ -17222,6 +17247,12 @@ async def case_edit_post(request: Request):
         for e in ap_hist_list:
             if not isinstance(e, dict): continue
             if not e.get("company") or not e.get("amount"): continue
+            # 金額欄被污染防呆：抽出「撥款M/D」回填到 disbursed、清「已」前綴
+            _clean_amt, _ext_disb = _clean_amount_field(e.get("amount", ""), e.get("disbursed", ""))
+            if not _clean_amt: continue
+            e["amount"] = _clean_amt
+            if _ext_disb and not (e.get("disbursed") or "").strip():
+                e["disbursed"] = _ext_disb
             new_hist.append({k: v for k, v in e.items() if v})
         _rp["history"] = new_hist
         # 同步 route_plan 的 order / current_index 跟新 current_company / concurrent_companies
