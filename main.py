@@ -10009,7 +10009,44 @@ def _handle_a_case_block_locked(block_text, reply_token, id_no, name, forced_cas
             if remaining:
                 msg += f"\n➡️ 剩下同時送件：{'、'.join(remaining)}"
             else:
-                msg += f"\n➡️ 下一家：{next_co}" if next_co else f"\n⚠️ {customer['customer_name']} 已無下一家送件方案"
+                # 同送清單空了 → 看 current_company 是否還在送（21 婉拒但 current 是和裕、和裕還在送）
+                # 再不行才跑 fallback 找下一家
+                _still_current = (current_co or "").strip()
+                _cur_norm_chk = normalize_section(_still_current) if _still_current else ""
+                if _still_current and _cur_norm_chk and _cur_norm_chk != company_norm:
+                    msg += f"\n➡️ 繼續送：{_still_current}"
+                elif not next_co:
+                    # is_in_concurrent 分支沒跑 fallback 鏈、補跑（route 下家 → cs 非婉拒家）
+                    try:
+                        _rp_data = parse_route_json(route or "")
+                        _order = _rp_data.get("order", []) or []
+                        _hist = _rp_data.get("history", []) or []
+                        _rejected = {normalize_section(h.get("company", ""))
+                                     for h in _hist if h.get("status") == "婉拒"}
+                        for _o_co in _order:
+                            _o_norm = normalize_section(_o_co)
+                            if not _o_norm or _o_norm == company_norm or _o_norm in _rejected:
+                                continue
+                            next_co = _o_co
+                            break
+                    except Exception:
+                        pass
+                    if not next_co:
+                        try:
+                            _cs_fb = json.loads(customer["company_status"] or "{}")
+                            for _k, _v in _cs_fb.items():
+                                if normalize_section(_k) == company_norm:
+                                    continue
+                                _first = (_v or "").splitlines()[0] if _v else ""
+                                if "婉拒" in _first:
+                                    continue
+                                next_co = _k
+                                break
+                        except Exception:
+                            pass
+                    msg += f"\n➡️ 下一家：{next_co}" if next_co else f"\n⚠️ {customer['customer_name']} 已無下一家送件方案"
+                else:
+                    msg += f"\n➡️ 下一家：{next_co}"
         else:
             msg += f"\n➡️ 下一家：{next_co}" if next_co else f"\n⚠️ {customer['customer_name']} 已無下一家送件方案"
     # 核准時在A群顯示金額確認
