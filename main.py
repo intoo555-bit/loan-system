@@ -16961,13 +16961,27 @@ function previewDailyLine() {{
     const tx = (r.querySelector('.cs-text')||{{}}).value || '';
     if (co.trim()) csObj[co.trim()] = tx;
   }});
+  // 收集核准明細（跟 submit handler 同邏輯、預覽要看到 + 加一家核准 的效果）
+  const apArr = [];
+  let firstAmt = '', firstDisb = '';
+  document.querySelectorAll('#apBox .ap-row').forEach((r, idx) => {{
+    const co = (r.querySelector('.ap-co')||{{}}).value.trim();
+    const amt = (r.querySelector('.ap-amt')||{{}}).value.trim();
+    const disb = (r.querySelector('.ap-disb')||{{}}).value.trim();
+    if (!co || !amt) return;
+    const entry = {{company: co, amount: amt}};
+    if (disb) {{ entry.disbursed = disb; entry.status = '撥款'; }}
+    else {{ entry.status = '核准'; }}
+    apArr.push(entry);
+    if (idx === 0) {{ firstAmt = amt; firstDisb = disb; }}
+  }});
   const data = {{
     case_id: '{h(case_id)}',
     status: document.querySelector('select[name="status"]').value,
     current_company: document.querySelector('select[name="current_company"]').value,
     concurrent_companies: document.getElementById('concVal').value,
-    approved_amount: document.querySelector('input[name="approved_amount"]').value,
-    disbursement_date: document.querySelector('input[name="disbursement_date"]').value,
+    approved_amount: firstAmt || document.querySelector('input[name="approved_amount"]').value,
+    disbursement_date: firstDisb || document.querySelector('input[name="disbursement_date"]').value,
     report_section: document.querySelector('select[name="report_section"]').value,
     pending_docs: document.getElementById('pendVal').value,
     signing_area: document.querySelector('input[name="signing_area"]').value,
@@ -16977,6 +16991,7 @@ function previewDailyLine() {{
     signing_location: document.querySelector('input[name="signing_location"]').value,
     last_update: document.querySelector('textarea[name="last_update"]').value,
     company_status_json: JSON.stringify(csObj),
+    approval_history_json: JSON.stringify(apArr),
   }};
   const box = document.getElementById('previewBox');
   box.style.display = 'block';
@@ -17142,8 +17157,33 @@ async def case_edit_preview(request: Request):
             r["company_status"] = data["company_status_json"] or "{}"
         except Exception:
             pass
-    # 移除自動 inject history：太武斷會把 current_company 誤當核准家
-    # 預覽就用實際 DB 的 route_plan、跟 case_edit_post 行為一致
+    # 套用核准明細到 route_plan history（跟 /case-edit POST 同邏輯、讓預覽看到 + 加一家核准 的效果）
+    if "approval_history_json" in data:
+        try:
+            ap_hist_list = json.loads(data["approval_history_json"] or "[]")
+            if isinstance(ap_hist_list, list):
+                try:
+                    _rp_preview = parse_route_json(r.get("route_plan") or "")
+                except Exception:
+                    _rp_preview = {"order": [], "current_index": 0, "history": []}
+                _new_hist = []
+                for _e in ap_hist_list:
+                    if not isinstance(_e, dict): continue
+                    if not _e.get("company") or not _e.get("amount"): continue
+                    _new_hist.append({k: v for k, v in _e.items() if v})
+                _rp_preview["history"] = _new_hist
+                # 同步 order：current 為第一家、concurrent 後面（跟 POST 同邏輯）
+                _new_cur_p = (r.get("current_company") or "").strip()
+                _new_concur_p = [c.strip() for c in (r.get("concurrent_companies") or "").split(",") if c.strip()]
+                if _new_cur_p:
+                    _rp_preview["order"] = [_new_cur_p] + [c for c in _new_concur_p if c != _new_cur_p]
+                    _rp_preview["current_index"] = 0
+                elif _new_concur_p:
+                    _rp_preview["order"] = _new_concur_p
+                    _rp_preview["current_index"] = 0
+                r["route_plan"] = json.dumps(_rp_preview, ensure_ascii=False)
+        except Exception:
+            pass
     # 用 sqlite Row 的 dict 行為：build_section_map 用 row[key]、需要 dict-like
     # 包成 sqlite3.Row 的替代
     class FakeRow:
