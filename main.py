@@ -5417,6 +5417,10 @@ def compute_customer_display(row):
                     current_co = _cs_k
                     _rerouted = True
                     break
+            # 4. 找不到任何替代 → 全數婉拒、section 清空、不顯示在日報（user 規則「婉拒 = 消失」）
+            if not _rerouted:
+                section = ""
+                current_co = ""
 
     company_short = _display_co_short(current_co) or current_co
 
@@ -5514,6 +5518,10 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
         customer_name = row["customer_name"]
         created = row["created_at"] or ""
 
+        # section 空字串 = 全數婉拒、不顯示在日報（user 規則「婉拒 = 消失」）
+        if not section:
+            continue
+
         # === 主行 ===
         if section == "待撥款":
             created_date = created[5:10].replace("-", "/") if created else date_str
@@ -5563,6 +5571,17 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
             pass
 
         # === concurrent 散開：同送公司也要顯示在自己區塊 ===
+        # 預先抓 route_plan history 內所有婉拒過的家、用 normalize_section 集合
+        _hist_rejected_secs = set()
+        try:
+            _hist_for_chk = parse_route_json(row["route_plan"] or "").get("history", []) or []
+            for _h in _hist_for_chk:
+                if _h.get("status") == "婉拒":
+                    _r_co = _h.get("company") or ""
+                    if _r_co:
+                        _hist_rejected_secs.add(normalize_section(_r_co))
+        except Exception:
+            pass
         concurrent_str = row["concurrent_companies"] or ""
         if concurrent_str:
             for co in concurrent_str.split(","):
@@ -5573,14 +5592,19 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
                 if co_section in approved_sections:
                     continue
                 if co_section != section:
-                    # 婉拒的家不顯示（只看 cs 第一行、避免第 2 行詳細備註誤抓）
+                    # 婉拒判定（三層、user 規則 2026-05-15「婉拒 = 消失」）：
+                    # 1. cs[公司] 第一行含「婉拒」
+                    # 2. _get_section_status_for_row 解析 = 「婉拒」
+                    # 3. route_plan history 有 {company: 此家, status: 婉拒}
+                    #    （cs 被「職收不易確認」這種補充文字蓋掉時、靠 history 才擋得住）
+                    if co_section in _hist_rejected_secs:
+                        continue
                     _cs_key_chk = _get_cs_key_for_section(cs, co_section)
                     _cs_text_chk = cs.get(_cs_key_chk, "") if _cs_key_chk else ""
                     _cs_first_chk = _cs_text_chk.splitlines()[0] if _cs_text_chk else ""
                     if "婉拒" in _cs_first_chk:
                         continue
                     co_status = _compress_status_short(_get_section_status_for_row(row, co_section, cs, first_line))
-                    # 雙重保險：extract 後 status 是「婉拒」也擋
                     if co_status == "婉拒":
                         continue
                     co_short = _display_co_short(co) or co
@@ -14623,7 +14647,15 @@ def render_section_block(label, rows, color_bg, color_text, icon, gid_prefix="")
 def build_row_map(rows) -> dict:
     m = {}
     for r in rows:
-        sec = r["report_section"] or r["current_company"] or r["company"] or "送件"
+        # 用 compute_customer_display 算 section（跟 LINE 日報 build_section_map 同邏輯、含婉拒 reroute）
+        try:
+            _info = compute_customer_display(r)
+            sec = _info["section"]
+        except Exception:
+            sec = r["report_section"] or r["current_company"] or r["company"] or "送件"
+        # section 空字串 = 全數婉拒、不顯示（user 規則「婉拒 = 消失」）
+        if not sec:
+            continue
         m.setdefault(sec, []).append(r)
     return m
 
