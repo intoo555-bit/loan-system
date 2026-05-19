@@ -5355,10 +5355,11 @@ def compute_customer_display(row):
         # 避免「補申覆\n【1】之前婉拒原因...」誤抓第 2 行「婉拒」當狀態
         _cs_first_line = _cs_value.splitlines()[0] if _cs_value else ""
         _cs_has_reject = bool(_cs_first_line) and "婉拒" in _cs_first_line
-        _cs_empty = not _cs_value  # cs 沒記錄該家（沒人重新處理）
         _history_has_reject = _section_norm in _rejected_secs
-        # cs 有非婉拒內容（補件/已補/補申覆）→ 業務已重新處理、不 reroute
-        if _cs_has_reject or (_history_has_reject and _cs_empty):
+        # 收緊「婉拒 = 消失」（user 2026-05-19）：
+        # 只要 cs 第一行含「婉拒」或 history 有婉拒、一律 reroute
+        # 之前有「cs 有非婉拒內容→不 reroute」例外、移除（業務想恢復請用 取消婉拒 指令）
+        if _cs_has_reject or _history_has_reject:
             _rerouted = False
             # 1. 優先用 route_plan order 內「current 之後的第一個非婉拒家」（user 規則：沒指定就跳下一家）
             try:
@@ -5522,6 +5523,18 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
         if not section:
             continue
 
+        # 預先抓 route_plan history 內所有婉拒過的家（給 extra_section / concurrent 散開共用）
+        _hist_rejected_secs = set()
+        try:
+            _hist_for_chk = parse_route_json(row["route_plan"] or "").get("history", []) or []
+            for _h in _hist_for_chk:
+                if _h.get("status") == "婉拒":
+                    _r_co = _h.get("company") or ""
+                    if _r_co:
+                        _hist_rejected_secs.add(normalize_section(_r_co))
+        except Exception:
+            pass
+
         # === 主行 ===
         if section == "待撥款":
             created_date = created[5:10].replace("-", "/") if created else date_str
@@ -5551,14 +5564,30 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
             if still_sending:
                 extra_section = normalize_section(current_co)
         if extra_section and extra_section != section:
-            extra_status = _compress_status_short(_get_section_status_for_row(row, extra_section, cs, first_line))
-            extra_line = f"{date_str}-{customer_name}-{company_short}"
-            if extra_status and not pending_str:
-                extra_line += f"-{extra_status}"
-            extra_line += pending_str
-            if is_today:
-                extra_line = "🆕" + extra_line
-            section_map.setdefault(extra_section, []).append(extra_line)
+            # 婉拒 skip（user 2026-05-19 規則「婉拒 = 消失」）：
+            # extra_section 那家若 cs 第一行含婉拒 / history 有婉拒 / status 解析 = 婉拒、不顯示
+            _extra_skip = False
+            if extra_section in _hist_rejected_secs:
+                _extra_skip = True
+            if not _extra_skip:
+                _ex_cs_key = _get_cs_key_for_section(cs, extra_section) if cs else None
+                _ex_cs_text = cs.get(_ex_cs_key, "") if _ex_cs_key else ""
+                _ex_cs_first = _ex_cs_text.splitlines()[0] if _ex_cs_text else ""
+                if "婉拒" in _ex_cs_first:
+                    _extra_skip = True
+            if not _extra_skip:
+                extra_status = _compress_status_short(_get_section_status_for_row(row, extra_section, cs, first_line))
+                if extra_status == "婉拒":
+                    _extra_skip = True
+            if not _extra_skip:
+                extra_status = _compress_status_short(_get_section_status_for_row(row, extra_section, cs, first_line))
+                extra_line = f"{date_str}-{customer_name}-{company_short}"
+                if extra_status and not pending_str:
+                    extra_line += f"-{extra_status}"
+                extra_line += pending_str
+                if is_today:
+                    extra_line = "🆕" + extra_line
+                section_map.setdefault(extra_section, []).append(extra_line)
 
         # === 已核准 sections（concurrent 散開時跳過、避免重複）===
         approved_sections = set()
@@ -5571,17 +5600,7 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
             pass
 
         # === concurrent 散開：同送公司也要顯示在自己區塊 ===
-        # 預先抓 route_plan history 內所有婉拒過的家、用 normalize_section 集合
-        _hist_rejected_secs = set()
-        try:
-            _hist_for_chk = parse_route_json(row["route_plan"] or "").get("history", []) or []
-            for _h in _hist_for_chk:
-                if _h.get("status") == "婉拒":
-                    _r_co = _h.get("company") or ""
-                    if _r_co:
-                        _hist_rejected_secs.add(normalize_section(_r_co))
-        except Exception:
-            pass
+        # (_hist_rejected_secs 已在主行上方算過、給 extra_section / concurrent 散開共用)
         concurrent_str = row["concurrent_companies"] or ""
         if concurrent_str:
             for co in concurrent_str.split(","):
