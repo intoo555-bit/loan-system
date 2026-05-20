@@ -3582,10 +3582,26 @@ def get_current_company(route_plan: str) -> str:
 
 
 def get_next_company(route_plan: str) -> str:
+    """找送件順序的下一家、自動 skip 已婉拒 (history) 的家"""
     data = parse_route_json(route_plan)
-    order, idx = data.get("order", []), data.get("current_index", 0)
-    next_idx = idx + 1
-    return order[next_idx] if next_idx < len(order) else ""
+    order = data.get("order", []) or []
+    idx = data.get("current_index", 0)
+    history = data.get("history", []) or []
+    # 收集已婉拒的公司（用 normalize_section 比對、避免家族名差異）
+    rejected = set()
+    for h in history:
+        if h.get("status") == "婉拒":
+            _co = h.get("company", "")
+            if _co:
+                rejected.add(normalize_section(_co))
+    for next_idx in range(idx + 1, len(order)):
+        co = order[next_idx]
+        if not co:
+            continue
+        if normalize_section(co) in rejected:
+            continue
+        return co
+    return ""
 
 
 def advance_route(route_plan: str, status: str, amount: str = "", disbursed: str = "") -> str:
@@ -9900,16 +9916,31 @@ def _handle_a_case_block_locked(block_text, reply_token, id_no, name, forced_cas
             _adv_route, _ok, _ = advance_route_to(route, company, "跳過")
             if _ok:
                 route = _adv_route
-        next_co = get_next_company(route)
         new_route = advance_route(route, "婉拒")
-        # fallback 1（羅雅芳 case）：route 沒下家、concurrent 有家、升上來
+        next_co = ""
+        # fallback 順序（user 規則 2026-05-20）：
+        # 1. concurrent（業務已主動送的、優先）— 卓姿吟 case 21 在 concurrent、喬美婉拒應推 21
+        # 2. get_next_company（route order 下家、已會 skip 婉拒）
+        # 3. route order 全範圍非婉拒（呂哲弘 case）
+        # 4. cs 非婉拒
+        _existing_concur = [c.strip() for c in (customer["concurrent_companies"] or "").split(",") if c.strip()]
+        _existing_concur = [c for c in _existing_concur if company not in c and c not in company]
+        # 排除已在 history 婉拒的 concurrent 項
+        try:
+            _hist_for_concur = parse_route_json(new_route).get("history", []) or []
+            _rej_norms_for_concur = {normalize_section(h.get("company", ""))
+                                     for h in _hist_for_concur if h.get("status") == "婉拒"}
+            _existing_concur = [c for c in _existing_concur
+                                if normalize_section(c) not in _rej_norms_for_concur]
+        except Exception:
+            pass
+        if _existing_concur:
+            next_co = _existing_concur[0]
+            _promoted_from_concurrent = next_co
+        # fallback 2：get_next_company（已內建 skip 婉拒）
         if not next_co:
-            _existing_concur = [c.strip() for c in (customer["concurrent_companies"] or "").split(",") if c.strip()]
-            _existing_concur = [c for c in _existing_concur if company not in c and c not in company]
-            if _existing_concur:
-                next_co = _existing_concur[0]
-                _promoted_from_concurrent = next_co
-        # fallback 2（呂哲弘/馮柏翰 case）：route 跟 concurrent 都沒、找 route_plan order 內非婉拒的家
+            next_co = get_next_company(new_route)
+        # fallback 3：route order 全範圍非婉拒、非當前要拒的
         if not next_co:
             try:
                 _new_route_data = parse_route_json(new_route)
@@ -10038,9 +10069,19 @@ def _handle_a_case_block_locked(block_text, reply_token, id_no, name, forced_cas
             else:
                 # 同送清單空了 → 看 current_company 是否還在送（21 婉拒但 current 是和裕、和裕還在送）
                 # 再不行才跑 fallback 找下一家
+                # 修：要查 current 是否在 history 已婉拒、避免推已婉拒的 current 回去（卓姿吟 case）
                 _still_current = (current_co or "").strip()
                 _cur_norm_chk = normalize_section(_still_current) if _still_current else ""
-                if _still_current and _cur_norm_chk and _cur_norm_chk != company_norm:
+                _cur_already_rejected = False
+                try:
+                    _hist_chk = parse_route_json(route or "").get("history", []) or []
+                    _rej_norms_chk = {normalize_section(h.get("company", ""))
+                                      for h in _hist_chk if h.get("status") == "婉拒"}
+                    _cur_already_rejected = _cur_norm_chk in _rej_norms_chk
+                except Exception:
+                    pass
+                if (_still_current and _cur_norm_chk and _cur_norm_chk != company_norm
+                        and not _cur_already_rejected):
                     msg += f"\n➡️ 繼續送：{_still_current}"
                 elif not next_co:
                     # is_in_concurrent 分支沒跑 fallback 鏈、補跑（route 下家 → cs 非婉拒家）
