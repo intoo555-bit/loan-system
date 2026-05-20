@@ -10011,16 +10011,23 @@ def _handle_a_case_block_locked(block_text, reply_token, id_no, name, forced_cas
                 new_route = route  # 同步 new_route、之後 update_customer 會寫進 DB
         except Exception:
             pass
-    if is_reject and route and not is_in_concurrent and not is_unknown_company:
-        # 不在同送、也非「額外公司婉拒」→ 正常推進 route
-        # 修（蔡輔倫 case）：若被婉拒的 company 在 route 內但不是 current、
-        # 先 advance_route_to 推 idx 到 company 那家、再 advance(婉拒) 標婉拒並 idx+1
-        # 避免 advance_route 把 current 那家誤標成婉拒（業務還在送 current 沒婉拒）
-        if company_norm and current_co and normalize_section(current_co) != company_norm:
-            _adv_route, _ok, _ = advance_route_to(route, company, "跳過")
-            if _ok:
-                route = _adv_route
-        new_route = advance_route(route, "婉拒")
+    if is_reject and not is_in_concurrent and not is_unknown_company:
+        # 不在同送、也非「額外公司婉拒」→ 跑 fallback 找下家
+        # 註：route 可能為空（業務只用「送 X」沒設送件順序）、此時還是要跑 concurrent / cs fallback
+        if route:
+            # 修（蔡輔倫 case）：若被婉拒的 company 在 route 內但不是 current、
+            # 先 advance_route_to 推 idx 到 company 那家、再 advance(婉拒) 標婉拒並 idx+1
+            # 避免 advance_route 把 current 那家誤標成婉拒（業務還在送 current 沒婉拒）
+            if company_norm and current_co and normalize_section(current_co) != company_norm:
+                _adv_route, _ok, _ = advance_route_to(route, company, "跳過")
+                if _ok:
+                    route = _adv_route
+            new_route = advance_route(route, "婉拒")
+        else:
+            # route 空、用空 route_plan、history 加婉拒記錄
+            _empty_rp = {"order": [], "current_index": 0,
+                         "history": [{"company": company, "status": "婉拒", "date": now_iso()[:10]}]}
+            new_route = json.dumps(_empty_rp, ensure_ascii=False)
         next_co = ""
         # fallback 順序（user 規則 2026-05-20）：
         # 1. concurrent（業務已主動送的、優先）— 卓姿吟 case 21 在 concurrent、喬美婉拒應推 21
