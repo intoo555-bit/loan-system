@@ -5294,6 +5294,14 @@ def compute_customer_display(row):
     current_co_raw = row["current_company"] or row["company"] or ""
     # 防呆：剝掉括號內容（缺件、狀態等）
     current_co = re.sub(r"\s*\([^)]*\)\s*", "", current_co_raw).strip()
+    # 「送件」標記陳舊判定（user 規則 2026/04/30：業務送過就該離開送件區）：
+    # report_section=="送件" 但 concurrent 有家 → 「送銀行」過了、送件標記是舊的、無視
+    # current 空 + concurrent 有家 → 用 concurrent 第一家當 current（避免 fallback「送件」）
+    _concur_first = next((c.strip() for c in (row["concurrent_companies"] or "").split(",") if c.strip()), "")
+    if report_sec == "送件" and _concur_first:
+        report_sec = ""
+    if not current_co and _concur_first:
+        current_co = _concur_first
     section = report_sec or current_co or "送件"
 
     try:
