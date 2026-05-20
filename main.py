@@ -5312,9 +5312,13 @@ def compute_customer_display(row):
     current_co = re.sub(r"\s*\([^)]*\)\s*", "", current_co_raw).strip()
     # 「送件」標記陳舊判定（user 規則 2026/04/30：業務送過就該離開送件區）：
     # report_section=="送件" 但 concurrent 有家 → 「送銀行」過了、送件標記是舊的、無視
+    # current 是民間方案（房地/銀行/...）→ 沒有「送件」階段、永遠不歸送件區（許春秀 case）
     # current 空 + concurrent 有家 → 用 concurrent 第一家當 current（避免 fallback「送件」）
     _concur_first = next((c.strip() for c in (row["concurrent_companies"] or "").split(",") if c.strip()), "")
-    if report_sec == "送件" and _concur_first:
+    _private_kws = ["銀行", "零卡", "商品貸", "代書", "當舖", "鄉民", "房地", "新鑫",
+                    "慢點付", "分期趣", "銀角", "刷卡換現"]
+    _current_is_private = current_co and any(k in current_co for k in _private_kws)
+    if report_sec == "送件" and (_concur_first or _current_is_private):
         report_sec = ""
     if not current_co and _concur_first:
         current_co = _concur_first
