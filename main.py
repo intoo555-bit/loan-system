@@ -16802,14 +16802,8 @@ async def edit_pending_post(request: Request):
     if unloan_json_str:
         cur.execute("UPDATE customers SET unloan_vehicles=?, updated_at=? WHERE case_id=?", (unloan_json_str, now, case_id))
     conn.commit(); conn.close()
-    # 推到對應業務群、讓群組成員看到「網頁更新個資」訊息
-    _gid = f.get("grp", "")
-    _cname = f.get("cname", "")
-    if _gid and _cname:
-        try:
-            push_text(_gid, f"📝 {_cname} 網頁更新個資")
-        except Exception:
-            pass
+    # 註：原本會 push「📝 XX 網頁更新個資」通知到業務群、user 2026-05-20 要求拿掉（LINE 訊息費用控管）
+    # 業務從日報能看到客戶最新狀態、不需要每次編輯都推 push
     return RedirectResponse("/edit-pending?case_id=" + case_id + "&saved=1", status_code=303)
 
 
@@ -17645,16 +17639,8 @@ async def case_edit_post(request: Request):
             _rp["current_index"] = 0
         cur.execute("UPDATE customers SET route_plan=? WHERE case_id=?",
                     (json.dumps(_rp, ensure_ascii=False), case_id))
-    # 推到對應業務群、讓群組成員看到「網頁修改案件狀態」訊息
-    try:
-        with db_conn() as _conn2:
-            _cur2 = _conn2.cursor()
-            _cur2.execute("SELECT customer_name, source_group_id FROM customers WHERE case_id=?", (case_id,))
-            _r2 = _cur2.fetchone()
-            if _r2 and _r2["source_group_id"] and _r2["customer_name"]:
-                push_text(_r2["source_group_id"], f"📝 {_r2['customer_name']} 網頁修改案件狀態")
-    except Exception:
-        pass
+    # 註：原本會 push「📝 XX 網頁修改案件狀態」通知到業務群、user 2026-05-20 要求拿掉（LINE 訊息費用控管）
+    # 業務從日報能看到最新狀態、不需要每次編輯都推 push
     return RedirectResponse(f"/case-edit?case_id={case_id}&saved=1", status_code=303)
 
 
