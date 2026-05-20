@@ -5369,13 +5369,37 @@ def compute_customer_display(row):
         # 抓 route_plan history 內所有婉拒過的家
         _rejected_secs = set()
         try:
-            _hist_for_chk = parse_route_json(row["route_plan"] or "").get("history", []) or []
+            _rp_for_skip = parse_route_json(row["route_plan"] or "")
+            _hist_for_chk = _rp_for_skip.get("history", []) or []
             for _h in _hist_for_chk:
                 # 婉拒 + 跳過（業務送了較後面的家、中間沒提的）都視為「該家不顯示」
                 if _h.get("status") in ("婉拒", "跳過"):
                     _r_co = _h.get("company") or ""
                     if _r_co:
                         _rejected_secs.add(normalize_section(_r_co))
+            # 隱式跳過推斷（給舊資料 retroactive 用）：
+            # order 內 idx 比「最遠被處理過家(history/concurrent)」小、又不是 current/concurrent → 視為跳過
+            # 例：order=[喬美,亞太,和裕,21,貸10] current_index=1、concurrent=[]、history=[喬美婉拒,21婉拒]
+            # 最遠處理過 idx=3 (21)、和裕 idx=2 < 3 且非 current/concurrent → 推斷跳過、加入 _rejected_secs
+            _order_for_skip = _rp_for_skip.get("order", []) or []
+            _concur_norms_skip = {normalize_section(c.strip()) for c in
+                                  (row["concurrent_companies"] or "").split(",") if c.strip()}
+            _cur_norm_skip = normalize_section(current_co) if current_co else ""
+            _hist_norms_skip = {normalize_section(h.get("company", "")) for h in _hist_for_chk}
+            _max_processed_idx = -1
+            for _i_p, _co_p in enumerate(_order_for_skip):
+                _co_n_p = normalize_section(_co_p)
+                if _co_n_p in _hist_norms_skip or _co_n_p in _concur_norms_skip or _co_n_p == _cur_norm_skip:
+                    if _i_p > _max_processed_idx:
+                        _max_processed_idx = _i_p
+            if _max_processed_idx > 0:
+                for _i_s in range(_max_processed_idx):
+                    _co_s = _order_for_skip[_i_s]
+                    _co_n_s = normalize_section(_co_s)
+                    if (_co_n_s not in _hist_norms_skip
+                            and _co_n_s not in _concur_norms_skip
+                            and _co_n_s != _cur_norm_skip):
+                        _rejected_secs.add(_co_n_s)
         except Exception:
             pass
         _section_cs_key = _get_cs_key_for_section(cs, section) if cs else None
@@ -5556,15 +5580,37 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
             continue
 
         # 預先抓 route_plan history 內所有婉拒/跳過的家（給 extra_section / concurrent 散開共用）
+        # 含隱式跳過推斷（舊資料 retroactive）
         _hist_rejected_secs = set()
         try:
-            _hist_for_chk = parse_route_json(row["route_plan"] or "").get("history", []) or []
+            _rp_bsm = parse_route_json(row["route_plan"] or "")
+            _hist_for_chk = _rp_bsm.get("history", []) or []
             for _h in _hist_for_chk:
-                # 婉拒 + 跳過 都不在日報顯示（user 規則：跳過 = 消失）
                 if _h.get("status") in ("婉拒", "跳過"):
                     _r_co = _h.get("company") or ""
                     if _r_co:
                         _hist_rejected_secs.add(normalize_section(_r_co))
+            # 隱式跳過：order 內 idx 比「最遠被處理過家」小、非 current/concurrent → 視為跳過
+            _order_bsm = _rp_bsm.get("order", []) or []
+            _concur_norms_bsm = {normalize_section(c.strip()) for c in
+                                 (row["concurrent_companies"] or "").split(",") if c.strip()}
+            _cur_norm_bsm = normalize_section(current_co) if current_co else ""
+            _hist_norms_bsm = {normalize_section(h.get("company", "")) for h in _hist_for_chk}
+            _max_processed_idx_bsm = -1
+            for _i_b, _co_b in enumerate(_order_bsm):
+                _co_n_b = normalize_section(_co_b)
+                if (_co_n_b in _hist_norms_bsm or _co_n_b in _concur_norms_bsm
+                        or _co_n_b == _cur_norm_bsm):
+                    if _i_b > _max_processed_idx_bsm:
+                        _max_processed_idx_bsm = _i_b
+            if _max_processed_idx_bsm > 0:
+                for _i_sb in range(_max_processed_idx_bsm):
+                    _co_sb = _order_bsm[_i_sb]
+                    _co_n_sb = normalize_section(_co_sb)
+                    if (_co_n_sb not in _hist_norms_bsm
+                            and _co_n_sb not in _concur_norms_bsm
+                            and _co_n_sb != _cur_norm_bsm):
+                        _hist_rejected_secs.add(_co_n_sb)
         except Exception:
             pass
 
@@ -9999,6 +10045,7 @@ def _handle_a_case_block_locked(block_text, reply_token, id_no, name, forced_cas
         if not next_co:
             next_co = get_next_company(new_route)
         # fallback 3：route order 全範圍非婉拒/非跳過、非當前要拒的
+        # 加 cs 第一行婉拒 + 隱式跳過推斷
         if not next_co:
             try:
                 _new_route_data = parse_route_json(new_route)
@@ -10006,6 +10053,38 @@ def _handle_a_case_block_locked(block_text, reply_token, id_no, name, forced_cas
                 _rejected_in_hist = {normalize_section(h.get("company", ""))
                                      for h in _new_history if h.get("status") in ("婉拒", "跳過")}
                 _new_order = _new_route_data.get("order", []) or []
+                # cs 第一行婉拒
+                try:
+                    _cs_fb3 = json.loads(customer["company_status"] or "{}")
+                    for _k, _v in _cs_fb3.items():
+                        _f = (_v or "").splitlines()[0] if _v else ""
+                        if "婉拒" in _f:
+                            _rejected_in_hist.add(normalize_section(_k))
+                except Exception:
+                    pass
+                # 隱式跳過：idx 比「最遠處理過家」小、又非 current/concurrent/history → 視為跳過
+                try:
+                    _concur_n_fb3 = {normalize_section(c.strip()) for c in
+                                     (customer["concurrent_companies"] or "").split(",") if c.strip()}
+                    _cur_n_fb3 = normalize_section(current_co) if current_co else ""
+                    _hist_n_fb3 = {normalize_section(h.get("company", "")) for h in _new_history}
+                    _max_p_fb3 = -1
+                    for _i_fb3, _co_fb3 in enumerate(_new_order):
+                        _n_fb3 = normalize_section(_co_fb3)
+                        if (_n_fb3 in _hist_n_fb3 or _n_fb3 in _concur_n_fb3
+                                or _n_fb3 == _cur_n_fb3 or _n_fb3 == company_norm):
+                            if _i_fb3 > _max_p_fb3:
+                                _max_p_fb3 = _i_fb3
+                    if _max_p_fb3 > 0:
+                        for _i_sf in range(_max_p_fb3):
+                            _co_sf = _new_order[_i_sf]
+                            _n_sf = normalize_section(_co_sf)
+                            if (_n_sf not in _hist_n_fb3
+                                    and _n_sf not in _concur_n_fb3
+                                    and _n_sf != _cur_n_fb3):
+                                _rejected_in_hist.add(_n_sf)
+                except Exception:
+                    pass
                 for _o_co in _new_order:
                     _o_norm = normalize_section(_o_co)
                     if not _o_norm or _o_norm == company_norm or _o_norm in _rejected_in_hist:
@@ -10176,6 +10255,30 @@ def _handle_a_case_block_locked(block_text, reply_token, id_no, name, forced_cas
                                 _first_l = (_v or "").splitlines()[0] if _v else ""
                                 if "婉拒" in _first_l:
                                     _rejected.add(normalize_section(_k))
+                        except Exception:
+                            pass
+                        # 隱式跳過推斷（舊資料 retroactive）：
+                        # idx 比「最遠處理過家」小、又非 current/concurrent/history → 視為跳過
+                        try:
+                            _concur_norms_a = {normalize_section(c.strip()) for c in
+                                               (customer["concurrent_companies"] or "").split(",") if c.strip()}
+                            _cur_norm_a = normalize_section(current_co) if current_co else ""
+                            _hist_norms_a = {normalize_section(h.get("company", "")) for h in _hist}
+                            _max_proc_idx_a = -1
+                            for _i_a, _co_a in enumerate(_order):
+                                _co_n_a = normalize_section(_co_a)
+                                if (_co_n_a in _hist_norms_a or _co_n_a in _concur_norms_a
+                                        or _co_n_a == _cur_norm_a or _co_n_a == company_norm):
+                                    if _i_a > _max_proc_idx_a:
+                                        _max_proc_idx_a = _i_a
+                            if _max_proc_idx_a > 0:
+                                for _i_s_a in range(_max_proc_idx_a):
+                                    _co_s_a = _order[_i_s_a]
+                                    _co_n_s_a = normalize_section(_co_s_a)
+                                    if (_co_n_s_a not in _hist_norms_a
+                                            and _co_n_s_a not in _concur_norms_a
+                                            and _co_n_s_a != _cur_norm_a):
+                                        _rejected.add(_co_n_s_a)
                         except Exception:
                             pass
                         # 從 current_index 之後找（不挑業務跳過的）
