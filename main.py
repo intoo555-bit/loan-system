@@ -3582,15 +3582,15 @@ def get_current_company(route_plan: str) -> str:
 
 
 def get_next_company(route_plan: str) -> str:
-    """找送件順序的下一家、自動 skip 已婉拒 (history) 的家"""
+    """找送件順序的下一家、自動 skip 已婉拒/已跳過 (history) 的家"""
     data = parse_route_json(route_plan)
     order = data.get("order", []) or []
     idx = data.get("current_index", 0)
     history = data.get("history", []) or []
-    # 收集已婉拒的公司（用 normalize_section 比對、避免家族名差異）
+    # 收集已婉拒/已跳過的公司（用 normalize_section 比對、避免家族名差異）
     rejected = set()
     for h in history:
-        if h.get("status") == "婉拒":
+        if h.get("status") in ("婉拒", "跳過"):
             _co = h.get("company", "")
             if _co:
                 rejected.add(normalize_section(_co))
@@ -5371,7 +5371,8 @@ def compute_customer_display(row):
         try:
             _hist_for_chk = parse_route_json(row["route_plan"] or "").get("history", []) or []
             for _h in _hist_for_chk:
-                if _h.get("status") == "婉拒":
+                # 婉拒 + 跳過（業務送了較後面的家、中間沒提的）都視為「該家不顯示」
+                if _h.get("status") in ("婉拒", "跳過"):
                     _r_co = _h.get("company") or ""
                     if _r_co:
                         _rejected_secs.add(normalize_section(_r_co))
@@ -5554,12 +5555,13 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
         if not section:
             continue
 
-        # 預先抓 route_plan history 內所有婉拒過的家（給 extra_section / concurrent 散開共用）
+        # 預先抓 route_plan history 內所有婉拒/跳過的家（給 extra_section / concurrent 散開共用）
         _hist_rejected_secs = set()
         try:
             _hist_for_chk = parse_route_json(row["route_plan"] or "").get("history", []) or []
             for _h in _hist_for_chk:
-                if _h.get("status") == "婉拒":
+                # 婉拒 + 跳過 都不在日報顯示（user 規則：跳過 = 消失）
+                if _h.get("status") in ("婉拒", "跳過"):
                     _r_co = _h.get("company") or ""
                     if _r_co:
                         _hist_rejected_secs.add(normalize_section(_r_co))
@@ -9264,6 +9266,38 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
         # 「送」= 已送、清掉「送件」標記、跳到公司區塊
         if (target["report_section"] or "") == "送件":
             update_kw["report_section"] = ""
+        # 送的家若在 route 順序內、idx > current_index → 把中間沒送過的家標成「跳過」
+        # 業務心智：送順序內較後面的家、中間沒提的視同跳過、避免後續 fallback 又推回去
+        try:
+            _route_for_skip = parse_route_json(target["route_plan"] or "")
+            _order_for_skip = _route_for_skip.get("order", []) or []
+            _idx_for_skip = _route_for_skip.get("current_index", 0)
+            _hist_for_skip = _route_for_skip.get("history", []) or []
+            _existing_hist_cos = {normalize_section(h.get("company", "")) for h in _hist_for_skip}
+            _max_target_idx = -1
+            for _added_co in added:
+                _added_norm = normalize_section(_added_co)
+                _added_idx = next(
+                    (i for i, c in enumerate(_order_for_skip) if normalize_section(c) == _added_norm),
+                    -1)
+                if _added_idx > _idx_for_skip and _added_idx > _max_target_idx:
+                    _max_target_idx = _added_idx
+            if _max_target_idx > _idx_for_skip:
+                # 把 current_index 跟 _max_target_idx 之間（不含兩端）標跳過、若還沒在 history
+                _added_skip = False
+                for _i_mid in range(_idx_for_skip + 1, _max_target_idx):
+                    _mid_co = _order_for_skip[_i_mid]
+                    _mid_norm = normalize_section(_mid_co)
+                    if _mid_norm in _existing_hist_cos:
+                        continue
+                    _hist_for_skip.append({"company": _mid_co, "status": "跳過", "date": now_iso()[:10]})
+                    _existing_hist_cos.add(_mid_norm)
+                    _added_skip = True
+                if _added_skip:
+                    _route_for_skip["history"] = _hist_for_skip
+                    update_kw["route_plan"] = json.dumps(_route_for_skip, ensure_ascii=False)
+        except Exception:
+            pass
         update_customer(target["case_id"], **update_kw)
         # 組訊息
         msg_parts = [f"✅ {name}"]
@@ -9914,6 +9948,23 @@ def _handle_a_case_block_locked(block_text, reply_token, id_no, name, forced_cas
             reply_quick_reply(reply_token, prompt, items)
             return "QUICK_REPLY_SENT"
     _promoted_from_concurrent = ""  # 婉拒後從 concurrent 升上來的家（給後面 concurrent 處理用）
+    # is_in_concurrent 分支：婉拒的家也要寫進 history（避免後續找下家時、check 已婉拒 fail）
+    # 之前只移 concurrent、不寫 history → 後續判斷「current 是否已婉拒」抓不到
+    if is_reject and is_in_concurrent and not is_unknown_company:
+        try:
+            _rp_data_concur = parse_route_json(route or "")
+            _hist_concur = _rp_data_concur.get("history", []) or []
+            _already_rec = any(
+                normalize_section(_h.get("company", "")) == company_norm and _h.get("status") == "婉拒"
+                for _h in _hist_concur
+            )
+            if not _already_rec:
+                _hist_concur.append({"company": company, "status": "婉拒", "date": now_iso()[:10]})
+                _rp_data_concur["history"] = _hist_concur
+                route = json.dumps(_rp_data_concur, ensure_ascii=False)
+                new_route = route  # 同步 new_route、之後 update_customer 會寫進 DB
+        except Exception:
+            pass
     if is_reject and route and not is_in_concurrent and not is_unknown_company:
         # 不在同送、也非「額外公司婉拒」→ 正常推進 route
         # 修（蔡輔倫 case）：若被婉拒的 company 在 route 內但不是 current、
@@ -9947,13 +9998,13 @@ def _handle_a_case_block_locked(block_text, reply_token, id_no, name, forced_cas
         # fallback 2：get_next_company（已內建 skip 婉拒）
         if not next_co:
             next_co = get_next_company(new_route)
-        # fallback 3：route order 全範圍非婉拒、非當前要拒的
+        # fallback 3：route order 全範圍非婉拒/非跳過、非當前要拒的
         if not next_co:
             try:
                 _new_route_data = parse_route_json(new_route)
                 _new_history = _new_route_data.get("history", []) or []
                 _rejected_in_hist = {normalize_section(h.get("company", ""))
-                                     for h in _new_history if h.get("status") == "婉拒"}
+                                     for h in _new_history if h.get("status") in ("婉拒", "跳過")}
                 _new_order = _new_route_data.get("order", []) or []
                 for _o_co in _new_order:
                     _o_norm = normalize_section(_o_co)
@@ -10080,6 +10131,7 @@ def _handle_a_case_block_locked(block_text, reply_token, id_no, name, forced_cas
                 _still_current = (current_co or "").strip()
                 _cur_norm_chk = normalize_section(_still_current) if _still_current else ""
                 _cur_already_rejected = False
+                # 第一道：查 history 有沒有婉拒紀錄
                 try:
                     _hist_chk = parse_route_json(route or "").get("history", []) or []
                     _rej_norms_chk = {normalize_section(h.get("company", ""))
@@ -10087,18 +10139,48 @@ def _handle_a_case_block_locked(block_text, reply_token, id_no, name, forced_cas
                     _cur_already_rejected = _cur_norm_chk in _rej_norms_chk
                 except Exception:
                     pass
+                # 第二道：查 cs[該家] 第一行有沒有「婉拒」字（對舊資料 history 沒記的 case 也擋得住）
+                if not _cur_already_rejected and _still_current:
+                    try:
+                        _cs_chk = json.loads(customer["company_status"] or "{}")
+                        _cs_key_for_cur = next(
+                            (k for k in _cs_chk.keys() if normalize_section(k) == _cur_norm_chk),
+                            None)
+                        if _cs_key_for_cur:
+                            _cs_v = _cs_chk[_cs_key_for_cur] or ""
+                            _cs_first = _cs_v.splitlines()[0] if _cs_v else ""
+                            if "婉拒" in _cs_first:
+                                _cur_already_rejected = True
+                    except Exception:
+                        pass
                 if (_still_current and _cur_norm_chk and _cur_norm_chk != company_norm
                         and not _cur_already_rejected):
                     msg += f"\n➡️ 繼續送：{_still_current}"
                 elif not next_co:
                     # is_in_concurrent 分支沒跑 fallback 鏈、補跑（route 下家 → cs 非婉拒家）
+                    # 修：「已婉拒集合」也要包含 cs 第一行有「婉拒」的、避免舊資料 history 沒記但 cs 有記時誤推
+                    # 修：「跳過」的家也要排除（業務送了較後面的家、中間沒送的視同跳過）
                     try:
                         _rp_data = parse_route_json(route or "")
                         _order = _rp_data.get("order", []) or []
                         _hist = _rp_data.get("history", []) or []
+                        _rp_idx_fb = _rp_data.get("current_index", 0)
+                        if not isinstance(_rp_idx_fb, int) or _rp_idx_fb < 0:
+                            _rp_idx_fb = 0
                         _rejected = {normalize_section(h.get("company", ""))
-                                     for h in _hist if h.get("status") == "婉拒"}
-                        for _o_co in _order:
+                                     for h in _hist if h.get("status") in ("婉拒", "跳過")}
+                        # 加 cs 第一行含婉拒的
+                        try:
+                            _cs_fb_chk = json.loads(customer["company_status"] or "{}")
+                            for _k, _v in _cs_fb_chk.items():
+                                _first_l = (_v or "").splitlines()[0] if _v else ""
+                                if "婉拒" in _first_l:
+                                    _rejected.add(normalize_section(_k))
+                        except Exception:
+                            pass
+                        # 從 current_index 之後找（不挑業務跳過的）
+                        for _i in range(_rp_idx_fb, len(_order)):
+                            _o_co = _order[_i]
                             _o_norm = normalize_section(_o_co)
                             if not _o_norm or _o_norm == company_norm or _o_norm in _rejected:
                                 continue
