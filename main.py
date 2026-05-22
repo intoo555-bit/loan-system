@@ -6610,10 +6610,39 @@ def _get_valid_company_names():
     return valid
 
 
+def _resolve_alias_loose(co):
+    """寬鬆 alias 解析：先 exact match、找不到再找最長的 alias key 是否含在 co 中
+    例：「王道銀行」→ alias「王道」包含在內 → 回「銀行」
+    例：「玉山銀行」→ alias「玉山」包含在內 → 回「銀行」
+    """
+    if not co:
+        return co
+    if co in COMPANY_ALIAS:
+        return COMPANY_ALIAS[co]
+    # 找最長匹配的 alias key（避免短 key 誤搶長 key）
+    best_key = None
+    for k in COMPANY_ALIAS:
+        if k and k in co:
+            if best_key is None or len(k) > len(best_key):
+                best_key = k
+    if best_key:
+        return COMPANY_ALIAS[best_key]
+    return co
+
+
 def _validate_companies_or_warn(companies, reply_token, name):
-    """驗證公司名清單，若有未知回覆警告 + 合法名清單 並回 False；全部合法回 True"""
+    """驗證公司名清單、若有未知回覆警告 + 合法名清單 並回 False；全部合法回 True
+    自動套寬鬆 alias 解析、像「王道銀行/玉山銀行」這類也認得"""
     valid = _get_valid_company_names()
-    unknown = [c for c in companies if c not in valid]
+    unknown = []
+    for c in companies:
+        if c in valid:
+            continue
+        # 寬鬆 alias 解析：「王道銀行」→「銀行」也算合法
+        resolved = _resolve_alias_loose(c)
+        if resolved != c and resolved in valid:
+            continue
+        unknown.append(c)
     if unknown:
         reply_text(reply_token,
                    f"⚠️ {name}：找不到公司「{'、'.join(unknown)}」\n"
@@ -8998,16 +9027,17 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
                 target, reject_company, "婉拒轉", reply_token,
                 example_template=f"@AI {{name}} {{active0}} 婉拒轉{target_raw}"):
             return
-        # 支援「亞太+21」多家同送：拆 +、套 alias、第一家當 current、其餘 concurrent
+        # 支援「亞太+21」多家同送：拆 +、套寬鬆 alias、第一家當 current、其餘 concurrent
+        # 寬鬆 alias：「王道銀行」「玉山銀行」這類也認得（找 alias key 是否含在內）
         target_items = [t.strip() for t in re.split(r"[+＋]", target_raw) if t.strip()]
-        target_cos = [COMPANY_ALIAS.get(t, t) for t in target_items]
+        target_cos = [_resolve_alias_loose(t) for t in target_items]
         if not _validate_companies_or_warn(target_cos, reply_token, name):
             return
         target_co = target_cos[0]
         extra_concurrent = target_cos[1:]
         route = target["route_plan"] or ""
         current = get_current_company(route)
-        reject_co = COMPANY_ALIAS.get(reject_company, reject_company) if reject_company else current
+        reject_co = _resolve_alias_loose(reject_company) if reject_company else current
         if reject_company and not _validate_companies_or_warn([reject_co], reply_token, name):
             return
         # 從 concurrent_companies 移除婉拒的公司、重建新同送（target_co 的同伴）
