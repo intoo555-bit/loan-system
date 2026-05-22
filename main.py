@@ -10014,6 +10014,7 @@ def _handle_a_case_block_locked(block_text, reply_token, id_no, name, forced_cas
     if is_reject and not is_in_concurrent and not is_unknown_company:
         # 不在同送、也非「額外公司婉拒」→ 跑 fallback 找下家
         # 註：route 可能為空（業務只用「送 X」沒設送件順序）、此時還是要跑 concurrent / cs fallback
+        next_co = ""
         if route:
             # 修（蔡輔倫 case）：若被婉拒的 company 在 route 內但不是 current、
             # 先 advance_route_to 推 idx 到 company 那家、再 advance(婉拒) 標婉拒並 idx+1
@@ -10022,16 +10023,19 @@ def _handle_a_case_block_locked(block_text, reply_token, id_no, name, forced_cas
                 _adv_route, _ok, _ = advance_route_to(route, company, "跳過")
                 if _ok:
                     route = _adv_route
+            # **先**從 route 抓下家（advance 前 idx 還是當前位置、get_next_company 用 idx+1 算才對）
+            # 修：advance 後 idx 已 +1、再呼 get_next_company 會 +1 跳掉真正的下一家（陶嘉玲 bug）
+            _pre_next = get_next_company(route)
             new_route = advance_route(route, "婉拒")
         else:
             # route 空、用空 route_plan、history 加婉拒記錄
             _empty_rp = {"order": [], "current_index": 0,
                          "history": [{"company": company, "status": "婉拒", "date": now_iso()[:10]}]}
             new_route = json.dumps(_empty_rp, ensure_ascii=False)
-        next_co = ""
-        # fallback 順序（user 規則 2026-05-20）：
+            _pre_next = ""
+        # fallback 順序（user 規則 2026-05-22）：
         # 1. concurrent（業務已主動送的、優先）— 卓姿吟 case 21 在 concurrent、喬美婉拒應推 21
-        # 2. get_next_company（route order 下家、已會 skip 婉拒）
+        # 2. route order 下家（advance 前抓、卓姿吟 沒 concurrent 也能推、陶嘉玲 case）
         # 3. route order 全範圍非婉拒（呂哲弘 case）
         # 4. cs 非婉拒
         _existing_concur = [c.strip() for c in (customer["concurrent_companies"] or "").split(",") if c.strip()]
@@ -10045,12 +10049,13 @@ def _handle_a_case_block_locked(block_text, reply_token, id_no, name, forced_cas
                                 if normalize_section(c) not in _rej_norms_for_concur]
         except Exception:
             pass
+        # fallback 1：concurrent（業務已主動送的）
         if _existing_concur:
             next_co = _existing_concur[0]
             _promoted_from_concurrent = next_co
-        # fallback 2：get_next_company（已內建 skip 婉拒）
-        if not next_co:
-            next_co = get_next_company(new_route)
+        # fallback 2：route order 下家（advance 前抓）
+        if not next_co and _pre_next:
+            next_co = _pre_next
         # fallback 3：route order 全範圍非婉拒/非跳過、非當前要拒的
         # 加 cs 第一行婉拒 + 隱式跳過推斷
         if not next_co:
