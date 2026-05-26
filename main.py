@@ -3437,8 +3437,10 @@ def extract_company(text: str) -> str:
             matches.append((idx, alias, real))
     if not matches:
         return ""
-    # 按位置排序，同位置時長度長的優先（亞太商品 > 亞太）
-    matches.sort(key=lambda x: (x[0], -len(x[1])))
+    # 按長度排序、長的優先；同長度才看位置（位置前面優先）
+    # 修（許雯喬 case）：「許雯喬 21 NA」裡「雯喬」的「喬」alias→喬美 idx=2、「21」idx=4
+    # 舊邏輯位置優先 → 誤抓「喬」→ 喬美。新邏輯長度優先 → 抓「21」(更長)
+    matches.sort(key=lambda x: (-len(x[1]), x[0]))
     return matches[0][2]
 
 
