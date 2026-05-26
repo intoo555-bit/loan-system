@@ -13639,14 +13639,16 @@ async def import_zhuanan_confirm(request: Request):
                 update_kwargs["disbursement_date"] = disb
             if concurrent_str:
                 update_kwargs["concurrent_companies"] = concurrent_str
-            phone = (d.get("phone") or "").strip()
-            if phone:
-                update_kwargs["phone"] = phone
             if cnotes:
                 cs_dict = {normalize_section(k): v for k, v in cnotes.items()}
                 update_kwargs["company_status"] = json.dumps(cs_dict, ensure_ascii=False)
             if update_kwargs:
                 update_customer(case_id, text=None, from_group_id=SALES_GROUP_ID, **update_kwargs)
+            # phone 用 raw SQL（update_customer 沒這參數）
+            phone = (d.get("phone") or "").strip()
+            if phone:
+                with db_conn(commit=True) as conn:
+                    conn.cursor().execute("UPDATE customers SET phone=? WHERE case_id=?", (phone, case_id))
             created.append(name)
         except Exception as e:
             failed.append(f"{name}：{e}")
