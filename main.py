@@ -13548,20 +13548,42 @@ async def import_zhuanan_confirm(request: Request):
                 rsec = d.get("report_section", "") or ""
                 report_sec = "待撥款" if approved else ("" if rsec == "民間" else "")
                 concurrent_str = d.get("concurrent_companies", "") or ""
+                co_import = d.get("current_company", "") or ""
+                cnotes = d.get("company_notes") or {}
+                # 轉移時強制覆蓋（JSON 是最新狀態、舊群組殘留資料可能過時造成日報錯）
                 merge_kwargs = {"source_group_id": SALES_GROUP_ID,
                                 "text": f"已從【{old_gname}】搬到【{ZHUANAN_GROUP_NAME}】",
-                                "from_group_id": SALES_GROUP_ID}
-                if approved and not (existing["approved_amount"] or "").strip():
-                    merge_kwargs["approved_amount"] = approved
-                if disb and not (existing["disbursement_date"] or "").strip():
-                    merge_kwargs["disbursement_date"] = disb
-                if report_sec and not (existing["report_section"] or "").strip():
-                    merge_kwargs["report_section"] = report_sec
-                if concurrent_str and not (existing["concurrent_companies"] or "").strip():
-                    merge_kwargs["concurrent_companies"] = concurrent_str
-                co_import = d.get("current_company", "") or ""
-                if co_import and not (existing["current_company"] or "").strip():
+                                "from_group_id": SALES_GROUP_ID,
+                                "signing_area": "", "signing_salesperson": "",
+                                "signing_company": "", "signing_time": "", "signing_location": ""}
+                if co_import:
                     merge_kwargs["current_company"] = co_import
+                merge_kwargs["concurrent_companies"] = concurrent_str
+                merge_kwargs["approved_amount"] = approved
+                merge_kwargs["disbursement_date"] = disb
+                merge_kwargs["report_section"] = report_sec
+                # 同步 route_plan（用 JSON 的 route_plan_order + history、覆蓋舊 route）
+                order = d.get("route_plan_order", []) or []
+                if not order and co_import:
+                    order = [co_import]
+                if order:
+                    history = []
+                    if approved and co_import:
+                        main_h = {"company": co_import, "amount": approved,
+                                  "status": "撥款" if disb else "核准"}
+                        if disb:
+                            main_h["disbursed"] = disb
+                        history.append(main_h)
+                    for k, v in cnotes.items():
+                        v_first = (v or "").splitlines()[0]
+                        if "婉拒" in v_first and k != co_import:
+                            history.append({"company": k, "status": "婉拒", "date": now_iso()[:10]})
+                    cur_idx = order.index(co_import) if (co_import and co_import in order) else 0
+                    merge_kwargs["route_plan"] = make_route_json(order, cur_idx, history)
+                # 各家狀態
+                if cnotes:
+                    cs_dict = {normalize_section(k): v for k, v in cnotes.items()}
+                    merge_kwargs["company_status"] = json.dumps(cs_dict, ensure_ascii=False)
                 update_customer(existing["case_id"], **merge_kwargs)
                 transferred.append(f"{name}（從 {old_gname}）")
                 continue
