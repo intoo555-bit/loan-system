@@ -18618,6 +18618,23 @@ async def unlock_account(request: Request):
     return JSONResponse({"ok": True, "message": f"已解鎖：{identifier}"})
 
 
+@app.get("/admin/emergency-unlock-all-2026")
+async def emergency_unlock_all(request: Request):
+    """臨時用、清掉所有 login_attempts 鎖定紀錄。用完通知 Claude 拿掉。
+    URL 含日期字串作為簡易 secret、避免被掃機掃到隨機亂用。"""
+    conn = get_conn(); cur = conn.cursor()
+    cur.execute("SELECT COUNT(*) as c FROM login_attempts")
+    n = cur.fetchone()["c"]
+    cur.execute("DELETE FROM login_attempts")
+    conn.commit(); conn.close()
+    return HTMLResponse(
+        f"<div style='padding:40px;font-family:sans-serif'>"
+        f"<h2>✅ 已清除 {n} 筆登入鎖定紀錄</h2>"
+        f"<p>請通知 Claude 拿掉此臨時 endpoint。</p>"
+        f"<a href='/login'>回登入頁</a>"
+        f"</div>")
+
+
 # =========================
 # VBA 查詢 API
 # =========================
