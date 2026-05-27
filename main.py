@@ -3425,6 +3425,13 @@ def extract_company(text: str) -> str:
             break
     # 只看第一行（多行訊息後面通常是備註）
     search_text = search_text.splitlines()[0] if search_text else ""
+    # 先把開頭姓名剝掉、避免姓名內含 alias 單字（如「許雯喬」的「喬」）被當公司
+    # 姓名 pattern：開頭日期(可選) + 2~6 漢字姓名 + (空白 or「-」or「(」)
+    _name_strip = re.match(
+        r"^\s*(?:\d{1,4}[-/]\d{1,2}(?:[-/]\d{1,2})?\s*[-－]\s*)?([㐀-鿿豈-﫿]{2,6})(?=[\s\-－(（])",
+        search_text)
+    if _name_strip:
+        search_text = search_text[_name_strip.end():]
     # 找出所有匹配及其位置（第 4 欄 source：0=COMPANY_LIST 正式公司名、1=COMPANY_ALIAS 別名）
     matches = []
     for c in COMPANY_LIST:
@@ -3437,12 +3444,12 @@ def extract_company(text: str) -> str:
             matches.append((idx, alias, real, 1))
     if not matches:
         return ""
-    # 排序優先：1) COMPANY_LIST 優先（正式公司名比 alias 可信）
-    #         2) 長度長優先（亞太機車 > 亞太）
-    #         3) 位置前面優先
-    # 修（王信益 case）：「王信益 亞太 補聯徵或信用卡帳單」「信用卡」alias 但「亞太」是正式名 → 亞太 贏
-    # 修（許雯喬 case）：「許雯喬 21 NA」「喬」alias 但「21」是 COMPANY_LIST → 21 贏
-    matches.sort(key=lambda x: (x[3], -len(x[1]), x[0]))
+    # 排序：1) 位置前面優先（公司通常在姓名後、不在備註內）
+    #     2) 同位置長度長優先（亞太機車 > 亞太、維力商品貸 > 維力）
+    # 姓名已剝、不會有「許雯喬」的「喬」搶在「21」前面的問題
+    # 而王信益 case：亞太(idx 0) 早於 信用卡(idx 8 在備註) → 亞太 贏
+    # 維力商品貸 case：維力商品貸/維力/商品貸 都在「(維力...」開頭、長度長贏 → 維力商品貸 → 和裕商品
+    matches.sort(key=lambda x: (x[0], -len(x[1])))
     return matches[0][2]
 
 
