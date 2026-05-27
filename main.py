@@ -3425,22 +3425,24 @@ def extract_company(text: str) -> str:
             break
     # 只看第一行（多行訊息後面通常是備註）
     search_text = search_text.splitlines()[0] if search_text else ""
-    # 找出所有匹配及其位置，取最前面出現的
+    # 找出所有匹配及其位置（第 4 欄 source：0=COMPANY_LIST 正式公司名、1=COMPANY_ALIAS 別名）
     matches = []
     for c in COMPANY_LIST:
         idx = search_text.find(c)
         if idx >= 0:
-            matches.append((idx, c, c))
+            matches.append((idx, c, c, 0))
     for alias, real in COMPANY_ALIAS.items():
         idx = search_text.find(alias)
         if idx >= 0:
-            matches.append((idx, alias, real))
+            matches.append((idx, alias, real, 1))
     if not matches:
         return ""
-    # 按長度排序、長的優先；同長度才看位置（位置前面優先）
-    # 修（許雯喬 case）：「許雯喬 21 NA」裡「雯喬」的「喬」alias→喬美 idx=2、「21」idx=4
-    # 舊邏輯位置優先 → 誤抓「喬」→ 喬美。新邏輯長度優先 → 抓「21」(更長)
-    matches.sort(key=lambda x: (-len(x[1]), x[0]))
+    # 排序優先：1) COMPANY_LIST 優先（正式公司名比 alias 可信）
+    #         2) 長度長優先（亞太機車 > 亞太）
+    #         3) 位置前面優先
+    # 修（王信益 case）：「王信益 亞太 補聯徵或信用卡帳單」「信用卡」alias 但「亞太」是正式名 → 亞太 贏
+    # 修（許雯喬 case）：「許雯喬 21 NA」「喬」alias 但「21」是 COMPANY_LIST → 21 贏
+    matches.sort(key=lambda x: (x[3], -len(x[1]), x[0]))
     return matches[0][2]
 
 
