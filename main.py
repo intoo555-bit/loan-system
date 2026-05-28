@@ -10223,6 +10223,32 @@ def _handle_a_case_block_locked(block_text, reply_token, id_no, name, forced_cas
                      (json.dumps(cs, ensure_ascii=False), customer["case_id"]))
         conn4.commit(); conn4.close()
 
+    # 補件訊息 + 客戶在待撥款 → 離開待撥款（補件 = 還沒完成、不該掛待撥款）
+    # 若訊息含新金額（如「最高核貸金額6萬」）→ 更新金額為新值
+    if (not is_approved and not is_reject and company
+            and cur_report_sec == "待撥款"
+            and any(k in block_text for k in _supplement_action_kw)):
+        _new_amt = extract_approved_amount(block_text)
+        try:
+            _rp = parse_route_json(new_route)
+            _hist = _rp.get("history", []) or []
+            _co_norm = normalize_section(company)
+            # 找出 history 內這家的核准 entry、更新金額 + 改 status 為「補件」
+            for _h in _hist:
+                if (normalize_section(_h.get("company", "")) == _co_norm
+                        and _h.get("status") in ("核准", "撥款", "待撥款")):
+                    if _new_amt:
+                        _h["amount"] = _new_amt
+                    _h["status"] = "補件"
+                    break
+            _rp["history"] = _hist
+            new_route = json.dumps(_rp, ensure_ascii=False)
+        except Exception:
+            pass
+        # 強制離開待撥款、清核准金額（補件還沒最終決定）
+        approved_amount = _new_amt or ""
+        new_report_section = ""
+
     if is_approved:
         update_customer(customer["case_id"], text=block_text,
                         from_group_id=A_GROUP_ID, status=new_status,
