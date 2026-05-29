@@ -5704,6 +5704,10 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
                     approved_sections.add(normalize_section(ap_co))
         except Exception:
             pass
+        # 修（王耀霆 case）：客戶在「待撥款」+ approved_amount 有值但 history 沒記錄時、
+        # current_co 也算「已核准家」、避免 concurrent 散開把同家族（如玉山=銀行）重複顯示
+        if section == "待撥款" and current_co and (row["approved_amount"] or "").strip():
+            approved_sections.add(normalize_section(current_co))
 
         # === concurrent 散開：同送公司也要顯示在自己區塊 ===
         # (_hist_rejected_secs 已在主行上方算過、給 extra_section / concurrent 散開共用)
