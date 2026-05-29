@@ -5030,6 +5030,22 @@ def extract_status_summary(first_line: str, customer_name: str) -> str:
             return "保人補件"
         # 什麼特定關鍵字都沒 → 顯示「等保書」
         return "等保書"
+    # 複合補件（多個 補X / 缺X 用 + 連接、如「補中信+合迪繳息+補照會」）
+    # → 不單獨抓某一項、返回原始狀態文字
+    # 修（江寶翎 case）：之前只抓「補照會」、中信跟合迪繳息漏掉
+    _ct_bu_kw = first_line.count("補") + first_line.count("缺")
+    if "+" in first_line and _ct_bu_kw >= 2:
+        _t = first_line.replace(customer_name, "").strip()
+        _t = re.sub(r"^\d{1,4}/\d{1,2}(/\d{1,2})?[-－\s]+", "", _t).strip()
+        # 只剝開頭可能的公司名（不砍中間、避免砍掉「補中信」的「中信」）
+        _all_co_sorted = sorted(list(COMPANY_LIST) + list(COMPANY_ALIAS.keys()),
+                                 key=len, reverse=True)
+        for c in _all_co_sorted:
+            if _t.startswith(c) and (len(_t) == len(c) or _t[len(c)] in " 　"):
+                _t = _t[len(c):].strip()
+                break
+        if _t:
+            return _t[:40]
     # 已補照會 / 照會完 / 接完照會 → 已完成（先查，避免命中下面的「補照會」）
     if "已補照會" in first_line or "照會完" in first_line or "接完照會" in first_line:
         return "已補照會"
