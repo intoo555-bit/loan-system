@@ -5664,11 +5664,15 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
             _main_amt = (row["approved_amount"] or "").strip()
             if not approved_companies and _main_amt and current_co:
                 approved_companies.append(current_co)
-            still_sending = current_co not in approved_companies and not any(
-                current_co in ac or ac in current_co for ac in approved_companies
-            )
+            # 修（宋俊葦 case）：用 normalize_section 比對、避免「亞太」vs「亞太機車25萬」這類家族錯判
+            _cur_norm_ex = normalize_section(current_co) if current_co else ""
+            _approved_norms = {normalize_section(ac) for ac in approved_companies}
+            still_sending = (current_co not in approved_companies
+                             and _cur_norm_ex not in _approved_norms
+                             and not any(current_co in ac or ac in current_co
+                                         for ac in approved_companies))
             if still_sending:
-                extra_section = normalize_section(current_co)
+                extra_section = _cur_norm_ex
         if extra_section and extra_section != section:
             # 婉拒 skip（user 2026-05-19 規則「婉拒 = 消失」）：
             # extra_section 那家若 cs 第一行含婉拒 / history 有婉拒 / status 解析 = 婉拒、不顯示
@@ -8736,6 +8740,10 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
                 else:
                     # history 歸檔：current/concurrent 不動、只清 route_plan 該公司 + 撥款日期
                     update_kw["disbursement_date"] = ""
+                    # 修（李佳容 case）：被刪那家的核准金額 / 待撥款 標記也要清
+                    # current 是別家但 approved_amount/report_section 卻是死掉那家留的 → 一起清乾淨
+                    update_kw["approved_amount"] = ""
+                    update_kw["report_section"] = ""
                     _new_idx = _route_data_chk.get("current_index", 0)
                     if 0 <= _new_idx < len(_old_order):
                         old_co = _old_order[_new_idx]
