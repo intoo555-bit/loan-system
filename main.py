@@ -6642,14 +6642,19 @@ def _get_valid_company_names():
 
 
 def _resolve_alias_loose(co):
-    """寬鬆 alias 解析：先 exact match、找不到再找最長的 alias key 是否含在 co 中
+    """寬鬆 alias 解析：先 exact match、再查 COMPANY_LIST、找不到再找最長 alias key 是否含在 co 中
     例：「王道銀行」→ alias「王道」包含在內 → 回「銀行」
     例：「玉山銀行」→ alias「玉山」包含在內 → 回「銀行」
+    例：「分貝汽」→ 在 COMPANY_LIST → 用 SECTION_MAP 規範化 → 回「分貝汽車」
     """
     if not co:
         return co
     if co in COMPANY_ALIAS:
         return COMPANY_ALIAS[co]
+    # 修（周閩菲 case）：「分貝汽」在 COMPANY_LIST、之前 loose 抓到「分」alias→分貝機車 誤判
+    # 優先用 COMPANY_LIST exact match、SECTION_MAP 規範化
+    if co in COMPANY_LIST:
+        return COMPANY_SECTION_MAP.get(co, co)
     # 找最長匹配的 alias key（避免短 key 誤搶長 key）
     best_key = None
     for k in COMPANY_ALIAS:
