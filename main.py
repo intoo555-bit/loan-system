@@ -20813,7 +20813,14 @@ def _do_download_excel(request: Request, case_id: str):
             phone_fmt = fmt_phone(phone)
 
             # === F17 資金用途（新範本下拉 8 選 1、值要匹配清單）===
-            # 從 adminb_fund_use（亞太分類 I-1/II-2 等）轉成 和裕格式（1-8.XXX）
+            # 支援 3 種來源：
+            # 1. 網頁和裕區塊直接選（已是和裕格式 1-8.XXX）→ 直接用
+            # 2. 網頁亞太區塊選（I-1/II-2 等格式）→ 轉成和裕格式
+            # 3. 沒填 → 預設「1.購買消費型產品」
+            _hr_fund_options = {
+                "1.購買消費型產品", "2.購買家電、家具", "3.購買3C產品", "4.房屋裝修",
+                "5.子女教育費", "6.醫療保險費", "7.出國旅遊", "8.個人創業",
+            }
             _hr_fund_map = {
                 "I-1教育費": "5.子女教育費", "I-2醫藥費": "6.醫療保險費",
                 "I-3出國旅遊": "7.出國旅遊", "I-4創業": "8.個人創業",
@@ -20821,7 +20828,14 @@ def _do_download_excel(request: Request, case_id: str):
                 "II-2購買手機": "3.購買3C產品", "II-3購買3C產品": "3.購買3C產品",
             }
             _fund_raw = (v("adminb_fund_use") or "").strip()
-            _f17_val = _hr_fund_map.get(_fund_raw, "1.購買消費型產品" if not _fund_raw else "")
+            if _fund_raw in _hr_fund_options:
+                _f17_val = _fund_raw  # 已是和裕格式
+            elif _fund_raw in _hr_fund_map:
+                _f17_val = _hr_fund_map[_fund_raw]  # 亞太格式轉和裕
+            elif not _fund_raw:
+                _f17_val = "1.購買消費型產品"  # 預設
+            else:
+                _f17_val = ""  # 不認識的格式
 
             result = {
                 "C11": name,
