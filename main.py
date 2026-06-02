@@ -20395,12 +20395,23 @@ def _fill_excel_inner(orig_zip, original_bytes, cell_map, _re):
         # sharedStrings.xml 沒有 <si> 區塊，跳過 shared string 修改
         return original_bytes
     si_list = [m.group(0) for m in si_blocks]
+    # 預建反查表（value → idx）給「重用既有 shared string」用
+    # 避免下拉選單對不到既有 SS、Excel 跳修復警告（新範本 F17 case）
+    _ss_text_to_idx = {}
+    for _i, _si in enumerate(si_list):
+        _t = _re.search(r'<t[^>]*>([^<]*)</t>', _si)
+        if _t:
+            _ss_text_to_idx.setdefault(_t.group(1), _i)
     new_sheet_xml = sheet_xml
     for cell_ref, new_value in ss_cell_changes.items():
         escaped = new_value.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
-        # 新增一個 shared string
-        new_idx = len(si_list)
-        si_list.append(f'<si><t>{escaped}</t></si>')
+        # 優先重用既有 shared string（給下拉選單對得到）
+        if escaped in _ss_text_to_idx:
+            new_idx = _ss_text_to_idx[escaped]
+        else:
+            new_idx = len(si_list)
+            si_list.append(f'<si><t>{escaped}</t></si>')
+            _ss_text_to_idx[escaped] = new_idx
         # 修改 sheet XML 中該 cell 的 <v> 指向新索引
         old_idx = cell_to_ss_idx[cell_ref]
         cell_pattern = _re.compile(
@@ -20427,8 +20438,13 @@ def _fill_excel_inner(orig_zip, original_bytes, cell_map, _re):
                     open_tag = m.group(1)
                     open_tag_clean = _re.sub(r'\s+t="[^"]*"', '', open_tag)
                     new_open = open_tag_clean[:-1] + ' t="s">'
-                    new_idx = len(si_list)
-                    si_list.append(f'<si><t>{escaped_val}</t></si>')
+                    # 優先重用既有 shared string
+                    if escaped_val in _ss_text_to_idx:
+                        new_idx = _ss_text_to_idx[escaped_val]
+                    else:
+                        new_idx = len(si_list)
+                        si_list.append(f'<si><t>{escaped_val}</t></si>')
+                        _ss_text_to_idx[escaped_val] = new_idx
                     new_sheet_xml = new_sheet_xml[:m.start()] + new_open + f'<v>{new_idx}</v>' + m.group(2) + new_sheet_xml[m.end():]
                 else:
                     new_sheet_xml = new_sheet_xml[:m.start()] + m.group(1) + f'<v>{escaped_val}</v>' + m.group(2) + new_sheet_xml[m.end():]
@@ -20445,8 +20461,13 @@ def _fill_excel_inner(orig_zip, original_bytes, cell_map, _re):
         m2 = pattern2.search(new_sheet_xml)
         if m2 and new_value:  # 只在有值時寫入
             attrs = m2.group(1).strip()
-            new_idx = len(si_list)
-            si_list.append(f'<si><t>{escaped_val}</t></si>')
+            # 優先重用既有 shared string
+            if escaped_val in _ss_text_to_idx:
+                new_idx = _ss_text_to_idx[escaped_val]
+            else:
+                new_idx = len(si_list)
+                si_list.append(f'<si><t>{escaped_val}</t></si>')
+                _ss_text_to_idx[escaped_val] = new_idx
             new_cell = f'<c r="{cell_ref}" {attrs} t="s"><v>{new_idx}</v></c>'
             new_sheet_xml = new_sheet_xml[:m2.start()] + new_cell + new_sheet_xml[m2.end():]
 
