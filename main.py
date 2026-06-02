@@ -16265,9 +16265,10 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
       </div>
       <div class="ab-block" data-plans="和裕機車,和裕商品" style="background:#f0fdf4;">
         <div style="font-size:12px;font-weight:700;color:#166534;margin-bottom:10px;">和裕（機車／商品）</div>
-        <div class="ab-g2" style="margin-bottom:10px;">
+        <div class="ab-g3" style="margin-bottom:10px;">
           <div><div class="ab-lbl">行業類別</div><select name="hr_industry" class="ab-sel"><option value="">請選擇</option>{"".join(f'<option {"selected" if customer.get("adminb_hr_industry","")==o else ""}>{o}</option>' for o in ["服務業","餐飲業","科技業","軍人","運輸業","倉儲業","金融業","製造業","營造業","電商網拍業","農狩林牧業","礦業","漁業","證券期貨業","保險業","不動產業","公教人員","水電燃氣業","通信業","社團個人服務","其它"])}</select></div>
           <div><div class="ab-lbl">照會時間</div><input name="hr_contact" class="ab-inp" placeholder="平日下午2-5點" value="{h(customer.get('adminb_contact_time','') or '')}"></div>
+          <div><div class="ab-lbl">資金用途（F17 下拉）</div><select name="hr_fund" class="ab-sel"><option value="">請選擇</option>{"".join(f'<option value="{o}" {"selected" if customer.get("adminb_fund_use","")==o else ""}>{o}</option>' for o in ["1.購買消費型產品","2.購買家電、家具","3.購買3C產品","4.房屋裝修","5.子女教育費","6.醫療保險費","7.出國旅遊","8.個人創業"])}</select></div>
         </div>
         <div style="font-size:11px;font-weight:700;color:#166534;margin-bottom:8px;">撥款資料</div>
         <div class="ab-g2" style="margin-bottom:10px;">
@@ -16275,9 +16276,10 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
           <div><div class="ab-lbl">分行</div><input name="hr_branch" class="ab-inp" placeholder="苗栗分行" value="{h(customer.get('adminb_branch','') or '')}"></div>
         </div>
         <div style="font-size:11px;font-weight:700;color:#166534;margin-bottom:8px;">商品資料</div>
-        <div class="ab-g2">
+        <div class="ab-g3">
           <div><div class="ab-lbl">廠牌+商品</div><input name="hr_product" class="ab-inp" placeholder="三陽/安卓手機" value="{h(customer.get('adminb_product','') or '')}"></div>
           <div><div class="ab-lbl">型號或車號</div><input name="hr_model" class="ab-inp" placeholder="677-NSY/OPPO A77" value="{h(customer.get('adminb_model','') or '')}"></div>
+          <div><div class="ab-lbl">機車出廠年月（H43）</div><input name="hr_mfg" class="ab-inp" placeholder="2023/08" value="{h(customer.get('adminb_mfg_date','') or '')}"></div>
         </div>
       </div>
       <div class="ab-block" data-plans="貸救補" style="background:#fef9c3;">
@@ -16694,10 +16696,11 @@ async def adminb_save(request: Request):
         "adminb_vehicle_type": form.get("at_vtype",""),
         "adminb_engine_no": form.get("at_engine",""),
         "adminb_displacement": form.get("at_disp",""),
-        "adminb_mfg_date": form.get("at_mfg",""),
+        # at_/hr_ 兩個前綴都接、共用 DB 欄位（亞太用 at_、和裕用 hr_、誰填到誰寫）
+        "adminb_mfg_date": form.get("at_mfg","") or form.get("hr_mfg",""),
         "adminb_color": form.get("at_color",""),
         "adminb_body_no": form.get("at_body",""),
-        "adminb_fund_use": form.get("at_fund",""),
+        "adminb_fund_use": form.get("at_fund","") or form.get("hr_fund",""),
         "vehicle_plate": form.get("at_plate",""),
     }
     # 套用「確認資料」自動調整規則，回寫到主要欄位
