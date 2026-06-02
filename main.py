@@ -286,6 +286,8 @@ DEFAULT_MAPPINGS = {
             "C15": "reg_full_address", "H15": "reg_phone",
             "C16": "live_full_address", "H16": "live_phone",
             "C17": "line_id",
+            # 新範本 F17 加資金用途下拉、H43 加機車出廠年月（user 2026-06-02 加）
+            "F17": "adminb_fund_use",
             "C18": "company_name_detail", "G18": "company_role",
             "H17": "company_full_phone",
             "C19": "company_full_address",
@@ -298,6 +300,7 @@ DEFAULT_MAPPINGS = {
             "C25": "contact1_phone", "F25": "contact2_phone",
             "C37": "adminb_bank", "C38": "adminb_branch",
             "C42": "adminb_product", "F42": "adminb_model",
+            "H43": "adminb_mfg_date",
         },
         "擔保品資訊": {
             "B2": "adminb_brand", "B3": "vehicle_plate",
@@ -20785,6 +20788,17 @@ def _do_download_excel(request: Request, case_id: str):
             # === 行動電話（F14）也要格式化 ===
             phone_fmt = fmt_phone(phone)
 
+            # === F17 資金用途（新範本下拉 8 選 1、值要匹配清單）===
+            # 從 adminb_fund_use（亞太分類 I-1/II-2 等）轉成 和裕格式（1-8.XXX）
+            _hr_fund_map = {
+                "I-1教育費": "5.子女教育費", "I-2醫藥費": "6.醫療保險費",
+                "I-3出國旅遊": "7.出國旅遊", "I-4創業": "8.個人創業",
+                "II-1購買交通工具": "1.購買消費型產品",
+                "II-2購買手機": "3.購買3C產品", "II-3購買3C產品": "3.購買3C產品",
+            }
+            _fund_raw = (v("adminb_fund_use") or "").strip()
+            _f17_val = _hr_fund_map.get(_fund_raw, "1.購買消費型產品" if not _fund_raw else "")
+
             result = {
                 "C11": name,
                 "C39": "__FORMULA_RECALC__",  # 戶名是公式 =C11，清快取值強制重算
@@ -20794,7 +20808,7 @@ def _do_download_excel(request: Request, case_id: str):
                 "C14": edu_val, "F14": phone_fmt,
                 "C15": reg_addr, "H15": v("reg_phone") or "",
                 "C16": live_addr, "H16": (v("live_phone") or "") if not live_same else "同戶籍",
-                "C17": line_id, "F17": "家用",  # 資金用途固定家用
+                "C17": line_id, "F17": _f17_val,  # F17 轉成和裕下拉 8 選 1 格式
                 "H17": co_phone_fmt,
                 "C18": company, "G18": co_role, "I18": years_fmt,
                 "C19": co_addr, "I19": sal_fmt,
@@ -20808,6 +20822,8 @@ def _do_download_excel(request: Request, case_id: str):
                 # 商品資訊（無填寫則清空）
                 "C42": v("adminb_product") or "",
                 "F42": v("adminb_model") or "",
+                # 機車出廠年月（新範本 H43、user 2026-06-02 加）
+                "H43": v("adminb_mfg_date") or v("vehicle_year") or "",
                 # 行業/電信
                 "G19": hr_ind_val,
                 "C20": carrier_val,
