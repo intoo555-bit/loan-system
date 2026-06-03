@@ -5760,6 +5760,20 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
                     co_status = _compress_status_short(_get_section_status_for_row(row, co_section, cs, first_line))
                     if co_status == "婉拒":
                         continue
+                    # 修（簡浚宏 case、user 2026-06-03）：concurrent 內純掛名（業務還沒實際送）的家不散開
+                    # 判定「業務有互動過」：cs[公司] 有內容、或 route_plan history 有該公司紀錄
+                    _has_cs_content = bool((_cs_text_chk or "").strip())
+                    _has_history_entry = False
+                    try:
+                        _rp_for_hist = parse_route_json(row["route_plan"] or "")
+                        _hist_for_hist = _rp_for_hist.get("history", []) or []
+                        _has_history_entry = any(
+                            normalize_section(_h.get("company", "")) == co_section
+                            for _h in _hist_for_hist)
+                    except Exception:
+                        pass
+                    if not _has_cs_content and not _has_history_entry:
+                        continue  # 純掛名 concurrent、業務無互動、不散開
                     co_short = _display_co_short(co) or co
                     co_line = f"{date_str}-{customer_name}-{co_short}"
                     if co_status and not pending_str:
