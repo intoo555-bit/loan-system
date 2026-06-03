@@ -5562,7 +5562,8 @@ def compute_customer_display(row):
                     parts.append(f"{co_s} {amt}(撥款{disb})")
                 else:
                     parts.append(f"{co_s} {amt}{pending_tag}")
-            amount_display = "-核准" + "/".join(parts)
+            # 改用「、」分隔（之前「/」LINE 群組會把訊息截斷在第一個「(撥款M/D)」後）
+            amount_display = "-核准" + "、".join(parts)
         elif amount:
             disb_date = row["disbursement_date"] or ""
             disb_str = f"(撥款{disb_date})" if disb_date else pending_tag
