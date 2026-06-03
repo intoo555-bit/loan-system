@@ -20479,8 +20479,9 @@ def _fill_excel_inner(orig_zip, original_bytes, cell_map, _re):
             new_sheet_xml = sheet_xml
         for cell_ref in formula_recalc:
             # 匹配公式儲存格：含 <f>...</f> 和 <v>...</v>
+            # 修（和裕新範本）：<v> 可能帶屬性如 <v xml:space="preserve">、要支援
             pattern = _re.compile(
-                r'<c\s+r="' + _re.escape(cell_ref) + r'"([^>]*)>(.*?)<v>[^<]*</v>(.*?)</c>',
+                r'<c\s+r="' + _re.escape(cell_ref) + r'"([^>]*)>(.*?)<v(?:\s[^>]*)?>[^<]*</v>(.*?)</c>',
                 _re.DOTALL
             )
             m = pattern.search(new_sheet_xml)
