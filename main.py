@@ -20428,6 +20428,28 @@ def _fill_excel_inner(orig_zip, original_bytes, cell_map, _re):
         except: return False
     for cell_ref, new_value in direct_changes.items():
         escaped_val = new_value.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;') if new_value else ""
+        # Case 0: 公式儲存格 <c r="C39" t="str"><f>C11</f><v>...</v></c>
+        # 直接寫值時要把公式也砍掉、避免 Excel 重算把我們的值蓋掉
+        pattern0 = _re.compile(
+            r'<c\s+r="' + _re.escape(cell_ref) + r'"([^>]*)>\s*<f[^>]*>[^<]*</f>\s*(?:<v(?:\s[^>]*)?>[^<]*</v>)?\s*</c>',
+            _re.DOTALL)
+        m0 = pattern0.search(new_sheet_xml)
+        if m0 and new_value:
+            attrs = m0.group(1)
+            attrs = _re.sub(r'\s+t="[^"]*"', '', attrs)
+            if not _is_numeric_inner(new_value):
+                # 用 shared string、優先重用既有
+                if escaped_val in _ss_text_to_idx:
+                    new_idx = _ss_text_to_idx[escaped_val]
+                else:
+                    new_idx = len(si_list)
+                    si_list.append(f'<si><t>{escaped_val}</t></si>')
+                    _ss_text_to_idx[escaped_val] = new_idx
+                new_cell = f'<c r="{cell_ref}"{attrs} t="s"><v>{new_idx}</v></c>'
+            else:
+                new_cell = f'<c r="{cell_ref}"{attrs}><v>{escaped_val}</v></c>'
+            new_sheet_xml = new_sheet_xml[:m0.start()] + new_cell + new_sheet_xml[m0.end():]
+            continue
         # Case 1: 已有值 <c r="G18" s="48"><v>5.4</v></c>
         pattern1 = _re.compile(r'(<c\s+r="' + _re.escape(cell_ref) + r'"[^>]*>)\s*<v>[^<]*</v>\s*(</c>)')
         m = pattern1.search(new_sheet_xml)
@@ -20840,7 +20862,8 @@ def _do_download_excel(request: Request, case_id: str):
 
             result = {
                 "C11": name,
-                "C39": "__FORMULA_RECALC__",  # 戶名是公式 =C11，清快取值強制重算
+                # 戶名 C39 原本是公式 =C11、但 Excel 不一定會重算、改直接寫姓名（user 2026-06-03）
+                "C39": name,
                 "F11": id_no,
                 "C12": birth, "F12": (id_date + " " + id_type) if id_date else "",
                 "C13": marriage_val, "F13": id_place_code,
