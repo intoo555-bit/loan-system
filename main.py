@@ -799,7 +799,7 @@ def _strip_sheet_colors(xlsx_bytes: bytes, target_sheet_name: str) -> bytes:
 REPORT_SECTION_1 = [
     "麻吉", "和潤", "中租", "裕融", "21汽車", "亞太", "創鉅", "21",
     "第一", "合信", "興達", "和裕", "鄉民", "喬美",
-    "分貝汽車", "分貝機車", "貸救補", "預付手機分期", "融易", "手機分期", "鼎多",
+    "分貝汽車", "分貝機車", "分貝商品", "貸救補", "預付手機分期", "融易", "手機分期", "鼎多",
     "送件",
 ]
 REPORT_SECTION_4 = ["待撥款"]
@@ -824,7 +824,7 @@ COMPANY_LIST = [
     "手機分期", "貸救補",
     "合信機車", "合信手機", "合信二輪",
     # 分貝方案
-    "分貝汽車", "分貝機車", "分貝汽", "分貝機",
+    "分貝汽車", "分貝機車", "分貝商品", "分貝汽", "分貝機", "分貝商",
     # 21方案
     "21汽車", "21機車", "21機25萬", "21機25", "21汽", "21機", "21商品",
     # 創鉅方案
@@ -888,6 +888,7 @@ COMPANY_ALIAS = {
     "分唄": "分貝",
     "分唄機車": "分貝機車",
     "分唄汽車": "分貝汽車",
+    "分唄商品": "分貝商品", "分貝商": "分貝商品",
     # 亞太相關
     "熊速貸": "亞太商品",
     "工會機車動擔": "亞太工會",
@@ -987,6 +988,7 @@ PLAN_INFO = {
     "喬美": ("喬美", "14萬/30期"), "鼎多": ("喬美", "14萬/30期"),
     "分貝機車": ("分貝機車", ""), "分貝機": ("分貝機車", ""),
     "分貝汽車": ("分貝汽車", ""), "分貝汽": ("分貝汽車", ""),
+    "分貝商品": ("分貝商品", "14.8萬/24期"), "分貝商": ("分貝商品", "14.8萬/24期"),
     "21汽車": ("21汽車", ""), "21汽": ("21汽車", ""),
     "鄉民": ("鄉民貸", ""), "鄉": ("鄉民貸", ""),
     "銀行": ("銀行", ""), "銀": ("銀行", ""),
@@ -1537,6 +1539,20 @@ PLAN_ELIGIBILITY_RULES = [
             {"type": "simple", "label": "名下有可用機車（不能機車滿貸）", "op": "motorcycle_has_space"},
         ],
         "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面", "機車行照"],
+    },
+    {
+        "company": "分貝商品",
+        "max_amount": 14.8,
+        "priority": 66,
+        "rules": [
+            {"type": "simple", "label": "年齡 20~65", "field": "age", "op": "between", "value": [20, 65]},
+            {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
+            {"type": "simple", "label": "✅ 沒有機車也可送（無動產限制）", "op": "always_pass"},
+            {"type": "simple", "label": "21 體系（麻吉/21/分貝/樂分期/分期趣/慢點付）含利息剩餘 < 25 萬",
+             "op": "group21_remain_lt", "value": 250000},
+            {"type": "simple", "label": "警示戶可送（撥二等親、自動偵測）", "op": "alert_warning_handler"},
+        ],
+        "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面"],
     },
     # ===== 21汽車系列（二十一世紀數位車貸 A/B/C 專案）=====
     # 紅線：警示戶不做、車輛不在天書/權威不做、車價 ≤ 10 萬不做
@@ -5173,6 +5189,7 @@ COMPANY_SECTION_MAP = {
     # 分貝方案 → 各自欄位
     "分貝汽": "分貝汽車",
     "分貝機": "分貝機車",
+    "分貝商": "分貝商品",
     # 創鉅方案 → 全部歸到「創鉅」欄位
     "創鉅手機": "創鉅", "創鉅手": "創鉅",
     "創鉅機車": "創鉅", "創鉅機": "創鉅",
@@ -5223,7 +5240,7 @@ _DISPLAY_SECTION_SHORT_CODE = {
     "零卡": "C", "銀行": "銀", "商品貸": "商",
     "代書": "代", "當舖": "當", "鄉民": "鄉",
 }
-_DISPLAY_FAMILY_CS_KEY = {"分貝機車": "分貝", "分貝汽車": "分貝"}
+_DISPLAY_FAMILY_CS_KEY = {"分貝機車": "分貝", "分貝汽車": "分貝", "分貝商品": "分貝"}
 
 
 def _display_co_short(co_raw):
@@ -16237,7 +16254,7 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
         {"".join(f'<label class="ab-plan"><input type="checkbox" name="plans" value="{v}"><div><div class="ab-plan-name">{n}</div><div class="ab-plan-sub">{s}</div></div></label>' for v,n,s in [
           ("麻吉機車","麻吉機車","10萬 24期"),("麻吉手機","麻吉手機","10萬 24期"),
           ("手機分期","手機分期","填寫表"),("分貝機車","分貝機車","改裝填寫表"),
-          ("分貝汽車","分貝汽車","改裝填寫表"),("21汽車","21汽車","貸款100% 利率16%"),
+          ("分貝汽車","分貝汽車","改裝填寫表"),("分貝商品","分貝商品","14.8萬 24期"),("21汽車","21汽車","貸款100% 利率16%"),
         ])}
       </div>
       <div style="margin-top:8px;padding:8px 12px;background:#fdf2f8;border:1px dashed #9d174d;border-radius:6px;"><label style="display:flex;align-items:center;gap:8px;font-size:13px;color:#9d174d;font-weight:600;cursor:pointer;"><input type="checkbox" name="mj_6w18p" value="1" {"checked" if customer.get('adminb_mj_6w18p','')=='1' else ''} style="width:16px;height:16px;accent-color:#9d174d;"> 麻吉改用 6萬／18期／月付3771元（不勾用預設 10萬／24期）</label></div>
@@ -16334,12 +16351,12 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
           <div><div class="ab-lbl">月付金</div><input name="qm_cpay" class="ab-inp" placeholder="3000" value="{h(customer.get('adminb_credit_pay','') or '')}"></div>
         </div>
       </div>
-      <div class="ab-block" data-plans="分貝汽車,分貝機車,21汽車" style="background:#ece8e2;">
-        <div style="font-size:12px;font-weight:700;color:#4a3e30;margin-bottom:8px;">照會時間（分貝汽車／分貝機車／21汽車）</div>
+      <div class="ab-block" data-plans="分貝汽車,分貝機車,分貝商品,21汽車" style="background:#ece8e2;">
+        <div style="font-size:12px;font-weight:700;color:#4a3e30;margin-bottom:8px;">照會時間（分貝汽車／分貝機車／分貝商品／21汽車）</div>
         <input name="contact_time" class="ab-inp" placeholder="平日下午2-5點" value="{h(customer.get('adminb_contact_time','') or '')}">
       </div>
-      <div class="ab-block" data-plans="分貝汽車,分貝機車" style="background:#ece8e2;">
-        <div style="font-size:12px;font-weight:700;color:#4a3e30;margin-bottom:8px;">近2個月送件備註（分貝汽車／分貝機車）</div>
+      <div class="ab-block" data-plans="分貝汽車,分貝機車,分貝商品" style="background:#ece8e2;">
+        <div style="font-size:12px;font-weight:700;color:#4a3e30;margin-bottom:8px;">近2個月送件備註（分貝汽車／分貝機車／分貝商品）</div>
         <div style="font-size:11px;color:#8a7a68;margin-bottom:6px;line-height:1.6;">
           1. 近2個月內有無送過21世紀或瑪吉pay或分唄、樂分期、慢點付、分期趣？<br>
           2. 如有的話，有無過件？<br>
