@@ -20186,8 +20186,35 @@ def _fill_excel_multi_sheet(template_path: str, sheet_cell_maps: dict) -> bytes:
                 if not s: return False
                 try: float(s); return True
                 except: return False
+            # 預建反查 ss → idx（重用既有 SS、給下拉選單對得到）
+            _ss_text_to_idx = {}
+            for _i, _si in enumerate(si_list):
+                _t = _re.search(r'<t[^>]*>([^<]*)</t>', _si)
+                if _t:
+                    _ss_text_to_idx.setdefault(_t.group(1), _i)
             for cell_ref, new_value in direct_changes.items():
                 escaped_val = new_value.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;') if new_value else ""
+                # Case 0: 公式儲存格 <c r="C39" t="str"><f>C11</f><v>...</v></c>
+                # 直接寫值時要把公式也砍掉、避免 Excel 重算把我們的值蓋掉
+                pattern0 = _re.compile(
+                    r'<c\s+r="' + _re.escape(cell_ref) + r'"([^>]*)>\s*<f[^>]*>[^<]*</f>\s*(?:<v(?:\s[^>]*)?>[^<]*</v>)?\s*</c>',
+                    _re.DOTALL)
+                m0 = pattern0.search(sheet_xml)
+                if m0 and new_value:
+                    attrs = m0.group(1)
+                    attrs = _re.sub(r'\s+t="[^"]*"', '', attrs)
+                    if not _is_numeric(new_value):
+                        if escaped_val in _ss_text_to_idx:
+                            new_idx = _ss_text_to_idx[escaped_val]
+                        else:
+                            new_idx = len(si_list)
+                            si_list.append(f'<si><t>{escaped_val}</t></si>')
+                            _ss_text_to_idx[escaped_val] = new_idx
+                        new_cell = f'<c r="{cell_ref}"{attrs} t="s"><v>{new_idx}</v></c>'
+                    else:
+                        new_cell = f'<c r="{cell_ref}"{attrs}><v>{escaped_val}</v></c>'
+                    sheet_xml = sheet_xml[:m0.start()] + new_cell + sheet_xml[m0.end():]
+                    continue
                 pattern1 = _re.compile(r'(<c\s+r="' + _re.escape(cell_ref) + r'"[^>]*>)\s*<v>[^<]*</v>\s*(</c>)')
                 mm = pattern1.search(sheet_xml)
                 if mm:
