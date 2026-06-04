@@ -15318,15 +15318,54 @@ def build_row_map(rows) -> dict:
     m = {}
     for r in rows:
         # 用 compute_customer_display 算 section（跟 LINE 日報 build_section_map 同邏輯、含婉拒 reroute）
+        # 同送多家：散到對應區塊（跟 LINE 日報一致、user 要求 2026-06-04）
         try:
             _info = compute_customer_display(r)
             sec = _info["section"]
+            _cur_co_disp = _info.get("current_co") or ""
         except Exception:
             sec = r["report_section"] or r["current_company"] or r["company"] or "送件"
+            _cur_co_disp = r["current_company"] or r["company"] or ""
         # section 空字串 = 全數婉拒、不顯示（user 規則「婉拒 = 消失」）
         if not sec:
             continue
         m.setdefault(sec, []).append(r)
+        # 同送散開：concurrent_companies 內每家也散到對應區塊（跟 LINE 一致）
+        # 避免重複：跟主 section 同的不再加（normalize_section 比對）
+        _concur_str = (r["concurrent_companies"] or "").strip()
+        if _concur_str:
+            try:
+                _main_norm = normalize_section(sec)
+                _route_hist = parse_route_json(r["route_plan"] or "").get("history", []) or []
+                _rejected_norms = {normalize_section(h.get("company", ""))
+                                   for h in _route_hist if h.get("status") in ("婉拒", "跳過")}
+                _seen_norms = {_main_norm}
+                for _co in _concur_str.split(","):
+                    _co = _co.strip()
+                    if not _co:
+                        continue
+                    _co_norm = normalize_section(_co)
+                    if _co_norm in _seen_norms or _co_norm in _rejected_norms:
+                        continue
+                    _seen_norms.add(_co_norm)
+                    m.setdefault(_co_norm, []).append(r)
+            except Exception:
+                pass
+        # extras_section：待撥款 + current 還在送（核准的是別家）→ 也歸 current 區塊
+        if sec == "待撥款" and _cur_co_disp:
+            try:
+                _cur_norm_disp = normalize_section(_cur_co_disp)
+                _appr_norms_disp = {normalize_section(h.get("company", ""))
+                                    for h in parse_route_json(r["route_plan"] or "").get("history", []) or []
+                                    if h.get("amount") and h.get("status") in ("核准", "撥款", "待撥款")}
+                _main_amt_disp = (r["approved_amount"] or "").strip()
+                if not _appr_norms_disp and _main_amt_disp:
+                    _appr_norms_disp.add(_cur_norm_disp)
+                if _cur_norm_disp and _cur_norm_disp not in _appr_norms_disp:
+                    if _cur_norm_disp != normalize_section(sec):
+                        m.setdefault(_cur_norm_disp, []).append(r)
+            except Exception:
+                pass
     return m
 
 def render_cust_rows(rows) -> str:
