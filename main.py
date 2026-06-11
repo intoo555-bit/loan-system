@@ -5630,6 +5630,9 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
         # 預先抓 route_plan history 內所有婉拒/跳過的家（給 extra_section / concurrent 散開共用）
         # 含隱式跳過推斷（舊資料 retroactive）
         _hist_rejected_secs = set()
+        # 只含「婉拒」（不含跳過）的集合：給 concurrent 散開用
+        # 在 concurrent_companies 內 = 業務明確同送、不該被舊「跳過」紀錄藏掉、只有真婉拒才藏
+        _hist_reject_only = set()
         try:
             _rp_bsm = parse_route_json(row["route_plan"] or "")
             _hist_for_chk = _rp_bsm.get("history", []) or []
@@ -5638,6 +5641,10 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
                     _r_co = _h.get("company") or ""
                     if _r_co:
                         _hist_rejected_secs.add(normalize_section(_r_co))
+                if _h.get("status") == "婉拒":
+                    _r_co2 = _h.get("company") or ""
+                    if _r_co2:
+                        _hist_reject_only.add(normalize_section(_r_co2))
             # 隱式跳過：order 內 idx 比「最遠被處理過家」小、非 current/concurrent → 視為跳過
             _order_bsm = _rp_bsm.get("order", []) or []
             _concur_norms_bsm = {normalize_section(c.strip()) for c in
@@ -5751,7 +5758,9 @@ def build_section_map(all_rows) -> Dict[str, List[str]]:
                     # 2. _get_section_status_for_row 解析 = 「婉拒」
                     # 3. route_plan history 有 {company: 此家, status: 婉拒}
                     #    （cs 被「職收不易確認」這種補充文字蓋掉時、靠 history 才擋得住）
-                    if co_section in _hist_rejected_secs:
+                    # 注意：用「婉拒 only」集合、不含「跳過」——
+                    # 此家既在 concurrent（業務明確同送）、舊的「跳過」紀錄不該把它藏掉
+                    if co_section in _hist_reject_only:
                         continue
                     _cs_key_chk = _get_cs_key_for_section(cs, co_section)
                     _cs_text_chk = cs.get(_cs_key_chk, "") if _cs_key_chk else ""
@@ -9418,6 +9427,11 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
             _idx_for_skip = _route_for_skip.get("current_index", 0)
             _hist_for_skip = _route_for_skip.get("history", []) or []
             _existing_hist_cos = {normalize_section(h.get("company", "")) for h in _hist_for_skip}
+            # 正在送的家（current + concurrent，含這次剛加送的）一律不能標「跳過」
+            # 例：送「和裕+21」、order=[亞太,和裕,21]、和裕雖夾在中間、但本身就是被加送的家
+            _active_norms = {normalize_section(c) for c in concurrent_list if c}
+            if current_co:
+                _active_norms.add(normalize_section(current_co))
             _max_target_idx = -1
             for _added_co in added:
                 _added_norm = normalize_section(_added_co)
@@ -9432,7 +9446,7 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
                 for _i_mid in range(_idx_for_skip + 1, _max_target_idx):
                     _mid_co = _order_for_skip[_i_mid]
                     _mid_norm = normalize_section(_mid_co)
-                    if _mid_norm in _existing_hist_cos:
+                    if _mid_norm in _existing_hist_cos or _mid_norm in _active_norms:
                         continue
                     _hist_for_skip.append({"company": _mid_co, "status": "跳過", "date": now_iso()[:10]})
                     _existing_hist_cos.add(_mid_norm)
