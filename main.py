@@ -16146,7 +16146,7 @@ def adminb_page(request: Request, case_id: str = "", saved: str = ""):
     from fastapi.responses import RedirectResponse
     role = check_auth(request)
     if not role: return RedirectResponse("/login")
-    if role not in ("admin","adminB"): return RedirectResponse("/report")
+    if role not in ("admin","adminB","ops_admin"): return RedirectResponse("/report")
 
     conn = get_conn(); cur = conn.cursor()
     cur.execute("SELECT case_id, customer_name, id_no, source_group_id, created_at, status FROM customers WHERE status IN ('ACTIVE','PENDING') ORDER BY updated_at DESC LIMIT 200")
@@ -16429,7 +16429,7 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
       <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
         <button type="submit" class="btn-save">💾 儲存資料</button>
         <a href="/adminb/download-excel?case_id={h(case_id)}" class="btn-dl" onclick="return confirm('將根據勾選的方案下載 Excel/TXT，確定嗎？')">📥 下載EXCEL/TXT</a>
-        {'<button type="button" onclick="checkEligibilityAdminB()" style="background:#fef3c7;color:#854d0e;border:1px solid #fde047;padding:11px 22px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;">📋 對照規則表</button>' if role == 'admin' else ''}
+        {'<button type="button" onclick="checkEligibilityAdminB()" style="background:#fef3c7;color:#854d0e;border:1px solid #fde047;padding:11px 22px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;">📋 對照規則表</button>' if role in ('admin', 'ops_admin') else ''}
       </div>
       <div style="font-size:12px;color:#8a7a68;margin-top:8px;">請先儲存資料再下載；喬美 PDF 請使用「補充資料」區的「簽名並下載」按鈕</div>
       <div id="eligibilityBoxAdminB" style="display:none;margin-top:14px;padding:14px;background:#fff;border:1px solid #e5e7eb;border-radius:8px;font-size:13px"></div>
@@ -16722,7 +16722,7 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
 async def adminb_save(request: Request):
     from fastapi.responses import RedirectResponse
     role = check_auth(request)
-    if not role or role not in ("admin","adminB"):
+    if not role or role not in ("admin","adminB","ops_admin"):
         return RedirectResponse("/login")
     form = await request.form()
     case_id = form.get("case_id","")
@@ -17857,8 +17857,8 @@ def api_check_eligibility(request: Request, case_id: str = ""):
     role = check_auth(request)
     if not role:
         return JSONResponse({"ok": False, "message": "請先登入"})
-    if role != "admin":
-        return JSONResponse({"ok": False, "message": "需要最高權限管理員"}, status_code=403)
+    if role not in ("admin", "ops_admin"):
+        return JSONResponse({"ok": False, "message": "需要管理員或行政管理員權限"}, status_code=403)
     if not case_id:
         return JSONResponse({"ok": False, "message": "缺 case_id"})
     conn = get_conn(); cur = conn.cursor()
@@ -19754,7 +19754,7 @@ function downloadPDF() {{
 @app.post("/adminb/save-signature")
 async def adminb_save_signature(request: Request):
     role = check_auth(request)
-    if not role or role not in ("admin", "adminB"):
+    if not role or role not in ("admin", "adminB", "ops_admin"):
         return JSONResponse({"ok": False, "error": "無權限"}, status_code=403)
     try:
         data = await request.json()
@@ -19784,7 +19784,7 @@ async def adminb_save_signature(request: Request):
 def adminb_download_qiaomei(request: Request, case_id: str = ""):
     from fastapi.responses import StreamingResponse
     role = check_auth(request)
-    if not role or role not in ("admin", "adminB"):
+    if not role or role not in ("admin", "adminB", "ops_admin"):
         return JSONResponse({"error": "無權限"}, status_code=403)
     if not case_id:
         return JSONResponse({"error": "缺少 case_id"}, status_code=400)
@@ -20650,7 +20650,7 @@ def _fill_excel_inner(orig_zip, original_bytes, cell_map, _re):
 def _do_download_excel(request: Request, case_id: str):
     from fastapi.responses import StreamingResponse
     role = check_auth(request)
-    if not role or role not in ("admin", "adminB"):
+    if not role or role not in ("admin", "adminB", "ops_admin"):
         return JSONResponse({"error": "無權限"}, status_code=403)
     if not case_id:
         return JSONResponse({"error": "缺少 case_id"}, status_code=400)
