@@ -4800,6 +4800,43 @@ async def extract_approved_amount_with_ai(text: str) -> str:
     return ""
 
 
+# ── 撥款名單標頭正則（模組層級：閘門 is_disbursement_list 與解析器 parse_disbursement_list 共用，永遠一致）──
+# 有日期 + 公司：「04/18 裕融 撥款名單」
+DISB_HEADER_RE = re.compile(
+    r"(\d{1,2}/\d{1,2})\s*([\w㐀-鿿豈-﫿]+?)\s*(撥款名單|預計排撥|排撥|今日撥款|商品撥款|機車撥款|汽車撥款|撥款)",
+    re.IGNORECASE
+)
+# 無公司標頭（有日期、無公司）：「4/24 撥款」/「4/24 撥款名單」→ 公司空字串、後面查每個客戶的核准公司
+DISB_HEADER_NOCO_RE = re.compile(
+    r"^\s*(\d{1,2}/\d{1,2})\s*(撥款名單|預計排撥|排撥|今日撥款|撥款)\s*$",
+    re.IGNORECASE
+)
+# 無日期標頭（結尾為撥款關鍵字）：「貸救補 今日撥款」
+DISB_HEADER_NODATE_RE = re.compile(
+    r"^([\w㐀-鿿豈-﫿]+?)\s*(撥款名單|預計排撥|排撥|今日撥款|商品撥款|機車撥款|汽車撥款|撥款)\s*$",
+    re.IGNORECASE
+)
+# 標頭裡「公司名」不能是這些關鍵字本身（避免「4/24 撥款」把「撥款」當公司）
+_DISB_KW_NOT_COMPANY = ("撥款", "撥款名單", "排撥", "預計排撥", "今日撥款")
+
+
+def match_disb_header(line: str, prev_date: str = ""):
+    """這行若是撥款名單標頭 → 回 (date, company)；company="" 代表無公司（用客戶核准公司）；
+    date 為 None 代表無日期標頭、由呼叫端補今日。不是標頭 → 回 None。"""
+    m = DISB_HEADER_NOCO_RE.match(line)       # NOCO 先比：避免「4/24 撥款」被當成 company=撥款
+    if m:
+        return (m.group(1), "")
+    m = DISB_HEADER_RE.search(line)
+    if m:
+        co = m.group(2).strip()
+        if co not in _DISB_KW_NOT_COMPANY:
+            return (m.group(1), co)
+    m = DISB_HEADER_NODATE_RE.match(line)
+    if m:
+        return (prev_date or None, m.group(1).strip())
+    return None
+
+
 def parse_disbursement_list(text: str) -> Dict:
     """
     解析撥款名單格式：
@@ -4815,68 +4852,28 @@ def parse_disbursement_list(text: str) -> Dict:
     result = {}
     current_date = ""
     current_company = ""
-
-    # 撥款名單標頭正則（有日期 + 公司）
-    DISB_HEADER_RE = re.compile(
-        r"(\d{1,2}/\d{1,2})\s*([\w㐀-鿿豈-﫿]+?)\s*(撥款名單|預計排撥|排撥|今日撥款|商品撥款|機車撥款|汽車撥款|撥款)",
-        re.IGNORECASE
-    )
-    # 無公司標頭（有日期、無公司）：「4/24 撥款」/「4/24 撥款名單」 → 公司空字串、後面查每個客戶的核准公司
-    DISB_HEADER_NOCO_RE = re.compile(
-        r"^\s*(\d{1,2}/\d{1,2})\s*(撥款名單|預計排撥|排撥|今日撥款|撥款)\s*$",
-        re.IGNORECASE
-    )
-    # 無日期標頭：「貸救補 今日撥款」
-    DISB_HEADER_NODATE_RE = re.compile(
-        r"^([\w㐀-鿿豈-﫿]+?)\s*(撥款名單|預計排撥|排撥|今日撥款|商品撥款|機車撥款|汽車撥款|撥款)\s*$",
-        re.IGNORECASE
-    )
+    in_section = False  # 已進入撥款名單區段（NOCO 公司=空字串也算 → 修正名字被略過的 bug）
 
     today_date = now_tw().strftime("%#m/%#d") if os.name == "nt" else now_tw().strftime("%-m/%-d")
 
-    lines = text.splitlines()
-    for line in lines:
+    for line in text.splitlines():
         line = line.strip()
         if not line:
             continue
 
-        # 無公司標頭（4/24 撥款）優先比對：避免 "(date)(撥款 keyword)" 被 DISB_HEADER_RE 抓成 company=撥款
-        m_noco = DISB_HEADER_NOCO_RE.match(line)
-        if m_noco:
-            current_date = m_noco.group(1)
-            current_company = ""  # 空 = 後面用客戶的核准公司
-            if current_date not in result:
-                result[current_date] = {}
-            if current_company not in result[current_date]:
-                result[current_date][current_company] = []
+        # 標頭判斷與 is_disbursement_list 共用 match_disb_header（單一來源、不會兩邊不一致）
+        hdr = match_disb_header(line, current_date)
+        if hdr is not None:
+            current_date, current_company = hdr
+            if current_date is None:          # 無日期標頭 → 補今日
+                current_date = today_date
+            in_section = True
+            result.setdefault(current_date, {}).setdefault(current_company, [])
             continue
 
-        m = DISB_HEADER_RE.search(line)
-        if m:
-            current_date = m.group(1)
-            current_company = m.group(2).strip()
-            # 排除把「撥款」自己誤當公司名（例如 "4/24 撥款" 整段亂吃）
-            if current_company in ("撥款", "撥款名單", "排撥", "預計排撥", "今日撥款"):
-                continue
-            if current_date not in result:
-                result[current_date] = {}
-            if current_company not in result[current_date]:
-                result[current_date][current_company] = []
-            continue
-
-        # 無日期標頭（如「貸救補 今日撥款」），用今日日期
-        m2 = DISB_HEADER_NODATE_RE.match(line)
-        if m2:
-            current_date = current_date or today_date
-            current_company = m2.group(1).strip()
-            if current_date not in result:
-                result[current_date] = {}
-            if current_company not in result[current_date]:
-                result[current_date][current_company] = []
-            continue
-
-        # 名字行（2-4個中文字，或含英文的姓名）
-        if current_date and current_company:
+        # 名字行（2-6個中文字）；用 in_section 判斷而非 current_company
+        # （NOCO「4/24 撥款」時 current_company 是空字串、舊寫法 if current_company 會把名字整段略過）
+        if in_section:
             name_m = re.match(r"^([㐀-鿿豈-﫿]{2,6})\s*$", line)
             if name_m:
                 result[current_date][current_company].append(name_m.group(1))
@@ -4885,24 +4882,19 @@ def parse_disbursement_list(text: str) -> Dict:
 
 
 def is_disbursement_list(text: str) -> bool:
-    """判斷是否為撥款名單（多行格式，標頭+人名行）"""
+    """是不是撥款名單（多行：真標頭 + 人名行）。
+    標頭判斷與 parse_disbursement_list 共用 match_disb_header，兩邊永遠一致；
+    避免「補撥款確認書」這種把『撥款』夾在詞中間的補件訊息被誤判成名單。"""
     lines = [l.strip() for l in (text or "").splitlines() if l.strip()]
     if len(lines) < 2:
         return False
-    # 至少一行要是標頭（含撥款關鍵詞）
-    header_re = re.compile(
-        r"(撥款名單|排撥|預計排撥|今日撥款|商品撥款|機車撥款|汽車撥款|撥款)"
-    )
-    has_header = False
     header_idx = -1
     for i, line in enumerate(lines):
-        if header_re.search(line):
-            has_header = True
+        if match_disb_header(line) is not None:
             header_idx = i
             break
-    if not has_header:
+    if header_idx < 0:
         return False
-    # 標頭後面至少要有一行純人名（2-4個中文字）
     name_re = re.compile(r"^[㐀-鿿豈-﫿]{2,6}$")
     for line in lines[header_idx + 1:]:
         if name_re.match(line):
