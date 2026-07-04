@@ -15135,8 +15135,14 @@ def get_status_type(row) -> str:
     # 新客戶：有資料但沒有送件順序和公司
     if not co and not order and not sec:
         return "new"
-    # 待撥款
-    if sec == "待撥款":
+    # 待撥款：跟 LINE 日報一致、用 compute_customer_display 算出的 section 判定
+    # （不能只看 raw report_section："A群核准某家"可能只寫進 route_plan.history、沒改 report_section，
+    #   LINE 會算出「待撥款」但網頁 sec!="待撥款" → 客戶在網頁待撥款區漏掉。江婉婷 case 2026-07）
+    try:
+        _computed_sec = compute_customer_display(row)["section"]
+    except Exception:
+        _computed_sec = sec
+    if _computed_sec == "待撥款":
         disbursed = row["disbursement_date"] if row["disbursement_date"] else ""
         if disbursed:
             return "paid_verified"
@@ -15676,15 +15682,14 @@ def report_web(request: Request):
     groups = cur.fetchall()
 
     # 統計
-    total_new = 0; total_supp = 0; total_active = 0; total_unverified = 0; total_closed = 0
+    total_new = 0; total_supp = 0; total_active = 0; total_unverified = 0; total_verified = 0; total_closed = 0
     month_start = now_tw().strftime("%Y-%m-01")
     today_date = now_tw().strftime("%Y-%m-%d")
     cur.execute("SELECT COUNT(*) as c FROM customers WHERE status IN ('CLOSED','PENALTY','ABANDONED','REJECTED') AND updated_at>=?", (month_start,))
     total_closed = cur.fetchone()["c"]
     cur.execute("SELECT COUNT(*) as c FROM customers WHERE date(created_at)=?", (today_date,))
     today_new = cur.fetchone()["c"]
-    cur.execute("SELECT COUNT(*) as c FROM customers WHERE status='ACTIVE' AND report_section='待撥款'")
-    total_pending_disb = cur.fetchone()["c"]
+    # 待撥款總數改用迴圈累加 cats（跟清單/LINE 一致），不用 raw report_section 全域 count（會漏「history 有核准但欄位沒改」的案子）
 
     groups_html = ""
     for i, grp in enumerate(groups):
@@ -15699,6 +15704,7 @@ def report_web(request: Request):
         total_supp += len(cats["supplement"])
         total_active += len(cats["active"])
         total_unverified += len(cats["paid_unverified"])
+        total_verified += len(cats["paid_verified"])
 
         count = len(active_rows)
         color = GROUP_COLORS[i % len(GROUP_COLORS)]
@@ -15772,7 +15778,7 @@ def report_web(request: Request):
         <div class="stat-card"><div class="stat-num" style="color:#991b1b">{total_unverified}</div><div class="stat-lbl">💰 未對保</div></div>
         <div class="stat-card"><div class="stat-num" style="color:#64748b">{total_closed}</div><div class="stat-lbl">📁 本月結案</div></div>
         <div class="stat-card"><div class="stat-num" style="color:#7c3aed">{today_new}</div><div class="stat-lbl">📅 今日進件</div></div>
-        <div class="stat-card"><div class="stat-num" style="color:#ea580c">{total_pending_disb}</div><div class="stat-lbl">⏳ 待撥款</div></div>
+        <div class="stat-card"><div class="stat-num" style="color:#ea580c">{total_unverified + total_verified}</div><div class="stat-lbl">⏳ 待撥款</div></div>
       </div>
       <div style="margin-bottom:14px;display:flex;gap:8px;justify-content:space-between;align-items:center;flex-wrap:wrap">
         <div style="display:flex;gap:6px;align-items:center;flex:1;min-width:220px;max-width:420px">
