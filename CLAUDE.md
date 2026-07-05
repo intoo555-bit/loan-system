@@ -1235,3 +1235,36 @@ JSON 內 `company_notes: {公司: 狀態}` 會匯入到 `customer.company_status
 - **送件順序設成 21 → 喬美 → 和裕**：current=21、route order=[21,喬美,和裕]
 - **同送 = 一次送多家**：current=主送、concurrent=同送的其他幾家
 - 21 婉拒 → 看 21 在哪邊（current / route / concurrent）走不同推進邏輯
+
+---
+
+## 2026/07 修正
+
+### 規則檢查表開放行政管理員（ops_admin）
+
+- `/adminb` 整頁（含方案判別、對照規則表、儲存、下載申請書/Excel、喬美簽名）從 `admin`/`adminB` 擴大到 **`ops_admin`（行政管理員）**
+- 涉及路由：`/adminb`、`/adminb/save`、`/adminb/save-signature`、`/adminb/download-qiaomei`、`_do_download_excel`、`/api/check-eligibility`、「📋 對照規則表」按鈕顯示條件
+- 角色對照：`admin`=管理員、`ops_admin`=行政管理員、`sales_admin`=業務管理員、`adminB`=行政B
+
+### 撥款名單偵測收緊 + 閘門/解析器共用標頭判斷
+
+- **問題**：補件訊息「林家源 第一 補撥款確認書+401/405」含「撥款」被誤判成撥款名單、回「⚠️ 撥款名單格式看不懂」
+- **根因**：偵測閘門 `is_disbursement_list` 比解析器 `parse_disbursement_list` 寬鬆（只要「含」撥款就算標頭 + 任何 2-6 中文字算人名）→ 門放進來、解析器吐不出 → 報錯
+- **修法**：三個標頭正則（`DISB_HEADER_RE` / `DISB_HEADER_NOCO_RE` / `DISB_HEADER_NODATE_RE`）拉到**模組層級**、新增 `match_disb_header(line, prev_date)` 共用函式、閘門與解析器都呼叫它（單一來源、永遠一致）
+- **順手修 NOCO bug**：`4/24 撥款`（無公司名）格式、名字判斷用 `if current_company:`（空字串=falsy）會把整段名字略過 → 改用 `in_section` 旗標。以前這種格式雖不報錯但名字沒抓到、撥款日沒更新（等於白打），現在會正確逐一查客戶核准公司、更新撥款日
+- **教訓**：偵測閘門要跟實際解析器用同一套判斷、否則「兩段判斷不一致」會出包
+
+### 姓名字元類別加補充平面（支援罕見字姓名）
+
+- **問題**：`115/7/3-吳銀𡠺N223413492` 貼上去無反應、不建立客戶
+- **根因**：「𡠺」= U+2183A（CJK 擴充 B 區、補充平面）。系統所有「中文姓名」字元類別只涵蓋常用區（`㐀-鿿` + 相容 `豈-﫿`）、不含補充平面 → 建案正則整條比對失敗
+- **修法**：所有姓名字元類別（建案 DATE_NAME_ID / 查 / 送 / 轉 / 結案 / 婉拒 / 核准 / 撥款 / 改名 / 撥款名單…共 83 處、跨 79 行）加補充平面範圍 `𠀀-𯨟`（U+20000–U+2FA1F、涵蓋擴充 B～F + 相容補充）
+- **改這種正則的注意事項**：見記憶 `editing_cjk_regex_mainpy` — 用 `chr()` 建構的 Python 腳本改、別用 Edit 工具（`\U` 會被當實際字元、手打 CJK 會亂）
+
+### 網頁日報待撥款判定對齊 LINE
+
+- **問題**：LINE 日報顯示「06/25-江婉婷-核准喬美 10萬(待撥款)」、但網頁日報待撥款區沒有她
+- **根因**：網頁分桶用的 `get_status_type` 判待撥款只看 raw `report_section=='待撥款'`；A 群核准某家可能只寫進 `route_plan.history`、沒同步改 `report_section`。LINE 用 `compute_customer_display` 從 history 動態算得出待撥款、網頁認不得 → 客戶被歸到「送件中」、待撥款區漏掉
+- **修法**：`get_status_type` 改用 `compute_customer_display(row)["section"]` 判待撥款（跟 LINE 單一來源）。無撥款日→未對保、有撥款日→已對保
+- **順手**：表頭「⏳待撥款」統計從「全域 SQL 數 raw 欄位」改成迴圈累加 `未對保+已對保`（跟其他統計卡同源、依群組過濾、不再漏數）
+- **通則**：網頁日報顯示/分類一律走 `compute_customer_display`、不要自己讀 raw 欄位判斷、否則會跟 LINE 不一致
