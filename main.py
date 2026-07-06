@@ -4339,6 +4339,11 @@ def init_db():
         ("adminb_credit_limit", "TEXT"),
         ("adminb_credit_late", "TEXT"),
         ("adminb_credit_pay", "TEXT"),
+        # 喬美申請書「分期付款標的」表格欄位（數字自己填、印在 PDF）
+        ("qm_inst_amount", "TEXT"),   # 辦理分期金額
+        ("qm_inst_periods", "TEXT"),  # 期數
+        ("qm_inst_payment", "TEXT"),  # 期付款
+        ("qm_inst_total", "TEXT"),    # 分期總額（期付款x期數）
         ("eval_license", "TEXT"),
         ("eval_law", "TEXT"),
         ("carrier", "TEXT"),
@@ -16175,6 +16180,7 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
 .ab-sel{width:100%;padding:7px 10px;border:1px solid #ddd5ca;border-radius:6px;font-size:13px;background:#fff;color:#1a1208;font-family:inherit;}
 .ab-g2{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
 .ab-g3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;}
+.ab-g4{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;}
 .ab-plan-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:10px;}
 .ab-plan{display:flex;align-items:center;gap:8px;padding:10px 12px;background:#fff;border:1px solid #ddd5ca;border-radius:8px;cursor:pointer;}
 .ab-plan:has(input:checked){border:2px solid #6a5e4e;background:#f5f0eb;}
@@ -16386,12 +16392,19 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
       <div class="ab-block" data-plans="喬美" style="background:#ede9fe;">
         <div style="font-size:12px;font-weight:700;color:#5b21b6;margin-bottom:10px;">喬美（PDF電子簽名）</div>
         <div class="ab-g2" style="margin-bottom:10px;">
-          <div><div class="ab-lbl">手機型號</div><input name="qm_model" class="ab-inp" placeholder="iPhone 16 Pro Max" value="{h(customer.get('product_model','') or '')}"></div>
+          <div><div class="ab-lbl">商品名稱/型號/引擎號</div><input name="qm_model" class="ab-inp" placeholder="iPhone 16 Pro Max" value="{h(customer.get('product_model','') or '')}"></div>
           <div><div class="ab-lbl">IMEI</div><input name="qm_imei" class="ab-inp" placeholder="356194482654922" value="{h(customer.get('product_imei','') or '')}"></div>
+        </div>
+        <div style="font-size:11px;font-weight:700;color:#5b21b6;margin-bottom:6px;">分期付款標的（數字自己填、印在申請書表格）</div>
+        <div class="ab-g4" style="margin-bottom:10px;">
+          <div><div class="ab-lbl">辦理分期金額</div><input name="qm_inst_amount" class="ab-inp" inputmode="numeric" placeholder="120000" value="{h(customer.get('qm_inst_amount','') or '')}"></div>
+          <div><div class="ab-lbl">期數</div><input name="qm_inst_periods" class="ab-inp" inputmode="numeric" placeholder="30" value="{h(customer.get('qm_inst_periods','') or '')}"></div>
+          <div><div class="ab-lbl">期付款</div><input name="qm_inst_payment" class="ab-inp" inputmode="numeric" placeholder="5200" value="{h(customer.get('qm_inst_payment','') or '')}"></div>
+          <div><div class="ab-lbl">分期總額(期付款x期數)</div><input name="qm_inst_total" class="ab-inp" inputmode="numeric" placeholder="156000" value="{h(customer.get('qm_inst_total','') or '')}"></div>
         </div>
         <div style="background:#fff;border:1px dashed #5b21b6;border-radius:8px;padding:12px;margin:10px 0;">
           <div style="font-size:12px;font-weight:700;color:#5b21b6;margin-bottom:8px;">📝 電子簽名（一鍵簽名+下載 PDF）</div>
-          <div style="font-size:11px;color:#6b5b8e;margin-bottom:8px;">說明：下方畫板簽一次，即可同時用於 第1頁「申請人正楷簽名」+ 第2頁「立約定書人」</div>
+          <div style="font-size:11px;color:#6b5b8e;margin-bottom:8px;">說明：下方畫板簽一次，即填入「申請人正楷簽名」欄</div>
           <canvas id="qmSignPad" width="500" height="150" style="border:2px solid #5b21b6;background:#fff;cursor:crosshair;display:block;border-radius:6px;width:100%;max-width:500px;"></canvas>
           <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;">
             <button type="button" onclick="qmClear()" style="padding:6px 14px;background:#888;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:13px;">🗑 清除</button>
@@ -16761,6 +16774,11 @@ async def adminb_save(request: Request):
         "adminb_mj_6w18p": form.get("mj_6w18p",""),
         "product_model": form.get("qm_model",""),
         "product_imei": form.get("qm_imei",""),
+        # 喬美「分期付款標的」數字（自己填、印在 PDF）
+        "qm_inst_amount": form.get("qm_inst_amount",""),
+        "qm_inst_periods": form.get("qm_inst_periods",""),
+        "qm_inst_payment": form.get("qm_inst_payment",""),
+        "qm_inst_total": form.get("qm_inst_total",""),
         "adminb_credit_bank": form.get("qm_cbank",""),
         "adminb_credit_no": form.get("qm_cno",""),
         "adminb_credit_exp": credit_exp,
@@ -19834,7 +19852,7 @@ def _fill_qiaomei_pdf(r: dict) -> bytes:
             font_name = 'Helvetica'
 
         _base = os.path.dirname(os.path.abspath(__file__))
-        template_path = os.path.join(_base, "申請書", "喬美3-14萬.pdf")
+        template_path = os.path.join(_base, "申請書", "喬美申請書.pdf")
         if not os.path.exists(template_path):
             return b""
 
@@ -19911,12 +19929,16 @@ def _fill_qiaomei_pdf(r: dict) -> bytes:
         # === 精準座標表（從用戶填好的範本 PDF 提取）===
         # 格式：(x, top, value)
         fields_p1 = [
+            # 申請日期（今天民國年）：標籤 年=230 月=255.4 日=280.8 (top62.2)、值放各單位前
+            (211, 62, ap_y),
+            (238, 62, ap_m),
+            (263, 62, ap_d),
             # 申請人姓名
-            (105, 78, v("customer_name")),
-            # 出生日期 年/月/日 (避開範本字 年=249.4 月=265.2 日=284.2)
-            (240, 80, b_y),
-            (258, 80, b_m),
-            (275, 80, b_d),
+            (105, 80, v("customer_name")),
+            # 出生日期 年/月/日 (新範本標籤 年=234.6 月=256.2 日=279.5)
+            (216, 82, b_y),
+            (240, 82, b_m),
+            (263, 82, b_d),
             # 發證日期 年/月/日 (避開 年=115.4 月=137 日=160.3)
             (98, 129, i_y),
             (122, 129, i_m),
@@ -19956,9 +19978,9 @@ def _fill_qiaomei_pdf(r: dict) -> bytes:
             (267, 451, v("company_months")),
             # 月薪（喬美 PDF 要完整數字、5.5→55000）
             (110, 472, _qm_salary_full(v("company_salary"))),
-            # 居住時間 年/月
-            (119.8, 326, v("live_years")),
-            (174.8, 326, v("live_months")),
+            # 居住時間 年/月（新範本標籤 年=141.1 月=203.7）
+            (120, 326, v("live_years")),
+            (185, 326, v("live_months")),
             # 信用卡：發卡銀行 / 卡號 / 有效日期年/月 (同卡號行 y=323) / 額度 (下行 y=353)
             (371, 285, v("adminb_credit_bank")),
             (359, 323, v("adminb_credit_no")),
@@ -19968,9 +19990,14 @@ def _fill_qiaomei_pdf(r: dict) -> bytes:
             (548, 323, v("adminb_credit_exp").split("/")[1] if "/" in v("adminb_credit_exp") else v("adminb_credit_exp")),
             # 額度：在「萬」字 (423.9) 之前的空白
             (380, 353, v("adminb_credit_limit")),
-            # 商品名稱（手機型號）+ IMEI
-            (93, 565, qm_model),
-            (80, 588, qm_imei),
+            # === 分期付款標的表格（新範本、top~548 第一資料列）===
+            # 欄位標頭：商品名稱=104.5 / 辦理分期金額=176.7 / 期數=254 / 期付款=317.7 / 分期總額=412.2 / 推廣人員=515.5
+            (92, 548, qm_model),                    # 商品名稱/型號
+            (92, 565, qm_imei),                     # 引擎號/IMEI（同格下一行）
+            (180, 548, v("qm_inst_amount")),        # 辦理分期金額
+            (262, 548, v("qm_inst_periods")),       # 期數
+            (330, 548, v("qm_inst_payment")),       # 期付款
+            (408, 548, v("qm_inst_total")),         # 分期總額
         ]
 
         sig_app = r.get("signature_applicant", "") or ""
