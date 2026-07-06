@@ -3837,6 +3837,8 @@ def is_format_trigger(block: str) -> bool:
 _CASE_START_BLOCKLIST = (
     "貸款", "未作", "需補", "申請", "審核", "請補", "請提供",
     "案件", "資融", "繳款", "繳息",
+    # 「日期+申覆結果 :XXX」這種結果明細行不是新案件、歸上一筆（避免切出 name=申覆結果 找不到客戶）
+    "申覆", "核貸金額",
 )
 
 def looks_like_case_start(line: str) -> bool:
