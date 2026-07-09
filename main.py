@@ -18906,6 +18906,72 @@ async def customer_lookup(
             "vehicle_owner": d.get("vehicle_owner",""),
         }
     })
+
+
+@app.get("/api/customer-status")
+async def customer_status(id_no: str = "", secret: str = ""):
+    """供 business_ai 業務AI串接：只用身分證查客戶是否存在、辦到哪一關、名下資產/負債/送件。
+    唯讀，不修改任何資料。驗證沿用 vba_secret。"""
+    stored_secret = get_setting("vba_secret")
+    if stored_secret:
+        ok = verify_pw(secret, stored_secret)
+    else:
+        ok = (secret == os.getenv("VBA_SECRET", "vba_secret_2026"))
+    if not ok:
+        return JSONResponse({"ok": False, "error": "無權限"}, status_code=403)
+    idv = (id_no or "").strip().upper()
+    if not idv:
+        return JSONResponse({"ok": False, "error": "請提供身分證"})
+    conn = get_conn(); cur = conn.cursor()
+    cur.execute("SELECT * FROM customers WHERE id_no=? ORDER BY created_at DESC", (idv,))
+    rows = cur.fetchall(); conn.close()
+    if not rows:
+        return JSONResponse({"ok": True, "exists": False})
+    latest = dict(rows[0])
+    active = next((dict(r) for r in rows if r["status"] == "ACTIVE"), None)
+    ref = active or latest
+    def g(k):
+        return (ref.get(k) or "")
+    STATUS_ZH = {"ACTIVE": "進行中", "CLOSED": "已結案(撥款完成)", "PENALTY": "違約金結案",
+                 "ABANDONED": "放棄", "REJECTED": "全數婉拒", "PENDING": "待處理"}
+    return JSONResponse({
+        "ok": True,
+        "exists": True,
+        "case_count": len(rows),
+        "status": ref.get("status", ""),
+        "status_zh": STATUS_ZH.get(ref.get("status", ""), ref.get("status", "")),
+        "is_returning": (active is None),  # 查得到但無進行中案件 → 回頭客/結案客戶
+        "customer_name": g("customer_name"),
+        "fb": g("fb"),
+        "last_case_date": (ref.get("created_at") or "")[:10],
+        "disbursement_date": g("disbursement_date"),
+        "approved_amount": g("approved_amount"),
+        "current_company": g("current_company"),
+        "concurrent_companies": g("concurrent_companies"),
+        # 名下資產 / 負債 / 評估（讓業務AI帶出、不重問）
+        "fund_need": g("eval_fund_need"),
+        "alert": g("eval_alert"),                     # 警示戶
+        "alert_warning": g("eval_alert_warning"),     # 告誡戶
+        "alert_method": g("eval_alert_warning_method"),
+        "sent_3m": g("eval_sent_3m"),
+        "sent_3m_detail": g("eval_sent_3m_detail"),
+        "labor_ins": g("eval_labor_ins"),
+        "salary_transfer": g("eval_salary_transfer"),
+        "credit_card": g("eval_credit_card"),
+        "property": g("eval_property"),
+        "house_private": g("eval_house_private"),
+        "late": g("eval_late"),
+        "late_days": g("eval_late_days"),
+        "license": g("eval_license"),
+        "law": g("eval_law"),
+        "debt_list": g("debt_list"),
+        "vehicle_model": g("vehicle_model"),
+        "vehicle_year": g("vehicle_year"),
+        "unloan_vehicles": g("unloan_vehicles"),
+        "company_salary": g("company_salary"),
+        "selected_plans": g("selected_plans") or g("adminb_selected_plans"),
+        "note": g("eval_note"),
+    })
     # =========================
 # =========================
 # 新增客戶網頁（行政A）
