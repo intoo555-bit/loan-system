@@ -9116,6 +9116,58 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
         reject_co = _resolve_alias_loose(reject_company) if reject_company else current
         if reject_company and not _validate_companies_or_warn([reject_co], reply_token, name):
             return
+        # ── 同區塊內換公司（玉山→遠東 都歸「銀行」；元大→渣打 同理）──
+        # 三層結構下、個別銀行(玉山/遠東/元大…) 全部 normalize 成同一個「銀行」區塊。
+        # 若照下面一般婉拒邏輯跑、會把整個「銀行」區塊標婉拒 + current 又設回銀行、
+        # 日報 compute_customer_display reroute 找不到替代家 → section 清空 → 客戶整筆消失(bug)。
+        # 正解：這不是真婉拒、只是在同一區塊換送另一家。客戶留在「銀行」、顯示新的細名(遠東)。
+        if reject_co and normalize_section(reject_co) == normalize_section(target_co):
+            sec_name = normalize_section(target_co)
+            raw_target = target_items[0]  # 保留原始細名(遠東)給日報顯示、不 alias 成「銀行」
+            reject_disp = reject_company or reject_co
+            # route_plan：current 指到 raw_target、不加婉拒 history（該區塊仍在送）
+            data = parse_route_json(route)
+            order = data.get("order", []) or []
+            history = data.get("history", []) or []
+            if raw_target not in order:
+                order.append(raw_target)
+            data["order"] = order
+            data["current_index"] = order.index(raw_target)
+            data["history"] = history
+            new_route = json.dumps(data, ensure_ascii=False)
+            # concurrent：移除同區塊殘留(避免銀行重複顯示) + 帶入其他區塊的同送夥伴
+            concurrent_str = target["concurrent_companies"] or ""
+            concurrent_list = [c.strip() for c in concurrent_str.split(",")
+                               if c.strip() and normalize_section(c.strip()) != sec_name]
+            for c in target_cos[1:]:
+                if c not in concurrent_list and normalize_section(c) != sec_name:
+                    concurrent_list.append(c)
+            new_concurrent = ",".join(concurrent_list)
+            # report_section：待撥款保留、其他清空歸區塊
+            _existing_rsec = (target["report_section"] or "").strip()
+            _new_rsec = "待撥款" if _existing_rsec == "待撥款" else ""
+            # 用「轉送」字樣（_INTERNAL_ACTION_KEYWORDS）讓 last_update 不被當業務狀態污染日報
+            update_customer(target["case_id"], route_plan=new_route,
+                            current_company=raw_target,
+                            concurrent_companies=new_concurrent,
+                            report_section=_new_rsec,
+                            text=f"{name} {sec_name}區塊內轉送：{reject_disp}→{raw_target}",
+                            from_group_id=group_id)
+            # 清 company_status[該區塊] 舊狀態（避免殘留婉拒/舊補件文字觸發 reroute）
+            try:
+                cs = json.loads(target["company_status"] or "{}")
+                keys_to_del = [k for k in cs.keys() if normalize_section(k) == sec_name]
+                if keys_to_del:
+                    for k in keys_to_del:
+                        del cs[k]
+                    with db_conn(commit=True) as _cn:
+                        _cn.cursor().execute("UPDATE customers SET company_status=? WHERE case_id=?",
+                                             (json.dumps(cs, ensure_ascii=False), target["case_id"]))
+            except Exception:
+                pass
+            push_text(target["source_group_id"], f"{name} {reject_disp} 婉拒\n➡️ 仍在「{sec_name}」、改送：{raw_target}")
+            reply_text(reply_token, f"✅ {name} {reject_disp} 婉拒\n➡️ 仍在「{sec_name}」、改送：{raw_target}")
+            return
         # 從 concurrent_companies 移除婉拒的公司、重建新同送（target_co 的同伴）
         concurrent_str = target["concurrent_companies"] or ""
         concurrent_list = [c.strip() for c in concurrent_str.split(",") if c.strip()]
