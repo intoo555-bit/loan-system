@@ -15186,6 +15186,7 @@ def make_topnav(role: str, active: str) -> str:
         links.append(("➕ 新增客戶","/new-customer","new"))
     if role in ("admin","adminB","ops_admin"):
         links.append(("📋 行政B作業","/adminb","adminb"))
+    if role in ("admin","adminB","ops_admin","sales_admin") or role.startswith("group_"):
         links.append(("💬 指令台","/console","console"))
     admin_items = []
     if role == "admin":
@@ -18904,6 +18905,34 @@ async def emergency_unlock_all(request: Request):
 # =========================
 # 網頁指令台（LINE 官方帳號當機時、改用網頁下跟 LINE 一樣的指令）
 # =========================
+_CONSOLE_ADMIN_ROLES = ("admin", "adminB", "ops_admin")
+
+def _console_can_access(role: str) -> bool:
+    """誰能用網頁指令台：行政三種 + 業務管理員 + 各業務群登入帳號。"""
+    return role in _CONSOLE_ADMIN_ROLES or role == "sales_admin" or role.startswith("group_")
+
+# 指令台一律排除的群組（練習/測試群，避免誤操作到練習/測試資料）。
+# 關鍵字為系統常數、非使用者輸入，f-string 帶入 SQL 無注入風險。
+_CONSOLE_GROUP_EXCLUDE = "group_name NOT LIKE '%練習%' AND group_name NOT LIKE '%測試%'"
+
+def _console_allowed_groups(role: str):
+    """依角色回傳可操作的群組 rows（一律排除練習/測試群）。
+    - 行政(admin/adminB/ops_admin)：全部啟用中的群
+    - 業務管理員(sales_admin)：只有業務群（碰不到 A 群/行政群）
+    - 各業務群帳號(group_xxx)：只有自己那一群"""
+    conn = get_conn(); cur = conn.cursor()
+    if role in _CONSOLE_ADMIN_ROLES:
+        cur.execute(f"SELECT group_id, group_name, group_type FROM groups WHERE is_active=1 AND {_CONSOLE_GROUP_EXCLUDE} ORDER BY group_type, group_name")
+    elif role == "sales_admin":
+        cur.execute(f"SELECT group_id, group_name, group_type FROM groups WHERE is_active=1 AND group_type='SALES_GROUP' AND {_CONSOLE_GROUP_EXCLUDE} ORDER BY group_name")
+    elif role.startswith("group_"):
+        cur.execute(f"SELECT group_id, group_name, group_type FROM groups WHERE group_id=? AND {_CONSOLE_GROUP_EXCLUDE}", (role[6:],))
+    else:
+        cur.execute("SELECT group_id, group_name, group_type FROM groups WHERE 1=0")
+    rows = cur.fetchall(); conn.close()
+    return rows
+
+
 def _run_console_command(group_id: str, text: str):
     """在攔截模式下跑一次指令、回傳 BOT 本來會發出的所有訊息（list of dict）。
     跟 LINE 走同一套 _process_event_inner，改的是同一個資料庫。"""
@@ -18929,7 +18958,7 @@ def _run_console_command(group_id: str, text: str):
 @app.post("/console/run")
 async def console_run(request: Request):
     role = check_auth(request)
-    if role not in ("admin", "adminB", "ops_admin"):
+    if not _console_can_access(role):
         return JSONResponse({"ok": False, "message": "無權限"}, status_code=403)
     try:
         data = await request.json()
@@ -18937,10 +18966,17 @@ async def console_run(request: Request):
         data = {}
     group_id = (data.get("group_id") or "").strip()
     text = (data.get("text") or "").strip()
+    # 業務群帳號：強制鎖自己那一群、不信任前端送來的 group_id（改網址/改前端都繞不過）
+    if role.startswith("group_"):
+        group_id = role[6:]
     if not group_id:
         return JSONResponse({"ok": False, "message": "請先選群組"})
     if not text:
         return JSONResponse({"ok": False, "message": "請輸入指令"})
+    # 權限範圍：業務管理員只能操作業務群、業務帳號只能操作自己群
+    allowed_ids = {g["group_id"] for g in _console_allowed_groups(role)}
+    if group_id not in allowed_ids:
+        return JSONResponse({"ok": False, "message": "無權操作這個群組"})
     from starlette.concurrency import run_in_threadpool
     out = await run_in_threadpool(_run_console_command, group_id, text)
     parts = []
@@ -18960,18 +18996,23 @@ async def console_run(request: Request):
 def console_page(request: Request):
     from fastapi.responses import RedirectResponse
     role = check_auth(request)
-    if role not in ("admin", "adminB", "ops_admin"):
+    if not _console_can_access(role):
         return RedirectResponse("/login")
-    conn = get_conn(); cur = conn.cursor()
-    cur.execute("SELECT group_id, group_name, group_type FROM groups WHERE is_active=1 ORDER BY group_type, group_name")
-    grows = cur.fetchall(); conn.close()
+    grows = _console_allowed_groups(role)
     type_label = {"A_GROUP": "行政A群", "SALES_GROUP": "業務群", "ADMIN_GROUP": "行政群"}
-    opts = ['<option value="">— 請先選群組 —</option>']
+    _single_group = role.startswith("group_")
+    opts = [] if _single_group else ['<option value="">— 請先選群組 —</option>']
     for g in grows:
         gt = type_label.get(g["group_type"], g["group_type"] or "")
         gname = g["group_name"] or g["group_id"]
         opts.append(f'<option value="{h(g["group_id"])}">[{h(gt)}] {h(gname)}</option>')
     options_html = "".join(opts)
+    if role in _CONSOLE_ADMIN_ROLES:
+        scope_note = "你可以操作所有群組。"
+    elif role == "sales_admin":
+        scope_note = "你可以操作所有業務群（碰不到 A 群／行政群）。"
+    else:
+        scope_note = "你只能操作自己這一群。"
     examples = [
         ("查日報", "@AI 日報"),
         ("今日統計", "@AI 統計"),
@@ -18992,7 +19033,8 @@ def console_page(request: Request):
     <b>LINE 官方帳號當機時、在這裡下跟群組裡一模一樣的指令。</b><br>
     背後跑的是同一套引擎、改的是同一個資料庫，所以資料完全正確。<br>
     ⚠️ 會「回貼到別的群組」的動作（例如 A 群核准回貼業務群），LINE 當機時那則發不出去、但你的資料照樣改好。<br>
-    ⚠️ 這裡下的破壞性指令（結案、婉拒、核准金額…）跟 LINE 一樣真的會改資料，請看清楚群組再執行。
+    ⚠️ 這裡下的破壞性指令（結案、婉拒、核准金額…）跟 LINE 一樣真的會改資料，請看清楚群組再執行。<br>
+    👤 <b>{scope_note}</b>
   </div>
   <label style="font-weight:600;font-size:14px">群組</label><br>
   <select id="grp" style="width:100%;max-width:520px;padding:9px;font-size:15px;margin:5px 0 16px;border:1px solid #cbd5e1;border-radius:8px">{options_html}</select>
