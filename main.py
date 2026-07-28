@@ -3884,8 +3884,41 @@ def split_multi_cases(text: str) -> List[str]:
 # =========================
 # LINE API
 # =========================
+# =========================
+# 網頁指令台：攔截 LINE 發送、改存進緩衝區（LINE 官方帳號當機時、改用網頁下指令）
+# =========================
+_console_cap = _threading.local()
+
+def _console_capturing() -> bool:
+    return getattr(_console_cap, "buf", None) is not None
+
+def _console_capture_add(text: str, kind: str = "reply", to_group: str = ""):
+    buf = getattr(_console_cap, "buf", None)
+    if buf is None:
+        return
+    buf.append({"kind": kind, "text": text or "", "to_group": to_group})
+
+def _console_fmt_buttons(items) -> str:
+    """把 Quick Reply 按鈕轉成文字（網頁沒按鈕、列出來讓操作者知道有哪些選項）"""
+    btns = []
+    for it in (items or []):
+        act = it.get("action", {}) if isinstance(it, dict) else {}
+        lbl = (act.get("label", "") or "").strip()
+        atext = (act.get("text", "") or "").strip()
+        if atext and atext != lbl:
+            btns.append(f"　• {lbl} → 要選這個就打：{atext}")
+        elif lbl:
+            btns.append(f"　• {lbl}")
+    if not btns:
+        return ""
+    return "\n\n👇 可選動作（網頁沒按鈕、把對應那句貼回指令框再執行）：\n" + "\n".join(btns)
+
+
 def push_text(to_group_id: str, text: str):
     """推送訊息。超過 4900 字會自動分段推送，每段都加「(N/M)」標記"""
+    if _console_capturing():
+        _console_capture_add(text or "", "push", to_group_id)
+        return True, ""
     if not CHANNEL_ACCESS_TOKEN:
         return False, "未設定 CHANNEL_ACCESS_TOKEN"
     text = text or ""
@@ -3933,6 +3966,9 @@ def push_text(to_group_id: str, text: str):
 
 
 def reply_text(reply_token: str, text: str):
+    if _console_capturing():
+        _console_capture_add(text or "", "reply")
+        return
     if not CHANNEL_ACCESS_TOKEN or reply_token == "TEST":
         return
     try:
@@ -3952,6 +3988,9 @@ def make_quick_reply_item(label: str, text: str):
 
 def push_text_with_buttons(to_group_id: str, text: str, items):
     """推送訊息 + Quick Reply 按鈕（用於主動通知需要復原等操作的群組）"""
+    if _console_capturing():
+        _console_capture_add((text or "") + _console_fmt_buttons(items), "push", to_group_id)
+        return True, ""
     if not CHANNEL_ACCESS_TOKEN:
         return False, "未設定 CHANNEL_ACCESS_TOKEN"
     if len(items) > 13:
@@ -3970,6 +4009,11 @@ def push_text_with_buttons(to_group_id: str, text: str, items):
 
 def reply_text_multi(reply_token: str, texts):
     """一次 reply 送多則訊息（LINE reply API 支援最多 5 則、不算 push 配額）"""
+    if _console_capturing():
+        for _t in (texts or []):
+            if _t:
+                _console_capture_add(_t, "reply")
+        return
     if not CHANNEL_ACCESS_TOKEN or reply_token == "TEST":
         return
     texts = [t for t in (texts or []) if t]
@@ -3988,6 +4032,9 @@ def reply_text_multi(reply_token: str, texts):
 
 
 def reply_quick_reply(reply_token: str, text: str, items):
+    if _console_capturing():
+        _console_capture_add((text or "") + _console_fmt_buttons(items), "reply_buttons")
+        return
     if not CHANNEL_ACCESS_TOKEN or reply_token == "TEST":
         return
     # LINE Quick Reply 上限 13 個按鈕，超過警告 + 截斷
@@ -7514,6 +7561,8 @@ _DUP_WINDOW_SEC = 5
 
 def is_duplicate_message(group_id: str, content: str) -> bool:
     """5 秒內同群組收到一模一樣訊息 → True（caller 忽略）"""
+    if _console_capturing():
+        return False  # 網頁指令台：允許連續重打同一個指令、不套 5 秒防重
     import time as _time
     now = _time.time()
     stale = [k for k, t in _recent_msgs.items() if t < now - _DUP_WINDOW_SEC]
@@ -9950,9 +9999,9 @@ def handle_route_order_block(block_text, source_group_id, reply_token) -> Option
     # 新建客戶：貸款方案先放送件，民間方案直接放對應區塊
     conn = get_conn(); cur = conn.cursor()
     if not is_private:
-        cur.execute("UPDATE customers SET report_section='送件' WHERE customer_name=? AND source_group_id=? AND status='ACTIVE' ORDER BY created_at DESC LIMIT 1", (name, source_group_id))
+        cur.execute("UPDATE customers SET report_section='送件' WHERE case_id=(SELECT case_id FROM customers WHERE customer_name=? AND source_group_id=? AND status='ACTIVE' ORDER BY created_at DESC LIMIT 1)", (name, source_group_id))
     if n_amt:
-        cur.execute("UPDATE customers SET notify_amount=?, notify_period=? WHERE customer_name=? AND source_group_id=? AND status='ACTIVE' ORDER BY created_at DESC LIMIT 1",
+        cur.execute("UPDATE customers SET notify_amount=?, notify_period=? WHERE case_id=(SELECT case_id FROM customers WHERE customer_name=? AND source_group_id=? AND status='ACTIVE' ORDER BY created_at DESC LIMIT 1)",
                     (n_amt, n_per or "", name, source_group_id))
     conn.commit(); conn.close()
     return f"🆕 已建立客戶 {name}，送件順序：{'/'.join(companies)}{dupe_suffix}"
@@ -15137,6 +15186,7 @@ def make_topnav(role: str, active: str) -> str:
         links.append(("➕ 新增客戶","/new-customer","new"))
     if role in ("admin","adminB","ops_admin"):
         links.append(("📋 行政B作業","/adminb","adminb"))
+        links.append(("💬 指令台","/console","console"))
     admin_items = []
     if role == "admin":
         admin_items = [("⚙️ 群組管理","/admin/groups","admin"),
@@ -18849,6 +18899,155 @@ async def emergency_unlock_all(request: Request):
         f"<p>請通知 Claude 拿掉此臨時 endpoint。</p>"
         f"<a href='/login'>回登入頁</a>"
         f"</div>")
+
+
+# =========================
+# 網頁指令台（LINE 官方帳號當機時、改用網頁下跟 LINE 一樣的指令）
+# =========================
+def _run_console_command(group_id: str, text: str):
+    """在攔截模式下跑一次指令、回傳 BOT 本來會發出的所有訊息（list of dict）。
+    跟 LINE 走同一套 _process_event_inner，改的是同一個資料庫。"""
+    event = {
+        "type": "message",
+        "message": {"type": "text", "text": text},
+        "source": {"type": "group", "groupId": group_id, "userId": "WEB_CONSOLE"},
+        "replyToken": "WEB_CONSOLE",
+    }
+    _console_cap.buf = []
+    try:
+        try:
+            _process_event_inner(event)
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            _console_capture_add(f"❌ 指令處理發生錯誤：{type(e).__name__}: {e}", "error")
+        return list(_console_cap.buf)
+    finally:
+        _console_cap.buf = None
+
+
+@app.post("/console/run")
+async def console_run(request: Request):
+    role = check_auth(request)
+    if role not in ("admin", "adminB", "ops_admin"):
+        return JSONResponse({"ok": False, "message": "無權限"}, status_code=403)
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    group_id = (data.get("group_id") or "").strip()
+    text = (data.get("text") or "").strip()
+    if not group_id:
+        return JSONResponse({"ok": False, "message": "請先選群組"})
+    if not text:
+        return JSONResponse({"ok": False, "message": "請輸入指令"})
+    from starlette.concurrency import run_in_threadpool
+    out = await run_in_threadpool(_run_console_command, group_id, text)
+    parts = []
+    for item in out:
+        if item.get("kind") == "push" and item.get("to_group") and item.get("to_group") != group_id:
+            gname = get_group_name(item["to_group"]) or item["to_group"]
+            parts.append(f"↗️（原本會推到「{gname}」，LINE 當機時發不出去、但資料已更新）\n{item['text']}")
+        else:
+            parts.append(item.get("text", ""))
+    reply = "\n\n━━━━━━━━━━\n\n".join(p for p in parts if p)
+    if not reply:
+        reply = "（這個指令沒有回話。可能是：靜默處理成功、或指令格式不對、或這個群組類型不吃這個指令。若有改到資料、請到日報確認。）"
+    return JSONResponse({"ok": True, "reply": reply, "count": len(out)})
+
+
+@app.get("/console", response_class=HTMLResponse)
+def console_page(request: Request):
+    from fastapi.responses import RedirectResponse
+    role = check_auth(request)
+    if role not in ("admin", "adminB", "ops_admin"):
+        return RedirectResponse("/login")
+    conn = get_conn(); cur = conn.cursor()
+    cur.execute("SELECT group_id, group_name, group_type FROM groups WHERE is_active=1 ORDER BY group_type, group_name")
+    grows = cur.fetchall(); conn.close()
+    type_label = {"A_GROUP": "行政A群", "SALES_GROUP": "業務群", "ADMIN_GROUP": "行政群"}
+    opts = ['<option value="">— 請先選群組 —</option>']
+    for g in grows:
+        gt = type_label.get(g["group_type"], g["group_type"] or "")
+        gname = g["group_name"] or g["group_id"]
+        opts.append(f'<option value="{h(g["group_id"])}">[{h(gt)}] {h(gname)}</option>')
+    options_html = "".join(opts)
+    examples = [
+        ("查日報", "@AI 日報"),
+        ("今日統計", "@AI 統計"),
+        ("待撥款名單", "@AI 待撥款"),
+        ("查客戶", "@AI 查 王小明"),
+    ]
+    chips = "".join(
+        f'<button type="button" class="ex-chip" data-cmd="{h(c)}" '
+        f'style="padding:5px 12px;margin:3px;border:1px solid #cbd5e1;background:#f1f5f9;'
+        f'border-radius:16px;font-size:13px;cursor:pointer">{h(lbl)}</button>'
+        for lbl, c in examples
+    )
+    head = f"""<!DOCTYPE html><html><head>{PAGE_CSS}<title>網頁指令台</title></head><body>
+{make_topnav(role, "console")}
+<div class="page">
+  <h2>💬 網頁指令台</h2>
+  <div style="background:#fffbeb;border:1px solid #fcd34d;border-radius:10px;padding:12px 14px;margin-bottom:16px;font-size:14px;line-height:1.7;color:#78350f">
+    <b>LINE 官方帳號當機時、在這裡下跟群組裡一模一樣的指令。</b><br>
+    背後跑的是同一套引擎、改的是同一個資料庫，所以資料完全正確。<br>
+    ⚠️ 會「回貼到別的群組」的動作（例如 A 群核准回貼業務群），LINE 當機時那則發不出去、但你的資料照樣改好。<br>
+    ⚠️ 這裡下的破壞性指令（結案、婉拒、核准金額…）跟 LINE 一樣真的會改資料，請看清楚群組再執行。
+  </div>
+  <label style="font-weight:600;font-size:14px">群組</label><br>
+  <select id="grp" style="width:100%;max-width:520px;padding:9px;font-size:15px;margin:5px 0 16px;border:1px solid #cbd5e1;border-radius:8px">{options_html}</select>
+  <br>
+  <label style="font-weight:600;font-size:14px">指令（跟你在 LINE 群裡打的一樣）</label><br>
+  <textarea id="cmd" rows="3" placeholder="例如：@AI 日報　或　王小明 亞太 核准 20萬" style="width:100%;max-width:720px;padding:10px;font-size:15px;font-family:inherit;box-sizing:border-box;margin:5px 0;border:1px solid #cbd5e1;border-radius:8px"></textarea>
+  <div style="margin:4px 0 12px">{chips}</div>
+  <div style="margin-bottom:16px">
+    <button id="runbtn" style="padding:11px 26px;font-size:16px;background:#2563eb;color:#fff;border:none;border-radius:8px;cursor:pointer">▶ 執行</button>
+    <span style="font-size:12px;color:#64748b;margin-left:8px">（Ctrl+Enter 也可執行）</span>
+    <span id="status" style="margin-left:10px;font-size:14px;font-weight:600"></span>
+  </div>
+  <h3 style="margin-bottom:6px">回覆</h3>
+  <pre id="out" style="white-space:pre-wrap;word-break:break-word;background:#0f172a;color:#e2e8f0;padding:16px;border-radius:10px;min-height:120px;font-size:14px;line-height:1.7;max-width:820px;overflow:auto">在上面選群組、打指令、按執行。</pre>
+</div>
+"""
+    script = """
+<script>
+(function(){
+  var grp=document.getElementById('grp');
+  var saved=localStorage.getItem('console_grp');
+  if(saved){ grp.value=saved; }
+  grp.addEventListener('change',function(){ localStorage.setItem('console_grp',grp.value); });
+  var out=document.getElementById('out');
+  var btn=document.getElementById('runbtn');
+  var st=document.getElementById('status');
+  var cmd=document.getElementById('cmd');
+  function run(){
+    var gid=grp.value, txt=cmd.value;
+    if(!gid){ st.style.color='#b45309'; st.textContent='⚠️ 請先選群組'; return; }
+    if(!txt.trim()){ st.style.color='#b45309'; st.textContent='⚠️ 請輸入指令'; return; }
+    st.style.color='#64748b'; st.textContent='處理中…'; btn.disabled=true; out.textContent='';
+    fetch('/console/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({group_id:gid,text:txt})})
+      .then(function(r){return r.json();})
+      .then(function(d){
+        btn.disabled=false;
+        if(!d.ok){ st.style.color='#dc2626'; st.textContent='❌ '+(d.message||'失敗'); return; }
+        st.style.color='#16a34a'; st.textContent='✅ 完成（'+d.count+' 則回覆）';
+        out.textContent=d.reply||'（無回覆）';
+      })
+      .catch(function(e){ btn.disabled=false; st.style.color='#dc2626'; st.textContent='❌ 連線錯誤：'+e; });
+  }
+  btn.addEventListener('click',run);
+  cmd.addEventListener('keydown',function(e){
+    if((e.ctrlKey||e.metaKey)&&e.key==='Enter'){ e.preventDefault(); run(); }
+  });
+  var chips=document.querySelectorAll('.ex-chip');
+  for(var i=0;i<chips.length;i++){
+    chips[i].addEventListener('click',function(){ cmd.value=this.getAttribute('data-cmd'); cmd.focus(); });
+  }
+})();
+</script>
+</body></html>
+"""
+    return HTMLResponse(head + script)
 
 
 # =========================
