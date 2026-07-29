@@ -8252,8 +8252,8 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
             first_line = ((r["message_text"] or "").splitlines() or [""])[0]
             msg = first_line[:30]
             lines.append(f"[{i}] {ts} - {msg}")
-        lines.append("\n要還原：@AI 姓名 還原 N（N = 編號）")
-        lines.append("例：@AI " + name + " 還原 1  → 回到第 1 筆之前的狀態")
+        lines.append("\n要退回：直接打「@AI " + name + " 還原」= 退回上一個狀態")
+        lines.append("再往前退：@AI " + name + " 還原 2（退 2 步）、還原 3…")
         reply_text(reply_token, "\n".join(lines))
         return
 
@@ -8261,80 +8261,76 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
         name = cmd["name"]
         idx = int(cmd.get("index", 1) or 1)
         if idx < 1:
-            reply_text(reply_token, "❌ 編號要 1 以上\n例：@AI 王小明 還原 1（回到最近一次動作之前）"); return
+            reply_text(reply_token, "❌ 步數要 1 以上\n例：@AI 王小明 還原（退回上一個狀態）"); return
         target = _resolve_target_strict(cmd, name, group_id, reply_token, "還原")
         if not target:
             return
         case_id = target["case_id"]
         conn = get_conn(); cur = conn.cursor()
         cur.execute("""SELECT id, created_at, snapshot_json, message_text FROM case_logs
-                       WHERE case_id=? ORDER BY id DESC LIMIT ?""",
-                    (case_id, idx))
-        rows = cur.fetchall(); conn.close()
-        if len(rows) < idx:
-            reply_text(reply_token,
-                       f"❌ {name} 只有 {len(rows)} 筆紀錄，無法還原到第 {idx} 筆\n"
-                       f"請先打「@AI {name} 歷史」確認編號")
-            return
-        target_log = rows[idx - 1]
-        snapshot_json = target_log["snapshot_json"]
-        if not snapshot_json:
-            reply_text(reply_token,
-                       f"❌ 第 {idx} 筆沒有備份資料\n"
-                       f"（舊紀錄沒存備份，只有近期動作才能還原）")
-            return
-        try:
-            snapshot = json.loads(snapshot_json)
-        except Exception:
-            reply_text(reply_token, "❌ 備份資料損毀，無法還原")
-            return
-        # 套回快照欄位
+                       WHERE case_id=? ORDER BY id DESC LIMIT 60""", (case_id,))
+        logs = cur.fetchall()
+        cur.execute("SELECT * FROM customers WHERE case_id=?", (case_id,))
+        cur_row = cur.fetchone(); conn.close()
+        if not logs or not cur_row:
+            reply_text(reply_token, f"ℹ️ {name} 沒有可還原的紀錄"); return
+
+        def _snap_differs(snap, after):
+            # 只比對快照有記錄的送件狀態欄位，看跟「之後的狀態」有沒有不同
+            for k, val in snap.items():
+                if k in ("text", "from_group_id"):
+                    continue
+                if str(after.get(k) or "") != str(val or ""):
+                    return True
+            return False
+
+        # 收集非還原動作的快照（新→舊），相鄰相同的去重
+        snaps = []   # [(log, snapshot)]
+        last_added = None
+        for log in logs:
+            sj = log["snapshot_json"]
+            if not sj:
+                continue
+            _mt = log["message_text"] or ""
+            if "還原（退回" in _mt or "還原到第" in _mt:   # 還原動作本身不算歷程階段（避免還原還原、且不誤判含「還原」的客戶名）
+                continue
+            try:
+                snap = json.loads(sj)
+            except Exception:
+                continue
+            if last_added is not None and not _snap_differs(snap, last_added):
+                continue   # 跟前一筆收集到的狀態相同、去重
+            snaps.append((log, snap))
+            last_added = snap
+
+        if not snaps:
+            reply_text(reply_token, f"ℹ️ {name} 沒有可退回的動作"); return
+
+        # 定位「現在」在時間軸的位置＝第一個等於現狀的快照；沒有就代表現狀是最新（還沒退過）
+        cur_state = dict(cur_row)
+        pos = None
+        for i, (lg, sp) in enumerate(snaps):
+            if not _snap_differs(sp, cur_state):   # 這個快照 == 現狀
+                pos = i
+                break
+        base = 0 if pos is None else pos + 1        # 要退回的第一個「比現狀更舊」的快照
+        target_index = base + (idx - 1)
+        if target_index >= len(snaps):
+            reply_text(reply_token, f"ℹ️ {name} 已經是最初狀態、沒有可再退回的動作了"); return
+
+        log, snapshot = snaps[target_index]
         ok_v, diffs, cust_name = update_with_verify(
             case_id, snapshot, from_group_id=group_id,
-            text_log=f"{name} 還原到第 {idx} 筆之前")
+            text_log=f"{name} 還原（退回「{(log['message_text'] or '')[:16]}」之前）")
         if not ok_v:
             reply_text(reply_token, "⚠️ 案件不存在，無法還原")
             return
-        ts = (target_log["created_at"] or "")[5:16].replace("T", " ")
+        ts = (log["created_at"] or "")[5:16].replace("T", " ")
+        what = (log["message_text"] or "")[:30]
         if diffs:
-            msg = f"✅ {cust_name} 已還原到 {ts} 之前的狀態\n" + "\n".join(diffs)
+            msg = f"✅ {cust_name} 已退回「{what}」之前的狀態（{ts}）\n" + "\n".join(diffs)
         else:
-            # 第 N 筆沒改 DB → 往後找第一筆有實際變動的 log、建議使用者還原到那筆
-            conn2 = get_conn(); cur2 = conn2.cursor()
-            cur2.execute("""SELECT id, created_at, snapshot_json, message_text FROM case_logs
-                            WHERE case_id=? ORDER BY id DESC LIMIT 20""", (case_id,))
-            all_logs = cur2.fetchall(); conn2.close()
-            # 找下一個實際有差異的 snapshot
-            suggest_idx = None
-            for check_idx, log in enumerate(all_logs[idx:], start=idx+1):
-                sj = log["snapshot_json"]
-                if not sj: continue
-                try:
-                    snap = json.loads(sj)
-                except Exception:
-                    continue
-                # 比對主要欄位是否跟現在不同
-                conn3 = get_conn(); cur3 = conn3.cursor()
-                cur3.execute("SELECT * FROM customers WHERE case_id=?", (case_id,))
-                cur_row = cur3.fetchone(); conn3.close()
-                if cur_row:
-                    cur_dict = dict(cur_row)
-                    for k, v in snap.items():
-                        if str(cur_dict.get(k) or "") != str(v or ""):
-                            suggest_idx = check_idx
-                            break
-                if suggest_idx:
-                    break
-            if suggest_idx:
-                ts2 = (all_logs[suggest_idx-1]["created_at"] or "")[5:16].replace("T", " ")
-                msg2 = (all_logs[suggest_idx-1]["message_text"] or "")[:40]
-                msg = (f"ℹ️ {cust_name}：第 {idx} 筆沒有改到 DB 欄位、還原無效果\n"
-                       f"要真正回到上個狀態、打：\n"
-                       f"  @AI {name} 還原 {suggest_idx}\n"
-                       f"（對應：{ts2} {msg2}）")
-            else:
-                msg = (f"ℹ️ {cust_name}：還原完成、但最近紀錄都沒改到 DB 欄位。\n"
-                       f"打「@AI {name} 歷史」看完整紀錄、選正確編號")
+            msg = f"✅ {cust_name} 已還原（狀態沒有變化）"
         reply_text(reply_token, msg)
         return
 
@@ -15190,47 +15186,8 @@ def get_auth_group_id(request: Request) -> str:
     return ""
 
 def make_topnav(role: str, active: str) -> str:
-    links = [("📊 日報","/report","report"),("🔍 查詢","/search","search"),
-             ("📁 歷史","/history","history"),("📖 指令速查","/guide","guide")]
-    if role in ("admin","adminB","ops_admin","sales_admin","normal") or role.startswith("group_"):
-        links.append(("📋 客戶資料庫","/pending-customers","pending"))
-        links.append(("➕ 新增客戶","/new-customer","new"))
-    if role in ("admin","adminB","ops_admin"):
-        links.append(("📋 行政B作業","/adminb","adminb"))
-    if role in ("admin","adminB","ops_admin","sales_admin") or role.startswith("group_"):
-        links.append(("💬 指令台","/console","console"))
-    admin_items = []
-    if role == "admin":
-        admin_items = [("⚙️ 群組管理","/admin/groups","admin"),
-                       ("🔑 密碼管理","/admin/passwords","passwords"),
-                       ("📝 操作紀錄","/admin/logs","logs"),
-                       ("📄 申請書範本","/admin/templates","templates"),
-                       ("📋 日報還原","/admin/restore-from-report","restore-report"),
-                       ("💾 下載備份","/admin/download-db","download"),
-                       ("☁️ Drive 備份","/admin/gdrive-backup","gdrive-backup"),
-                       ("🗑️ 清除資料","/admin/reset_data","reset")]
-    nav = "".join(f'<a class="nl {"active" if a==active else ""}" href="{u}">{n}</a>'
-                  for n,u,a in links)
-    if admin_items:
-        is_active_parent = active in {a for _,_,a in admin_items}
-        drop_items = "".join(f'<a class="nl {"active" if a==active else ""}" href="{u}">{n}</a>'
-                             for n,u,a in admin_items)
-        nav += (
-            f'<div class="nl-drop{" active-parent" if is_active_parent else ""}" id="adminDrop">'
-            f'<button class="nl-drop-btn" onclick="event.stopPropagation();document.getElementById(\'adminDrop\').classList.toggle(\'open\')">⚙️ 管理<span class="nl-drop-caret">▾</span></button>'
-            f'<div class="nl-drop-menu">{drop_items}</div>'
-            f'</div>'
-        )
-    nav += '<a class="nl" href="/logout">登出</a>'
-    mobile_links = links + admin_items
-    mobile_nav = "".join(f'<a class="nl {"active" if a==active else ""}" href="{u}" onclick="document.getElementById(\'mobileMenu\').classList.remove(\'show\')">{n}</a>'
-                  for n,u,a in mobile_links)
-    mobile_nav += '<a class="nl" href="/logout">登出</a>'
-    script = '<script>document.addEventListener("click",function(e){var d=document.getElementById("adminDrop");if(d&&!d.contains(e.target))d.classList.remove("open");});</script>'
-    return (f'<nav class="topnav"><div class="topnav-title">貸款案件管理</div>'
-            f'<div class="topnav-links">{nav}</div>'
-            f'<button class="menu-btn" onclick="document.getElementById(\'mobileMenu\').classList.toggle(\'show\')">☰</button></nav>'
-            f'<div id="mobileMenu" class="mobile-menu">{mobile_nav}</div>{script}')
+    """全站頂部導覽（已統一）——直接委派到 _page_topnav，讓所有頁面共用同一條 teal 頂欄。"""
+    return _page_topnav(role, active)
 
 def get_badge(row) -> str:
     sec = row["report_section"] or ""
@@ -15783,6 +15740,8 @@ def report_export(request: Request):
 @app.get("/report", response_class=HTMLResponse)
 def report_web(request: Request):
     from fastapi.responses import RedirectResponse
+    # 舊日報已停用、統一導向新版 /report2（保留舊網址/書籤/登入跳轉不失效）
+    return RedirectResponse("/report2")
     role = check_auth(request)
     if not role: return RedirectResponse("/login")
     auth_group = get_auth_group_id(request)
@@ -16037,123 +15996,301 @@ def _build_timeline(case_id: str) -> str:
     return "".join(lines)
 
 
+def _page_topnav(role, active):
+    """全站統一頂部導覽列（所有頁面共用；make_topnav 也委派到這裡）。
+    核心連結平鋪；只有總管理(admin)看得到的管理功能收進「⚙️ 管理」下拉。"""
+    role = role or ""
+    items = [("📊 日報", "/report2", "report2"), ("🔍 查詢", "/search", "search"),
+             ("📁 結案", "/history", "history"), ("📋 客戶資料庫", "/pending-customers", "pending"),
+             ("➕ 新增客戶", "/new-customer", "new"), ("📖 指令速查", "/guide", "guide")]
+    if role in ("admin", "adminB", "ops_admin"):
+        items.append(("📋 行政B", "/adminb", "adminb"))
+    if role in ("admin", "adminB", "ops_admin", "sales_admin") or role.startswith("group_"):
+        items.append(("💬 指令台", "/console", "console"))
+    admin_items = []
+    if role == "admin":
+        admin_items = [("⚙️ 群組管理", "/admin/groups", "admin"),
+                       ("🔑 密碼管理", "/admin/passwords", "passwords"),
+                       ("📝 操作紀錄", "/admin/logs", "logs"),
+                       ("📄 申請書範本", "/admin/templates", "templates"),
+                       ("📋 日報還原", "/admin/restore-from-report", "restore-report"),
+                       ("💾 下載備份", "/admin/download-db", "download"),
+                       ("☁️ Drive 備份", "/admin/gdrive-backup", "gdrive-backup"),
+                       ("🗑️ 清除資料", "/admin/reset_data", "reset")]
+
+    def _chip(n, u, a, block=False):
+        on = (a == active)
+        disp = "display:block;" if block else ""
+        cls = "ptn-lnk ptn-on" if on else "ptn-lnk"
+        return (f'<a class="{cls}" href="{u}" style="{disp}color:{"#fff" if on else "#c7d6e3"};'
+                f'background:{"#12a8a6" if on else "transparent"};padding:{"9px 12px" if block else "9px 13px"};'
+                f'font-size:13px;font-weight:700;border-radius:9px;white-space:nowrap;text-decoration:none">{n}</a>')
+
+    links = "".join(_chip(n, u, a) for n, u, a in items)
+    drop = ""
+    if admin_items:
+        admin_on = active in {a for _, _, a in admin_items}
+        menu = "".join(_chip(n, u, a, block=True) for n, u, a in admin_items)
+        drop = (
+            '<details class="ptn-adm" style="position:relative;flex:0 0 auto">'
+            f'<summary class="ptn-sum" style="list-style:none;cursor:pointer;color:{"#fff" if admin_on else "#c7d6e3"};'
+            f'background:{"#12a8a6" if admin_on else "transparent"};padding:9px 13px;font-size:13px;'
+            'font-weight:700;border-radius:9px;white-space:nowrap">⚙️ 管理 ▾</summary>'
+            '<div style="position:absolute;top:calc(100% + 8px);right:0;background:#0d2237;'
+            'border:1px solid #1d3a54;border-radius:12px;padding:7px;min-width:162px;display:flex;'
+            'flex-direction:column;gap:3px;box-shadow:0 16px 36px rgba(0,0,0,.45);z-index:80">'
+            f'{menu}</div></details>')
+
+    brand = (
+        '<div style="display:flex;align-items:center;gap:11px;flex:0 0 auto;padding-right:14px;margin-right:8px;'
+        'border-right:1px solid rgba(255,255,255,.10)">'
+        '<div style="width:23px;height:23px;background:linear-gradient(135deg,#3fd8d4,#0b7f82);border-radius:6px;'
+        'transform:rotate(45deg);box-shadow:0 3px 11px rgba(18,168,166,.5);flex:0 0 auto"></div>'
+        '<div style="line-height:1.16">'
+        '<div style="color:#fff;font-weight:800;font-size:15px;letter-spacing:.5px">送件管理系統</div>'
+        '<div style="color:#8296ad;font-size:9px;letter-spacing:1.3px;text-transform:uppercase;margin-top:1px">Submission Management System</div>'
+        '</div></div>')
+
+    return (
+        '<style>.ptn-adm>summary::-webkit-details-marker{display:none}.ptn-adm>summary::marker{content:""}'
+        '.ptn-lnk,.ptn-sum{transition:background .14s,color .14s,box-shadow .14s}'
+        '.ptn-lnk:hover,.ptn-sum:hover{background:rgba(255,255,255,.10);color:#fff}'
+        '.ptn-on,.ptn-on:hover,.ptn-adm[open]>summary{background:#12a8a6;color:#fff;box-shadow:0 4px 14px rgba(18,168,166,.42)}</style>'
+        '<div style="position:sticky;top:0;z-index:60;background:linear-gradient(100deg,#0b1e33,#123350 62%,#12a8a6 190%);'
+        'padding:8px 18px;display:flex;gap:5px;align-items:center;border-bottom:1px solid rgba(255,255,255,.07);'
+        'box-shadow:0 3px 14px rgba(13,34,55,.25)">'
+        f'{brand}'
+        f'<div style="display:flex;gap:5px;align-items:center;overflow-x:auto;min-width:0;flex:1 1 auto">{links}</div>'
+        f'{drop}'
+        '<a class="ptn-lnk" href="/logout" style="flex:0 0 auto;color:#9fb3c4;padding:9px 13px;font-size:13px;'
+        'font-weight:700;border-radius:9px;white-space:nowrap;text-decoration:none">登出</a>'
+        '</div>')
+
+
+_SEARCH_CSS = r"""
+:root{--bg:#f5f8fb;--line:#e5ebf2;--text:#172033;--muted:#6f7b8d;--teal:#12a8a6;--teal-dark:#0b7f82;--teal-soft:#eaf9f8;--green-soft:#eaf8f0;--orange-soft:#fff4df;--red-soft:#ffeceb;--blue-soft:#eaf2ff;--purple-soft:#f1edff;--gray-soft:#f1f4f7;--shadow:0 10px 24px rgba(25,44,74,.07);--radius:14px}
+*{box-sizing:border-box}html,body{margin:0;background:var(--bg);color:var(--text)}
+body{font-family:"Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,sans-serif;font-size:13px}
+a{text-decoration:none}button,input,select{font:inherit}button{cursor:pointer}.num{font-variant-numeric:tabular-nums}
+.spage{padding:18px}.container{max-width:1280px;margin:0 auto}
+.topbar{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:12px}
+.topbar h1{margin:0;font-size:24px}.topbar p{margin:5px 0 0;color:var(--muted);font-size:12px}
+.top-actions{display:flex;gap:8px;flex-wrap:wrap}
+.sbtn{min-height:38px;border:1px solid var(--line);background:#fff;color:#405065;border-radius:9px;padding:0 13px;font-size:12px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;gap:6px}
+.sbtn.primary{background:var(--teal);color:#fff;border-color:var(--teal)}.sbtn.soft{background:var(--teal-soft);color:var(--teal-dark);border-color:#c9ecea}.sbtn.green{background:#547a60;color:#fff;border-color:#547a60}
+.search-card{background:#fff;border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);padding:14px;margin-bottom:12px}
+.search-grid{display:flex;gap:8px;align-items:end;flex-wrap:wrap}
+.field{display:flex;flex-direction:column;gap:5px}.field label{font-size:12px;font-weight:800;color:#37445a}
+.search-card input,.search-card select{height:38px;border:1px solid #ccd5e1;border-radius:9px;background:#fff;color:var(--text);padding:0 10px;outline:none;font-size:12px}
+.search-card input:focus,.search-card select:focus{border-color:#78d0ce;box-shadow:0 0 0 3px rgba(18,168,166,.10)}
+.summary-bar{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:10px;padding:10px 12px;border:1px solid #d7e6ef;background:#f8fbfd;border-radius:10px;color:#4e5d72;font-size:12px}
+.warning{display:flex;gap:8px;align-items:flex-start;padding:10px 12px;margin-bottom:10px;border-radius:10px;background:#fff7d8;border:1px solid #efd982;color:#785900;font-size:12px}
+.results{display:flex;flex-direction:column;gap:10px}
+.customer-card{background:#fff;border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);overflow:hidden}
+.customer-main{padding:14px;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:start}
+.customer-title{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px}
+.customer-title h2{margin:0;font-size:18px}
+.tag{display:inline-flex;align-items:center;padding:4px 8px;border-radius:7px;font-size:11px;font-weight:800;white-space:nowrap}
+.tag.green{background:var(--green-soft);color:#168454}.tag.red{background:var(--red-soft);color:#c83d42}.tag.orange{background:var(--orange-soft);color:#b36c00}.tag.blue{background:var(--blue-soft);color:#236bd7}.tag.purple{background:var(--purple-soft);color:#7053d0}.tag.gray{background:var(--gray-soft);color:#6c7685}
+.group-tag{color:#fff;border-radius:7px;padding:4px 8px;font-size:11px;font-weight:800}
+.info-grid{display:grid;grid-template-columns:repeat(4,minmax(120px,1fr));gap:8px 16px;margin-bottom:10px}
+.info-item small{display:block;color:var(--muted);font-size:11px;margin-bottom:2px}.info-item b{font-size:12px}
+.route-line{padding:9px 10px;border-radius:9px;background:#f8fafc;border:1px solid var(--line);color:#4f5e72;font-size:12px;line-height:1.5}
+.card-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;align-items:flex-start}
+.read-only-note{margin-top:8px;color:#8a95a5;font-size:11px;text-align:right}
+.history-wrap{border-top:1px solid var(--line);background:#fbfcfe}
+.history-toggle{width:100%;border:0;background:transparent;padding:11px 14px;display:flex;justify-content:space-between;align-items:center;color:#4b596d;font-size:12px;font-weight:800}
+.history-content{display:none;padding:0 14px 14px}.history-wrap.open .history-content{display:block}
+.history-list{border:1px solid var(--line);border-radius:9px;overflow:auto;max-height:220px;background:#fff}
+.history-row{display:grid;grid-template-columns:130px 90px 1fr;gap:10px;padding:8px 10px;border-bottom:1px solid #edf1f5;font-size:11px}
+.history-row:last-child{border-bottom:0}.history-time{color:#7d8898}.history-source{color:#5a687c;font-weight:700}.history-text{color:#37445a;line-height:1.5;white-space:pre-wrap;word-break:break-word}
+.empty-state{padding:56px 20px;text-align:center;color:var(--muted);background:#fff;border:1px dashed #ced7e2;border-radius:14px}
+@media(max-width:980px){.customer-main{grid-template-columns:1fr}.card-actions{justify-content:flex-start}.read-only-note{text-align:left}.info-grid{grid-template-columns:1fr 1fr}.history-row{grid-template-columns:1fr}}
+"""
+
+_SEARCH_JS = r"""
+document.querySelectorAll('.history-toggle').forEach(function(btn){ btn.addEventListener('click',function(){ btn.closest('.history-wrap').classList.toggle('open'); }); });
+document.querySelectorAll('.history-open-btn').forEach(function(btn){ btn.addEventListener('click',function(){ var w=btn.closest('.customer-card').querySelector('.history-wrap'); if(w){ w.classList.add('open'); w.scrollIntoView({behavior:'smooth',block:'nearest'}); } }); });
+"""
+
 @app.get("/search", response_class=HTMLResponse)
 def search_page(request: Request, q: str = "", grp: str = "", date_from: str = "", date_to: str = "", page: int = 1):
     from fastapi.responses import RedirectResponse
     role = check_auth(request)
-    if not role: return RedirectResponse("/login")
+    if not role:
+        return RedirectResponse("/login")
+    auth_group = get_auth_group_id(request)
+    is_admin_type = role in ("admin", "adminB", "ops_admin", "sales_admin")
 
     conn2 = get_conn(); cur2 = conn2.cursor()
     cur2.execute("SELECT group_id, group_name FROM groups WHERE group_type='SALES_GROUP' AND is_active=1 ORDER BY group_name")
     all_groups2 = cur2.fetchall(); conn2.close()
-    grp_opts2 = "<option value=''>全部群組</option>" + "".join(f'<option value="{h(g["group_id"])}" {"selected" if grp==g["group_id"] else ""}>{h(g["group_name"])}</option>' for g in all_groups2)
-    results_html = ""
+    _GC = ["#18a761", "#7957d5", "#2b75e9", "#ef8b18", "#37a95d", "#ec4f4d", "#8d5de7", "#6f7ce2", "#ba8c1d", "#0d9488", "#db2777"]
+    gcolor = {g["group_id"]: _GC[i % len(_GC)] for i, g in enumerate(all_groups2)}
+    grp_opts2 = "<option value=''>全部群組</option>" + "".join(
+        f'<option value="{h(g["group_id"])}" {"selected" if grp==g["group_id"] else ""}>{h(g["group_name"])}</option>' for g in all_groups2)
+
+    def _search_tag(row_, disp_):
+        st = row_["status"] or ""
+        if st == "REJECTED": return ("婉拒", "red")
+        if st in ("CLOSED", "ABANDONED", "PENALTY"): return ("已結案", "gray")
+        if st == "PENDING": return ("待處理", "gray")
+        if (disp_.get("section", "") or "") == "待撥款": return ("待撥款", "purple")
+        t = disp_.get("status", "") or ""
+        if "婉拒" in t: return ("婉拒", "red")
+        if "已補" in t: return ("已補件", "green")
+        if any(k in t for k in ("待補", "缺", "補件")): return ("補件", "orange")
+        if "照會" in t: return ("照會中", "purple")
+        if "核准" in t: return ("核准", "green")
+        return ("進行中", "blue")
+
+    cards_html = ""
     total_count_s = 0; total_pages_s = 1
-    if q or grp or date_from or date_to:
+    searched = bool(q or grp or date_from or date_to)
+    result_n = 0
+    if searched:
         conn = get_conn(); cur = conn.cursor()
         where_sql = " WHERE 1=1"; params2 = []
         if q: where_sql += " AND (customer_name LIKE ? OR id_no LIKE ?)"; params2 += [f"%{q}%", f"%{q}%"]
         if grp: where_sql += " AND source_group_id=?"; params2.append(grp)
         if date_from: where_sql += " AND DATE(created_at) >= ?"; params2.append(date_from)
         if date_to: where_sql += " AND DATE(created_at) <= ?"; params2.append(date_to)
-        # 先算總數
         cur.execute("SELECT COUNT(*) as c FROM customers" + where_sql, params2)
         total_count_s = cur.fetchone()["c"]
         PAGE_SIZE_S = 50
         total_pages_s = max(1, (total_count_s + PAGE_SIZE_S - 1) // PAGE_SIZE_S)
         page = max(1, min(page, total_pages_s))
         offset_s = (page - 1) * PAGE_SIZE_S
-        sql2 = "SELECT * FROM customers" + where_sql + " ORDER BY status ASC, updated_at DESC LIMIT ? OFFSET ?"
-        cur.execute(sql2, params2 + [PAGE_SIZE_S, offset_s])
+        cur.execute("SELECT * FROM customers" + where_sql + " ORDER BY status ASC, updated_at DESC LIMIT ? OFFSET ?", params2 + [PAGE_SIZE_S, offset_s])
         rows = cur.fetchall()
+        result_n = len(rows)
+        # 批次撈 case_logs
+        ids = [r["case_id"] for r in rows]
+        logmap = {}
+        if ids:
+            _qm = ",".join("?" * len(ids))
+            cur.execute(f"SELECT case_id, message_text, from_group_id, created_at FROM case_logs WHERE case_id IN ({_qm}) ORDER BY id DESC", ids)
+            for lr in cur.fetchall():
+                logmap.setdefault(lr["case_id"], [])
+                if len(logmap[lr["case_id"]]) < 20:
+                    logmap[lr["case_id"]].append(lr)
         conn.close()
-        if not rows:
-            results_html = '<div style="color:#9ca3af;padding:20px 0;text-align:center">找不到符合條件的客戶</div>'
+
         for row in rows:
-            route_data = parse_route_json(row["route_plan"] or "")
-            order, idx = route_data.get("order",[]), route_data.get("current_index",0)
-            history = route_data.get("history",[])
-            if row["status"] == "PENDING":
-                badge = '<span class="badge b-doc">待處理</span>'
-            elif row["status"] != "ACTIVE":
-                badge = '<span class="badge b-close">已結案</span>'
+            try:
+                disp = compute_customer_display(row)
+            except Exception:
+                disp = {}
+            cid = row["case_id"]
+            rd = parse_route_json(row["route_plan"] or "")
+            order, idx = rd.get("order", []) or [], rd.get("current_index", 0) or 0
+            hist = rd.get("history", []) or []
+            approved = [hh for hh in hist if hh.get("status") in ("核准", "待撥款", "撥款") and hh.get("amount")]
+            st_label, st_color = _search_tag(row, disp)
+            gname = get_group_name(row["source_group_id"])
+            gcol = gcolor.get(row["source_group_id"], "#64748b")
+            editable = is_admin_type or (auth_group and row["source_group_id"] == auth_group)
+            if editable:
+                perm = "可編輯"
+                perm_tag = "" if is_admin_type else '<span class="tag blue">自己群組</span>'
+                note = "管理員可編輯所有群組" if is_admin_type else "此筆屬於自己群組，可直接編輯"
+                edit_btn = f'<a class="sbtn" href="/edit-pending?case_id={h(cid)}">✏ 編輯</a>'
             else:
-                badge = get_badge(row)
-            co = row["current_company"] or row["company"] or ""
-            amt = row["approved_amount"] or ""
-            disb = row["disbursement_date"] or ""
-
-            route_html = ""
-            if order:
-                current_co = order[idx] if idx < len(order) else "（已完成）"
-                next_co = order[idx+1] if idx+1 < len(order) else ""
-                route_html += f'<div class="route-line">目前送件：<b>{h(current_co)}</b> （第{idx+1}/{len(order)}家）</div>'
-                if next_co: route_html += f'<div class="route-line">下一家：{h(next_co)}</div>'
-                if history:
-                    route_html += '<div class="route-line" style="flex-wrap:wrap;gap:4px">歷程：'
-                    def _fmt_history(hi):
-                        co = h(hi.get("company",""))
-                        st = h(hi.get("status",""))
-                        amt = hi.get("amount") or ""
-                        return f'{co}({st}{amt})' if amt else f'{co}({st})'
-                    route_html += " → ".join(_fmt_history(hi) for hi in history[-5:])
-                    route_html += '</div>'
-
-            last = (row["last_update"] or "").splitlines()
-            last_short = last[-1].strip()[:80] if last else ""
-            amount_line = f'核准金額：{amt}' if amt else ""
-            disb_line = f'撥款日期：{disb}' if disb else ""
-            if role == "admin":
-                tl = _build_timeline(row["case_id"])
-                timeline_html = '<div onclick="var el=this.nextElementSibling;el.style.display=el.style.display===\'none\'?\'block\':\'none\'" style="cursor:pointer;font-size:12px;color:#8b7355;font-weight:600">▶ 操作歷程</div><div style="display:none;margin-top:6px;max-height:200px;overflow-y:auto">' + tl + '</div>'
+                perm = "僅供查看"
+                perm_tag = '<span class="tag orange">跨群組資料</span>'
+                note = "其他群組客戶無法直接修改"
+                edit_btn = ""
+            cur_co = order[idx] if idx < len(order) else (row["current_company"] or row["company"] or "—")
+            next_co = order[idx + 1] if idx + 1 < len(order) else ""
+            is_closed = (row["status"] in ("CLOSED", "ABANDONED", "PENALTY", "REJECTED"))
+            send_label = "最後送件" if is_closed else "目前送件"
+            send_val = f"{h(cur_co)}（第 {idx+1}／{len(order)} 家）" if order else h(cur_co)
+            amt = (approved[-1].get("amount", "") if approved else "") or (row["approved_amount"] or "")
+            disb = row["disbursement_date"] or (approved[-1].get("disbursed", "") if approved else "")
+            # info 格
+            info = []
+            info.append(f'<div class="info-item"><small>身分證</small><b class="num">{h(row["id_no"]) or "—"}</b></div>')
+            info.append(f'<div class="info-item"><small>{send_label}</small><b>{send_val}</b></div>')
+            if not is_closed and next_co:
+                info.append(f'<div class="info-item"><small>下一家</small><b>{h(next_co)}</b></div>')
+            info.append(f'<div class="info-item"><small>最後更新</small><b class="num">{h((row["updated_at"] or "")[:10].replace("-","/"))}</b></div>')
+            if amt:
+                info.append(f'<div class="info-item"><small>核准金額</small><b>{h(amt)}</b></div>')
+            if disb:
+                info.append(f'<div class="info-item"><small>撥款日期</small><b class="num">{h(disb)}</b></div>')
+            info.append(f'<div class="info-item"><small>建立日期</small><b class="num">{h((row["created_at"] or "")[:10].replace("-","/"))}</b></div>')
+            info.append(f'<div class="info-item"><small>資料權限</small><b>{perm}</b></div>')
+            # 歷程摘要
+            def _fmt(hi):
+                _c = hi.get("company", ""); _s = hi.get("status", ""); _a = hi.get("amount") or ""
+                return f'{_c}{_s}{_a}' if _a else f'{_c}{_s}'
+            route_summary = " → ".join(_fmt(hi) for hi in hist) if hist else "（尚無送件歷程）"
+            # 送件流程紀錄
+            logs = logmap.get(cid, [])
+            if logs:
+                hrows = "".join(
+                    f'<div class="history-row"><div class="history-time num">{h((lg["created_at"] or "")[:16].replace("T"," "))}</div>'
+                    f'<div class="history-source">{h(get_group_name(lg["from_group_id"]) or "")}</div>'
+                    f'<div class="history-text">{h(lg["message_text"] or "")}</div></div>' for lg in logs)
             else:
-                timeline_html = ""
+                hrows = '<div class="history-row"><div class="history-text">（無紀錄）</div></div>'
 
-            results_html += f'''<div class="search-result">
-              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
-                <div style="display:flex;align-items:center;gap:8px">
-                  <div style="font-size:16px;font-weight:600">{h(row["customer_name"])}</div>
-                  {badge}
-                </div>
-                <div style="display:flex;align-items:center;gap:8px">
-                  <div style="font-size:11px;color:#9ca3af">{h(get_group_name(row["source_group_id"]))}</div>
-                  <a href="/edit-pending?case_id={h(row['case_id'])}" style="font-size:11px;color:#0369a1;text-decoration:none">✏️ 編輯</a>
-                  <a href="/customer-pdf?case_id={h(row['case_id'])}" target="_blank" style="font-size:11px;color:#fff;background:#4e7055;padding:4px 10px;border-radius:5px;text-decoration:none;font-weight:600">📄 匯出 PDF</a>
-                </div>
-              </div>
-              <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:12px;color:#6b7280;margin-bottom:10px">
-                {"<div>身分證：" + h(row["id_no"]) + "</div>" if row["id_no"] else ""}
-                {"<div>公司：" + h(co) + "</div>" if co else ""}
-                {"<div>" + h(amount_line) + "</div>" if amount_line else ""}
-                {"<div>" + h(disb_line) + "</div>" if disb_line else ""}
-                <div>建立：{h(row["created_at"][:10]) if row["created_at"] else ""}</div>
-                <div>更新：{h(row["updated_at"][:10]) if row["updated_at"] else ""}</div>
-              </div>
-              {route_html}
-              {"<div style=\'margin-top:8px;padding:8px;background:#f9fafb;border-radius:6px;font-size:12px;color:#374151\'>" + h(last_short) + "</div>" if last_short else ""}
-              <div style="margin-top:8px">
-                {timeline_html}
-              </div>
-            </div>'''
+            cards_html += f'''<article class="customer-card">
+  <div class="customer-main">
+    <div>
+      <div class="customer-title"><h2>{h(row["customer_name"])}</h2><span class="group-tag" style="background:{gcol}">{h(gname)}</span><span class="tag {st_color}">{h(st_label)}</span>{perm_tag}</div>
+      <div class="info-grid">{"".join(info)}</div>
+      <div class="route-line">歷程摘要：{h(route_summary)}</div>
+    </div>
+    <div>
+      <div class="card-actions"><button type="button" class="sbtn soft history-open-btn">查看送件歷程</button>{edit_btn}<a class="sbtn green" href="/customer-pdf?case_id={h(cid)}" target="_blank">匯出 PDF</a></div>
+      <div class="read-only-note">{h(note)}</div>
+    </div>
+  </div>
+  <div class="history-wrap">
+    <button type="button" class="history-toggle"><span>▶ 送件流程紀錄（{len(logs)} 筆）</span><span>⌄</span></button>
+    <div class="history-content"><div class="history-list">{hrows}</div></div>
+  </div>
+</article>'''
 
-    return f"""<!DOCTYPE html><html><head>{PAGE_CSS}<title>查詢客戶</title></head><body>
-    {make_topnav(role, "search")}
-    <div class="page">
-      <form method="get" action="/search">
-        <div style="background:#faf7f4;border:1px solid #ddd5ca;border-radius:10px;padding:14px 16px;margin-bottom:14px;display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;">
-          <div><div style="font-size:12px;font-weight:600;color:#5a4e40;margin-bottom:3px">姓名／身分證</div><input class="input" name="q" value="{h(q)}" placeholder="搜尋..." autofocus style="width:150px"></div>
-          <div><div style="font-size:12px;font-weight:600;color:#5a4e40;margin-bottom:3px">群組</div><select name="grp" class="input" style="width:110px">{grp_opts2}</select></div>
-          <div><div style="font-size:12px;font-weight:600;color:#5a4e40;margin-bottom:3px">日期從</div><input type="date" name="date_from" value="{h(date_from)}" class="input" style="width:140px"></div>
-          <div><div style="font-size:12px;font-weight:600;color:#5a4e40;margin-bottom:3px">日期至</div><input type="date" name="date_to" value="{h(date_to)}" class="input" style="width:140px"></div>
-          <div style="display:flex;gap:6px;align-items:flex-end">
-            <button type="submit" class="btn btn-primary">🔍 搜尋</button>
-            <a href="/search" class="btn" style="background:#e8e2da;color:#4a3e30;">清除</a>
-          </div>
-        </div>
-      </form>
-      {results_html}
-      {render_pagination(page, total_pages_s, total_count_s, "/search", {"q": q, "grp": grp, "date_from": date_from, "date_to": date_to}) if total_count_s else ""}
-    </div></body></html>"""
+    # ---- 頁面 ----
+    dup_warn = ('<div class="warning"><span>⚠</span><div><b>找到疑似相同客戶。</b>請以身分證確認是否為同一人；姓名相同但身分證不同，僅視為同名客戶。</div></div>'
+                if searched and result_n > 1 else "")
+    if searched:
+        summary_text = f'搜尋「{h(q)}」的結果，共找到 {result_n} 筆。' if q else f'共 {result_n} 筆。'
+    else:
+        summary_text = '請輸入姓名、姓氏或身分證開始查詢。'
+    if searched and result_n == 0:
+        results_block = '<div class="empty-state">找不到符合條件的客戶資料。</div>'
+    else:
+        results_block = f'<div class="results">{cards_html}</div>'
+    pager = render_pagination(page, total_pages_s, total_count_s, "/search", {"q": q, "grp": grp, "date_from": date_from, "date_to": date_to}) if total_count_s else ""
+
+    shell = f"""<div class="spage"><div class="container">
+  <div class="topbar">
+    <div><h1>跨群組客戶查詢</h1><p>查詢客戶是否已在其他官方 LINE 群組送過件，避免不同來源重複送件。</p></div>
+    <div class="top-actions"><a class="sbtn" href="/report2">返回日報</a></div>
+  </div>
+  <form class="search-card" method="get" action="/search">
+    <div class="search-grid">
+      <div class="field" style="flex:2;min-width:200px"><label>姓名／身分證</label><input name="q" value="{h(q)}" placeholder="輸入完整姓名、姓氏或身分證…" autofocus></div>
+      <div class="field"><label>群組</label><select name="grp">{grp_opts2}</select></div>
+      <div class="field"><label>日期從</label><input type="date" name="date_from" value="{h(date_from)}"></div>
+      <div class="field"><label>日期至</label><input type="date" name="date_to" value="{h(date_to)}"></div>
+      <button type="submit" class="sbtn primary">🔍 搜尋</button>
+      <a class="sbtn" href="/search">清除</a>
+    </div>
+  </form>
+  <div class="summary-bar"><span>{summary_text}</span><span class="num">{result_n} 筆</span></div>
+  {dup_warn}
+  {results_block}
+  <div style="margin-top:12px">{pager}</div>
+</div></div>"""
+
+    return ("<!DOCTYPE html><html lang='zh-Hant'><head><meta charset='utf-8'>"
+            "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+            "<title>跨群組客戶查詢</title><style>" + _SEARCH_CSS + "</style></head><body>"
+            + _page_topnav(role, "search") + shell + "<script>" + _SEARCH_JS + "</script></body></html>")
 
 
 
@@ -16968,19 +17105,22 @@ def edit_pending_get(request: Request, case_id: str = ""):
 <title>編輯 {h(v("customer_name"))}</title>
 {PAGE_CSS}
 <style>
-.page{{max-width:860px;margin:24px auto;padding:0 16px 40px;}}
-.card{{background:#faf6f2;border-radius:10px;padding:18px;margin-bottom:14px;border:1px solid #ddd5ca;}}
-.sec{{font-size:13px;font-weight:700;color:#5a4e40;margin-bottom:12px;padding-bottom:7px;border-bottom:1px solid #ddd5ca;}}
+body{{background:#f5f8fb;color:#182234;font-family:"Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,-apple-system,sans-serif;}}
+.page{{max-width:1000px;margin:24px auto;padding:0 16px 60px;}}
+.card{{background:#fff;border-radius:14px;padding:16px;margin-bottom:12px;border:1px solid #e5ebf2;box-shadow:0 10px 24px rgba(25,44,74,.06);}}
+.sec{{font-size:14px;font-weight:800;color:#0b7f82;margin-bottom:14px;padding:0 0 10px 10px;border-bottom:1px solid #e5ebf2;border-left:3px solid #14aaa7;}}
 .g2{{display:grid;grid-template-columns:1fr 1fr;gap:12px;}}
 .g3{{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;}}
-label{{display:block;font-size:12px;font-weight:600;color:#5a4e40;margin-bottom:4px;}}
-.ep{{width:100%;padding:8px 10px;border:1px solid #c8bfb5;border-radius:6px;font-size:13px;font-family:inherit;background:#fff;box-sizing:border-box;}}
-.btn-s{{background:#6a5e4e;color:#fff;border:none;padding:10px 28px;border-radius:8px;font-size:15px;font-weight:700;cursor:pointer;font-family:inherit;}}
-.btn-b{{background:#e8e2da;color:#4a3e30;border:1px solid #c8bfb5;padding:10px 20px;border-radius:8px;font-size:14px;text-decoration:none;display:inline-block;}}
+label{{display:block;font-size:11px;font-weight:800;color:#344158;margin-bottom:4px;}}
+.ep{{width:100%;padding:8px 10px;border:1px solid #ccd5df;border-radius:9px;font-size:13px;font-family:inherit;background:#fff;color:#182234;box-sizing:border-box;transition:border .15s;}}
+.ep:focus{{outline:none;border-color:#76d0cd;box-shadow:0 0 0 3px rgba(20,170,167,.10);}}
+.btn-s{{background:#14aaa7;color:#fff;border:none;padding:11px 30px;border-radius:9px;font-size:15px;font-weight:800;cursor:pointer;font-family:inherit;}}
+.btn-s:hover{{background:#0b7f82;}}
+.btn-b{{background:#fff;color:#425067;border:1px solid #e5ebf2;padding:11px 22px;border-radius:9px;font-size:14px;text-decoration:none;display:inline-block;}}
 </style></head><body>
-{make_topnav(role, "edit")}
+{_page_topnav(role, "pending")}
 <div class="page">
-<div style="font-size:20px;font-weight:700;margin-bottom:18px;">{h(v("customer_name"))} 資料編輯</div>
+<div style="font-size:22px;font-weight:800;margin-bottom:18px;color:#182234;">{h(v("customer_name"))} 資料編輯</div>
 <form method="post" action="/edit-pending">
 <input type="hidden" name="case_id" value="{h(case_id)}">
 <div class="card"><div class="sec">所屬群組</div>
@@ -17004,10 +17144,10 @@ label{{display:block;font-size:12px;font-weight:600;color:#5a4e40;margin-bottom:
   <div><label>換補發類別</label><select name="idtype" class="ep"><option value="">請選擇</option><option {"selected" if v("id_issue_type")=="初發" else ""}>初發</option><option {"selected" if v("id_issue_type")=="補發" else ""}>補發</option><option {"selected" if v("id_issue_type")=="換發" else ""}>換發</option></select></div>
 </div></div>
 <div class="card"><div class="sec">地址資料</div>
-  <div style="font-size:13px;font-weight:700;color:#4a3e30;margin-bottom:8px">戶籍地址</div>
+  <div style="font-size:13px;font-weight:800;color:#182234;margin-bottom:8px">戶籍地址</div>
   <div class="g3" style="margin-bottom:10px"><div><label>縣市</label>{csel("rcity",v("reg_city"))}</div><div><label>區/鄉鎮</label><input name="rdist" class="ep" value="{h(v("reg_district"))}"></div><div><label>詳細地址</label><input name="raddr" class="ep" value="{h(v("reg_address"))}"></div></div>
   <div style="margin-bottom:10px"><label>戶籍電話</label><input name="rphone" class="ep" value="{h(v("reg_phone"))}" style="max-width:200px"></div>
-  <label style="display:flex;align-items:center;gap:8px;font-size:14px;color:#3a3020;margin-bottom:10px;cursor:pointer;font-weight:600">
+  <label style="display:flex;align-items:center;gap:8px;font-size:14px;color:#182234;margin-bottom:10px;cursor:pointer;font-weight:700">
     <input type="checkbox" id="sameck" name="sameck" {"checked" if lsame else ""} onchange="document.getElementById('lsec').style.display=this.checked?'none':'block'">住家地址與戶籍相同</label>
   <div id="lsec" style="{"display:none" if lsame else ""};margin-bottom:10px">
     <div class="g3"><div><label>縣市</label>{csel("lcity",v("live_city"))}</div><div><label>區/鄉鎮</label><input name="ldist" class="ep" value="{h(v("live_district"))}"></div><div><label>詳細地址</label><input name="laddr" class="ep" value="{h(v("live_address"))}"></div></div>
@@ -17061,16 +17201,16 @@ label{{display:block;font-size:12px;font-weight:600;color:#5a4e40;margin-bottom:
   <div id="ep-debt-list"></div>
   <input type="hidden" name="debt_json" id="debt_json_input">
   <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
-    <button type="button" onclick="addD('車貸')" style="background:#e8e2da;color:#4a3e30;border:1px dashed #a09080;border-radius:6px;padding:8px 16px;font-size:13px;cursor:pointer;font-weight:600">+ 新增車貸</button>
-    <button type="button" onclick="addD('信貸')" style="background:#e8e2da;color:#4a3e30;border:1px dashed #a09080;border-radius:6px;padding:8px 16px;font-size:13px;cursor:pointer;font-weight:600">+ 新增信貸/其他</button>
+    <button type="button" onclick="addD('車貸')" style="background:#f8fbfc;color:#0b7f82;border:1px dashed #b6c2cf;border-radius:9px;padding:9px 16px;font-size:13px;cursor:pointer;font-weight:800">+ 新增車貸</button>
+    <button type="button" onclick="addD('信貸')" style="background:#f8fbfc;color:#0b7f82;border:1px dashed #b6c2cf;border-radius:9px;padding:9px 16px;font-size:13px;cursor:pointer;font-weight:800">+ 新增信貸/其他</button>
   </div>
 </div>
 <div class="card"><div class="sec">無貸款車輛</div>
   <div id="ep-unloan-list"></div>
   <input type="hidden" name="unloan_json" id="unloan_json_input">
   <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
-    <button type="button" onclick="addUL('機車')" style="background:#e8e2da;color:#4a3e30;border:1px dashed #a09080;border-radius:6px;padding:8px 16px;font-size:13px;cursor:pointer;font-weight:600">+ 新增無貸款機車</button>
-    <button type="button" onclick="addUL('汽車')" style="background:#e8e2da;color:#4a3e30;border:1px dashed #a09080;border-radius:6px;padding:8px 16px;font-size:13px;cursor:pointer;font-weight:600">+ 新增無貸款汽車</button>
+    <button type="button" onclick="addUL('機車')" style="background:#f8fbfc;color:#0b7f82;border:1px dashed #b6c2cf;border-radius:9px;padding:9px 16px;font-size:13px;cursor:pointer;font-weight:800">+ 新增無貸款機車</button>
+    <button type="button" onclick="addUL('汽車')" style="background:#f8fbfc;color:#0b7f82;border:1px dashed #b6c2cf;border-radius:9px;padding:9px 16px;font-size:13px;cursor:pointer;font-weight:800">+ 新增無貸款汽車</button>
   </div>
 </div>
 <div style="display:flex;gap:10px;margin-top:8px;align-items:center;flex-wrap:wrap">
@@ -17468,11 +17608,11 @@ def case_edit_get(request: Request, case_id: str = "", saved: str = ""):
     ap_rows_html = ""
     for _ap in _ap_rows:
         ap_rows_html += (
-            '<div class="ap-row" style="display:flex;gap:6px;margin-bottom:6px;align-items:center">'
-            f'<input type="text" class="ap-co fld" value="{h(_ap["company"])}" style="flex:0 0 130px" placeholder="公司">'
-            f'<input type="text" class="ap-amt fld" value="{h(_ap["amount"])}" style="flex:0 0 100px" placeholder="N萬">'
-            f'<input type="text" class="ap-disb fld" value="{h(_ap["disbursed"])}" style="flex:0 0 90px" placeholder="撥 M/D">'
-            '<button type="button" onclick="this.parentElement.remove()" style="background:#fee2e2;color:#dc2626;border:1px solid #fca5a5;padding:6px 10px;border-radius:5px;cursor:pointer;font-size:12px">刪</button>'
+            '<div class="ap-row" style="display:grid;grid-template-columns:1fr 64px 58px 32px;gap:5px;margin-bottom:6px;align-items:center">'
+            f'<input type="text" class="ap-co" value="{h(_ap["company"])}" placeholder="公司">'
+            f'<input type="text" class="ap-amt" value="{h(_ap["amount"])}" placeholder="金額">'
+            f'<input type="text" class="ap-disb" value="{h(_ap["disbursed"])}" placeholder="撥M/D">'
+            '<button type="button" onclick="this.parentElement.remove()" style="width:32px;height:36px;background:#fee2e2;color:#dc2626;border:1px solid #fca5a5;border-radius:6px;cursor:pointer;font-size:13px;padding:0">🗑</button>'
             '</div>'
         )
 
@@ -17517,18 +17657,95 @@ def case_edit_get(request: Request, case_id: str = "", saved: str = ""):
     log_rows = cur2.fetchall(); conn2.close()
     log_html = ""
     for lg in log_rows:
-        msg = (lg["message_text"] or "")[:60]
+        msg = lg["message_text"] or ""
         when = (lg["created_at"] or "")[5:16].replace("-", "/").replace("T", " ")
-        src = (lg["from_group_id"] or "")[:10]
         log_html += (
-            f'<div style="display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid #f3f4f6;font-size:12px">'
-            f'<span style="color:#6b7280;flex:0 0 100px">{h(when)}</span>'
-            f'<span style="flex:1;color:#374151">{h(msg)}</span>'
-            f'<button type="button" onclick="revertLog({lg["id"]})" style="background:#fef3c7;color:#78350f;border:1px solid #fcd34d;padding:3px 10px;border-radius:5px;cursor:pointer;font-size:11px">↶ 還原</button>'
+            f'<div style="display:flex;gap:8px;align-items:flex-start;padding:8px 0;border-bottom:1px solid #f3f4f6;font-size:12px">'
+            f'<span style="color:#6b7280;flex:0 0 74px;line-height:1.5">{h(when)}</span>'
+            f'<span style="flex:1;min-width:0;color:#374151;white-space:pre-wrap;word-break:break-word;line-height:1.55">{h(msg)}</span>'
+            f'<button type="button" onclick="revertLog({lg["id"]})" style="background:#fff8df;color:#9c6800;border:1px solid #efc66d;padding:3px 8px;border-radius:6px;cursor:pointer;font-size:11px;flex:0 0 auto;white-space:nowrap">↶ 還原</button>'
             f'</div>'
         )
     if not log_html:
         log_html = '<div style="color:#9ca3af;font-size:12px;padding:8px 0">（無歷史紀錄）</div>'
+
+    _STL = {"ACTIVE": "進行中", "CLOSED": "已結案", "PENDING": "待處理", "PENALTY": "違約金結案", "ABANDONED": "放棄", "REJECTED": "全數婉拒", "DELETED": "已刪除"}
+    cur_status_label = _STL.get(st_now, st_now or "—")
+    _conc_disp = conc_now if conc_now else "—"
+    _pend_disp = pend_now if pend_now else "—"
+    _last_disp = v("last_update") or "（無狀態文字）"
+
+    # LINE 群組原始訊息（左欄用）— 直接列 case_logs 訊息
+    line_msgs_html = ""
+    for lg in log_rows:
+        _m = lg["message_text"] or ""
+        _w = (lg["created_at"] or "")[5:16].replace("-", "/").replace("T", " ")
+        _s = get_group_name(lg["from_group_id"]) if lg["from_group_id"] else ""
+        line_msgs_html += f'<div class="lm"><div class="lm-t">{h(_w)}{" · " + h(_s) if _s else ""}</div><div class="lm-b">{h(_m)}</div></div>'
+    if not line_msgs_html:
+        line_msgs_html = '<div style="color:#9ca3af;font-size:12px">（此案目前沒有 LINE 訊息紀錄）</div>'
+
+    # 目前狀態下拉（中欄）— 從主要公司的狀態/最後狀態文字第一行帶入
+    _cs_first_lines = (company_status.get(cur_co, "") or v("last_update") or "").splitlines()
+    _cs_first = _cs_first_lines[0] if _cs_first_lines else ""
+    _cur_status_list = ["", "照會", "送件", "待照會", "補件", "待補件", "已補件", "補申覆", "待補申覆", "已補申覆", "核准", "婉拒", "待撥款", "對保中", "撥款", "追蹤", "退件"]
+    cur_status_val = ""
+    for _o in _cur_status_list[1:]:
+        if _o and _o in _cs_first:
+            cur_status_val = _o
+            break
+    cur_status_opts = "".join(
+        f'<option value="{h(o)}" {"selected" if o == cur_status_val else ""}>{h(o) or "（未設定 / 用各家狀態）"}</option>' for o in _cur_status_list)
+
+    # 同時送件 勾選框（route 各家 + 現有同送 + 常用，排除主要公司）
+    _conc_box_cos = []
+    for _c in (_order + conc_list + ["亞太", "和裕", "喬美", "21", "貸救補", "銀行", "代書", "零卡"]):
+        if _c and _c not in _conc_box_cos and _c != cur_co:
+            _conc_box_cos.append(_c)
+    conc_cb_html = "".join(
+        f'<label class="cbx"><input type="checkbox" class="conc-cb" value="{h(c)}" {"checked" if c in conc_list else ""}>{h(c)}</label>' for c in _conc_box_cos)
+
+    # 缺件 勾選框（常用 + 現有自訂）
+    _pend_box_items = list(pending_common)
+    for _p in pend_list:
+        if _p not in _pend_box_items:
+            _pend_box_items.append(_p)
+    pend_cb_html = "".join(
+        f'<label class="cbx"><input type="checkbox" class="pend-cb" value="{h(p)}" {"checked" if p in pend_list else ""}>{h(p)}</label>' for p in _pend_box_items)
+
+    # 送件順序 編號步驟條
+    stepper_html = ""
+    for _i, _co in enumerate(_order):
+        _cls = "done" if _i < _idx else ("cur" if _i == _idx else ("next" if _i == _idx + 1 else ""))
+        _cap = "目前公司" if _i == _idx else ("下一家" if _i == _idx + 1 else ("已送" if _i < _idx else "尚未送件"))
+        _arr = '<span class="arr">›</span>' if _i < len(_order) - 1 else ''
+        stepper_html += f'<div class="st2 {_cls}"><div class="box"><div class="n">{_i+1}</div>{h(_co)}</div><div class="cap">{_cap}</div>{_arr}</div>'
+    if not stepper_html:
+        stepper_html = '<div style="color:#9ca3af;font-size:13px;padding:8px 0">尚未設定送件順序</div>'
+
+    # ---- 兩欄版（mockup）用的 HTML 片段 ----
+    route_nodes_html = ""
+    for _i, _co in enumerate(_order):
+        _rc = "current" if _i == _idx else ("next" if _i == _idx + 1 else "")
+        _rcap = "目前公司" if _i == _idx else ("下一家" if _i == _idx + 1 else "尚未送件")
+        route_nodes_html += f'<div class="route-node {_rc}"><div class="route-num">{_i+1}</div><b>{h(_co)}</b><small>{_rcap}</small></div>'
+        if _i < len(_order) - 1:
+            route_nodes_html += '<div class="arrow">→</div>'
+    if not route_nodes_html:
+        route_nodes_html = '<div style="color:#9ca6b5;font-size:13px">尚未設定送件順序</div>'
+
+    cs_table_rows_html = ""
+    for _co, _txt in company_status.items():
+        cs_table_rows_html += (
+            '<tr class="cs-row"><td><input class="cs-co" value="' + h(_co) + '" placeholder="公司"></td>'
+            '<td><textarea class="cs-text" placeholder="第一行=日報狀態，後面可寫詳細">' + h(_txt) + '</textarea></td>'
+            '<td class="row-preview"><b>' + h(_co) + '</b></td>'
+            '<td><div class="status-tools"><button type="button" class="icon-btn" onclick="this.closest(\'tr\').remove()">🗑</button></div></td></tr>')
+
+    pend_tags_html = "".join(
+        f'<span class="selected-tag" data-value="{h(p)}">{h(p)} <button type="button">×</button></span>' for p in pend_list)
+    pend_quick_html = "".join(
+        f'<button type="button" class="quick-btn{" disabled" if p in pend_list else ""}" data-value="{h(p)}"{" disabled" if p in pend_list else ""}>＋{h(p)}</button>' for p in pending_common)
 
     saved_msg = '<div style="background:#dcfce7;color:#166534;padding:10px 14px;border-radius:6px;margin-bottom:14px;font-weight:600">✅ 已儲存</div>' if saved else ""
 
@@ -17549,170 +17766,253 @@ label{{display:block;font-size:12px;font-weight:700;color:#374151;margin-bottom:
 .qadd input{{padding:4px 8px;border:1px solid #d1d5db;border-radius:5px;font-size:12px;width:130px}}
 .btn-save{{background:#16a34a;color:#fff;border:none;padding:11px 32px;border-radius:8px;font-size:15px;font-weight:700;cursor:pointer}}
 .btn-cancel{{background:#fff;color:#374151;border:1px solid #d1d5db;padding:11px 24px;border-radius:8px;font-size:14px;text-decoration:none;display:inline-block;margin-left:10px}}
+.page{{max-width:1320px!important}}
+.ce-grid{{display:grid;grid-template-columns:290px minmax(0,1fr) 300px;gap:16px;align-items:start}}
+.ce-h{{font-size:14px;font-weight:800;color:#1f2937;margin-bottom:10px}}
+.ce-ro{{background:#f8fafc}}
+.ce-warn{{background:#fef3c7;color:#92400e;font-size:12px;padding:8px 10px;border-radius:6px;margin-bottom:12px;line-height:1.5}}
+.ce-kv{{display:flex;justify-content:space-between;gap:8px;font-size:13px;padding:6px 0;border-bottom:1px dashed #e5e7eb}}
+.ce-kv span{{color:#6b7280}}.ce-kv b{{color:#111827;text-align:right}}
+.ce-sub{{font-size:11px;color:#9ca3af;margin:12px 0 4px;letter-spacing:.03em}}
+.ce-msg{{background:#fff;border:1px solid #e5e7eb;border-radius:6px;padding:9px 11px;font-size:12.5px;color:#374151;white-space:pre-wrap;line-height:1.55}}
+.ce-3{{display:grid;grid-template-columns:1fr 1fr;gap:12px}}
+.ce-info{{background:#f0fdf4;border-color:#bbf7d0}}
+.ce-info .ok{{color:#15803d;font-size:13px;padding:3px 0}}
+.ce-info .no{{color:#94a3b8;font-size:13px;padding:3px 0}}
+.ce-adv summary{{font-size:13.5px;font-weight:800;color:#374151;cursor:pointer;padding:2px 0;list-style:none}}
+.ce-adv summary::-webkit-details-marker{{display:none}}
+.ce-adv summary::before{{content:"▸ ";color:#94a3b8}}
+.ce-adv[open] summary::before{{content:"▾ "}}
+.ce-sec{{margin-top:14px;padding-top:12px;border-top:1px solid #f1f5f9}}
+.ce-sec:first-of-type{{border-top:none;margin-top:10px;padding-top:0}}
+.ce-bottom{{display:flex;gap:10px;justify-content:flex-end;align-items:center;margin-top:18px;flex-wrap:wrap}}
+.ce-tag{{display:inline-block;font-size:11px;font-weight:700;padding:2px 9px;border-radius:12px;background:#fee2e2;color:#b91c1c;margin-left:8px;vertical-align:middle}}
+.cbwrap{{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px}}
+.cbx{{display:inline-flex;align-items:center;gap:6px;background:#fff;border:1px solid #d1d5db;border-radius:8px;padding:7px 11px;font-size:13px;cursor:pointer;user-select:none}}
+.cbx input{{width:15px;height:15px;cursor:pointer;margin:0}}
+.cbx:has(input:checked){{background:#eff6ff;border-color:#93c5fd;color:#1d4ed8;font-weight:600}}
+.stepper2{{display:flex;gap:0;overflow-x:auto;padding:8px 0 4px}}
+.st2{{flex:0 0 auto;min-width:82px;text-align:center;position:relative;padding:0 2px}}
+.st2 .box{{border:2px solid #e5e7eb;border-radius:10px;padding:10px 6px;background:#fff;font-size:13px;font-weight:700;color:#374151}}
+.st2 .n{{display:inline-flex;width:22px;height:22px;border-radius:50%;background:#e5e7eb;color:#6b7280;font-size:12px;align-items:center;justify-content:center;margin-bottom:6px}}
+.st2 .cap{{font-size:10px;color:#9ca3af;margin-top:5px}}
+.st2.done .box{{color:#9ca3af}}.st2.done .n{{background:#d1fae5;color:#059669}}
+.st2.cur .box{{border-color:#16a34a;background:#f0fdf4}}.st2.cur .n{{background:#16a34a;color:#fff}}.st2.cur .cap{{color:#16a34a;font-weight:700}}
+.st2.next .box{{border-color:#f59e0b;background:#fffbeb}}.st2.next .n{{background:#f59e0b;color:#fff}}.st2.next .cap{{color:#b45309;font-weight:700}}
+.st2 .arr{{position:absolute;right:-5px;top:28px;color:#cbd5e1;font-weight:400}}
+.lm{{background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:8px 10px;margin-bottom:8px}}
+.lm-t{{font-size:10.5px;color:#9ca3af;margin-bottom:3px}}
+.lm-b{{font-size:12.5px;color:#374151;white-space:pre-wrap;line-height:1.5}}
+.ce-legend{{display:flex;gap:14px;font-size:11px;color:#6b7280;margin-top:8px;flex-wrap:wrap;align-items:center}}
+.ce-legend i{{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:4px;vertical-align:middle}}
+@media(max-width:1100px){{.ce-grid{{grid-template-columns:1fr}}.ce-3{{grid-template-columns:1fr 1fr}}}}
+/* ===== 兩欄版（mockup）===== */
+.page{{max-width:1260px!important;margin:18px auto!important;padding:0 18px 110px!important}}
+.ce2 .topbar{{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:12px}}
+.ce2 .topbar h1{{margin:0;font-size:24px}}.ce2 .topbar p{{margin:5px 0 0;color:#6f7b8d;font-size:12px}}
+.meta-strip{{display:grid;grid-template-columns:1.2fr repeat(4,1fr);gap:8px;background:#fff;border:1px solid #e5ebf2;border-radius:12px;padding:8px 10px;margin-bottom:10px}}
+.meta{{padding:4px 10px;border-right:1px solid #e5ebf2}}.meta:last-child{{border-right:0}}
+.meta small{{display:block;color:#6f7b8d;font-size:11px;margin-bottom:2px}}.meta b{{font-size:13px}}.meta.nm b{{font-size:17px}}
+.notice{{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 12px;margin-bottom:10px;background:#fff7d8;border:1px solid #efd982;border-radius:10px;color:#785900;font-size:12px}}
+.layout2{{display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:12px;align-items:start}}
+.stack2{{display:flex;flex-direction:column;gap:10px}}
+.card2{{background:#fff;border:1px solid #e5ebf2;border-radius:14px;overflow:hidden}}
+.card-head2{{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:11px 13px;border-bottom:1px solid #e5ebf2;background:#fbfcfe}}
+.card-head2 h2{{margin:0;font-size:14px}}.card-body2{{padding:12px}}
+.tagr{{display:inline-flex;align-items:center;height:26px;padding:0 9px;border-radius:7px;font-size:11px;font-weight:800;background:#ffeceb;color:#c83d42}}
+.grid3{{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}}.grid2{{display:grid;grid-template-columns:1fr 1fr;gap:8px}}
+.field2{{display:flex;flex-direction:column;gap:5px}}.field2 label{{font-size:12px;font-weight:800;color:#37445a;display:block}}
+.ce2 input,.ce2 select,.ce2 textarea{{width:100%;border:1px solid #ccd5e1;border-radius:9px;background:#fff;color:#172033;font-size:12px;outline:none;font-family:inherit}}
+.ce2 input,.ce2 select{{height:38px;padding:0 10px}}.ce2 textarea{{min-height:60px;padding:9px 10px;resize:vertical}}
+.helper2{{font-size:11px;color:#6f7b8d;line-height:1.5}}
+.route-inline{{display:flex;align-items:center;gap:6px;overflow:auto;padding-bottom:4px}}
+.route-node{{min-width:88px;border:1px solid #d1dae5;border-radius:10px;padding:8px;text-align:center;background:#fff;flex:0 0 auto}}
+.route-node.current{{border:2px solid #1fa86b;background:#f3fcf7}}.route-node.next{{border:2px solid #f59e0b;background:#fffaf0}}
+.route-num{{width:21px;height:21px;border-radius:50%;display:grid;place-items:center;margin:0 auto 5px;background:#e6ebf1;color:#7c8797;font-size:11px;font-weight:900}}
+.route-node.current .route-num{{background:#1fa86b;color:#fff}}.route-node.next .route-num{{background:#f59e0b;color:#fff}}
+.route-node b{{font-size:12px}}.route-node small{{display:block;margin-top:4px;color:#6f7b8d;font-size:10px}}
+.arrow{{color:#9ca6b5;font-size:16px;flex:0 0 auto}}
+.route-actions{{display:grid;grid-template-columns:1fr auto;gap:7px;margin-top:8px}}
+.status-table{{width:100%;border-collapse:collapse;font-size:12px}}
+.status-table th{{background:#f8fafc;color:#6e798a;text-align:left;padding:8px;border-bottom:1px solid #e5ebf2;font-size:12px}}
+.status-table td{{padding:8px;border-bottom:1px solid #edf1f5;vertical-align:top}}.status-table tr:last-child td{{border-bottom:0}}
+.status-table textarea{{min-height:48px}}
+.row-preview{{font-size:11px;color:#526174;line-height:1.5}}.row-preview b{{color:#0b7f82;font-size:12px}}
+.status-tools{{display:flex;gap:4px}}.icon-btn{{width:30px;height:30px;border:0;background:transparent;color:#6d7b8e;padding:0;display:grid;place-items:center;cursor:pointer}}
+.missing-selected{{min-height:40px;border:1px solid #ccd5e1;border-radius:9px;background:#fff;padding:6px 8px;display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:7px}}
+.selected-tag{{height:28px;border-radius:999px;background:#e8f0ff;color:#2f67c9;padding:0 10px;display:inline-flex;align-items:center;gap:7px;font-size:12px;font-weight:700}}
+.selected-tag button{{border:0;background:transparent;color:#5077b9;padding:0;font-size:14px;line-height:1;cursor:pointer}}
+.quick-list{{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:7px}}
+.quick-btn{{height:32px;min-width:64px;border:1px solid #cbd4df;background:#fff;color:#1f2937;border-radius:999px;padding:0 10px;display:inline-flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;white-space:nowrap;cursor:pointer}}
+.quick-btn.disabled{{background:#f2f4f7;color:#9ba4b1;cursor:not-allowed;border-color:#e2e6eb}}
+.custom-row{{display:flex;align-items:center;gap:6px}}.custom-row input{{width:160px;height:32px;border-radius:8px}}
+.add-small{{height:32px;min-width:46px;border:1px solid #cbd4df;background:#fff;border-radius:999px;padding:0 10px;font-size:12px;font-weight:700;cursor:pointer}}
+.preview2{{background:#fffbea;border:1px solid #efd66e;border-radius:11px;padding:10px 11px;margin-top:10px}}
+.preview2 h3{{margin:0 0 7px;font-size:12px;color:#795a00}}
+.preview-line{{background:#fff;border:1px solid #efe1a3;border-radius:8px;padding:8px 9px;font-size:12px}}
+.side2{{position:sticky;top:12px;display:flex;flex-direction:column;gap:10px}}
+.impact2{{padding:12px;background:#effbf3;border:1px solid #a7e5bb;border-radius:11px}}
+.impact2 h3{{margin:0 0 8px;font-size:13px}}.impact2 .impact-list{{display:grid;gap:5px;font-size:12px}}
+.impact2 .yes{{color:#168454}}.impact2 .no{{color:#7a8697}}
+.acc{{border-top:1px solid #e5ebf2}}.acc:first-child{{border-top:0}}
+.acc-head{{display:flex;justify-content:space-between;align-items:center;padding:10px 12px;font-size:12px;font-weight:800;cursor:pointer}}
+.acc-body{{padding:11px 12px;border-top:1px solid #e5ebf2;background:#fbfcfe}}.acc.closed .acc-body{{display:none}}
+.hrow{{display:grid;grid-template-columns:82px 1fr auto;gap:6px;align-items:center;padding:7px 0;border-bottom:1px solid #edf1f5;font-size:11px}}
+.sticky-save{{position:fixed;left:0;right:0;bottom:0;background:rgba(255,255,255,.96);border-top:1px solid #e5ebf2;backdrop-filter:blur(10px);padding:11px 18px;z-index:50}}
+.save-inner{{max-width:1260px;margin:0 auto;display:flex;justify-content:space-between;gap:14px;align-items:center}}
+.save-actions{{display:flex;gap:8px;flex-wrap:wrap}}
+.b2{{min-height:38px;border:1px solid #e5ebf2;background:#fff;color:#405065;border-radius:9px;padding:0 14px;font-size:12px;font-weight:700;display:inline-flex;align-items:center;gap:6px;cursor:pointer;text-decoration:none}}
+.b2.primary{{background:#12a8a6;color:#fff;border-color:#12a8a6}}.b2.soft{{background:#eaf9f8;color:#0b7f82;border-color:#c9ecea}}.b2.warn{{background:#fff8df;color:#9d6500;border-color:#efd38c}}
+@media(max-width:1080px){{.layout2{{grid-template-columns:1fr}}.side2{{position:static}}.meta-strip{{grid-template-columns:1fr 1fr}}}}
 </style></head><body>
-{make_topnav(role, "case-edit")}
-<div class="page">
-<h2 style="margin-bottom:6px">{h(v("customer_name"))} <span style="font-weight:400;color:#6b7280;font-size:14px">案件狀態修正</span></h2>
-<p style="font-size:12px;color:#6b7280;margin-top:0">案件編號: {h(case_id)} ｜ 建檔: {h(v("created_at")[:10])} ｜ 群組: {h(v("source_group_id"))}</p>
-<div style="background:#fef3c7;color:#78350f;padding:10px 14px;border-radius:7px;margin:10px 0 18px;font-size:13px;line-height:1.6">
-  💡 <b>什麼時候用這頁？</b>當 LINE 訊息被 BOT 解析錯時、用這頁直接改案件狀態。<br>
-  改完按底下「💾 儲存」、日報就會跟著變。要改個資（電話、地址）請按下面「改個資」鈕。
+{_page_topnav(role, "case-edit")}
+<div class="page ce2"><div class="container">
+<div class="topbar">
+  <div><h1>{h(v("customer_name"))}｜案件狀態修正</h1><p>修正後日報立即更新；資料與存檔邏輯不變。</p></div>
+  <div class="top-actions" style="display:flex;gap:8px">
+    <a href="/edit-pending?case_id={h(case_id)}" class="b2 soft">改電話／地址</a>
+    <a href="/report2" class="b2">返回日報</a>
+  </div>
 </div>
+<div class="meta-strip">
+  <div class="meta nm"><small>客戶姓名</small><b>{h(v("customer_name"))}</b></div>
+  <div class="meta"><small>身分證</small><b>{h(v("id_no")) or "—"}</b></div>
+  <div class="meta"><small>建立日期</small><b>{h(v("created_at")[:10])}</b></div>
+  <div class="meta"><small>所屬群組</small><b>{h(get_group_name(v("source_group_id")))}</b></div>
+  <div class="meta"><small>目前狀態</small><b>{h(cur_status_label)}</b></div>
+</div>
+<div class="notice">
+  <span><b>⚠ 系統目前認定：</b>主要公司 {h(v("current_company")) or "—"} ｜ 同時送件 {h(_conc_disp)} ｜ 缺件 {h(_pend_disp)}。與 LINE 不符請於下方修正。</span>
+  <button type="button" class="b2 warn" onclick="var b=document.getElementById('lineMsgBox');b.style.display=(b.style.display==='none'?'block':'none')">查看原始 LINE 訊息</button>
+</div>
+<div id="lineMsgBox" style="display:none;background:#fff;border:1px solid #e5ebf2;border-radius:12px;padding:12px;margin-bottom:10px">{line_msgs_html}</div>
 {saved_msg}
 <form method="post" action="/case-edit">
 <input type="hidden" name="case_id" value="{h(case_id)}">
+<div class="layout2">
+  <main class="stack2">
 
-<div class="card">
-  <div class="row"><label>案件狀態</label>
-    <select name="status" class="fld">{st_opts}</select>
-  </div>
-  <div class="row"><label>主要公司</label>
-    <select name="current_company" class="fld">{co_opts}</select>
-  </div>
-  <div class="row"><label>同時送件</label>
-    <div id="concBox" class="chips">{conc_chips}</div>
-    <div class="qadd">
-      <input id="concInput" type="text" placeholder="加公司、Enter 確認">
-      <button type="button" onclick="addChip('conc')">+ 加</button>
-    </div>
-    <input type="hidden" name="concurrent_companies" id="concVal" value="{h(conc_now)}">
-  </div>
+    <section class="card2"><div class="card-head2"><h2>1. 主要公司與送件順序</h2><span class="tagr">最常使用</span></div>
+      <div class="card-body2">
+        <div class="grid3">
+          <div class="field2"><label>案件狀態</label><select name="status">{st_opts}</select></div>
+          <div class="field2"><label>主要公司（日報那家）</label><select name="current_company">{co_opts}</select></div>
+          <div class="field2"><label>目前狀態</label><select name="cur_status">{cur_status_opts}</select></div>
+        </div>
+        <div style="height:1px;background:#e5ebf2;margin:12px 0"></div>
+        <div class="field2"><label>同時送件（多家用 / 或 , 分隔）</label>
+          <input id="concText" value="{h(conc_now)}" placeholder="例：亞太 / 和裕">
+          <input type="hidden" name="concurrent_companies" id="concVal" value="{h(conc_now)}">
+        </div>
+        <div style="height:1px;background:#e5ebf2;margin:12px 0"></div>
+        <div class="route-inline">{route_nodes_html}</div>
+        <div class="route-actions">
+          <input id="route_input" value="{h(rest_default)}" placeholder="和裕/貸救補/21">
+          <button type="button" class="b2 warn" onclick="saveRouteOrder()">儲存順序</button>
+        </div>
+        <div id="route_msg" style="font-size:11px;margin-top:6px"></div>
+      </div>
+    </section>
+
+    <section class="card2"><div class="card-head2"><div><h2>2. 各家狀態（日報顯示內容）</h2><div class="helper2" style="margin-top:3px">公司＋日報重點狀態；第二行以後保留詳細紀錄。</div></div><button type="button" class="b2 soft" onclick="addCsRow()">＋新增一家</button></div>
+      <div class="card-body2" style="padding:0;overflow:auto">
+        <table class="status-table"><thead><tr><th style="width:20%">公司</th><th style="width:44%">狀態文字</th><th>日報預覽</th><th style="width:56px">操作</th></tr></thead>
+        <tbody id="csBox">{cs_table_rows_html}</tbody></table>
+      </div>
+      <input type="hidden" name="company_status_json" id="csVal">
+    </section>
+
+    <section class="card2"><div class="card-head2"><h2>3. 缺件（送件前共用）</h2></div>
+      <div class="card-body2">
+        <div class="helper2" style="margin-bottom:7px">⚠ 送件前全家共用；開始送件後請用「各家狀態」記個別公司缺件。</div>
+        <div class="missing-selected" id="pendBox">{pend_tags_html}</div>
+        <div class="quick-list" id="pendQuick">{pend_quick_html}</div>
+        <div class="custom-row"><input id="pendCustom" placeholder="自訂・Enter 確認"><button type="button" class="add-small" onclick="addMissingCustom()">＋加</button></div>
+        <input type="hidden" name="pending_docs" id="pendVal" value="{h(pend_now)}">
+      </div>
+    </section>
+
+    <section class="card2"><div class="card-head2"><h2>4. 最後狀態文字</h2></div>
+      <div class="card-body2"><textarea name="last_update">{h(v("last_update"))}</textarea><div class="helper2" style="margin-top:5px">可保留完整人工備註，不一定全顯示在日報。</div></div>
+    </section>
+
+    <section class="preview2"><h3>日報預覽</h3><div class="preview-line" id="previewBox">按下面「預覽日報」查看這筆會怎麼顯示。</div></section>
+  </main>
+
+  <aside class="side2">
+    <div class="impact2"><h3>儲存後會更新</h3><div class="impact-list">
+      <div class="yes">✓ 公司日報</div><div class="yes">✓ 客戶主要公司</div><div class="yes">✓ 送件順序</div><div class="yes">✓ 各家公司狀態</div>
+      <div class="no">・不修改電話／地址</div><div class="no">・不刪除附件與歷程</div>
+    </div></div>
+
+    <section class="card2">
+      <div class="acc"><div class="acc-head" onclick="this.parentElement.classList.toggle('closed')"><span>核准明細</span><span>⌄</span></div>
+        <div class="acc-body">
+          <div class="helper2">第一列為主要核准（寫到 approved_amount／撥款日）；其他核准公司保留於歷程。</div>
+          <div id="apBox" style="margin-top:8px">{ap_rows_html}</div>
+          <button type="button" class="b2" style="margin-top:8px" onclick="addApRow()">＋加一家核准</button>
+          <input type="hidden" name="approval_history_json" id="apVal">
+          <input type="hidden" name="approved_amount" id="apAmtVal" value="{h(v("approved_amount"))}">
+          <input type="hidden" name="disbursement_date" id="apDisbVal" value="{h(v("disbursement_date"))}">
+          <div style="height:1px;background:#e5ebf2;margin:10px 0"></div>
+          <div class="field2"><label>日報區塊</label><select name="report_section">{sec_opts}</select></div>
+        </div>
+      </div>
+
+      <div class="acc"><div class="acc-head" onclick="this.parentElement.classList.toggle('closed')"><span>對保資料</span><span>⌄</span></div>
+        <div class="acc-body">
+          <div class="field2"><label>對保區域</label><input name="signing_area" value="{h(v("signing_area"))}" placeholder="例：台北"></div>
+          <div class="grid2" style="margin-top:8px">
+            <input name="signing_salesperson" value="{h(v("signing_salesperson"))}" placeholder="對保員">
+            <input name="signing_company" value="{h(v("signing_company"))}" placeholder="對保公司">
+            <input name="signing_time" value="{h(v("signing_time"))}" placeholder="對保時間">
+            <input name="signing_location" value="{h(v("signing_location"))}" placeholder="對保地點">
+          </div>
+        </div>
+      </div>
+
+      <div class="acc {'' if st_now == 'PENALTY' else 'closed'}" id="penaltyCard" style="display:{'block' if st_now == 'PENALTY' else 'none'}"><div class="acc-head" onclick="this.parentElement.classList.toggle('closed')"><span>違約金</span><span>⌄</span></div>
+        <div class="acc-body"><div class="grid2"><input name="penalty_amount" value="{h(penalty_amt)}" placeholder="金額，例：5000"><input name="penalty_date" value="{h(penalty_dt)}" placeholder="付款日期"></div></div>
+      </div>
+
+      <div class="acc closed"><div class="acc-head" onclick="this.parentElement.classList.toggle('closed')"><span>操作紀錄（最近 10 筆）</span><span>⌄</span></div>
+        <div class="acc-body">{log_html}</div>
+      </div>
+    </section>
+  </aside>
 </div>
 
-<div class="card">
-  <div class="row"><label>核准明細（每家一列、可記多家）</label>
-    <p style="font-size:11px;color:#6b7280;margin:0 0 6px">第一列當主要核准（會寫到 customer.approved_amount/disbursement_date）、其他列存到 route_plan history</p>
-    <div id="apBox">{ap_rows_html}</div>
-    <button type="button" onclick="addApRow()" style="background:#f3f4f6;border:1px solid #d1d5db;padding:6px 14px;border-radius:6px;font-size:12px;cursor:pointer;margin-top:6px">+ 加一家核准</button>
-    <input type="hidden" name="approval_history_json" id="apVal">
-    <input type="hidden" name="approved_amount" id="apAmtVal" value="{h(v("approved_amount"))}">
-    <input type="hidden" name="disbursement_date" id="apDisbVal" value="{h(v("disbursement_date"))}">
-  </div>
-  <div class="row"><label>日報區塊</label>
-    <select name="report_section" class="fld">{sec_opts}</select>
-    <p style="font-size:11px;color:#6b7280;margin:4px 0 0">空白 = 自動歸到「主要公司」對應的公司區塊。「送件」「待撥款」要明確選</p>
-  </div>
-</div>
-
-<div class="card">
-  <div class="row"><label>送件順序（已送灰、目前紅）</label>
-    <div style="font-size:13px;color:#374151;margin-bottom:8px;padding:6px 10px;background:#f9fafb;border-radius:6px">{route_display}</div>
-    <label style="margin-top:6px">接下來送哪幾家（用 / 分隔）</label>
-    <div style="display:flex;gap:6px;align-items:center">
-      <input id="route_input" type="text" class="fld" value="{h(rest_default)}" placeholder="和裕/貸救補/21" style="flex:1">
-      <button type="button" onclick="saveRouteOrder()" style="background:#6a5e4e;color:#fff;border:none;padding:9px 18px;border-radius:6px;font-size:13px;cursor:pointer;white-space:nowrap">儲存順序</button>
-    </div>
-    <div id="route_msg" style="font-size:12px;margin-top:6px"></div>
-    <p style="font-size:11px;color:#6b7280;margin:6px 0 0">這個按下立即生效（不用按下面的「儲存」）</p>
-  </div>
-</div>
-
-<div class="card">
-  <div class="row"><label>對保區域</label>
-    <input type="text" name="signing_area" class="fld" value="{h(v("signing_area"))}" placeholder="例：台北">
-  </div>
-  <div class="row"><label>對保員 / 對保公司</label>
-    <div style="display:flex;gap:8px">
-      <input type="text" name="signing_salesperson" class="fld" value="{h(v("signing_salesperson"))}" placeholder="對保員姓名" style="flex:1">
-      <input type="text" name="signing_company" class="fld" value="{h(v("signing_company"))}" placeholder="對保公司（如：新光對保）" style="flex:1">
-    </div>
-  </div>
-  <div class="row"><label>對保時間 / 地點</label>
-    <div style="display:flex;gap:8px">
-      <input type="text" name="signing_time" class="fld" value="{h(v("signing_time"))}" placeholder="例：8/20 下午 2 點" style="flex:1">
-      <input type="text" name="signing_location" class="fld" value="{h(v("signing_location"))}" placeholder="例：台北 XX 路" style="flex:1">
-    </div>
-  </div>
-</div>
-
-<div class="card" id="penaltyCard" style="display:{'block' if st_now == 'PENALTY' else 'none'}">
-  <div class="row"><label>違約金</label>
-    <div style="display:flex;gap:8px">
-      <input type="text" name="penalty_amount" class="fld" value="{h(penalty_amt)}" placeholder="例：5000" style="flex:1">
-      <input type="text" name="penalty_date" class="fld" value="{h(penalty_dt)}" placeholder="付款日期" style="flex:1">
-    </div>
-  </div>
-</div>
-
-<div class="card">
-  <div class="row"><label>各家狀態（每家公司獨立的狀態文字 — 多家同送時各自顯示）</label>
-    <div id="csBox">{cs_rows_html}</div>
-    <button type="button" onclick="addCsRow()" style="background:#f3f4f6;border:1px solid #d1d5db;padding:6px 14px;border-radius:6px;font-size:12px;cursor:pointer;margin-top:6px">+ 加一家</button>
-    <input type="hidden" name="company_status_json" id="csVal">
-    <p style="font-size:11px;color:#6b7280;margin:4px 0 0">例：第一 → 「核准 28萬-待撥款」、亞太 → 「補保人」</p>
-  </div>
-</div>
-
-<div class="card">
-  <div class="row"><label>缺件（送件前共用）</label>
-    <p style="font-size:11px;color:#6b7280;margin:0 0 6px">⚠️ 此區是「送件前」全家共用的缺件、開始送件後請改用上面「各家狀態」區塊用 +缺件 鈕記到對應公司、避免每家都標到同樣缺件</p>
-    <div id="pendBox" class="chips">{pend_chips}</div>
-    <div class="qadd">
-      {"".join(f'<button type="button" onclick="quickAddPend(\'{p}\')">+ {p}</button>' for p in pending_common)}
-      <input id="pendInput" type="text" placeholder="自訂、Enter 確認">
-      <button type="button" onclick="addChip('pend')">+ 加</button>
-    </div>
-    <input type="hidden" name="pending_docs" id="pendVal" value="{h(pend_now)}">
-  </div>
-  <div class="row"><label>最後狀態文字</label>
-    <textarea name="last_update" class="fld" rows="3">{h(v("last_update"))}</textarea>
-  </div>
-</div>
-
-<div style="margin-top:18px">
-  <button type="submit" class="btn-save">💾 儲存</button>
-  <button type="button" onclick="previewDailyLine()" style="background:#eef2ff;color:#3730a3;border:1px solid #c7d2fe;padding:11px 22px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;margin-left:10px">🔍 預覽日報那行</button>
-  <a href="/edit-pending?case_id={h(case_id)}" class="btn-cancel">改個資</a>
-  <a href="/report" class="btn-cancel">回日報</a>
-</div>
-<div id="previewBox" style="display:none;margin-top:14px;padding:14px;background:#fefce8;border:1px solid #fde68a;border-radius:8px;font-family:monospace;font-size:13px"></div>
+<div class="sticky-save"><div class="save-inner">
+  <div style="color:#7a5d00;font-size:12px;font-weight:800">修正好按右邊儲存 → 日報立即同步</div>
+  <div class="save-actions"><a href="/report2" class="b2">取消／回日報</a><button type="button" class="b2 soft" onclick="previewDailyLine()">預覽日報</button><button type="submit" class="b2 primary">💾 儲存並同步日報</button></div>
+</div></div>
 </form>
-
-<div class="card" style="margin-top:18px">
-  <div style="font-size:13px;font-weight:700;color:#374151;margin-bottom:10px">操作歷史（最近 10 筆）</div>
-  {log_html}
-  <p style="font-size:11px;color:#6b7280;margin:8px 0 0">↶ 還原 = 套用該筆操作前的快照（current/concurrent/金額/區塊等）</p>
-</div>
-</div>
+</div></div>
 <script>
+// 同時送件（文字框，/ 或 , 分隔）+ 缺件（標籤選取器）同步成隱藏欄位
 function syncVal(kind) {{
-  const box = document.getElementById(kind+'Box');
-  const arr = [...box.querySelectorAll('.chip')].map(c=>c.dataset.v);
-  document.getElementById(kind+'Val').value = arr.join(',');
+  if (kind === 'conc') {{
+    var t = document.getElementById('concText');
+    var arr = (t ? t.value : '').split(/[\\/,、，]/).map(function(s){{return s.trim();}}).filter(Boolean);
+    document.getElementById('concVal').value = arr.join(',');
+  }} else {{
+    var tags = [...document.querySelectorAll('#pendBox .selected-tag')].map(function(x){{return x.dataset.value;}});
+    document.getElementById('pendVal').value = tags.join(',');
+  }}
 }}
-function removeChip(el, kind) {{
-  el.parentElement.remove();
-  syncVal(kind);
-}}
-function addChip(kind) {{
-  const inp = document.getElementById(kind+'Input');
-  const v = inp.value.trim();
-  if (!v) return;
-  const box = document.getElementById(kind+'Box');
-  if ([...box.querySelectorAll('.chip')].some(c=>c.dataset.v===v)) {{ inp.value=''; return; }}
-  const sp = document.createElement('span');
-  sp.className = 'chip';
-  sp.dataset.v = v;
-  sp.innerHTML = v + ' <a onclick="removeChip(this,\\''+kind+'\\')">×</a>';
-  box.appendChild(sp);
-  inp.value = '';
-  syncVal(kind);
-}}
-function quickAddPend(v) {{
-  const box = document.getElementById('pendBox');
-  if ([...box.querySelectorAll('.chip')].some(c=>c.dataset.v===v)) return;
-  const sp = document.createElement('span');
-  sp.className = 'chip';
-  sp.dataset.v = v;
-  sp.innerHTML = v + ' <a onclick="removeChip(this,\\'pend\\')">×</a>';
-  box.appendChild(sp);
-  syncVal('pend');
-}}
-['conc','pend'].forEach(k=>{{
-  document.getElementById(k+'Input').addEventListener('keydown', e=>{{
-    if (e.key==='Enter') {{ e.preventDefault(); addChip(k); }}
-  }});
-}});
+var _pendBox = document.getElementById('pendBox');
+var _pendQuick = document.getElementById('pendQuick');
+var _pendCustom = document.getElementById('pendCustom');
+function _pendValues(){{ return [...(_pendBox ? _pendBox.querySelectorAll('.selected-tag') : [])].map(function(x){{return x.dataset.value;}}); }}
+function _syncQuick(){{ if(!_pendQuick) return; var vs=_pendValues(); _pendQuick.querySelectorAll('.quick-btn').forEach(function(b){{ var ex=vs.includes(b.dataset.value); b.disabled=ex; b.classList.toggle('disabled',ex); }}); }}
+function addMissing(val){{ var c=(val||'').trim(); if(!c||_pendValues().includes(c))return; var t=document.createElement('span'); t.className='selected-tag'; t.dataset.value=c; t.appendChild(document.createTextNode(c+' ')); var bx=document.createElement('button'); bx.type='button'; bx.textContent='×'; t.appendChild(bx); _pendBox.appendChild(t); _syncQuick(); syncVal('pend'); }}
+function addMissingCustom(){{ addMissing(_pendCustom.value); _pendCustom.value=''; _pendCustom.focus(); }}
+if(_pendQuick) _pendQuick.addEventListener('click', function(e){{ var b=e.target.closest('.quick-btn'); if(!b||b.disabled)return; addMissing(b.dataset.value); }});
+if(_pendBox) _pendBox.addEventListener('click', function(e){{ var x=e.target.closest('button'); if(!x)return; x.closest('.selected-tag').remove(); _syncQuick(); syncVal('pend'); }});
+if(_pendCustom) _pendCustom.addEventListener('keydown', function(e){{ if(e.key==='Enter'){{ e.preventDefault(); addMissingCustom(); }} }});
+var _concText = document.getElementById('concText');
+if(_concText) _concText.addEventListener('input', function(){{ syncVal('conc'); }});
+_syncQuick();
 function saveRouteOrder() {{
   const cid = '{h(case_id)}';
   const val = document.getElementById('route_input').value.trim();
@@ -17730,24 +18030,14 @@ function saveRouteOrder() {{
 
 // 各家狀態：加一行 / 同步成 JSON
 function addCsRow() {{
-  const box = document.getElementById('csBox');
-  const div = document.createElement('div');
-  div.className = 'cs-row';
-  div.style.cssText = 'display:flex;gap:6px;margin-bottom:8px;align-items:start;flex-wrap:wrap';
-  const quickBtns = '<div style="margin-top:4px;display:flex;gap:4px;flex-wrap:wrap">' +
-    '<button type="button" onclick="csQuick(this,\\'缺件\\')" style="background:#fef3c7;color:#92400e;border:1px solid #fde047;padding:3px 8px;border-radius:4px;cursor:pointer;font-size:11px">+缺件</button>' +
-    '<button type="button" onclick="csQuick(this,\\'補照會\\')" style="background:#fef3c7;color:#92400e;border:1px solid #fde047;padding:3px 8px;border-radius:4px;cursor:pointer;font-size:11px">+補照會</button>' +
-    '<button type="button" onclick="csQuick(this,\\'補申覆\\')" style="background:#fef3c7;color:#92400e;border:1px solid #fde047;padding:3px 8px;border-radius:4px;cursor:pointer;font-size:11px">+補申覆</button>' +
-    '<button type="button" onclick="csQuick(this,\\'補資料\\')" style="background:#fef3c7;color:#92400e;border:1px solid #fde047;padding:3px 8px;border-radius:4px;cursor:pointer;font-size:11px">+補資料</button>' +
-    '<button type="button" onclick="csQuick(this,\\'已補完\\')" style="background:#dcfce7;color:#166534;border:1px solid #86efac;padding:3px 8px;border-radius:4px;cursor:pointer;font-size:11px">已補→已補完</button>' +
-    '</div>';
-  div.innerHTML = '<input type="text" class="cs-co fld" placeholder="公司" style="flex:0 0 130px;height:38px">' +
-    '<div style="flex:1;display:flex;flex-direction:column">' +
-    '<textarea class="cs-text fld" rows="2" placeholder="第一行 = 日報狀態（如「待補保人」），後面行可寫詳細紀錄" style="resize:vertical;min-height:60px"></textarea>' +
-    quickBtns +
-    '</div>' +
-    '<button type="button" onclick="this.parentElement.remove()" style="background:#fee2e2;color:#dc2626;border:1px solid #fca5a5;padding:9px 12px;border-radius:6px;cursor:pointer;font-size:12px;height:38px">刪</button>';
-  box.appendChild(div);
+  var tb = document.getElementById('csBox');
+  var tr = document.createElement('tr');
+  tr.className = 'cs-row';
+  tr.innerHTML = '<td><input class="cs-co" placeholder="公司"></td>'
+    + '<td><textarea class="cs-text" placeholder="第一行=日報狀態，後面可寫詳細"></textarea></td>'
+    + '<td class="row-preview"><b>—</b></td>'
+    + '<td><div class="status-tools"><button type="button" class="icon-btn" onclick="this.closest(\\'tr\\').remove()">🗑</button></div></td>';
+  tb.appendChild(tr);
 }}
 
 // 核准明細：加一行
@@ -17755,11 +18045,11 @@ function addApRow() {{
   const box = document.getElementById('apBox');
   const div = document.createElement('div');
   div.className = 'ap-row';
-  div.style.cssText = 'display:flex;gap:6px;margin-bottom:6px;align-items:center';
-  div.innerHTML = '<input type="text" class="ap-co fld" placeholder="公司" style="flex:0 0 130px">' +
-    '<input type="text" class="ap-amt fld" placeholder="N萬" style="flex:0 0 100px">' +
-    '<input type="text" class="ap-disb fld" placeholder="撥 M/D" style="flex:0 0 90px">' +
-    '<button type="button" onclick="this.parentElement.remove()" style="background:#fee2e2;color:#dc2626;border:1px solid #fca5a5;padding:6px 10px;border-radius:5px;cursor:pointer;font-size:12px">刪</button>';
+  div.style.cssText = 'display:grid;grid-template-columns:1fr 64px 58px 32px;gap:5px;margin-bottom:6px;align-items:center';
+  div.innerHTML = '<input class="ap-co" placeholder="公司">' +
+    '<input class="ap-amt" placeholder="金額">' +
+    '<input class="ap-disb" placeholder="撥M/D">' +
+    '<button type="button" onclick="this.parentElement.remove()" style="width:32px;height:36px;background:#fee2e2;color:#dc2626;border:1px solid #fca5a5;border-radius:6px;cursor:pointer;font-size:13px;padding:0">🗑</button>';
   box.appendChild(div);
 }}
 
@@ -17806,6 +18096,14 @@ document.querySelector('form[action="/case-edit"]').addEventListener('submit', f
     const tx = txEl ? txEl.value.trim() : '';
     if (co) obj[co] = tx;
   }});
+  // 目前狀態 → 主要公司狀態第一行（保留原有詳細行、不清空）
+  var _cs = document.querySelector('select[name="cur_status"]');
+  var _cc = document.querySelector('select[name="current_company"]');
+  if (_cs && _cc && _cc.value && _cs.value) {{
+    var _ex = (obj[_cc.value] || '').split('\\n');
+    _ex[0] = _cs.value;
+    obj[_cc.value] = _ex.join('\\n').trim();
+  }}
   document.getElementById('csVal').value = JSON.stringify(obj);
 
   // 核准明細：列出每家、第一筆同步寫到 approved_amount/disbursement_date
@@ -17832,7 +18130,11 @@ document.querySelector('form[action="/case-edit"]').addEventListener('submit', f
 
 // 切 status 自動顯示 / 隱藏違約金卡
 document.querySelector('select[name="status"]').addEventListener('change', function(e) {{
-  document.getElementById('penaltyCard').style.display = (e.target.value === 'PENALTY') ? 'block' : 'none';
+  var pc = document.getElementById('penaltyCard');
+  if (!pc) return;
+  var on = (e.target.value === 'PENALTY');
+  pc.style.display = on ? 'block' : 'none';
+  pc.classList.toggle('closed', !on);
 }});
 
 // 預覽日報那行（用當前表單值、不寫 DB）
@@ -17845,6 +18147,11 @@ function previewDailyLine() {{
     const tx = (r.querySelector('.cs-text')||{{}}).value || '';
     if (co.trim()) csObj[co.trim()] = tx;
   }});
+  var _pcs = document.querySelector('select[name="cur_status"]');
+  var _pcc = document.querySelector('select[name="current_company"]');
+  if (_pcs && _pcc && _pcc.value && _pcs.value) {{
+    var _pex = (csObj[_pcc.value] || '').split('\\n'); _pex[0] = _pcs.value; csObj[_pcc.value] = _pex.join('\\n').trim();
+  }}
   // 收集核准明細（跟 submit handler 同邏輯、預覽要看到 + 加一家核准 的效果）
   const apArr = [];
   let firstAmt = '', firstDisb = '';
@@ -18298,6 +18605,7 @@ def pending_customers_page(request: Request, q: str = "", grp: str = "", date_fr
     from fastapi.responses import RedirectResponse
     role = check_auth(request)
     if not role: return RedirectResponse("/login")
+    is_admin_type = role in ("admin", "adminB", "ops_admin", "sales_admin")  # 查看/編輯按鈕只有管理員看得到
     PAGE_SIZE = 50
     if page < 1: page = 1
     conn = get_conn(); cur = conn.cursor()
@@ -18329,309 +18637,420 @@ def pending_customers_page(request: Request, q: str = "", grp: str = "", date_fr
         for g in all_groups
     )
 
+    _GC = ["#18a761", "#7957d5", "#2b75e9", "#ef8b18", "#37a95d", "#ec4f4d", "#8d5de7", "#6f7ce2", "#ba8c1d", "#0d9488", "#db2777"]
+    gcolor = {g["group_id"]: _GC[i % len(_GC)] for i, g in enumerate(all_groups)}
+
     rows_html = ""
     for r in rows:
         name = r.get("customer_name", "") or ""
         id_no = r.get("id_no", "") or ""
-        created = (r.get("created_at", "") or "")[:10]
+        created = (r.get("created_at", "") or "")[:10].replace("-", "/")
         gname = group_name_map.get(r.get("source_group_id", ""), "未知群組")
+        gcol = gcolor.get(r.get("source_group_id", ""), "#64748b")
         case_id = r.get("case_id", "")
         pct = calc_completeness(r)
         dot_cls = "dot-green" if pct >= 70 else ("dot-yellow" if pct >= 30 else "dot-red")
         rows_html += f'''<tr>
-            <td style="padding:11px 12px;width:36px;"><input type="checkbox" class="case-chk" value="{h(case_id)}"></td>
-            <td style="padding:11px 12px;color:#3a2e1c;font-size:13px;font-weight:600;white-space:nowrap;">{h(created)}</td>
-            <td style="padding:11px 12px;font-weight:700;font-size:14px;white-space:nowrap;color:#0f0a04;"><span class="dot {dot_cls}" title="完整度 {pct}%"></span>{h(name)}</td>
-            <td style="padding:11px 12px;color:#1a1208;font-family:monospace;font-weight:600;">{h(id_no)}</td>
-            <td style="padding:11px 12px;color:#1a1208;font-weight:600;">{h(gname)}</td>
-            <td style="padding:11px 12px;text-align:center;white-space:nowrap;">
-                <a href="/edit-pending?case_id={h(case_id)}" style="background:#3a2e1c;color:#fff;padding:5px 14px;border-radius:6px;font-size:12px;text-decoration:none;font-weight:700;">編輯</a>
-            </td>
+            <td><input type="checkbox" class="case-chk" value="{h(case_id)}"></td>
+            <td class="num">{h(created)}</td>
+            <td><span class="cname"><i class="dot {dot_cls}" title="完整度 {pct}%"></i>{h(name)}</span></td>
+            <td class="num">{h(id_no) or "—"}</td>
+            <td><span class="group-tag" style="background:{gcol}">{h(gname)}</span></td>
+            <td><div class="row-actions">{(f'<a class="small-btn" href="/customer-pdf?case_id={h(case_id)}" target="_blank">查看</a><a class="small-btn primary" href="/edit-pending?case_id={h(case_id)}">編輯</a>') if is_admin_type else '<span style="color:#a7b2c0;font-size:12px">—</span>'}</div></td>
         </tr>'''
-    empty = "" if rows else '<tr><td colspan="6" style="text-align:center;padding:30px;color:#4a3e30;font-weight:600;">目前沒有待確認客戶</td></tr>'
+    empty = "" if rows else '<tr><td colspan="6" style="text-align:center;padding:40px;color:#8a95a5;">目前沒有待建相簿的客戶</td></tr>'
 
-    # 建分頁連結（保留篩選參數）
-    from urllib.parse import urlencode
-    def page_url(p: int) -> str:
-        qs = {"q": q, "grp": grp, "date_from": date_from, "date_to": date_to, "page": p}
-        qs = {k: v for k, v in qs.items() if v not in ("", None)}
-        return "/pending-customers?" + urlencode(qs)
+    pager_html = render_pagination(page, total_pages, total, "/pending-customers", {"q": q, "grp": grp, "date_from": date_from, "date_to": date_to}) if total_pages > 1 else ""
 
-    pager_html = ""
-    if total_pages > 1:
-        parts = []
-        if page > 1:
-            parts.append(f'<a href="{page_url(page-1)}">‹ 上一頁</a>')
-        start = max(1, page - 3)
-        end = min(total_pages, start + 6)
-        start = max(1, end - 6)
-        if start > 1:
-            parts.append(f'<a href="{page_url(1)}">1</a>')
-            if start > 2:
-                parts.append('<span style="padding:6px 4px;color:#8a7a68;">…</span>')
-        for p in range(start, end + 1):
-            cls = ' class="current"' if p == page else ''
-            parts.append(f'<a{cls} href="{page_url(p)}">{p}</a>')
-        if end < total_pages:
-            if end < total_pages - 1:
-                parts.append('<span style="padding:6px 4px;color:#8a7a68;">…</span>')
-            parts.append(f'<a href="{page_url(total_pages)}">{total_pages}</a>')
-        if page < total_pages:
-            parts.append(f'<a href="{page_url(page+1)}">下一頁 ›</a>')
-        pager_html = '<div class="pager">' + "".join(parts) + '</div>'
+    css = r"""
+:root{--bg:#f5f8fb;--line:#e5ebf2;--text:#172033;--muted:#6f7b8d;--teal:#12a8a6;--teal-dark:#0b7f82;--teal-soft:#eaf9f8;--shadow:0 10px 24px rgba(25,44,74,.07)}
+*{box-sizing:border-box}html,body{margin:0;background:var(--bg);color:var(--text)}
+body{font-family:"Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,sans-serif;font-size:13px}
+a{text-decoration:none}button,input,select{font:inherit}button{cursor:pointer}.num{font-variant-numeric:tabular-nums}
+.pcpage{padding:18px}.container{max-width:1280px;margin:0 auto}
+.topbar{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:12px}
+.topbar h1{margin:0;font-size:24px}.topbar p{margin:5px 0 0;color:var(--muted);font-size:12px}
+.top-actions{display:flex;gap:8px;flex-wrap:wrap}
+.pbtn{min-height:38px;border:1px solid var(--line);background:#fff;color:#405065;border-radius:9px;padding:0 13px;font-size:12px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;gap:6px}
+.pbtn.primary{background:var(--teal);color:#fff;border-color:var(--teal)}.pbtn.soft{background:var(--teal-soft);color:var(--teal-dark);border-color:#c9ecea}.pbtn:disabled{opacity:.5;cursor:not-allowed}
+.info-banner{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 13px;background:#eefafa;border:1px solid #c8ecea;border-radius:11px;margin-bottom:12px;color:#376465;font-size:12px}
+.info-banner strong{color:var(--teal-dark)}.info-banner .mut{color:var(--muted);font-size:11px}
+.search-card{background:#fff;border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);padding:14px;margin-bottom:12px}
+.search-grid{display:flex;gap:8px;align-items:end;flex-wrap:wrap}
+.field{display:flex;flex-direction:column;gap:5px}.field label{font-size:12px;font-weight:800;color:#37445a}
+.search-card input,.search-card select{height:38px;border:1px solid #ccd5e1;border-radius:9px;background:#fff;padding:0 10px;outline:none;font-size:12px}
+.search-card input:focus,.search-card select:focus{border-color:#78d0ce;box-shadow:0 0 0 3px rgba(18,168,166,.10)}
+.table-card{background:#fff;border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);overflow:hidden}
+.table-toolbar{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:12px 14px;border-bottom:1px solid var(--line);background:#fbfcfe}
+.muted{color:var(--muted);font-size:11px}
+.table-wrap{overflow:auto}
+table{width:100%;min-width:840px;border-collapse:collapse;font-size:12px}
+th{text-align:left;padding:10px 12px;background:#f8fafc;color:#6f7b8d;border-bottom:1px solid var(--line);font-weight:800}
+td{padding:10px 12px;border-bottom:1px solid #edf1f5;vertical-align:middle}
+tbody tr:hover{background:#fafdfd}tbody tr:last-child td{border-bottom:0}
+.cname{display:flex;align-items:center;gap:7px;font-weight:800}
+.dot{width:9px;height:9px;border-radius:50%;flex:0 0 auto;display:inline-block}.dot-green{background:#1fa86b}.dot-yellow{background:#f59e0b}.dot-red{background:#e64b4f}
+.group-tag{display:inline-flex;align-items:center;padding:4px 8px;border-radius:7px;color:#fff;font-size:11px;font-weight:800}
+.row-actions{display:flex;gap:6px;flex-wrap:wrap}
+.small-btn{min-height:30px;border:1px solid var(--line);background:#fff;color:#47566b;border-radius:8px;padding:0 10px;font-size:11px;font-weight:700;display:inline-flex;align-items:center}
+.small-btn.primary{background:var(--teal-soft);color:var(--teal-dark);border-color:#c9ecea}
+.table-footer{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:12px 14px;border-top:1px solid var(--line);background:#fbfcfe;flex-wrap:wrap}
+.empty-state{padding:56px 20px;text-align:center;color:var(--muted);background:#fff;border:1px dashed #ced7e2;border-radius:14px}
+input[type=checkbox]{width:15px;height:15px;cursor:pointer}
+"""
 
-    return f"""<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>客戶資料庫</title>
-{PAGE_CSS}
-<style>
-body{{background:#e4ddcd;}}
-.page{{max-width:1040px;margin:24px auto;padding:0 16px 40px;color:#1a1208;}}
-.card{{background:#f2ecdd;border:1px solid #b8ad9c;border-radius:10px;overflow:hidden;box-shadow:0 1px 3px rgba(60,45,25,0.08);}}
-table{{width:100%;border-collapse:collapse;}}
-thead tr{{background:#d8ccb0;}}
-thead th{{position:sticky;top:0;background:#d8ccb0;z-index:2;border-bottom:2px solid #a89c82;}}
-th{{padding:11px 12px;text-align:left;font-size:13px;font-weight:800;color:#1a1208;}}
-tbody td{{color:#1a1208;}}
-tbody tr{{border-bottom:1px solid #d8ccb0;}}
-tbody tr:hover{{background:#ddd5c4;}}
-h2{{font-size:19px;font-weight:800;color:#0f0a04;margin-bottom:14px;}}
-input,select{{padding:7px 10px;border:1px solid #8a7e68;border-radius:6px;font-size:13px;font-family:inherit;color:#1a1208;background:#f2ede0;}}
-input[type=checkbox]{{padding:0;width:16px;height:16px;cursor:pointer;}}
-.dot{{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:7px;vertical-align:middle;}}
-.dot-red{{background:#b91c1c;}}
-.dot-yellow{{background:#b45309;}}
-.dot-green{{background:#15803d;}}
-.pager{{text-align:center;padding:16px;}}
-.pager a{{display:inline-block;padding:6px 12px;margin:0 2px;border:1px solid #8a7e68;border-radius:6px;color:#1a1208;text-decoration:none;font-size:13px;background:#f2ecdd;font-weight:600;}}
-.pager a:hover{{background:#d8ccb0;}}
-.pager a.current{{background:#3a2e1c;color:#fff;border-color:#3a2e1c;font-weight:800;}}
-.btn-export{{background:#2f5339;color:#fff;border:none;padding:8px 16px;border-radius:6px;font-size:13px;cursor:pointer;font-weight:700;font-family:inherit;}}
-.btn-export:disabled{{background:#8a8275;cursor:not-allowed;}}
-.filter-box{{background:#f2ecdd !important;border:1px solid #b8ad9c !important;}}
-.filter-box label-text{{color:#1a1208 !important;}}
-</style></head><body>
-{make_topnav(role, "pending")}
-<div class="page">
-  <h2>客戶資料庫 共 {total} 筆</h2>
-  <form method="get" action="/pending-customers">
-    <div style="background:#f2ecdd;border:1px solid #b8ad9c;border-radius:10px;padding:14px 16px;margin-bottom:14px;display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;box-shadow:0 1px 3px rgba(60,45,25,0.08);">
-      <div><div style="font-size:13px;font-weight:700;color:#1a1208;margin-bottom:4px">姓名／身分證</div><input name="q" value="{h(q)}" placeholder="搜尋..." style="width:150px"></div>
-      <div><div style="font-size:13px;font-weight:700;color:#1a1208;margin-bottom:4px">群組</div><select name="grp" style="width:110px">{grp_opts}</select></div>
-      <div><div style="font-size:13px;font-weight:700;color:#1a1208;margin-bottom:4px">日期從</div><input type="date" name="date_from" value="{h(date_from)}" style="width:140px"></div>
-      <div><div style="font-size:13px;font-weight:700;color:#1a1208;margin-bottom:4px">日期至</div><input type="date" name="date_to" value="{h(date_to)}" style="width:140px"></div>
-      <div style="display:flex;gap:6px;align-items:flex-end">
-        <button type="submit" style="background:#3a2e1c;color:#fff;border:none;padding:8px 18px;border-radius:6px;font-size:13px;cursor:pointer;font-weight:700;font-family:inherit">🔍 搜尋</button>
-        <a href="/pending-customers" style="background:#d8ccb0;color:#1a1208;border:1px solid #8a7e68;padding:8px 14px;border-radius:6px;font-size:13px;text-decoration:none;font-weight:600;">清除</a>
-      </div>
-      <div style="margin-left:auto;display:flex;gap:8px;align-items:flex-end;">
-        <button type="button" id="btnExport" class="btn-export" disabled onclick="exportPdf()">📄 匯出 PDF（<span id="selCount">0</span>）</button>
-      </div>
+    shell = f"""<div class="pcpage"><div class="container">
+  <div class="topbar">
+    <div><h1>客戶資料庫</h1><p>只顯示已整理完成、尚未建立 LINE 群組相簿的客戶。</p></div>
+    <div class="top-actions"><button type="button" class="pbtn soft" id="btnExport" disabled onclick="exportSel()">匯出勾選 PDF（<span id="selCount">0</span>）</button><a class="pbtn" href="/report2">返回日報</a></div>
+  </div>
+  <div class="info-banner"><div><strong>資料流向：</strong>LINE 群組相簿建立後，客戶會自動從此頁移除，直接出現在「跨群組客戶查詢」。</div><div class="mut">不需手動標記或搬移</div></div>
+  <form class="search-card" method="get" action="/pending-customers">
+    <div class="search-grid">
+      <div class="field" style="flex:2;min-width:200px"><label>姓名／身分證</label><input name="q" value="{h(q)}" placeholder="輸入姓名、姓氏或身分證…"></div>
+      <div class="field"><label>群組</label><select name="grp">{grp_opts}</select></div>
+      <div class="field"><label>日期從</label><input type="date" name="date_from" value="{h(date_from)}"></div>
+      <div class="field"><label>日期至</label><input type="date" name="date_to" value="{h(date_to)}"></div>
+      <button type="submit" class="pbtn primary">🔍 搜尋</button>
+      <a class="pbtn" href="/pending-customers">清除</a>
     </div>
   </form>
-  <div class="card"><table>
-    <thead><tr>
-      <th style="width:36px;"><input type="checkbox" id="chkAll" onclick="toggleAll(this)"></th>
-      <th>日期</th><th>姓名</th><th>身分證</th><th>群組</th><th>操作</th>
-    </tr></thead>
-    <tbody>{rows_html}{empty}</tbody>
-  </table></div>
-  {pager_html}
-</div>
+  <section class="table-card">
+    <div class="table-toolbar"><div style="display:flex;align-items:center;gap:8px"><b>尚未建立 LINE 群組相簿</b><span class="muted">共 {total} 筆</span></div><button type="button" class="pbtn soft" onclick="exportAll()">匯出目前結果</button></div>
+    <div class="table-wrap"><table>
+      <thead><tr><th style="width:40px"><input type="checkbox" id="selectAll" onclick="toggleAll(this)"></th><th>建立日期</th><th>客戶姓名</th><th>身分證</th><th>群組</th><th style="width:150px">操作</th></tr></thead>
+      <tbody>{rows_html}{empty}</tbody>
+    </table></div>
+    <div class="table-footer"><div class="muted">建立 LINE 群組相簿後，系統會自動從本頁移除並進入跨群組查詢。</div><div>{pager_html}</div></div>
+  </section>
+</div></div>
 <script>
-function updateSelCount() {{
-  var n = document.querySelectorAll('.case-chk:checked').length;
-  document.getElementById('selCount').textContent = n;
-  document.getElementById('btnExport').disabled = (n === 0);
-}}
-function toggleAll(src) {{
-  document.querySelectorAll('.case-chk').forEach(function(c) {{ c.checked = src.checked; }});
-  updateSelCount();
-}}
-document.querySelectorAll('.case-chk').forEach(function(c) {{
-  c.addEventListener('change', updateSelCount);
-}});
-function exportPdf() {{
-  var ids = [];
-  document.querySelectorAll('.case-chk:checked').forEach(function(c) {{ ids.push(c.value); }});
-  if (ids.length === 0) return;
-  window.open('/customer-pdf-batch?ids=' + encodeURIComponent(ids.join(',')));
-}}
-function deleteCust(caseId) {{
-  var f = document.createElement('form');
-  f.method = 'POST';
-  f.action = '/delete-customer';
-  var i1 = document.createElement('input');
-  i1.type = 'hidden'; i1.name = 'case_id'; i1.value = caseId;
-  f.appendChild(i1);
-  var i2 = document.createElement('input');
-  i2.type = 'hidden'; i2.name = 'from'; i2.value = 'pending';
-  f.appendChild(i2);
-  document.body.appendChild(f);
-  f.submit();
-}}
-</script>
-</body></html>"""
+function updateSel(){{var n=document.querySelectorAll('.case-chk:checked').length;var el=document.getElementById('selCount');if(el)el.textContent=n;var b=document.getElementById('btnExport');if(b)b.disabled=(n===0);}}
+function toggleAll(src){{document.querySelectorAll('.case-chk').forEach(function(c){{c.checked=src.checked;}});updateSel();}}
+document.querySelectorAll('.case-chk').forEach(function(c){{c.addEventListener('change',updateSel);}});
+function exportSel(){{var ids=[...document.querySelectorAll('.case-chk:checked')].map(function(c){{return c.value;}});if(!ids.length){{alert('請先勾選要匯出的客戶');return;}}window.open('/customer-pdf-batch?ids='+encodeURIComponent(ids.join(',')));}}
+function exportAll(){{var ids=[...document.querySelectorAll('.case-chk')].map(function(c){{return c.value;}});if(!ids.length){{alert('目前沒有可匯出的客戶');return;}}window.open('/customer-pdf-batch?ids='+encodeURIComponent(ids.join(',')));}}
+</script>"""
+
+    return ("<!DOCTYPE html><html lang='zh-Hant'><head><meta charset='utf-8'>"
+            "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+            "<title>客戶資料庫</title><style>" + css + "</style></head><body>"
+            + _page_topnav(role, "pending") + shell + "</body></html>")
+
+
+_HIST_CSS = r"""
+:root{--bg:#f5f8fb;--panel:#fff;--line:#e6edf3;--text:#172033;--muted:#6f7b8d;--teal:#12a8a6;--teal-dark:#0b7e82;--teal-soft:#e9f9f8;--nav:#0d2237;--nav2:#102f48;--green:#20a66c;--green-soft:#eaf8f0;--orange:#f59e0b;--orange-soft:#fff3df;--red:#e64b4f;--red-soft:#ffeceb;--gray-soft:#f1f4f7;--shadow:0 12px 32px rgba(24,44,74,.08);--radius:16px}
+*{box-sizing:border-box}html,body{margin:0;min-height:100%;background:var(--bg);color:var(--text)}
+body{font-family:"Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,sans-serif}
+a{text-decoration:none}button,input,select{font:inherit}button{cursor:pointer}
+.num{font-variant-numeric:tabular-nums}
+.app{min-height:100vh;display:grid;grid-template-columns:minmax(0,1fr)}
+.sidebar{background:linear-gradient(180deg,var(--nav),var(--nav2));color:#d8e6f0;padding:18px 14px;position:sticky;top:0;height:100vh;overflow:auto}
+.brand{display:flex;gap:12px;align-items:center;padding:4px 6px 20px;border-bottom:1px solid rgba(255,255,255,.08);margin-bottom:14px}
+.brand-logo{width:42px;height:42px;border-radius:12px;display:grid;place-items:center;color:#fff;font-weight:900;font-size:20px;background:linear-gradient(135deg,#19c7c4,#2f77f5)}
+.brand strong{display:block;font-size:15px}.brand span{display:block;font-size:11px;color:#9fb3c4;margin-top:3px}
+.nav-item{display:flex;align-items:center;gap:10px;padding:11px 12px;border-radius:10px;color:#d8e4ed;margin:3px 0;font-size:14px}
+.nav-item:hover{background:rgba(255,255,255,.07);color:#fff}
+.nav-item.active{background:linear-gradient(90deg,#13aaa8,#168c98);color:#fff}
+.nav-item .ic{width:18px;text-align:center}
+.sidebar-footer{margin-top:24px;padding:12px;border:1px solid rgba(255,255,255,.09);border-radius:12px;font-size:12px;color:#9fb3c4}
+.main{min-width:0;display:grid;grid-template-columns:minmax(0,1fr) 380px}
+.workspace{min-width:0;padding:18px}
+.topbar{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:14px}
+.topbar h1{margin:0;font-size:25px}.topbar p{margin:5px 0 0;color:var(--muted);font-size:13px}
+.top-actions{display:flex;gap:9px;align-items:center;flex-wrap:wrap;justify-content:flex-end}
+.hbtn{border:1px solid var(--line);background:#fff;color:#405065;border-radius:10px;padding:9px 14px;font-weight:700;font-size:13px}
+.hbtn.primary{background:var(--teal);color:#fff;border-color:var(--teal)}
+.hbtn.danger{background:var(--red);color:#fff;border-color:var(--red)}
+.hbtn.soft{background:var(--teal-soft);color:var(--teal-dark);border-color:#cbecea}
+.kpis{display:grid;grid-template-columns:repeat(4,minmax(150px,1fr));gap:10px;margin-bottom:14px}
+.kpi{background:#fff;border:1px solid var(--line);border-radius:14px;padding:14px;box-shadow:var(--shadow);display:flex;align-items:center;gap:12px;min-height:82px}
+.kpi-icon{width:42px;height:42px;border-radius:13px;display:grid;place-items:center;font-size:20px;font-weight:900;flex:0 0 auto}
+.kpi small{display:block;color:var(--muted);font-size:12px;margin-bottom:5px}.kpi b{font-size:24px;line-height:1}.kpi em{font-style:normal;color:var(--muted);font-size:12px;margin-left:4px}
+.filter-card,.table-card{background:#fff;border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow)}
+.filter-card{padding:12px;margin-bottom:14px}
+.filters{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.control{min-height:40px;border:1px solid #cfd8e3;background:#fff;border-radius:10px;padding:0 12px;display:flex;align-items:center;gap:8px}
+.control input,.control select{border:0;outline:0;background:transparent;color:#344258;min-width:120px}
+.table-card{overflow:hidden}
+.table-toolbar{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:12px 14px;border-bottom:1px solid var(--line);background:#fbfcfe}
+.muted{color:var(--muted)}
+.table-wrap{overflow:auto}
+table{width:100%;min-width:920px;border-collapse:collapse;font-size:13px}
+th{text-align:left;padding:11px 14px;background:#f8fafc;color:#6c7889;border-bottom:1px solid var(--line);font-weight:700;position:sticky;top:0;z-index:1}
+td{padding:12px 14px;border-bottom:1px solid #edf1f5;vertical-align:middle}
+tbody tr{cursor:pointer}tbody tr:hover{background:#fafdfd}tbody tr.selected{background:#f1fbfb}
+.name{font-weight:800;font-size:14px}
+.status{display:inline-flex;align-items:center;gap:5px;padding:5px 9px;border-radius:8px;font-size:12px;font-weight:800;white-space:nowrap}
+.s-paid{background:var(--green-soft);color:#168454}.s-reject{background:var(--red-soft);color:#c93d42}.s-cancel{background:var(--orange-soft);color:#b76d00}.s-none{background:var(--gray-soft);color:#6d7684}
+.row-action{border:0;background:transparent;color:#68778a;font-size:18px;padding:5px}
+.table-footer{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px;border-top:1px solid var(--line);background:#fbfcfe;flex-wrap:wrap}
+.admin-note{font-size:12px;color:var(--muted);margin-left:8px}
+.drawer{background:#fff;border-left:1px solid var(--line);height:calc(100vh - 52px);position:sticky;top:52px;overflow:auto;padding:18px}
+.drawer-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}
+.drawer-head h2{margin:0;font-size:18px}
+.close-btn{border:0;background:transparent;font-size:24px;color:#697689}
+.customer-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:14px}
+.customer-head h3{margin:0 0 7px;font-size:22px}
+.group-tag{display:inline-flex;padding:5px 8px;border-radius:7px;background:var(--teal-soft);color:var(--teal-dark);font-size:12px;font-weight:800}
+.summary-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.summary-box{border:1px solid var(--line);border-radius:10px;padding:10px;background:#fafbfd}
+.summary-box span{display:block;color:var(--muted);font-size:11px;margin-bottom:4px}.summary-box b{font-size:14px}
+.panel{border:1px solid var(--line);border-radius:13px;padding:13px;margin-bottom:12px}
+.panel h4{margin:0 0 12px;font-size:14px}
+.timeline{position:relative;padding-left:19px}
+.timeline:before{content:"";position:absolute;left:6px;top:5px;bottom:5px;width:2px;background:#dce4ec}
+.timeline-item{position:relative;display:grid;grid-template-columns:60px 1fr;gap:9px;padding-bottom:13px;font-size:12px}
+.timeline-item:before{content:"";position:absolute;left:-17px;top:4px;width:9px;height:9px;border-radius:50%;background:#9aa5b3}
+.timeline-item.reject:before{background:var(--red)}.timeline-item.approve:before{background:var(--green)}.timeline-item.pay:before{background:var(--orange)}.timeline-item.close:before{background:var(--teal)}
+.timeline-date{color:#6f7b8d}
+.timeline-card{border:1px solid var(--line);border-radius:9px;padding:9px 10px;background:#fafbfd}
+.timeline-top{display:flex;justify-content:space-between;gap:10px;align-items:center;margin-bottom:4px}
+.timeline-top b{font-size:13px}.timeline-note{color:#6f7b8d;font-size:11px}
+.stat-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.stat{border:1px solid var(--line);border-radius:9px;padding:10px 8px;text-align:center;background:#fafbfd}
+.stat small{display:block;color:var(--muted);font-size:10px;margin-bottom:4px}.stat b{font-size:15px}
+.detail-list{display:grid;gap:9px;font-size:12px}
+.detail-row{display:flex;justify-content:space-between;gap:12px;padding-bottom:8px;border-bottom:1px solid #edf1f5}
+.detail-row:last-child{border-bottom:0;padding-bottom:0}.detail-row span{color:var(--muted)}
+.hist-empty{padding:40px;text-align:center;color:var(--muted)}
+@media(max-width:1360px){.main{grid-template-columns:minmax(0,1fr) 340px}.kpis{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:1080px){.app{grid-template-columns:70px 1fr}.brand strong,.brand span,.nav-item span:not(.ic),.sidebar-footer{display:none}.main{grid-template-columns:1fr}.drawer{position:fixed;right:0;top:0;width:min(390px,94vw);z-index:30;transform:translateX(100%);transition:transform .2s}.drawer.show{transform:translateX(0)}}
+"""
+
+_HIST_JS = r"""
+function esc(s){return (s==null?"":String(s)).replace(/[&<>"]/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[m]))}
+function toggleAll(ck){document.querySelectorAll('.del-ck').forEach(c=>c.checked=ck.checked);}
+function confirmDel(){var n=document.querySelectorAll('.del-ck:checked').length;if(n===0){alert('請先勾選要刪除的客戶');return false;}return confirm('確定要永久刪除勾選的 '+n+' 筆客戶嗎？（無法復原）');}
+const drawer=document.getElementById('histDrawer');
+function closeDrawer(){drawer.classList.remove('show');document.querySelectorAll('tbody tr').forEach(r=>r.classList.remove('selected'));}
+function openDrawer(cid,tr){
+  const d=HDATA[cid]; if(!d) return;
+  document.querySelectorAll('tbody tr').forEach(r=>r.classList.remove('selected'));
+  if(tr) tr.classList.add('selected');
+  const tl=(d.timeline||[]).map(t=>`<div class="timeline-item ${t.cls||''}"><div class="timeline-date">${esc(t.date)}</div><div class="timeline-card"><div class="timeline-top"><b>${esc(t.co)}</b><span class="status ${t.scls||'s-none'}">${esc(t.st)}</span></div>${t.note?`<div class="timeline-note">${esc(t.note)}</div>`:''}</div></div>`).join('')||'<div class="muted" style="font-size:12px">無送件歷程</div>';
+  drawer.innerHTML=`
+    <div class="drawer-head"><h2>案件歷程</h2><button class="close-btn" onclick="closeDrawer()">×</button></div>
+    <div class="customer-head"><div><div class="group-tag">${esc(d.group_name)}</div><h3>${esc(d.name)}</h3><div class="muted" style="font-size:12px">案件已結案，僅供查詢與歷程回顧</div></div><span class="status ${d.result_cls}">${esc(d.result)}</span></div>
+    <div class="panel"><h4>案件摘要</h4><div class="summary-grid">
+      <div class="summary-box"><span>最後公司</span><b>${esc(d.last_co)}</b></div>
+      <div class="summary-box"><span>核准／撥款金額</span><b style="color:var(--green)">${esc(d.amount_disp)}</b></div>
+      <div class="summary-box"><span>結案日期</span><b>${esc(d.close_date)}</b></div>
+      <div class="summary-box"><span>總送件數</span><b>${d.sent} 家</b></div>
+    </div></div>
+    <div class="panel"><h4>送件歷程</h4><div class="timeline">${tl}</div></div>
+    <div class="panel"><h4>案件統計</h4><div class="stat-grid">
+      <div class="stat"><small>總送件數</small><b>${d.sent} 家</b></div>
+      <div class="stat"><small>婉拒</small><b style="color:var(--red)">${d.reject_n} 家</b></div>
+      <div class="stat"><small>核准順位</small><b>${d.appr_pos?('第 '+d.appr_pos+' 家'):'—'}</b></div>
+      <div class="stat"><small>處理天數</small><b>${d.days} 天</b></div>
+      <div class="stat"><small>最終金額</small><b style="color:var(--green)">${esc(d.amount_disp)}</b></div>
+      <div class="stat"><small>最終結果</small><b>${esc(d.result)}</b></div>
+    </div></div>
+    <div class="panel"><h4>其他資料</h4><div class="detail-list">
+      <div class="detail-row"><span>建立時間</span><b>${esc(d.created)}</b></div>
+      <div class="detail-row"><span>結案時間</span><b>${esc(d.closed)}</b></div>
+      <div class="detail-row"><span>備註</span><b>${esc(d.note)||'—'}</b></div>
+      <div class="detail-row"><span>身分證</span><b>${esc(d.id_no)||'—'}</b></div>
+    </div></div>
+    <div style="display:flex;gap:8px"><a class="hbtn" href="/case-edit?case_id=${encodeURIComponent(cid)}">🔍 完整案件</a><a class="hbtn soft" href="/customer-pdf?case_id=${encodeURIComponent(cid)}" target="_blank">📄 客戶卡 PDF</a></div>`;
+  drawer.classList.add('show');
+}
+document.querySelectorAll('tbody tr.case-row').forEach(tr=>{
+  tr.addEventListener('click',e=>{ if(e.target.closest('input,button,a')) return; openDrawer(tr.dataset.cid, tr); });
+});
+"""
 
 
 @app.get("/history", response_class=HTMLResponse)
-def history_page(request: Request, group: str = "", month: str = "", q: str = "", page: int = 1):
+def history_page(request: Request, group: str = "", month: str = "", q: str = "", result: str = "", page: int = 1):
     from fastapi.responses import RedirectResponse
     role = check_auth(request)
-    if not role: return RedirectResponse("/login")
+    if not role:
+        return RedirectResponse("/login")
     auth_group = get_auth_group_id(request)
+    is_admin = (role == "admin")
 
     conn = get_conn(); cur = conn.cursor()
-    cur.execute("SELECT * FROM groups WHERE group_type='SALES_GROUP' AND is_active=1 ORDER BY group_name")
+    cur.execute("SELECT group_id, group_name FROM groups WHERE group_type='SALES_GROUP' AND is_active=1 ORDER BY group_name")
     groups = cur.fetchall()
-
-    # 業務只看自己群組
     if auth_group and not group:
         group = auth_group
 
-    where_sql = " WHERE status IN ('CLOSED','PENALTY','ABANDONED','REJECTED')"
-    params = []
+    # 基礎條件（結案 + 群組/月份/搜尋）
+    base_where = " WHERE status IN ('CLOSED','PENALTY','ABANDONED','REJECTED')"
+    base_params = []
     if group:
-        where_sql += " AND source_group_id=?"
-        params.append(group)
+        base_where += " AND source_group_id=?"; base_params.append(group)
     if month:
-        where_sql += " AND updated_at LIKE ?"
-        params.append(month + "%")
+        base_where += " AND updated_at LIKE ?"; base_params.append(month + "%")
     if q:
-        where_sql += " AND (customer_name LIKE ? OR id_no LIKE ?)"
-        params.extend([f"%{q}%", f"%{q}%"])
+        base_where += " AND (customer_name LIKE ? OR id_no LIKE ?)"; base_params.extend([f"%{q}%", f"%{q}%"])
 
-    # 先算總數用於分頁
-    cur.execute("SELECT COUNT(*) as c FROM customers" + where_sql, params)
-    total_count = cur.fetchone()["c"]
+    # 結案「最終結果」判定 —— 撥款要看 route_plan.history（結案會清掉 approved_amount/撥款日）
+    def _result_of(stt, amt, disb, hist):
+        if stt == "REJECTED": return ("全部婉拒", "s-reject")
+        if stt == "ABANDONED": return ("客戶取消", "s-cancel")
+        if stt == "PENALTY": return ("違約金", "s-cancel")
+        disbursed = bool(disb) or any((hh.get("disbursed") or hh.get("status") == "撥款") for hh in hist)
+        if stt == "CLOSED" and disbursed: return ("已撥款", "s-paid")
+        return ("已結案", "s-none")
+
+    # 輕量撈全部結案 → 算 KPI + 結案原因分類 + 分頁（只在 page 才 SELECT * 抓完整列）
+    cur.execute("SELECT case_id, status, approved_amount, disbursement_date, route_plan FROM customers" + base_where + " ORDER BY updated_at DESC", base_params)
+    _all = cur.fetchall()
+    kpi_total = len(_all); kpi_paid = 0; kpi_reject = 0
+    _label_map = {}
+    _filtered_ids = []
+    for rr in _all:
+        _hist = parse_route_json(rr["route_plan"] or "").get("history", []) or []
+        lab, _ = _result_of(rr["status"] or "", rr["approved_amount"] or "", rr["disbursement_date"] or "", _hist)
+        _label_map[rr["case_id"]] = lab
+        if lab == "已撥款": kpi_paid += 1
+        elif lab == "全部婉拒": kpi_reject += 1
+        if not result or lab == result:
+            _filtered_ids.append(rr["case_id"])
+    kpi_cancel = max(0, kpi_total - kpi_paid - kpi_reject)
+
+    total_count = len(_filtered_ids)
     PAGE_SIZE = 50
     total_pages = max(1, (total_count + PAGE_SIZE - 1) // PAGE_SIZE)
     page = max(1, min(page, total_pages))
     offset = (page - 1) * PAGE_SIZE
-
-    query = "SELECT * FROM customers" + where_sql + " ORDER BY updated_at DESC LIMIT ? OFFSET ?"
-    cur.execute(query, params + [PAGE_SIZE, offset])
-    rows = cur.fetchall()
+    page_ids = _filtered_ids[offset:offset + PAGE_SIZE]
+    if page_ids:
+        _qm = ",".join("?" * len(page_ids))
+        cur.execute(f"SELECT * FROM customers WHERE case_id IN ({_qm})", page_ids)
+        _rowmap = {r["case_id"]: r for r in cur.fetchall()}
+        rows = [_rowmap[c] for c in page_ids if c in _rowmap]
+    else:
+        rows = []
     conn.close()
 
-    # 月份選項（最近6個月）
-    from datetime import datetime, timedelta
-    month_opts = "<option value=\'\'>全部月份</option>"
-    for i in range(6):
-        dt = now_tw().replace(day=1) - timedelta(days=i*28)
-        ym = dt.strftime("%Y-%m")
-        label = dt.strftime("%Y年%m月")
-        sel = "selected" if month == ym else ""
-        month_opts += f'<option value="{ym}" {sel}>{label}</option>'
-
-    group_opts = "<option value=\'\'>全部群組</option>"
-    for g in groups:
-        sel = "selected" if g["group_id"]==group else ""
-        group_opts += f'<option value="{h(g["group_id"])}" {sel}>{h(g["group_name"])}</option>'
-
-    def get_close_badge(row):
-        st = row.get("status","") or ""
-        reason = row.get("close_reason","") or ""
-        amt = row.get("approved_amount","") or ""
-        penalty = row.get("penalty_amount","") or ""
-        if st == "PENALTY":
-            if "核准" in reason:
-                label = "核准不撥款"
-                bg, color = "#fef9c3", "#854d0e"
-            else:
-                label = "辦理中放棄"
-                bg, color = "#fef9c3", "#854d0e"
-            return f'<span style="background:{bg};color:{color};font-size:12px;padding:3px 10px;border-radius:20px;font-weight:600">{label}・違約金${h(penalty)}</span>'
-        if st == "ABANDONED":
-            if "核准" in reason:
-                label = "核准不撥款"
-            else:
-                label = "辦理中放棄"
-            return f'<span style="background:#ece8e2;color:#4a3e30;font-size:12px;padding:3px 10px;border-radius:20px;font-weight:600">{label}・未收違約金</span>'
-        if st == "CLOSED" and amt:
-            return '<span style="background:#dcfce7;color:#166534;font-size:12px;padding:3px 10px;border-radius:20px;font-weight:600">已撥款結案</span>'
-        if st == "CLOSED":
-            return '<span style="background:#f0fdf4;color:#166534;font-size:12px;padding:3px 10px;border-radius:20px;font-weight:600">結案</span>'
-        if st == "REJECTED":
-            return '<span style="background:#fee2e2;color:#991b1b;font-size:12px;padding:3px 10px;border-radius:20px;font-weight:600">全數婉拒</span>'
-        return '<span style="background:#ece8e2;color:#4a3e30;font-size:12px;padding:3px 10px;border-radius:20px;font-weight:600">結案</span>'
-
-    is_admin = (role == "admin")
-    # grid 欄位：admin 多一欄「選」（checkbox）
-    grid_cols = "40px 1.4fr 1.2fr 1fr 0.7fr 0.8fr" if is_admin else "1.4fr 1.2fr 1fr 0.7fr 0.8fr"
+    cust_data = {}
     rows_html = ""
-    if not rows:
-        rows_html = '<div style="color:#6a5e4e;padding:24px;text-align:center;font-size:14px">沒有結案紀錄</div>'
     for row in rows:
-        row = dict(row)
-        badge = get_close_badge(row)
-        co = row.get("current_company","") or row.get("company","") or ""
-        amt = row.get("approved_amount","") or ""
-        gname = get_group_name(row["source_group_id"])
-        updated = row["updated_at"][:10].replace("-","/") if row["updated_at"] else ""
-        # 多家核准
-        route_data2 = parse_route_json(row.get("route_plan","") or "")
-        all_approved = [rh for rh in route_data2.get("history",[]) if rh.get("status") in ("核准","待撥款","撥款") and rh.get("amount")]
-        if len(all_approved) > 1:
-            detail = "多家核准：" + " + ".join((rh.get("company") or "") + (rh.get("amount") or "") for rh in all_approved)
-        elif all_approved:
-            detail = all_approved[0].get("company","") + " 核准" + all_approved[0].get("amount","")
-        else:
-            detail = co + (" 核准" + amt if amt else "")
-        ck_html = f'<div><input type="checkbox" name="case_ids" value="{h(row["case_id"])}" class="del-ck" style="width:16px;height:16px;cursor:pointer;accent-color:#b84a35"></div>' if is_admin else ""
+        rw = dict(row)
+        cid = rw["case_id"]
+        rd = parse_route_json(rw.get("route_plan", "") or "")
+        order = rd.get("order", []) or []
+        hist = rd.get("history", []) or []
+        label, cls = _result_of(rw.get("status", "") or "", rw.get("approved_amount", "") or "", rw.get("disbursement_date", "") or "", hist)
+        approved = [hh for hh in hist if hh.get("status") in ("核准", "待撥款", "撥款") and hh.get("amount")]
+        last_co = rw.get("current_company", "") or (approved[-1].get("company", "") if approved else "") or rw.get("company", "") or "—"
+        amount = rw.get("approved_amount", "") or (approved[-1].get("amount", "") if approved else "")
+        amount_disp = (amount + " 元" if amount and amount.replace(",", "").isdigit() else amount) or "—"
+        sent = len(order) or (len(hist) if hist else 1)
+        reject_n = len([hh for hh in hist if hh.get("status") in ("婉拒", "跳過")])
+        appr_pos = 0
+        if approved and approved[-1].get("company") in order:
+            appr_pos = order.index(approved[-1]["company"]) + 1
+        created_raw = rw.get("created_at", "") or ""
+        closed_raw = rw.get("updated_at", "") or ""
+        close_date = closed_raw[:10].replace("-", "/") if closed_raw else ""
+        days = max(0, _r2_days_since(created_raw) - _r2_days_since(closed_raw)) if (created_raw and closed_raw) else 0
+        gname = get_group_name(rw["source_group_id"])
+        # timeline
+        _scls = {"婉拒": "s-reject", "跳過": "s-none", "核准": "s-paid", "待撥款": "s-paid", "撥款": "s-cancel"}
+        _tcls = {"婉拒": "reject", "跳過": "reject", "核准": "approve", "待撥款": "approve", "撥款": "pay"}
+        timeline = []
+        for hh in hist:
+            stt = hh.get("status", "") or "送件"
+            timeline.append({
+                "co": hh.get("company", ""), "st": stt,
+                "date": (hh.get("date", "") or "")[:10].replace("-", "/") if hh.get("date") else "",
+                "scls": _scls.get(stt, "s-none"), "cls": _tcls.get(stt, ""),
+                "note": (("額度 " + hh.get("amount", "")) if hh.get("amount") else ""),
+            })
+        timeline.append({"co": "結案", "st": label, "date": close_date, "scls": cls, "cls": "close", "note": ""})
+        cust_data[cid] = {
+            "name": rw.get("customer_name", ""), "group_name": gname, "id_no": rw.get("id_no", ""),
+            "result": label, "result_cls": cls, "last_co": last_co, "amount_disp": amount_disp,
+            "close_date": close_date, "sent": sent, "reject_n": reject_n, "appr_pos": appr_pos, "days": days,
+            "created": created_raw[:16].replace("-", "/").replace("T", " "), "closed": closed_raw[:16].replace("-", "/").replace("T", " "),
+            "note": rw.get("last_update", "") or "", "timeline": timeline,
+        }
+        ck = f'<td><input type="checkbox" name="case_ids" value="{h(cid)}" class="del-ck" style="width:15px;height:15px;cursor:pointer"></td>' if is_admin else ""
         rows_html += (
-            f'<div style="display:grid;grid-template-columns:{grid_cols};gap:12px;align-items:center;padding:12px 16px;border-bottom:1px solid #ece8e2">'
-            + ck_html
-            + '<div style="font-size:14px;font-weight:600;color:#1a1208">' + h(row["customer_name"]) + '</div>'
-            + '<div style="font-size:13px;color:#3a3530">' + h(detail) + '</div>'
-            + '<div>' + badge + '</div>'
-            + '<div style="font-size:13px;color:#4a3e30">' + h(gname) + '</div>'
-            + '<div style="font-size:12px;color:#6a5e4e">' + h(updated) + '</div>'
-            + '</div>'
-        )
+            f'<tr class="case-row" data-cid="{h(cid)}">{ck}'
+            f'<td><span class="name">{h(rw.get("customer_name",""))}</span></td>'
+            f'<td><span class="status {cls}">{h(label)}</span></td>'
+            f'<td>{h(last_co)}</td>'
+            f'<td class="num">{h(amount_disp)}</td>'
+            f'<td class="num">{sent} 家</td>'
+            f'<td>{h(gname)}</td>'
+            f'<td class="num">{h(close_date)}</td>'
+            f'<td><button type="button" class="row-action">•••</button></td></tr>')
+    if not rows_html:
+        rows_html = f'<tr><td colspan="{9 if is_admin else 8}" class="hist-empty">沒有符合條件的結案紀錄</td></tr>'
 
-    HIST_CSS = """
-    <style>
-    body{background:#ece8e2;color:#2c2820;font-family:'Microsoft JhengHei','PingFang TC',sans-serif}
-    .input{background:#faf7f4;border:1px solid #ddd5ca;color:#2c2820;border-radius:7px;padding:8px 12px;font-size:14px;font-family:inherit}
-    </style>"""
+    # 篩選選項
+    group_opts = "<option value=''>全部群組</option>" + "".join(
+        f'<option value="{h(g["group_id"])}" {"selected" if g["group_id"]==group else ""}>{h(g["group_name"])}</option>' for g in groups)
+    from datetime import timedelta
+    month_opts = "<option value=''>全部月份</option>"
+    for i in range(6):
+        dt = now_tw().replace(day=1) - timedelta(days=i * 28)
+        ym = dt.strftime("%Y-%m")
+        month_opts += f'<option value="{ym}" {"selected" if month==ym else ""}>{dt.strftime("%Y年%m月")}</option>'
+    result_opts = "<option value=''>全部結案原因</option>" + "".join(
+        f'<option value="{o}" {"selected" if result==o else ""}>{o}</option>' for o in ["已撥款", "全部婉拒", "客戶取消", "違約金", "已結案"])
 
-    return f"""<!DOCTYPE html><html><head>{PAGE_CSS}{HIST_CSS}<title>歷史紀錄</title></head><body>
-    {make_topnav(role, "history")}
-    <div class="page">
-      <form method="get" action="/history" style="margin-bottom:16px">
-        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
-          <select class="input" name="group" onchange="this.form.submit()" style="min-width:120px">{group_opts}</select>
-          <select class="input" name="month" onchange="this.form.submit()" style="min-width:140px">{month_opts}</select>
-          <input class="input" name="q" value="{h(q)}" placeholder="搜尋客戶姓名..." style="min-width:160px">
-          <button type="submit" class="btn btn-primary" style="white-space:nowrap">搜尋</button>
-          <span style="font-size:13px;color:#6a5e4e;margin-left:auto">共 {total_count} 筆</span>
+    # 左側欄
+    def _nl(ic, label, href, on=False):
+        return f'<a class="nav-item {"active" if on else ""}" href="{href}"><span class="ic">{ic}</span><span>{h(label)}</span></a>'
+    nav = (_nl("▣", "公司日報", "/report2") + _nl("▤", "客戶資料庫", "/pending-customers")
+           + _nl("⌕", "客戶搜尋", "/search") + _nl("○", "結案管理", "/history", True))
+    if role in ("admin", "adminB", "ops_admin", "sales_admin") or role.startswith("group_"):
+        nav += _nl("▦", "指令台", "/console")
+    if role in ("admin", "adminB", "ops_admin"):
+        nav += _nl("◈", "行政B作業", "/adminb")
+    if role == "admin":
+        nav += _nl("⚙", "群組管理", "/admin/groups")
+
+    del_btn = ('<button type="submit" class="hbtn danger">🗑 刪除勾選</button><span class="admin-note">僅管理員可用，永久刪除</span>') if is_admin else ""
+    sel_th = '<th style="width:40px"><input type="checkbox" id="ckall" onchange="toggleAll(this)"></th>' if is_admin else ""
+    data_json = json.dumps(cust_data, ensure_ascii=False).replace("</", "<\\/")
+    pager = render_pagination(page, total_pages, total_count, "/history", {"group": group, "month": month, "q": q, "result": result})
+
+    shell = f"""{_page_topnav(role, "history")}<div class="app">
+  <main class="main">
+    <section class="workspace">
+      <div class="topbar">
+        <div><h1>案件結案</h1><p>查詢所有已結案客戶，查看完整送件歷程與最終結果。</p></div>
+        <div class="top-actions"><a class="hbtn soft" href="/report/export">匯出 CSV</a><a class="hbtn" href="/history">重新整理</a></div>
+      </div>
+      <div class="kpis">
+        <div class="kpi"><div class="kpi-icon" style="background:var(--teal-soft);color:var(--teal-dark)">▦</div><div><small>全部結案</small><b class="num">{kpi_total}</b><em>件</em></div></div>
+        <div class="kpi"><div class="kpi-icon" style="background:var(--green-soft);color:var(--green)">✓</div><div><small>已撥款</small><b class="num">{kpi_paid}</b><em>件</em></div></div>
+        <div class="kpi"><div class="kpi-icon" style="background:var(--red-soft);color:var(--red)">×</div><div><small>全部婉拒</small><b class="num">{kpi_reject}</b><em>件</em></div></div>
+        <div class="kpi"><div class="kpi-icon" style="background:var(--orange-soft);color:var(--orange)">○</div><div><small>客戶取消／其他</small><b class="num">{kpi_cancel}</b><em>件</em></div></div>
+      </div>
+      <form class="filter-card" method="get" action="/history">
+        <div class="filters">
+          <div class="control">⌕ <input name="q" value="{h(q)}" placeholder="搜尋姓名 / 身分證…"></div>
+          <div class="control"><select name="group" onchange="this.form.submit()">{group_opts}</select></div>
+          <div class="control"><select name="result" onchange="this.form.submit()">{result_opts}</select></div>
+          <div class="control"><select name="month" onchange="this.form.submit()">{month_opts}</select></div>
+          <button type="submit" class="hbtn primary">查詢</button>
         </div>
       </form>
       <form method="post" action="/admin/delete-customers" id="delform" onsubmit="return confirmDel()">
-      <div style="background:#faf7f4;border:1px solid #ddd5ca;border-radius:10px;overflow:hidden">
-        <div style="display:grid;grid-template-columns:{grid_cols};gap:12px;padding:9px 16px;background:#ece8e2;border-bottom:1px solid #ddd5ca">
-          {'<div><input type="checkbox" id="ckall" onchange="toggleAll(this)" style="width:16px;height:16px;cursor:pointer;accent-color:#b84a35"></div>' if is_admin else ''}
-          <div style="font-size:12px;font-weight:700;color:#4a3e30">客戶姓名</div>
-          <div style="font-size:12px;font-weight:700;color:#4a3e30">方案/金額</div>
-          <div style="font-size:12px;font-weight:700;color:#4a3e30">結案原因</div>
-          <div style="font-size:12px;font-weight:700;color:#4a3e30">群組</div>
-          <div style="font-size:12px;font-weight:700;color:#4a3e30">日期</div>
-        </div>
-        {rows_html if rows_html else '<div style="color:#6a5e4e;padding:24px;text-align:center;font-size:14px">沒有結案紀錄</div>'}
-      </div>
-      {'<div style="margin-top:12px;display:flex;gap:10px;align-items:center"><button type="submit" class="btn" style="background:#b84a35;color:#fff;border:none;padding:8px 18px;border-radius:7px;font-size:14px;font-weight:600;cursor:pointer">🗑 刪除勾選</button><span style="font-size:12px;color:#6a5e4e">選起來後按這顆會永久刪除</span></div>' if is_admin else ''}
+      <section class="table-card">
+        <div class="table-toolbar"><div><b>結案客戶列表</b> <span class="muted" style="font-size:12px">共 {total_count} 筆</span></div><div class="muted" style="font-size:12px">點任一列看案件歷程 →</div></div>
+        <div class="table-wrap"><table><thead><tr>{sel_th}<th>客戶姓名</th><th>最終結果</th><th>最後公司</th><th>核准／撥款金額</th><th>總送件數</th><th>群組</th><th>結案日期</th><th>操作</th></tr></thead><tbody>{rows_html}</tbody></table></div>
+        <div class="table-footer"><div>{del_btn}</div><div>{pager}</div></div>
+      </section>
       </form>
-      {render_pagination(page, total_pages, total_count, "/history", {"group": group, "month": month, "q": q})}
-    </div>
-    <script>
-    function toggleAll(ck){{document.querySelectorAll('.del-ck').forEach(function(c){{c.checked=ck.checked;}});}}
-    function confirmDel(){{
-      var n=document.querySelectorAll('.del-ck:checked').length;
-      if(n===0){{alert('請先勾選要刪除的客戶');return false;}}
-      return confirm('確定要永久刪除勾選的 '+n+' 筆客戶嗎？（此操作無法復原）');
-    }}
-    </script>
-    </body></html>"""
+    </section>
+    <aside class="drawer" id="histDrawer"><div class="hist-empty">← 點左邊任一筆結案客戶<br>看完整案件歷程</div></aside>
+  </main>
+</div>"""
+
+    return ("<!DOCTYPE html><html lang='zh-Hant'><head><meta charset='utf-8'>"
+            "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+            "<title>案件結案</title><style>" + _HIST_CSS + "</style></head><body>"
+            + shell + "<script>const HDATA=" + data_json + ";\n" + _HIST_JS + "</script></body></html>")
 
 
 @app.get("/admin/groups", response_class=HTMLResponse)
@@ -19024,83 +19443,638 @@ def console_page(request: Request):
         scope_note = "你可以操作所有業務群（碰不到 A 群／行政群）。"
     else:
         scope_note = "你只能操作自己這一群。"
-    examples = [
-        ("查日報", "@AI 日報"),
-        ("今日統計", "@AI 統計"),
-        ("待撥款名單", "@AI 待撥款"),
-        ("查客戶", "@AI 查 王小明"),
-    ]
-    chips = "".join(
-        f'<button type="button" class="ex-chip" data-cmd="{h(c)}" '
-        f'style="padding:5px 12px;margin:3px;border:1px solid #cbd5e1;background:#f1f5f9;'
-        f'border-radius:16px;font-size:13px;cursor:pointer">{h(lbl)}</button>'
-        for lbl, c in examples
-    )
-    head = f"""<!DOCTYPE html><html><head>{PAGE_CSS}<title>網頁指令台</title></head><body>
-{make_topnav(role, "console")}
-<div class="page">
-  <h2>💬 網頁指令台</h2>
-  <div style="background:#fffbeb;border:1px solid #fcd34d;border-radius:10px;padding:12px 14px;margin-bottom:16px;font-size:14px;line-height:1.7;color:#78350f">
-    <b>LINE 官方帳號當機時、在這裡下跟群組裡一模一樣的指令。</b><br>
-    背後跑的是同一套引擎、改的是同一個資料庫，所以資料完全正確。<br>
-    ⚠️ 會「回貼到別的群組」的動作（例如 A 群核准回貼業務群），LINE 當機時那則發不出去、但你的資料照樣改好。<br>
-    ⚠️ 這裡下的破壞性指令（結案、婉拒、核准金額…）跟 LINE 一樣真的會改資料，請看清楚群組再執行。<br>
-    👤 <b>{scope_note}</b>
-  </div>
-  <label style="font-weight:600;font-size:14px">群組</label><br>
-  <select id="grp" style="width:100%;max-width:520px;padding:9px;font-size:15px;margin:5px 0 16px;border:1px solid #cbd5e1;border-radius:8px">{options_html}</select>
-  <br>
-  <label style="font-weight:600;font-size:14px">指令（跟你在 LINE 群裡打的一樣）</label><br>
-  <textarea id="cmd" rows="3" placeholder="例如：@AI 日報　或　王小明 亞太 核准 20萬" style="width:100%;max-width:720px;padding:10px;font-size:15px;font-family:inherit;box-sizing:border-box;margin:5px 0;border:1px solid #cbd5e1;border-radius:8px"></textarea>
-  <div style="margin:4px 0 12px">{chips}</div>
-  <div style="margin-bottom:16px">
-    <button id="runbtn" style="padding:11px 26px;font-size:16px;background:#2563eb;color:#fff;border:none;border-radius:8px;cursor:pointer">▶ 執行</button>
-    <span style="font-size:12px;color:#64748b;margin-left:8px">（Ctrl+Enter 也可執行）</span>
-    <span id="status" style="margin-left:10px;font-size:14px;font-weight:600"></span>
-  </div>
-  <h3 style="margin-bottom:6px">回覆</h3>
-  <pre id="out" style="white-space:pre-wrap;word-break:break-word;background:#0f172a;color:#e2e8f0;padding:16px;border-radius:10px;min-height:120px;font-size:14px;line-height:1.7;max-width:820px;overflow:auto">在上面選群組、打指令、按執行。</pre>
-</div>
+    who_txt = {"admin": "管理員", "adminB": "行政B", "ops_admin": "行政管理員", "sales_admin": "業務管理員"}.get(role, "業務")
+    css = r"""
+:root{--bg:#f4f7fb;--panel:#fff;--line:#e4eaf1;--text:#182236;--muted:#6f7d91;--navy:#17243a;--navy2:#0f1a2f;--teal:#14aaa7;--teal-dark:#0b7f82;--teal-soft:#eaf9f8;--blue:#2f6cf4;--orange:#f59e0b;--red:#e15353;--green:#28a66a;--green-soft:#eaf8f0;--shadow:0 14px 34px rgba(28,46,76,.08);--radius:16px}
+*{box-sizing:border-box}html,body{margin:0}body{background:var(--bg);color:var(--text);font-family:"Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,sans-serif;font-size:13px}
+button,input,select,textarea{font:inherit}button{cursor:pointer}a{text-decoration:none}
+.cpage{min-height:100vh;padding:20px}.container{max-width:1320px;margin:0 auto}
+.topbar{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:14px}
+.title-wrap h1{margin:0;font-size:24px}.title-wrap p{margin:6px 0 0;color:var(--muted);font-size:12px}
+.live-badge{display:inline-flex;align-items:center;gap:7px;padding:9px 11px;border-radius:10px;background:var(--green-soft);color:#197a4f;border:1px solid #cfe9da;font-size:11px;font-weight:900;white-space:nowrap}
+.live-dot{width:8px;height:8px;border-radius:50%;background:var(--green);box-shadow:0 0 0 4px rgba(40,166,106,.12)}
+.alert{background:#fffaf0;border:1px solid #f3cf72;border-left:5px solid var(--orange);border-radius:14px;padding:14px 16px;margin-bottom:14px;box-shadow:var(--shadow)}
+.alert h3{margin:0 0 7px;font-size:13px}.alert p{margin:4px 0;color:#7a4c08;font-size:12px;line-height:1.6}
+.layout{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(340px,.65fr);gap:14px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:16px;box-shadow:var(--shadow);overflow:hidden}
+.card-head{padding:14px 16px;border-bottom:1px solid var(--line);background:#fbfcfe;display:flex;justify-content:space-between;align-items:center;gap:12px}
+.card-head h2{margin:0;font-size:15px}.card-head small{color:var(--muted);font-size:11px}.card-body{padding:16px}
+.field{display:flex;flex-direction:column;gap:6px}label{font-size:11px;font-weight:900;color:#37445b}
+.cpage input,.cpage select,.cpage textarea{width:100%;border:1px solid #ccd5e1;border-radius:10px;background:#fff;color:var(--text);outline:none;padding:0 11px}
+.cpage input,.cpage select{height:40px}.cpage textarea{min-height:145px;padding:11px;resize:vertical;line-height:1.6;font-family:inherit}
+.cpage input:focus,.cpage select:focus,.cpage textarea:focus{border-color:#73cfcc;box-shadow:0 0 0 3px rgba(20,170,167,.10)}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:11px}
+.quick-row{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0 14px}
+.chip{border:1px solid #cfd8e4;background:#fff;color:#41516a;min-height:34px;padding:0 12px;border-radius:999px;font-size:11px;font-weight:800}
+.chip:hover{background:var(--teal-soft);color:var(--teal-dark);border-color:#bfe7e4}
+.preview{margin-top:13px;border:1px solid #d8e0ea;border-radius:12px;background:#fafcfe;overflow:hidden}
+.preview-head{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid #e6ebf1;font-size:11px;color:var(--muted)}
+.preview-body{display:grid;grid-template-columns:110px 1fr;gap:8px 12px;padding:12px;font-size:12px}.preview-body span{color:var(--muted)}
+.action-row{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-top:14px}.shortcut{color:var(--muted);font-size:11px}
+.btn{min-height:40px;border:1px solid var(--line);background:#fff;color:#41516a;border-radius:10px;padding:0 14px;font-weight:900;font-size:12px;display:inline-flex;align-items:center;justify-content:center;gap:7px}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:#fff}.btn.soft{background:var(--teal-soft);border-color:#c8ece9;color:var(--teal-dark)}
+.reply-box{background:var(--navy2);color:#eaf1ff;border-radius:13px;min-height:180px;padding:16px;line-height:1.7;white-space:pre-wrap;word-break:break-word;font-size:13px}
+.reply-meta{display:flex;justify-content:space-between;gap:10px;margin-bottom:10px}
+.status-pill{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:5px 8px;font-size:10px;font-weight:900}
+.status-pill.idle{background:#edf1f5;color:#5f6b7b}.status-pill.success{background:var(--green-soft);color:#187c4e}.status-pill.fail{background:#ffeceb;color:#c53838}
+.stat-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:9px;margin-bottom:14px}
+.stat{border:1px solid var(--line);border-radius:12px;padding:11px;background:#fff}.stat small{display:block;color:var(--muted);font-size:10px;margin-bottom:4px}.stat b{font-size:18px}
+.history-list{display:grid;gap:9px}.history-item{border:1px solid var(--line);border-radius:12px;padding:11px;background:#fff}
+.history-top{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:6px}.history-top b{font-size:12px}.history-top time{color:var(--muted);font-size:10px}
+.history-command{font-size:11px;line-height:1.5;color:#39485d;background:#f7f9fc;border-radius:8px;padding:8px 9px;white-space:pre-wrap;word-break:break-word}
+.history-meta{margin-top:7px;display:flex;gap:6px;flex-wrap:wrap}.mini-tag{font-size:9px;font-weight:800;padding:4px 6px;border-radius:6px;background:var(--teal-soft);color:var(--teal-dark)}
+.log-table-wrap{overflow:auto}table{width:100%;min-width:780px;border-collapse:collapse;font-size:11px}
+th{text-align:left;padding:10px 11px;color:var(--muted);background:#f8fafc;border-bottom:1px solid var(--line)}td{padding:10px 11px;border-bottom:1px solid #edf1f5}
+.footer-note{margin-top:12px;color:var(--muted);font-size:10px;line-height:1.6}
+@media(max-width:1000px){.layout{grid-template-columns:1fr}}
 """
-    script = """
+    chips_html = "".join(
+        f'<button type="button" class="chip" data-cmd="{h(c)}">{h(lbl)}</button>'
+        for lbl, c in [("查日報", "@AI 日報"), ("今日統計", "@AI 統計"), ("待撥款名單", "@AI 待撥款"),
+                       ("查客戶", "@AI 查 王小明"), ("結案", "王小明 結案"), ("核准金額", "王小明 亞太 核准 20萬")])
+    shell = f"""<div class="cpage"><div class="container">
+  <div class="topbar">
+    <div class="title-wrap"><h1>🧾 網頁指令台（LINE 備援）</h1><p>官方 LINE 無法傳送時，從這裡執行相同指令，日報與客戶歷程仍會完整保存。</p></div>
+    <div class="live-badge"><span class="live-dot"></span>正式資料模式</div>
+  </div>
+  <div class="alert"><h3>⚠ 重要提醒</h3>
+    <p><strong>本頁不是測試頁。</strong>執行後會直接更新日報、客戶狀態與歷程紀錄（跟在 LINE 群裡打指令一樣）。</p>
+    <p>涉及結案、婉拒、核准金額、轉件等狀態時，請再次核對客戶與群組。會回貼到別群的動作（例如 A 群核准回貼業務群），LINE 當機時發不出去、但資料照樣改好。</p>
+    <p>👤 {h(scope_note)}</p>
+  </div>
+  <div class="layout">
+    <section class="card"><div class="card-head"><div><h2>執行 LINE 群組指令</h2><small>輸入方式與 LINE 群組相同</small></div><span class="status-pill idle" id="mainStatus">尚未執行</span></div>
+      <div class="card-body">
+        <div class="grid2">
+          <div class="field"><label>目標群組</label><select id="grp">{options_html}</select></div>
+          <div class="field"><label>操作者</label><input value="目前登入者：{h(who_txt)}" readonly></div>
+        </div>
+        <div class="field" style="margin-top:11px"><label>指令內容</label><textarea id="cmd" placeholder="例如：&#10;@AI 日報&#10;王小明 亞太 核准 20萬&#10;王小明 已補申覆&#10;王小明 結案"></textarea></div>
+        <div class="quick-row">{chips_html}</div>
+        <div class="preview"><div class="preview-head"><span>執行前確認</span><span>會寫入資料</span></div>
+          <div class="preview-body"><span>群組</span><strong id="pvGroup">尚未選擇</strong><span>原始指令</span><strong id="pvCmd">尚未輸入</strong><span>資料影響</span><strong>更新日報、客戶狀態與客戶歷程</strong></div>
+        </div>
+        <div class="action-row"><span class="shortcut">快捷鍵：Ctrl + Enter</span><button class="btn primary" id="runbtn">▶ 執行指令</button></div>
+      </div>
+    </section>
+    <aside class="card"><div class="card-head"><div><h2>系統回覆</h2><small>解析與寫入結果</small></div><button class="btn soft" id="copyReply">複製回覆</button></div>
+      <div class="card-body"><div class="reply-meta"><span class="status-pill idle" id="replyStatus">等待指令</span><span style="color:var(--muted);font-size:10px" id="replyTime">—</span></div>
+        <div class="reply-box" id="out">請先選擇群組並輸入指令，按「執行指令」。
+
+送出後會直接進入正式流程：
+1. 解析群組指令
+2. 更新公司日報
+3. 寫入客戶歷程</div></div>
+    </aside>
+  </div>
+  <section class="card" style="margin-top:14px"><div class="card-head"><div><h2>本次備援操作概況</h2><small>只統計這次從本頁執行的指令</small></div></div>
+    <div class="card-body"><div class="stat-grid"><div class="stat"><small>本次執行</small><b id="totalCount">0</b></div><div class="stat"><small>成功</small><b id="successCount">0</b></div><div class="stat"><small>失敗</small><b id="failCount">0</b></div></div>
+      <div class="history-list" id="historyList"><div style="color:var(--muted);font-size:12px;padding:6px">尚無操作，執行後會列在這裡。</div></div>
+    </div>
+  </section>
+  <section class="card" style="margin-top:14px"><div class="card-head"><div><h2>完整操作紀錄</h2><small>本次瀏覽的指令</small></div></div>
+    <div class="log-table-wrap"><table><thead><tr><th>時間</th><th>操作者</th><th>群組</th><th>原始指令</th><th>結果</th></tr></thead><tbody id="logBody"></tbody></table></div>
+  </section>
+  <div class="footer-note">本頁與 LINE BOT 共用同一套解析引擎、資料庫與歷程寫入規則。</div>
+</div></div>"""
+    js = r"""
 <script>
 (function(){
-  var grp=document.getElementById('grp');
-  var saved=localStorage.getItem('console_grp');
-  if(saved){ grp.value=saved; }
-  grp.addEventListener('change',function(){ localStorage.setItem('console_grp',grp.value); });
-  var out=document.getElementById('out');
-  var btn=document.getElementById('runbtn');
-  var st=document.getElementById('status');
-  var cmd=document.getElementById('cmd');
+  var grp=document.getElementById('grp'),cmd=document.getElementById('cmd'),out=document.getElementById('out'),btn=document.getElementById('runbtn');
+  var mainStatus=document.getElementById('mainStatus'),replyStatus=document.getElementById('replyStatus'),replyTime=document.getElementById('replyTime');
+  var pvGroup=document.getElementById('pvGroup'),pvCmd=document.getElementById('pvCmd');
+  var historyList=document.getElementById('historyList'),logBody=document.getElementById('logBody');
+  var totalC=document.getElementById('totalCount'),okC=document.getElementById('successCount'),failC=document.getElementById('failCount');
+  var who=""; var opInput=document.querySelector('input[readonly]'); if(opInput) who=opInput.value.replace('目前登入者：','');
+  var saved=localStorage.getItem('console_grp'); if(saved) grp.value=saved;
+  function esc(s){return (s==null?'':String(s)).replace(/[&<>]/g,function(m){return({'&':'&amp;','<':'&lt;','>':'&gt;'}[m]);});}
+  function gtext(){return grp.value?grp.options[grp.selectedIndex].text:'';}
+  function updatePreview(){pvGroup.textContent=gtext()||'尚未選擇';pvCmd.textContent=cmd.value.trim()||'尚未輸入';}
+  function nowText(){var n=new Date();function p(x){return String(x).padStart(2,'0');}return n.getFullYear()+'/'+p(n.getMonth()+1)+'/'+p(n.getDate())+' '+p(n.getHours())+':'+p(n.getMinutes());}
+  grp.addEventListener('change',function(){localStorage.setItem('console_grp',grp.value);updatePreview();});
+  cmd.addEventListener('input',updatePreview);
+  document.querySelectorAll('.chip').forEach(function(b){b.addEventListener('click',function(){cmd.value=b.getAttribute('data-cmd');updatePreview();cmd.focus();});});
   function run(){
-    var gid=grp.value, txt=cmd.value;
-    if(!gid){ st.style.color='#b45309'; st.textContent='⚠️ 請先選群組'; return; }
-    if(!txt.trim()){ st.style.color='#b45309'; st.textContent='⚠️ 請輸入指令'; return; }
-    st.style.color='#64748b'; st.textContent='處理中…'; btn.disabled=true; out.textContent='';
+    var gid=grp.value, txt=cmd.value.trim();
+    if(!gid){alert('請先選擇群組');return;}
+    if(!txt){alert('請輸入指令內容');return;}
+    var t=nowText();
+    mainStatus.className='status-pill idle';mainStatus.textContent='處理中…';
+    replyStatus.className='status-pill idle';replyStatus.textContent='執行中';replyTime.textContent=t;btn.disabled=true;
     fetch('/console/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({group_id:gid,text:txt})})
       .then(function(r){return r.json();})
       .then(function(d){
-        btn.disabled=false;
-        if(!d.ok){ st.style.color='#dc2626'; st.textContent='❌ '+(d.message||'失敗'); return; }
-        st.style.color='#16a34a'; st.textContent='✅ 完成（'+d.count+' 則回覆）';
+        btn.disabled=false; var g=gtext();
+        totalC.textContent=Number(totalC.textContent)+1;
+        if(!d.ok){
+          mainStatus.className='status-pill fail';mainStatus.textContent='失敗';
+          replyStatus.className='status-pill fail';replyStatus.textContent='失敗';
+          out.textContent='❌ '+(d.message||'執行失敗');
+          failC.textContent=Number(failC.textContent)+1;
+          addRow(t,g,txt,false);return;
+        }
+        mainStatus.className='status-pill success';mainStatus.textContent='執行成功（'+d.count+' 則回覆）';
+        replyStatus.className='status-pill success';replyStatus.textContent='已完成';replyTime.textContent=t;
         out.textContent=d.reply||'（無回覆）';
+        okC.textContent=Number(okC.textContent)+1;
+        addRow(t,g,txt,true);
       })
-      .catch(function(e){ btn.disabled=false; st.style.color='#dc2626'; st.textContent='❌ 連線錯誤：'+e; });
+      .catch(function(e){btn.disabled=false;mainStatus.className='status-pill fail';mainStatus.textContent='連線錯誤';out.textContent='❌ 連線錯誤：'+e;});
+  }
+  function addRow(t,g,txt,ok){
+    var ph=historyList.querySelector('div[style]'); if(ph&&ph.textContent.indexOf('尚無操作')>=0) ph.remove();
+    historyList.insertAdjacentHTML('afterbegin','<div class="history-item"><div class="history-top"><b>'+esc(g)+'</b><time>'+t+'</time></div><div class="history-command">'+esc(txt)+'</div><div class="history-meta"><span class="mini-tag">'+(ok?'已執行':'失敗')+'</span><span class="mini-tag">操作者：'+esc(who)+'</span></div></div>');
+    logBody.insertAdjacentHTML('afterbegin','<tr><td>'+t+'</td><td>'+esc(who)+'</td><td>'+esc(g)+'</td><td>'+esc(txt)+'</td><td><span class="status-pill '+(ok?'success">成功':'fail">失敗')+'</span></td></tr>');
   }
   btn.addEventListener('click',run);
-  cmd.addEventListener('keydown',function(e){
-    if((e.ctrlKey||e.metaKey)&&e.key==='Enter'){ e.preventDefault(); run(); }
-  });
-  var chips=document.querySelectorAll('.ex-chip');
-  for(var i=0;i<chips.length;i++){
-    chips[i].addEventListener('click',function(){ cmd.value=this.getAttribute('data-cmd'); cmd.focus(); });
-  }
+  document.addEventListener('keydown',function(e){if((e.ctrlKey||e.metaKey)&&e.key==='Enter'){e.preventDefault();run();}});
+  document.getElementById('copyReply').addEventListener('click',function(){navigator.clipboard.writeText(out.textContent).then(function(){alert('回覆已複製');},function(){alert('請手動複製');});});
+  updatePreview();
 })();
 </script>
-</body></html>
 """
-    return HTMLResponse(head + script)
+    page = ("<!DOCTYPE html><html lang='zh-Hant'><head><meta charset='utf-8'>"
+            "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+            "<title>網頁指令台</title><style>" + css + "</style></head><body>"
+            + _page_topnav(role, "console") + shell + js + "</body></html>")
+    return HTMLResponse(page)
+
+
+# =========================
+# /report2 — 新版公司日報儀表板（接真實資料）
+# =========================
+def _rv(row, k, d=""):
+    """安全取 sqlite Row 欄位，缺欄或空值回預設。"""
+    try:
+        v = row[k]
+    except (IndexError, KeyError):
+        return d
+    return v if v not in (None, "") else d
+
+def _r2_days_since(s):
+    try:
+        from datetime import datetime as _dt
+        d = _dt.strptime((s or "")[:10], "%Y-%m-%d")
+        n = _dt.strptime(now_tw().strftime("%Y-%m-%d"), "%Y-%m-%d")
+        return (n - d).days
+    except Exception:
+        return 0
+
+def _report2_status(disp, row):
+    """把 compute_customer_display 的結果對到儀表板狀態色票 (type, 中文標籤)。
+    只看 compute_customer_display 已算好的 status（已處理婉拒跳轉），不看 first_line
+    以免殘留的舊公司「婉拒」字誤判（張三 喬美婉拒→已跳亞太 case）。"""
+    sec = disp.get("section", "") or ""
+    txt = disp.get("status", "") or ""
+    disbursed = _rv(row, "disbursement_date", "")
+    if sec == "待撥款":
+        return ("ok", "已撥款") if disbursed else ("money", "待撥款")
+    if "婉拒" in txt:
+        return ("rej", "婉拒")
+    if "已補" in txt:
+        return ("docok", "已補件")
+    if any(k in txt for k in ("待補", "缺", "補件", "請補", "未補")):
+        return ("doc", "待補件")
+    if "照會" in txt:
+        return ("call", "照會中")
+    if "核准" in txt:
+        return ("ok", "核准")
+    if sec == "送件" or "送件" in txt:
+        return ("send", "已送件")
+    return ("send", "進行中")
+
+def _report2_cust(row, disp, gname):
+    route = parse_route_json(_rv(row, "route_plan", ""))
+    order = route.get("order", []) or []
+    idx = route.get("current_index", 0) or 0
+    st, stl = _report2_status(disp, row)
+    co = disp.get("current_co", "") or disp.get("company_short", "") or _rv(row, "current_company", "其他")
+    created = _rv(row, "created_at", "")
+    updated = _rv(row, "updated_at", "") or _rv(row, "last_update", "")
+    fund = str(_rv(row, "eval_fund_need", ""))
+    cat = _rv(row, "selected_plans", "") or _rv(row, "product_type", "")
+    return {
+        "n": _rv(row, "customer_name", ""),
+        "st": st, "stl": stl,
+        "co": co, "tab": (disp.get("company_short", "") or co or "其他"),
+        "pos": (f"{idx+1} / {len(order)}" if order else "—"),
+        "cr": created[5:16].replace("-", "/") if created else "",
+        "up": updated[5:16].replace("-", "/") if updated else "",
+        "ph": _rv(row, "phone", ""),
+        "id": _rv(row, "id_no", ""),
+        "fund": (fund + "萬" if fund and not fund.endswith("萬") else fund),
+        "cat": cat,
+        "route": order, "ridx": idx,
+        "his": [],
+        "caseid": _rv(row, "case_id", ""),
+        "src": gname,
+    }
+
+_REPORT2_CSS = r"""
+:root{--sidebar:#0f1b2d;--sidebar-hover:#1b2b45;--sidebar-active:#2563eb;--app-bg:#f5f7fa;--surface:#fff;--surface-2:#fafbfd;--accent:#2563eb;--accent-soft:#dbeafe;--ink:#1e293b;--ink-2:#64748b;--ink-3:#94a3b8;--line:#e6eaf1;--line-2:#eef1f6;--amber:#b45309;--amber-bg:#fef3c7;--green:#15803d;--green-bg:#dcfce7;--blue:#1d4ed8;--blue-bg:#dbeafe;--purple:#6d28d9;--purple-bg:#ede9fe;--teal:#0f766e;--teal-bg:#ccfbf1;--red:#dc2626;--red-bg:#fee2e2;--radius:12px;color-scheme:light}
+*{box-sizing:border-box}html,body{margin:0;padding:0;height:100%}
+body{font-family:"PingFang TC","Microsoft JhengHei","Noto Sans TC",system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--app-bg);color:var(--ink);font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased}
+.num{font-variant-numeric:tabular-nums}button{font-family:inherit;cursor:pointer}a{text-decoration:none}
+.app{display:grid;grid-template-columns:232px 1fr;height:100vh;overflow:hidden}
+.side{background:var(--sidebar);color:#c7d2e0;display:flex;flex-direction:column;overflow-y:auto}
+.brand{display:flex;gap:10px;align-items:center;padding:18px 18px 14px}
+.brand .mark{width:34px;height:34px;border-radius:9px;background:linear-gradient(135deg,#2563eb,#1e40af);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:17px;flex:0 0 auto}
+.brand .bt{font-weight:800;color:#fff;font-size:15px;line-height:1.25}.brand .bs{font-size:11px;color:#7d8ca6}
+.nav{padding:6px 12px}
+.nav a{display:flex;align-items:center;gap:11px;padding:9px 12px;border-radius:9px;color:#aebbcf;font-size:13.5px;margin-bottom:2px}
+.nav a:hover{background:var(--sidebar-hover);color:#fff}.nav a.on{background:var(--sidebar-active);color:#fff;font-weight:600}
+.nav a .ico{width:18px;text-align:center;opacity:.9}
+.nav a .badge{margin-left:auto;background:#ef4444;color:#fff;font-size:11px;font-weight:700;border-radius:20px;padding:1px 7px;min-width:20px;text-align:center}
+.side-h{font-size:11px;letter-spacing:.08em;color:#6b7a94;padding:16px 22px 6px}
+.glist{padding:0 12px 16px}
+.glist a{display:flex;align-items:center;gap:9px;padding:8px 11px;border-radius:8px;color:#aebbcf;font-size:13px;margin-bottom:1px;cursor:pointer}
+.glist a:hover,.glist a.on{background:var(--sidebar-hover);color:#fff}
+.gtag{width:22px;height:22px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:#fff;flex:0 0 auto}
+.side-foot{margin-top:auto;padding:14px 20px;font-size:12.5px;color:#6b7a94;border-top:1px solid #1c2c46}
+.main{overflow-y:auto;position:relative}
+.topbar{position:sticky;top:0;z-index:20;background:rgba(255,255,255,.86);backdrop-filter:blur(8px);border-bottom:1px solid var(--line);display:flex;align-items:center;gap:16px;padding:12px 22px}
+.topbar h1{font-size:19px;margin:0;font-weight:800}.topbar .upd{font-size:12px;color:var(--ink-2)}.spacer{flex:1}
+.pill-btn,.date-nav{display:flex;align-items:center;gap:8px;background:var(--surface);border:1px solid var(--line);border-radius:9px;padding:8px 12px;font-size:13px;color:var(--ink)}
+.date-nav button{background:none;border:none;color:var(--ink-2);font-size:15px;padding:0 4px}
+.icon-btn{position:relative;width:38px;height:38px;border-radius:9px;background:var(--surface);border:1px solid var(--line);display:flex;align-items:center;justify-content:center;font-size:16px}
+.icon-btn .dot{position:absolute;top:-6px;right:-6px;background:#ef4444;color:#fff;font-size:10px;font-weight:700;border-radius:20px;padding:1px 6px}
+.who{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600}
+.who .av{width:30px;height:30px;border-radius:50%;background:#2563eb;color:#fff;display:flex;align-items:center;justify-content:center;font-size:13px}
+.sync{display:flex;align-items:center;gap:6px;font-size:12.5px;color:#16a34a}
+.wrap{padding:20px 22px 60px;max-width:1180px}
+.stats{display:grid;grid-template-columns:repeat(7,1fr);gap:12px;margin-bottom:18px}
+.stat{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:13px 14px}
+.stat.hero{background:linear-gradient(135deg,#eff5ff,#e5efff);border-color:#c9dcfb}
+.stat .lb{font-size:12px;color:var(--ink-2);display:flex;align-items:center;gap:6px;margin-bottom:8px}
+.stat .ic{width:26px;height:26px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:13px}
+.stat .vl{font-size:23px;font-weight:800;line-height:1}.stat .vl small{font-size:12px;font-weight:600;color:var(--ink-2);margin-left:2px}
+.i-send{background:var(--blue-bg);color:var(--blue)}.i-doc{background:var(--amber-bg);color:var(--amber)}.i-call{background:var(--purple-bg);color:var(--purple)}.i-money{background:var(--teal-bg);color:var(--teal)}.i-done{background:var(--green-bg);color:var(--green)}.i-all{background:#e6eaf1;color:#475569}
+.alert{background:#fffbeb;border:1px solid #fde68a;border-radius:var(--radius);padding:13px 16px;margin-bottom:16px}
+.alert .ah{font-size:13.5px;font-weight:700;color:#92400e;margin-bottom:10px}
+.alert .achips{display:flex;flex-wrap:wrap;gap:10px}
+.achip{display:flex;align-items:center;gap:8px;background:var(--surface);border:1px solid #fde68a;border-radius:9px;padding:7px 12px;font-size:13px;color:#78350f}
+.achip b{background:#f59e0b;color:#fff;border-radius:6px;padding:1px 7px;font-size:12px;font-weight:700}
+.achip.crit{border-color:#fecaca}.achip.crit b{background:#ef4444}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);margin-bottom:16px;overflow:hidden}
+.card-h{display:flex;align-items:center;gap:10px;padding:14px 16px;border-bottom:1px solid var(--line-2)}
+.card-h .ct{font-size:14.5px;font-weight:700}.card-h .cc{font-size:12px;color:var(--ink-2)}
+.btn{background:var(--accent);color:#fff;border:none;border-radius:8px;padding:7px 13px;font-size:13px;font-weight:600}
+.btn.ghost{background:var(--surface);color:var(--accent);border:1px solid var(--accent)}.btn-sm{padding:5px 10px;font-size:12px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+thead th{text-align:left;font-weight:600;color:var(--ink-2);font-size:12px;padding:10px 16px;background:var(--surface-2);border-bottom:1px solid var(--line-2)}
+tbody td{padding:11px 16px;border-bottom:1px solid var(--line-2);color:var(--ink)}
+tbody tr:last-child td{border-bottom:none}tbody tr.clk{cursor:pointer}tbody tr.clk:hover{background:#f6f9ff}
+.mono{font-variant-numeric:tabular-nums;color:var(--ink-2)}
+.act-ic{color:var(--ink-3);background:none;border:none;font-size:14px;padding:2px 5px;border-radius:6px}
+.act-ic:hover{background:var(--line-2);color:var(--accent)}.eye{color:var(--ink-3)}tbody tr.clk:hover .eye{color:var(--accent)}
+.pill{display:inline-flex;align-items:center;gap:5px;border-radius:20px;padding:3px 10px;font-size:12px;font-weight:600;white-space:nowrap}
+.pill::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor;opacity:.85}
+.p-doc{background:var(--amber-bg);color:var(--amber)}.p-docok{background:var(--green-bg);color:var(--green)}.p-send{background:var(--blue-bg);color:var(--blue)}.p-call{background:var(--purple-bg);color:var(--purple)}.p-money{background:var(--teal-bg);color:var(--teal)}.p-ok{background:var(--green-bg);color:var(--green)}.p-rej{background:var(--red-bg);color:var(--red)}.p-new{background:#f1f5f9;color:#64748b}
+.grp-stats .s-new b{color:#64748b}
+.grp{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);margin-bottom:12px;overflow:hidden}
+.grp-h{display:flex;align-items:center;gap:12px;padding:14px 16px;cursor:pointer;user-select:none}
+.grp-h:hover{background:var(--surface-2)}.grp-h .gname{font-size:15px;font-weight:700}
+.grp-stats{display:flex;gap:18px;margin-left:6px;font-size:12.5px;color:var(--ink-2)}
+.grp-stats b{color:var(--ink);font-weight:700}.grp-stats .s-doc b{color:var(--amber)}.grp-stats .s-money b{color:var(--teal)}.grp-stats .s-done b{color:var(--green)}
+.grp-h .caret{margin-left:auto;color:var(--ink-3);font-size:13px;transition:transform .2s}.grp.open .caret{transform:rotate(180deg)}
+.grp-body{display:none;border-top:1px solid var(--line-2)}.grp.open .grp-body{display:block}
+.tabs{display:flex;gap:4px;padding:10px 14px 0;border-bottom:1px solid var(--line-2);flex-wrap:wrap}
+.tab{background:none;border:none;padding:8px 13px;font-size:13px;color:var(--ink-2);font-weight:600;border-bottom:2px solid transparent;margin-bottom:-1px}
+.tab.on{color:var(--accent);border-bottom-color:var(--accent)}.tab .cnt{color:var(--ink-3)}.tab.on .cnt{color:var(--accent)}
+.scrim{position:fixed;inset:0;background:rgba(15,27,45,.28);opacity:0;pointer-events:none;transition:opacity .2s;z-index:40}
+.scrim.show{opacity:1;pointer-events:auto}
+.detail{position:fixed;top:0;right:0;height:100vh;width:378px;max-width:92vw;background:var(--surface);border-left:1px solid var(--line);box-shadow:-14px 0 40px rgba(15,27,45,.12);transform:translateX(100%);transition:transform .24s cubic-bezier(.4,0,.2,1);z-index:50;overflow-y:auto}
+.detail.show{transform:translateX(0)}
+.d-h{display:flex;align-items:center;justify-content:space-between;padding:16px 18px;border-bottom:1px solid var(--line-2);position:sticky;top:0;background:var(--surface);z-index:2}
+.d-h .dt{font-size:15px;font-weight:800}.d-close{background:none;border:none;font-size:20px;color:var(--ink-3)}.d-close:hover{color:var(--ink)}
+.d-sec{padding:16px 18px;border-bottom:1px solid var(--line-2)}
+.d-sec .sh{font-size:12px;color:var(--ink-3);letter-spacing:.04em;margin-bottom:10px;display:flex;align-items:center;justify-content:space-between}
+.d-sec .sh a{color:var(--accent);font-size:12px}
+.d-name{font-size:21px;font-weight:800;display:flex;align-items:center;gap:9px;margin-bottom:10px}
+.d-name .co{font-size:12px;font-weight:700;color:var(--accent);background:var(--accent-soft);border-radius:6px;padding:2px 8px}
+.d-row{display:flex;gap:8px;font-size:13px;margin-bottom:6px}.d-row .k{color:var(--ink-2);min-width:64px}
+.kv{display:flex;justify-content:space-between;font-size:13px;padding:3px 0}.kv .k{color:var(--ink-2)}
+.grp-tag{width:20px;height:20px;border-radius:5px;display:inline-flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;color:#fff}
+.stepper{display:flex;overflow-x:auto;gap:0;padding-bottom:4px}
+.step{flex:0 0 auto;display:flex;flex-direction:column;align-items:center;position:relative;min-width:56px}
+.step .dot{width:26px;height:26px;border-radius:50%;background:var(--line);color:var(--ink-2);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;z-index:2}
+.step.done .dot{background:var(--green);color:#fff}.step.cur .dot{background:var(--accent);color:#fff;box-shadow:0 0 0 4px var(--accent-soft)}
+.step .cn{font-size:11px;margin-top:6px;color:var(--ink-2);text-align:center;line-height:1.2}.step.cur .cn{color:var(--accent);font-weight:700}
+.step:not(:last-child)::after{content:"";position:absolute;top:13px;left:50%;width:100%;height:2px;background:var(--line);z-index:1}.step.done:not(:last-child)::after{background:var(--green)}
+.tl{position:relative;padding-left:6px}.tl-item{display:flex;gap:11px;padding-bottom:14px;position:relative}.tl-item:last-child{padding-bottom:0}
+.tl-item .tdot{width:11px;height:11px;border-radius:50%;margin-top:3px;flex:0 0 auto;z-index:2;background:#94a3b8}
+.tl-item:not(:last-child) .tdot::after{content:"";position:absolute;left:5px;top:12px;width:2px;height:calc(100% - 6px);background:var(--line)}
+.tl-item .tc{font-size:13px}.tl-item .tt{font-size:11.5px;color:var(--ink-3);margin-bottom:1px}
+.d-acts{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:16px 18px}
+.d-act{display:flex;align-items:center;justify-content:center;gap:6px;background:var(--surface-2);border:1px solid var(--line);border-radius:9px;padding:10px;font-size:12.5px;font-weight:600;color:var(--ink)}
+.d-act:hover{border-color:var(--accent);color:var(--accent)}
+.more-groups{text-align:center;padding:14px;color:var(--ink-2);font-size:13px;cursor:pointer}.more-groups:hover{color:var(--accent)}
+#toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%) translateY(20px);background:#0f1b2d;color:#fff;font-size:13.5px;padding:11px 18px;border-radius:10px;box-shadow:0 8px 28px rgba(15,27,45,.28);opacity:0;pointer-events:none;transition:opacity .2s,transform .2s;z-index:80;max-width:88vw}
+#toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+.empty{text-align:center;color:var(--ink-3);padding:30px;font-size:14px}
+.r2-toolbar{display:flex;gap:8px;align-items:center;margin-bottom:14px;flex-wrap:wrap}
+.r2-toolbar input#searchName{flex:1;min-width:200px;max-width:380px;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:13px}
+.r2-btn{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:8px 13px;font-size:13px;font-weight:600;color:var(--ink);cursor:pointer}
+.r2-btn.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+.r2-btn.danger{background:#b91c1c;color:#fff;border-color:#b91c1c}
+.r2-btn:disabled{opacity:.45;cursor:not-allowed}
+.selinfo{font-size:13px;color:var(--accent);font-weight:600}
+.rowchk{width:15px;height:15px;cursor:pointer;vertical-align:middle}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+@media(max-width:1080px){.stats{grid-template-columns:repeat(4,1fr)}.app{grid-template-columns:64px 1fr}.brand .bt,.brand .bs,.nav a span.tx,.side-h,.glist a span.gn,.side-foot{display:none}}
+"""
+
+_REPORT2_JS = r"""
+const PC={doc:"p-doc",docok:"p-docok",send:"p-send",call:"p-call",money:"p-money",ok:"p-ok",rej:"p-rej",new:"p-new"};
+const TLC={x:"#94a3b8",doc:"#f59e0b",docok:"#16a34a",send:"#2563eb",call:"#7c3aed",money:"#0d9488"};
+function esc(s){return (s==null?"":String(s)).replace(/[&<>"]/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[m]))}
+function pill(c){return `<span class="pill ${PC[c.st]||'p-send'}">${esc(c.stl)}</span>`}
+function toast(msg){const t=document.getElementById("toast");t.textContent=msg;t.classList.add("show");clearTimeout(t._h);t._h=setTimeout(()=>t.classList.remove("show"),1900);}
+document.body.addEventListener("click",function(e){
+  const el=e.target.closest(".pill-btn,.date-nav,.icon-btn,.who,.achip,.btn,.stat");
+  if(!el) return;const label=(el.textContent||"").replace(/\s+/g," ").trim().slice(0,12);
+  toast("🔧 這個先示意（正式版會接功能）"+(label?("："+label):""));
+});
+const GROUPS=DATA.groups;
+let shown=4, groupFilter=null;
+const glist=document.getElementById("glist");
+glist.innerHTML=`<a class="on"><span class="gtag" style="background:#475569">全</span><span class="gn">全部群組</span></a>`+
+ GROUPS.map(g=>`<a><span class="gtag" style="background:${g.color}">${esc(g.code)}</span><span class="gn">${esc(g.name)}</span></a>`).join("");
+document.querySelectorAll("#glist a").forEach((a,i)=>a.addEventListener("click",e=>{
+  e.preventDefault();document.querySelectorAll("#glist a").forEach(x=>x.classList.remove("on"));a.classList.add("on");
+  groupFilter=i===0?null:GROUPS[i-1].id;closeDetail();renderGroups();document.querySelector(".main").scrollTop=0;
+}));
+const groupsEl=document.getElementById("groups");
+// 事件委派：點客戶列開詳情（重畫/切分頁都不會失效）
+groupsEl.addEventListener("click",function(e){
+  const tr=e.target.closest("tr.clk");
+  if(!tr) return;
+  if(e.target.closest("input,button,a")) return;
+  openDetail(tr.dataset.g, +tr.dataset.i);
+});
+function renderGroups(){
+  const list=groupFilter?GROUPS.filter(g=>g.id===groupFilter):GROUPS.slice(0,shown);
+  if(!GROUPS.length){groupsEl.innerHTML='<div class="empty">目前這個範圍沒有進行中的客戶。</div>';return;}
+  groupsEl.innerHTML=list.map((g,gi)=>{
+    const cs=g.customers||[];
+    const tabNames=[...new Set(cs.map(c=>c.tab))];
+    const tabs=tabNames.map((t,i)=>`<button class="tab ${i===0?'on':''}" data-g="${esc(g.id)}" data-t="${esc(t)}">${esc(t)} <span class="cnt">(${cs.filter(c=>c.tab===t).length})</span></button>`).join("")||'<div style="padding:10px 14px;color:var(--ink-3)">無進行中客戶</div>';
+    return `<div class="grp ${gi===0?'open':''}" data-g="${esc(g.id)}">
+      <div class="grp-h"><span class="gtag" style="background:${g.color}">${esc(g.code)}</span><span class="gname">${esc(g.name)}</span>
+        <div class="grp-stats"><span>今日 <b class="num">${g.today}</b> 件</span>${g.new?`<span class="s-new">尚未排 <b class="num">${g.new}</b></span>`:""}<span class="s-doc">待補 <b class="num">${g.doc}</b></span><span class="s-money">待撥 <b class="num">${g.disb}</b></span><span class="s-done">已結案 <b class="num">${g.done}</b></span></div>
+        <span class="caret">▼</span></div>
+      <div class="grp-body"><div class="tabs">${tabs}</div><div class="gtable" data-g="${esc(g.id)}"></div></div></div>`;
+  }).join("");
+  list.forEach(g=>{const t=(g.customers[0]||{}).tab;if(t)renderTable(g.id,t);});
+  bindGroups();
+  const mg=document.getElementById("moreGroups");if(mg)mg.style.display=(groupFilter||GROUPS.length<=4)?"none":"";
+}
+function renderTable(gid,tab){
+  const g=GROUPS.find(x=>x.id===gid);const cs=g.customers.filter(c=>c.tab===tab);
+  const host=document.querySelector(`.gtable[data-g="${gid}"]`);if(!host)return;
+  host.innerHTML=`<table><thead><tr><th style="width:30px"></th><th>建立</th><th>客戶姓名</th><th>目前狀態</th><th>目前公司</th><th>順位</th><th>最後更新</th><th style="width:36px"></th></tr></thead><tbody>`+
+    cs.map(c=>`<tr class="clk" data-g="${esc(gid)}" data-i="${g.customers.indexOf(c)}"><td><input type="checkbox" class="rowchk" data-cid="${esc(c.caseid)}" ${SEL.has(c.caseid)?'checked':''} onclick="event.stopPropagation()"></td><td class="mono">${esc(c.cr)}</td><td style="font-weight:600">${esc(c.n)}</td><td>${pill(c)}</td><td>${esc(c.co)}</td><td class="mono">${esc(c.pos)}</td><td class="mono">${esc(c.up)}</td><td><span class="eye">👁</span></td></tr>`).join("")+`</tbody></table>`;
+}
+function bindGroups(){
+  document.querySelectorAll(".grp-h").forEach(h=>h.onclick=()=>h.parentElement.classList.toggle("open"));
+  document.querySelectorAll(".tab").forEach(t=>t.onclick=e=>{e.stopPropagation();const g=t.dataset.g;document.querySelectorAll(`.tab[data-g="${g}"]`).forEach(x=>x.classList.remove("on"));t.classList.add("on");renderTable(g,t.dataset.t);});
+}
+const scrim=document.getElementById("scrim"),detail=document.getElementById("detail"),dBody=document.getElementById("dBody");
+function openDetail(gid,idx){
+  const g=GROUPS.find(x=>x.id===gid),c=g.customers[idx];const cid=encodeURIComponent(c.caseid||"");
+  const steps=(c.route||[]).map((co,i)=>`<div class="step ${i<c.ridx?'done':''} ${i===c.ridx?'cur':''}"><div class="dot num">${i+1}</div><div class="cn">${esc(co)}</div></div>`).join("")||'<span style="color:var(--ink-3)">尚未設定送件順序</span>';
+  const tl=(c.his||[]).map(h=>`<div class="tl-item"><div class="tdot" style="background:${TLC[h[2]]||'#94a3b8'}"></div><div class="tc"><div class="tt num">${esc(h[0])}</div>${esc(h[1])}</div></div>`).join("")||'<span style="color:var(--ink-3)">尚無紀錄</span>';
+  dBody.innerHTML=`
+   <div class="d-sec">
+     <div class="kv"><span class="k">所屬群組</span><span><span class="grp-tag" style="background:${g.color}">${esc(g.code)}</span> ${esc(g.name)}</span></div>
+     <div class="d-name">${esc(c.n)} <span class="co">${esc(c.co)}</span></div>
+     <div class="d-row"><span class="k">手機</span><span class="num">${esc(c.ph)||"—"}</span></div>
+     <div class="d-row"><span class="k">身分證</span><span class="num">${esc(c.id)||"—"}</span></div>
+     <div class="d-row"><span class="k">資金需求</span><span>${esc(c.fund)||"—"}</span></div>
+     <div class="d-row"><span class="k">方案/類別</span><span>${esc(c.cat)||"—"}</span></div>
+   </div>
+   <div class="d-sec"><div class="sh"><span>送件順序（目前第 ${c.ridx+1} / ${(c.route||[]).length} 家）</span></div><div class="stepper">${steps}</div></div>
+   <div class="d-sec"><div class="sh"><span>目前狀態</span><span class="num" style="color:var(--ink-3)">最後更新 ${esc(c.up)}</span></div><div>${pill(c)} <b style="margin-left:6px">${esc(c.co)}</b></div></div>
+   <div class="d-sec"><div class="sh"><span>案件歷程（case_logs）</span></div><div class="tl">${tl}</div></div>
+   <div class="d-sec"><div class="sh"><span>附件</span></div><div style="color:var(--ink-3);font-size:13px">📎 手動上傳／檢視 — 下一步實作</div></div>
+   <div class="d-sec"><div class="sh"><span>LINE 同步資訊</span></div>
+     <div class="kv"><span class="k">狀態</span><span class="pill p-docok" style="font-size:11px">已同步</span></div>
+     <div class="kv"><span class="k">來源群組</span><span>${esc(c.src)}</span></div>
+     <div class="kv"><span class="k">最後同步</span><span class="num">${esc(c.up)||"—"}</span></div>
+   </div>
+   <div class="d-acts">
+     ${CAN_EDIT?`<a class="d-act" href="/case-edit?case_id=${cid}">🔍 查看／編輯案件</a>`:''}
+     <a class="d-act" href="/customer-pdf?case_id=${cid}" target="_blank">📄 客戶卡 PDF</a>
+     ${CAN_EDIT?`<a class="d-act" href="/edit-pending?case_id=${cid}">✎ 編輯個資</a>`:''}
+     <a class="d-act" href="/search?q=${encodeURIComponent(c.n||'')}">🔎 搜尋此客戶</a>
+   </div>`;
+  scrim.classList.add("show");detail.classList.add("show");
+}
+function closeDetail(){scrim.classList.remove("show");detail.classList.remove("show");}
+scrim.onclick=closeDetail;document.getElementById("dClose").onclick=closeDetail;
+document.addEventListener("keydown",e=>{if(e.key==="Escape")closeDetail();});
+const mgEl=document.getElementById("moreGroups");
+if(mgEl)mgEl.onclick=function(){if(shown>=GROUPS.length){shown=4;this.textContent="展開更多群組 ▾";}else{shown=GROUPS.length;this.textContent="收合群組 ▴";}renderGroups();};
+
+// ---- 批次勾選（跨群組/分頁不掉）+ 批次結案/刪除 ----
+const SEL=new Set();
+function updateSel(){const el=document.getElementById("selCount");if(el)el.textContent=SEL.size?("已選 "+SEL.size+" 筆"):"";document.querySelectorAll(".needsel").forEach(b=>b.disabled=!SEL.size);}
+document.body.addEventListener("change",e=>{const cb=e.target.closest(".rowchk");if(!cb)return;const cid=cb.dataset.cid;if(cb.checked)SEL.add(cid);else SEL.delete(cid);updateSel();});
+function batchClose(){if(!SEL.size){toast("請先勾選客戶");return;}if(!confirm("確定要批次結案 "+SEL.size+" 位客戶嗎？"))return;fetch("/report/batch-close",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({case_ids:[...SEL]})}).then(r=>r.json()).then(d=>{alert(d.message||"完成");location.reload();}).catch(()=>alert("失敗，請重試"));}
+function batchDelete(){if(!SEL.size){toast("請先勾選客戶");return;}if(!confirm("確定要永久刪除勾選的 "+SEL.size+" 位客戶嗎？（無法復原）"))return;const fd=new FormData();[...SEL].forEach(id=>fd.append("case_ids",id));fetch("/admin/delete-customers",{method:"POST",body:fd}).then(()=>location.reload()).catch(()=>alert("失敗，請重試"));}
+
+// ---- 搜尋姓名（即時，跨全部群組）----
+function filterByName(q){
+  q=(q||"").trim().toLowerCase();
+  const gv=document.getElementById("groups"),mg=document.getElementById("moreGroups"),sr=document.getElementById("searchResults");
+  if(!q){gv.style.display="";if(mg)mg.style.display=(groupFilter||GROUPS.length<=4)?"none":"";sr.style.display="none";sr.innerHTML="";return;}
+  gv.style.display="none";if(mg)mg.style.display="none";sr.style.display="";
+  const hits=[];GROUPS.forEach(g=>(g.customers||[]).forEach((c,i)=>{if((c.n||"").toLowerCase().includes(q))hits.push({g,c,i});}));
+  sr.innerHTML=`<div class="card"><div class="card-h"><span class="ct">搜尋結果</span><span class="cc num">${hits.length} 筆</span></div>`+
+    (hits.length?`<table><thead><tr><th style="width:30px"></th><th>客戶姓名</th><th>群組</th><th>目前狀態</th><th>目前公司</th><th>順位</th></tr></thead><tbody>`+
+      hits.map(x=>`<tr class="clk" data-g="${esc(x.g.id)}" data-i="${x.i}"><td><input type="checkbox" class="rowchk" data-cid="${esc(x.c.caseid)}" ${SEL.has(x.c.caseid)?"checked":""} onclick="event.stopPropagation()"></td><td style="font-weight:600">${esc(x.c.n)}</td><td>${esc(x.g.name)}</td><td>${pill(x.c)}</td><td>${esc(x.c.co)}</td><td class="mono">${esc(x.c.pos)}</td></tr>`).join("")+`</tbody></table>`
+      :`<div class="empty">找不到「${esc(q)}」的客戶</div>`)+`</div>`;
+  sr.querySelectorAll("tr.clk").forEach(r=>r.onclick=()=>openDetail(r.dataset.g,+r.dataset.i));
+}
+function clearSearch(){const s=document.getElementById("searchName");if(s)s.value="";filterByName("");}
+
+renderGroups();
+"""
+
+@app.get("/report2", response_class=HTMLResponse)
+def report2_page(request: Request):
+    from fastapi.responses import RedirectResponse
+    role = check_auth(request)
+    if not role:
+        return RedirectResponse("/login")
+    auth_group = get_auth_group_id(request)
+    conn = get_conn(); cur = conn.cursor()
+    if auth_group:
+        cur.execute("SELECT group_id, group_name, group_type FROM groups WHERE group_id=? AND is_active=1", (auth_group,))
+    else:
+        cur.execute("SELECT group_id, group_name, group_type FROM groups WHERE group_type='SALES_GROUP' AND is_active=1 ORDER BY (CASE WHEN group_name LIKE '%測試%' OR group_name LIKE '%練習%' THEN 1 ELSE 0 END), group_name")
+    grows = cur.fetchall()
+    month_start = now_tw().strftime("%Y-%m-01")
+    today_date = now_tw().strftime("%Y-%m-%d")
+    groups_data = []
+    stats = {"groups": 0, "today": 0, "send": 0, "doc": 0, "call": 0, "money": 0, "done": 0}
+    alerts = {"rej": 0, "send2": 0, "resupp": 0, "disb5": 0}
+    gids_all = []
+    for gi, g in enumerate(grows):
+        gid = g["group_id"]; gname = g["group_name"] or gid
+        gids_all.append(gid)
+        color = GROUP_COLORS[gi % len(GROUP_COLORS)]
+        cur.execute("SELECT * FROM customers WHERE source_group_id=? AND status='ACTIVE' ORDER BY updated_at DESC", (gid,))
+        arows = cur.fetchall()
+        cur.execute("SELECT COUNT(*) c FROM customers WHERE source_group_id=? AND status IN ('CLOSED','PENALTY','ABANDONED','REJECTED') AND updated_at>=?", (gid, month_start))
+        gclosed = cur.fetchone()["c"]
+        custs = []; g_doc = 0; g_disb = 0; g_new = 0
+        for row in arows:
+            try:
+                disp = compute_customer_display(row)
+            except Exception:
+                continue
+            sec = disp.get("section", "") or ""
+            if get_status_type(row) == "new":
+                # 你們的邏輯：客戶一建檔就掛在「自己那群」日報底下的「尚未排順序」，之後再排
+                g_new += 1
+                custs.append({
+                    "n": _rv(row, "customer_name", ""), "st": "new", "stl": "尚未排順序",
+                    "co": "—", "tab": "🆕 尚未排順序", "pos": "—",
+                    "cr": _rv(row, "created_at", "")[5:16].replace("-", "/"),
+                    "up": (_rv(row, "updated_at", "") or "")[5:16].replace("-", "/"),
+                    "ph": _rv(row, "phone", ""), "id": _rv(row, "id_no", ""),
+                    "fund": _rv(row, "eval_fund_need", ""),
+                    "cat": _rv(row, "selected_plans", "") or _rv(row, "product_type", ""),
+                    "route": [], "ridx": 0, "his": [], "caseid": _rv(row, "case_id", ""), "src": gname,
+                })
+                continue
+            if not sec:
+                alerts["rej"] += 1
+                continue
+            c = _report2_cust(row, disp, gname)
+            custs.append(c)
+            if c["st"] in ("doc", "docok"):
+                g_doc += 1; stats["doc"] += 1
+            if c["st"] == "money":
+                g_disb += 1; stats["money"] += 1
+            if c["st"] == "send":
+                stats["send"] += 1
+            if c["st"] == "call":
+                stats["call"] += 1
+            if sec == "送件" and _r2_days_since(_rv(row, "updated_at", "")) >= 2:
+                alerts["send2"] += 1
+            if c["st"] == "docok" and _r2_days_since(_rv(row, "updated_at", "")) >= 3:
+                alerts["resupp"] += 1
+            if sec == "待撥款" and not _rv(row, "disbursement_date", "") and _r2_days_since(_rv(row, "approved_at", "") or _rv(row, "updated_at", "")) >= 5:
+                alerts["disb5"] += 1
+        groups_data.append({"id": gid, "name": gname, "color": color, "code": f"{gi+1:02d}", "today": 0, "new": g_new, "doc": g_doc, "disb": g_disb, "done": gclosed, "customers": custs})
+        stats["done"] += gclosed
+    stats["groups"] = len(groups_data)
+    # 今日進件（含尚未排順序的）
+    if gids_all:
+        qm = ",".join("?" * len(gids_all))
+        cur.execute(f"SELECT source_group_id gg, COUNT(*) c FROM customers WHERE source_group_id IN ({qm}) AND date(created_at)=? GROUP BY source_group_id", gids_all + [today_date])
+        tmap = {r["gg"]: r["c"] for r in cur.fetchall()}
+        stats["today"] = sum(tmap.values())
+        for gd in groups_data:
+            gd["today"] = tmap.get(gd["id"], 0)
+    # 案件歷程批次查
+    all_ids = [c["caseid"] for gg in groups_data for c in gg["customers"] if c["caseid"]]
+    if all_ids:
+        qm = ",".join("?" * len(all_ids))
+        cur.execute(f"SELECT case_id, created_at, message_text FROM case_logs WHERE case_id IN ({qm}) ORDER BY created_at DESC", all_ids)
+        lm = {}
+        for r in cur.fetchall():
+            k = r["case_id"]; lm.setdefault(k, [])
+            if len(lm[k]) < 8:
+                lm[k].append([(r["created_at"] or "")[5:16].replace("-", "/"), (r["message_text"] or "")[:50], "x"])
+        for gg in groups_data:
+            for c in gg["customers"]:
+                c["his"] = lm.get(c["caseid"], [])
+    conn.close()
+
+    # ---- 側欄導覽（連到真實頁面）----
+    def nl(icon, label, href, on=False, badge=""):
+        b = f'<span class="badge">{badge}</span>' if badge else ""
+        return f'<a class="{"on" if on else ""}" href="{href}"><span class="ico">{icon}</span><span class="tx">{h(label)}</span>{b}</a>'
+    navs = [nl("🏠", "公司日報", "/report2", True),
+            nl("🗂️", "客戶資料庫", "/pending-customers"), nl("🔍", "客戶搜尋", "/search"),
+            nl("📁", "結案歷史", "/history")]
+    if role in ("admin", "adminB", "ops_admin"):
+        navs.append(nl("📋", "行政B作業", "/adminb"))
+    if role in ("admin", "adminB", "ops_admin", "sales_admin") or role.startswith("group_"):
+        navs.append(nl("💬", "指令台", "/console"))
+    if role == "admin":
+        navs.append(nl("⚙️", "群組管理", "/admin/groups"))
+    nav_html = "".join(navs)
+
+    # ---- 統計卡 ----
+    def sc(icls, icon, label, val, hero=False):
+        ic = "" if hero else f'<span class="ic {icls}">{icon}</span>'
+        unit = "組" if hero else "件"
+        return f'<div class="stat{" hero" if hero else ""}"><div class="lb">{ic}{h(label)}</div><div class="vl num">{val}<small>{unit}</small></div></div>'
+    stats_html = (sc("", "📦", "全部群組總覽", stats["groups"], True)
+                  + sc("i-all", "📋", "今日進件", stats["today"])
+                  + sc("i-send", "✈", "送件中", stats["send"])
+                  + sc("i-doc", "📂", "待補／補件", stats["doc"])
+                  + sc("i-call", "📞", "照會中", stats["call"])
+                  + sc("i-money", "＄", "待撥款", stats["money"])
+                  + sc("i-done", "✓", "本月結案", stats["done"]))
+
+    # ---- 異常提醒 ----
+    al = [("婉拒未處理／全數婉拒", alerts["rej"], True), ("送件中超過 2 天", alerts["send2"], False),
+          ("已補件超過 3 天未動", alerts["resupp"], False), ("待撥款超過 5 天", alerts["disb5"], True)]
+    achips = "".join(f'<div class="achip{" crit" if crit else ""}">{h(lbl)} <b class="num">{cnt}</b> 件</div>' for lbl, cnt, crit in al)
+    alert_total = sum(a[1] for a in al)
+
+    who_txt = {"admin": "管理員", "adminB": "行政B", "ops_admin": "行政管理員", "sales_admin": "業務管理員"}.get(role, "業務")
+    upd_time = now_tw().strftime("%Y/%m/%d %H:%M")
+    data_json = json.dumps({"groups": groups_data}, ensure_ascii=False).replace("</", "<\\/")
+
+    shell = f"""<div class="app">
+  <aside class="side">
+    <div class="brand"><div class="mark">📋</div><div><div class="bt">送件管理系統</div><div class="bs">公司日報</div></div></div>
+    <nav class="nav">{nav_html}</nav>
+    <div class="side-h">業務群組（LINE）</div>
+    <div class="glist" id="glist"></div>
+    <div class="side-foot">👤 {h(who_txt)}　·　<a href="/logout" style="color:#7d8ca6">登出</a></div>
+  </aside>
+  <div class="main">
+    <div class="topbar">
+      <h1>公司日報</h1><span class="upd">更新：<b class="num">{upd_time}</b></span>
+      <div class="spacer"></div>
+      <div class="sync">🔄 即時資料</div>
+      <div class="who"><span class="av">{h(who_txt[0])}</span>{h(who_txt)}</div>
+    </div>
+    <div class="wrap">
+      <div class="stats">{stats_html}</div>
+      <div class="alert"><div class="ah">⚠️ 異常提醒（需處理 <span class="num">{alert_total}</span> 件）</div><div class="achips">{achips}</div></div>
+      <div class="r2-toolbar">
+        <input id="searchName" placeholder="🔍 搜尋姓名（即時過濾）" oninput="filterByName(this.value)" autocomplete="off">
+        <button class="r2-btn" onclick="clearSearch()">清除</button>
+        <span class="selinfo" id="selCount"></span>
+        <div class="spacer"></div>
+        <button class="r2-btn primary needsel" onclick="batchClose()" disabled>批次結案</button>
+        {'<button class="r2-btn danger needsel" onclick="batchDelete()" disabled>🗑 批次刪除</button>' if role == 'admin' else ''}
+      </div>
+      <div id="groups"></div>
+      <div class="more-groups" id="moreGroups">展開更多群組 ▾</div>
+      <div id="searchResults" style="display:none"></div>
+    </div>
+  </div>
+</div>
+<div class="scrim" id="scrim"></div>
+<aside class="detail" id="detail"><div class="d-h"><span class="dt">客戶詳情</span><button class="d-close" id="dClose">✕</button></div><div id="dBody"></div></aside>
+<div id="toast"></div>"""
+
+    page = ("<!DOCTYPE html><html lang='zh-Hant'><head><meta charset='utf-8'>"
+            "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+            "<title>公司日報</title><style>" + _REPORT2_CSS + "</style></head><body>"
+            + shell + "<script>const DATA=" + data_json + ";\n"
+            + "const CAN_EDIT=" + ("true" if role in ("admin", "adminB", "ops_admin", "sales_admin") else "false") + ";\n"
+            + _REPORT2_JS + "</script></body></html>")
+    return HTMLResponse(page)
 
 
 # =========================
@@ -19292,6 +20266,36 @@ def new_customer_page(request: Request):
     grp_map_js = json.dumps({g["group_id"]: g["group_name"] for g in groups}, ensure_ascii=False)
     pdf_js = _PDF_EXPORT_JS.replace("__GRP_MAP__", grp_map_js)
     HTML_PAGE = '<!DOCTYPE html>\n<html lang="zh-TW">\n<head>\n<meta charset="UTF-8">\n<meta name="viewport" content="width=device-width, initial-scale=1.0">\n<title>新增客戶資料</title>\n<style>\n* { box-sizing: border-box; margin: 0; padding: 0; }\nbody { font-family: \'Microsoft JhengHei\', \'PingFang TC\', sans-serif; background: #ece8e2; color: #2c2820; font-size: 14px; }\n.topnav { background: #3a3530; padding: 0 20px; display: flex; align-items: center; height: 50px; gap: 4px; }\n.topnav a { color: #c8bfb5; text-decoration: none; padding: 7px 14px; border-radius: 6px; font-size: 14px; }\n.topnav a.active { background: #7c6f5e; color: #fff; }\n.topnav a:hover { background: #4a4540; color: #fff; }\n.page { max-width: 820px; margin: 24px auto; padding: 0 16px 40px; }\n.page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; padding-bottom: 12px; border-bottom: 2px solid #8a7a68; }\nh2 { font-size: 20px; font-weight: 700; color: #2c2820; }\n.card { background: #faf6f2; border-radius: 10px; padding: 18px; margin-bottom: 14px; box-shadow: 0 1px 4px rgba(0,0,0,0.08); border: 1px solid #ddd5ca; }\n.section-title { font-size: 13px; font-weight: 700; color: #5a4e40; margin-bottom: 14px; padding-bottom: 7px; border-bottom: 1px solid #ddd5ca; letter-spacing: 0.5px; }\n.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }\n.grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }\n.grid4 { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 12px; }\n.full { grid-column: 1 / -1; }\nlabel { display: block; font-size: 12px; color: #5a4e40; margin-bottom: 5px; font-weight: 600; }\n.req { color: #b84a35; }\ninput, select, textarea {\n  width: 100%; padding: 8px 11px; border: 1px solid #c8bfb5;\n  border-radius: 6px; font-size: 14px; font-family: inherit;\n  background: #fff; color: #2c2820; transition: border 0.15s;\n}\ninput:focus, select:focus, textarea:focus { outline: none; border-color: #7c6f5e; background: #fffcf9; }\ninput::placeholder, textarea::placeholder { color: #c8bfb5; }\ntextarea { resize: vertical; min-height: 65px; }\n.hint { font-size: 12px; color: #8a7a68; margin-top: 4px; }\n.auto-val { font-size: 15px; color: #b84a35; font-weight: 700; margin-top: 5px; }\n.vehicle-card { background: #f0ebe4; border: 1px solid #ccc5ba; border-radius: 8px; padding: 14px; margin-bottom: 10px; position: relative; }\n.vehicle-card .card-label { font-size: 13px; font-weight: 700; color: #5a4e40; margin-bottom: 10px; }\n.remove-btn { position: absolute; top: 12px; right: 12px; background: #f5ddd8; color: #b84a35; border: none; border-radius: 4px; padding: 4px 12px; font-size: 12px; cursor: pointer; font-weight: 600; }\n.debt-header { display: grid; grid-template-columns: 1.2fr 0.8fr 0.6fr 0.8fr 0.6fr 1fr 0.9fr 0.8fr 30px; gap: 5px; font-size: 12px; color: #5a4e40; font-weight: 600; margin-bottom: 6px; }\n.debt-row { display: grid; grid-template-columns: 1.2fr 0.8fr 0.6fr 0.8fr 0.6fr 1fr 0.9fr 0.8fr 30px; gap: 5px; margin-bottom: 7px; align-items: center; }\n.debt-row input { font-size: 13px; padding: 6px 8px; }\n.debt-remain { font-size: 13px; font-weight: 700; color: #b84a35; }\n.debt-del { background: #f5ddd8; color: #b84a35; border: none; border-radius: 4px; width: 30px; height: 32px; cursor: pointer; font-size: 15px; }\n.add-btn { background: #e8e2da; color: #4a3e30; border: 1px dashed #a09080; border-radius: 6px; padding: 8px 16px; font-size: 13px; cursor: pointer; margin-top: 8px; font-weight: 600; }\n.add-btn:hover { background: #ddd5ca; }\n.btn-row { display: flex; gap: 10px; margin-top: 22px; flex-wrap: wrap; }\n.btn { padding: 11px 26px; border-radius: 8px; font-size: 15px; font-weight: 700; cursor: pointer; border: none; font-family: inherit; }\n.btn-primary { background: #6a5e4e; color: #fff; }\n.btn-primary:hover { background: #5a4e40; }\n.btn-export { background: #4e7055; color: #fff; }\n.btn-export:hover { background: #3e5e45; }\n.btn-cancel { background: #ddd5ca; color: #4a3e30; }\n.btn-cancel:hover { background: #ccc5ba; }\n.ig { display: flex; gap: 6px; align-items: center; }\n.ig span { font-size: 14px; white-space: nowrap; line-height: 36px; color: #4a3e30; font-weight: 600; }\n</style>\n</head>\n<body>\n<div class="topnav">\n  <a href="/">&#128202; 日報</a>\n  <a href="/pending-customers">&#128203; 客戶資料庫</a>\n  <a href="/new-customer" class="active">&#10133; 新增客戶</a>\n</div>\n<div class="page">\n  <div class="page-header">\n    <h2>新增客戶資料</h2>\n\n  </div>\n  <form id="cf" method="post" action="/new-customer">\n    <div class="card">\n      <div class="section-title">所屬群組</div>\n      <div>\n        <div><label>群組</label><select name="grp"><option>B群</option><option>C群</option></select></div>\n      </div>\n    </div>\n    <div class="card">\n      <div class="section-title">基本資料</div>\n      <div class="grid2">\n        <div><label>客戶姓名 <span class="req">*</span></label><input name="cname" placeholder="王小明" required></div>\n        <div><label>身分證字號 <span class="req">*</span></label><input name="idno" placeholder="A123456789" style="text-transform:uppercase" required pattern="[A-Za-z][12]\\d{8}" title="格式：英文字母+1或2+8位數字"></div>\n        <div><label>出生年月日 <span class="req">*</span></label><input name="birth" placeholder="086/12/15"><div class="hint">民國年：086/12/15</div></div>\n        <div><label>行動電話 <span class="req">*</span></label><input name="phone" placeholder="0912-345678" pattern="09\\d{8}" title="格式：09開頭共10位數字"></div>\n        <div><label>電信業者</label><select name="carrier"><option value="">--- 請選擇 ---</option><option>中華電信</option><option>遠傳電信</option><option>台灣大哥大</option><option>台灣之星</option><option>亞太電信</option><option>其他</option></select></div>\n        <div><label>Email</label><input name="email" placeholder="example@gmail.com"></div>\n        <div><label>LINE ID</label><input name="line"></div>\n        <div><label>客戶FB</label><input name="fb" placeholder="Facebook名稱"></div>\n        <div><label>婚姻狀態</label><select name="marry"><option value="">--- 請選擇 ---</option><option>未婚</option><option>已婚</option></select></div>\n        <div><label>最高學歷</label><select name="edu"><option value="">--- 請選擇 ---</option><option>高中/職</option><option>專科/大學</option><option>研究所以上</option><option>其他</option></select></div>\n      </div>\n    </div>\n    <div class="card">\n      <div class="section-title">身分證發證資料</div>\n      <div class="grid3">\n        <div><label>發證日期 <span class="req">*</span></label><input name="iddate" placeholder="114/03/05"><div class="hint">民國年：114/03/05</div></div>\n        <div><label>發證地 <span class="req">*</span></label><select name="idplace"><option value="">--- 請選擇 ---</option><option>北市</option><option>北縣</option><option>新北市</option><option>桃市</option><option>桃縣</option><option>中市</option><option>中縣</option><option>南市</option><option>南縣</option><option>高市</option><option>高縣</option><option>基市</option><option>竹市</option><option>竹縣</option><option>苗縣</option><option>彰縣</option><option>投縣</option><option>雲縣</option><option>嘉市</option><option>嘉縣</option><option>屏縣</option><option>宜縣</option><option>花縣</option><option>東縣</option><option>澎縣</option><option>金門</option><option>連江</option></select></div>\n        <div><label>換補發類別 <span class="req">*</span></label><select name="idtype"><option value="">--- 請選擇 ---</option><option>初發</option><option>補發</option><option>換發</option></select></div>\n      </div>\n    </div>\n    <div class="card">\n      <div class="section-title">地址資料</div>\n      <div style="font-size:13px;font-weight:700;color:#4a3e30;margin-bottom:10px">戶籍地址</div>\n      <div class="grid3" style="margin-bottom:10px">\n        <div><label>縣市 <span class="req">*</span></label><select name="rcity"><option value="">請選擇</option><option>台北市</option><option>新北市</option><option>桃園市</option><option>台中市</option><option>台南市</option><option>高雄市</option><option>基隆市</option><option>新竹市</option><option>新竹縣</option><option>苗栗縣</option><option>彰化縣</option><option>南投縣</option><option>雲林縣</option><option>嘉義市</option><option>嘉義縣</option><option>屏東縣</option><option>宜蘭縣</option><option>花蓮縣</option><option>台東縣</option><option>澎湖縣</option><option>金門縣</option><option>連江縣</option></select></div>\n        <div><label>區/鄉鎮</label><input name="rdist" placeholder="苗栗市"></div>\n        <div><label>詳細地址 <span class="req">*</span></label><input name="raddr" placeholder="新東街257號"></div>\n      </div>\n      <div style="margin-bottom:12px"><label>戶籍電話</label><input name="rphone" placeholder="037-123456" style="max-width:200px"></div>\n      <label style="display:flex;align-items:center;gap:8px;font-size:14px;color:#3a3020;margin-bottom:12px;cursor:pointer;font-weight:600">\n        <input type="checkbox" id="sameck" name="sameck" checked style="width:18px;height:18px;flex-shrink:0;accent-color:#6a5e4e" onchange="document.getElementById(\'lsec\').style.display=this.checked?\'none\':\'block\'">\n        住家地址與戶籍相同\n      </label>\n      <div id="lsec" style="display:none;margin-bottom:12px">\n        <div style="font-size:13px;font-weight:700;color:#4a3e30;margin-bottom:10px">住家地址</div>\n        <div class="grid3">\n          <div><label>縣市</label><select name="lcity"><option value="">請選擇</option><option>台北市</option><option>新北市</option><option>桃園市</option><option>台中市</option><option>台南市</option><option>高雄市</option><option>基隆市</option><option>新竹市</option><option>新竹縣</option><option>苗栗縣</option><option>彰化縣</option><option>南投縣</option><option>雲林縣</option><option>嘉義市</option><option>嘉義縣</option><option>屏東縣</option><option>宜蘭縣</option><option>花蓮縣</option><option>台東縣</option><option>澎湖縣</option><option>金門縣</option><option>連江縣</option></select></div>\n          <div><label>區/鄉鎮</label><input name="ldist"></div>\n          <div><label>詳細地址</label><input name="laddr"></div>\n        </div>\n      </div>\n      <div class="grid3">\n        <div><label>現住電話</label><input name="lphone" placeholder="037-123456"></div>\n        <div><label>居住狀況</label><select name="lstatus" onchange="document.getElementById(\'hp_box\').style.display=this.value===\'自有\'?\'block\':\'none\'"><option value="">--- 請選擇 ---</option><option>自有</option><option>配偶</option><option>父母</option><option>親屬</option><option>租屋</option><option>宿舍</option></select></div>\n        <div id="hp_box" style="display:none"><label style="color:#b91c1c;font-weight:700">⚠️ 房屋私設（自有時填）</label><select name="hprivate" style="border:2px solid #b91c1c"><option value="">請選擇</option><option>無</option><option>有</option></select></div>\n        <div><label>居住時間</label><div class="ig"><input name="lyear" placeholder="5" style="width:58px"><span>年</span><input name="lmon" placeholder="0" style="width:58px"><span>月</span></div></div>\n      </div>\n    </div>\n    <div class="card">\n      <div class="section-title">職業資料</div>\n      <div class="grid2">\n        <div class="full"><label>公司名稱 <span class="req">*</span></label><input name="cmpname" placeholder="嘉合企業社"></div>\n        <div><label>公司電話 <span class="req">*</span></label><div class="ig"><select name="carea" style="width:82px"><option value="">區碼</option><option>02</option><option>03</option><option>037</option><option>04</option><option>049</option><option>05</option><option>06</option><option>07</option><option>08</option><option>089</option><option value="mobile">手機</option></select><input name="cnum" placeholder="1234567"><input name="cext" placeholder="分機" style="width:68px"></div></div>\n        <div><label>職稱</label><input name="crole" placeholder="技工"></div>\n        <div><label>年資</label><div class="ig"><input name="cyear" placeholder="3" style="width:62px"><span>年</span><input name="cmon" placeholder="0" style="width:62px"><span>月</span></div></div>\n        <div><label>月薪（萬）</label><input name="csal" placeholder="3.5"></div>\n        <div class="full"><label>公司地址</label><div style="display:grid;grid-template-columns:1fr 1fr 2fr;gap:8px"><select name="ccity"><option value="">請選擇</option><option>台北市</option><option>新北市</option><option>桃園市</option><option>台中市</option><option>台南市</option><option>高雄市</option><option>基隆市</option><option>新竹市</option><option>新竹縣</option><option>苗栗縣</option><option>彰化縣</option><option>南投縣</option><option>雲林縣</option><option>嘉義市</option><option>嘉義縣</option><option>屏東縣</option><option>宜蘭縣</option><option>花蓮縣</option><option>台東縣</option><option>澎湖縣</option><option>金門縣</option><option>連江縣</option></select><input name="cdist" placeholder="區/鄉鎮"><input name="caddr" placeholder="詳細地址"></div></div>\n      </div>\n    </div>\n    <div class="card">\n      <div class="section-title">聯絡人資料</div>\n      <div style="margin-bottom:14px;padding-bottom:14px;border-bottom:1px solid #ddd5ca">\n        <div style="font-size:13px;color:#5a4e40;font-weight:600;margin-bottom:10px">聯絡人1（需為二等親）</div>\n        <div class="grid4">\n          <div><label>姓名 <span class="req">*</span></label><input name="c1name" placeholder="吳玉英"></div>\n          <div><label>關係</label><input name="c1rel" placeholder="母"></div>\n          <div><label>電話 <span class="req">*</span></label><input name="c1tel" placeholder="0978-055530"></div>\n          <div><label>可知情</label><select name="c1know"><option value="">請選擇</option><option>可知情</option><option>保密</option></select></div>\n        </div>\n      </div>\n      <div>\n        <div style="font-size:13px;color:#5a4e40;font-weight:600;margin-bottom:10px">聯絡人2</div>\n        <div class="grid4">\n          <div><label>姓名 <span class="req">*</span></label><input name="c2name" placeholder="賴俊明"></div>\n          <div><label>關係</label><input name="c2rel" placeholder="友"></div>\n          <div><label>電話 <span class="req">*</span></label><input name="c2tel" placeholder="0919-616821"></div>\n          <div><label>可知情</label><select name="c2know"><option value="">請選擇</option><option>可知情</option><option>保密</option></select></div>\n        </div>\n      </div>\n    </div>\n    <div class="card">\n      <div class="section-title">貸款諮詢事項</div>\n      <div class="grid2">\n        <div><label style="color:#b91c1c;font-weight:700">⚠️ 警示戶</label><select name="ewarning" style="border:2px solid #b91c1c;font-weight:700" onchange="document.getElementById(\'ewmethod_box\').style.display=this.value===\'是\'?\'block\':\'none\'"><option value="">請選擇</option><option>否</option><option>是</option></select></div>\n        <div id="ewmethod_box" style="display:none"><label style="color:#b91c1c;font-weight:700">⚠️ 警示戶撥款方式</label><select name="ewmethod" style="border:2px solid #b91c1c;font-weight:700"><option value="">請選擇</option><option>撥二等親</option><option>現金或朋友</option></select></div>\n        <div><label>資金需求</label><input name="efund" placeholder="$100,000"></div>\n        <div><label>近三月送件 / 送過什麼</label><div style="display:flex;gap:6px"><select name="esent" style="width:72px;flex:0 0 72px"><option value="">?</option><option>否</option><option>是</option></select><input name="esent_detail" placeholder="例：喬美、裕融" style="flex:1"></div></div>\n        <div><label>當鋪私設</label><select name="eprivate"><option value="">請選擇</option><option>無</option><option>有</option></select></div>\n        <div><label>勞保狀態</label><select name="elabor"><option value="">請選擇</option><option>公司保</option><option>工會保</option><option>自行投保</option><option>軍保</option><option>公保</option><option>農保</option><option>漁保</option><option>無勞保</option></select></div>\n        <div><label>有無薪轉</label><select name="esal"><option value="">請選擇</option><option>有薪轉</option><option>無薪轉</option></select></div>\n        <div><label>有無證照</label><select name="elicense"><option value="">請選擇</option><option>無</option><option>有</option></select></div>\n        <div><label>貸款遲繳</label><select name="elate"><option value="">請選擇</option><option>無</option><option>有</option></select></div>\n        <div><label>遲繳天數</label><input name="elateday" placeholder="0"></div>\n        <div><label>罰單欠費金額 $</label><input name="efine" placeholder="0" type="number" min="0" oninput="calcF()"></div>\n        <div><label>燃料稅金額 $</label><input name="efuel" placeholder="0" type="number" min="0" oninput="calcF()"></div>\n        <div class="full"><label>欠費總額（自動計算）</label><div class="auto-val" id="tfees">$0</div></div>\n        <div><label>名下信用卡</label><input name="ecard" placeholder="銀行協商"></div>\n        <div><label>有無動產/不動產</label><input name="eprop" placeholder="有機車"></div>\n        <div><label>法學（幾條）</label><input name="elaw" placeholder="共1條"></div>\n        <div class="full"><label>備註</label><textarea name="enote" placeholder="其他說明..."></textarea></div>\n      </div>\n    </div>\n    <div class="card">\n      <div class="section-title">負債明細</div>\n      <div id="dlist"></div>\n      <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;">\n        <button type="button" class="add-btn" onclick="addD(\'車貸\')">&#10133; 新增車貸</button>\n        <button type="button" class="add-btn" onclick="addD(\'信貸\')">&#10133; 新增信貸/其他</button>\n      </div>\n    </div>\n    <div class="card">\n      <div class="section-title">無貸款車輛</div>\n      <div id="ulist"></div>\n      <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;">\n        <button type="button" class="add-btn" onclick="addUL(\'機車\')">&#10133; 新增無貸款機車</button>\n        <button type="button" class="add-btn" onclick="addUL(\'汽車\')">&#10133; 新增無貸款汽車</button>\n      </div>\n    </div>\n    <div class="btn-row">\n      <div id="err-box" style="display:none;background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;padding:12px 16px;margin-bottom:12px;"></div><button type="button" class="btn btn-primary" onclick="doSubmit()">&#9989; 建立客戶</button>\n      <button type="button" class="btn btn-cancel" onclick="history.back()">取消</button>\n    </div>\n  </form>\n</div>\n<script>\nlet vc=0,dc=0;\nfunction gv(n){const e=document.querySelector(\'[name="\'+n+\'"]\');return e?e.value||\'\':\'\';}\n\nfunction addD(type){\n  dc++;const n=dc;\n  var isCar=(type===\'車貸\');\n  var r=document.createElement(\'div\');\n  r.id=\'d\'+n;r.className=\'d-row\';\n  var bg=isCar?\'#f2f8f4\':\'#f8f5f1\';\n  var bc=isCar?\'#4e7055\':\'#8a7a68\';\n  r.style.cssText=\'border-radius:8px;margin-bottom:8px;padding:10px 14px;background:\'+bg+\';border-left:4px solid \'+bc+\';\';\n  var lbl=isCar?\'🚗 車貸\':\'💳 信貸/其他\';\n  var lc=isCar?\'#4e7055\':\'#6a5e4e\';\n  var LS=\'font-size:12px;font-weight:500;color:#2c2820;height:17px;\';\n  var IS=\'width:100%;height:34px;padding:0 8px;border:0.5px solid #ddd5ca;border-radius:6px;font-size:13px;font-family:inherit;box-sizing:border-box;background:#fff;color:#2c2820;\';\n  var RS=\'width:100%;height:34px;padding:0 8px;border:0.5px solid #e8c0b0;border-radius:6px;font-size:13px;font-weight:500;color:#b84a35;background:#fff8f5;display:flex;align-items:center;justify-content:flex-end;box-sizing:border-box;\';\n  var SS=\'width:100%;height:34px;padding:0 6px;border:0.5px solid #ddd5ca;border-radius:6px;font-size:13px;font-family:inherit;box-sizing:border-box;background:#fff;color:#2c2820;\';\n  var FS=\'display:flex;flex-direction:column;gap:4px;\';\n  var GS=\'display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-bottom:8px;\';\n  var h=\'\';\n  h+=\'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">\';\n  h+=\'<span style="font-size:13px;font-weight:500;color:\'+lc+\';">\'+lbl+\'</span>\';\n  h+=\'<button type="button" onclick="rmD(\'+n+\')" style="background:#f5ddd8;color:#b84a35;border:none;border-radius:5px;width:28px;height:28px;cursor:pointer;font-size:13px;">✕</button>\';\n  h+=\'</div>\';\n  h+=\'<div style="\'+GS+\'">\';\n  h+=\'<div style="\'+FS+\'"><div style="\'+LS+\'">貸款商家</div><input id="dc\'+n+\'" placeholder="裕融" style="\'+IS+\'"></div>\';\n  h+=\'<div style="\'+FS+\'"><div style="\'+LS+\'">貸款金額</div><input id="dl\'+n+\'" placeholder="150000" type="number" style="\'+IS+\'"></div>\';\n  h+=\'<div style="\'+FS+\'"><div style="\'+LS+\'">期數／已繳</div><input id="dp\'+n+\'" placeholder="36 / 0" oninput="calcD(\'+n+\')" style="\'+IS+\'"></div>\';\n  h+=\'<div style="\'+FS+\'"><div style="\'+LS+\'">月繳金額</div><input id="dm\'+n+\'" placeholder="5265" type="number" oninput="calcD(\'+n+\')" style="\'+IS+\'"></div>\';\n  h+=\'<div style="\'+FS+\'"><div style="\'+LS+\'">剩餘金額</div><div id="dr\'+n+\'" style="\'+RS+\'">-</div></div>\';\n  h+=\'</div>\';\n  if(isCar){\n    h+=\'<div style="\'+GS+\'">\';\n    h+=\'<div style="\'+FS+\'"><div style="\'+LS+\'">設定日期（民國）</div><input id="dd\'+n+\'" placeholder="112/01" style="\'+IS+\'"></div>\';\n    h+=\'<div style="\'+FS+\'"><div style="\'+LS+\'">動保／公路</div><select id="dg\'+n+\'" style="\'+SS+\'"><option>無</option><option>公路</option><option>動保</option><option>公路+動保</option></select></div>\';\n    h+=\'<div style="\'+FS+\'"><div style="\'+LS+\'">空間</div><select id="ds\'+n+\'" style="\'+SS+\'"><option>有</option><option>無</option></select></div>\';\n    h+=\'<div style="\'+FS+\'"><div style="\'+LS+\'">車牌</div><input id="dpl\'+n+\'" placeholder="ABC-1234" style="\'+IS+\'"></div>\';\n    h+=\'<div style="\'+FS+\'"><div style="\'+LS+\'">出廠年月</div><input id="dyr\'+n+\'" placeholder="2019/05" style="\'+IS+\'"></div>\';\n    h+=\'</div>\';\n  }else{\n    h+=\'<input id="dd\'+n+\'" value="" style="display:none;"><input id="dg\'+n+\'" value="-" style="display:none;"><input id="ds\'+n+\'" value="-" style="display:none;"><input id="dpl\'+n+\'" value="" style="display:none;"><input id="dyr\'+n+\'" value="" style="display:none;">\';\n  }\n  r.innerHTML=h;\n  document.getElementById(\'dlist\').appendChild(r);\n}\nfunction rmD(n){\n  var el=document.getElementById(\'d\'+n);if(el)el.remove();\n}\nfunction calcD(n){\n  var m=parseFloat(document.getElementById(\'dm\'+n)?.value)||0;\n  var dpv=(document.getElementById(\'dp\'+n)?.value||\'\').trim();\n  var parts=dpv.split(\'/\');\n  var p=parseFloat(parts[0])||0;\n  var a=parseFloat(parts[1])||0;\n  var el=document.getElementById(\'dr\'+n);if(!el)return;\n  if(m>0&&p>0){\n    var rem=(m*p)-(m*a);\n    el.textContent=\'$\'+Math.round(rem).toLocaleString();\n    el.style.color=rem>0?\'#b84a35\':\'#4e7055\';\n  }else el.textContent=\'-\';\n}\n\nfunction calcF(){\n  const f=parseFloat(document.querySelector(\'[name="efine"]\')?.value)||0;\n  const u=parseFloat(document.querySelector(\'[name="efuel"]\')?.value)||0;\n  document.getElementById(\'tfees\').textContent=\'$\'+(f+u).toLocaleString();\n}\n\nfunction sec(t){\n  return \'<div style="background:#5a4e40;color:#fff;font-size:13px;font-weight:500;padding:7px 12px;border-radius:5px 5px 0 0;letter-spacing:0.5px;">\'+t+\'</div>\'\n    +\'<div style="border:1px solid #ccc5ba;border-top:none;border-radius:0 0 5px 5px;padding:8px 14px;margin-bottom:14px;background:#fdfaf7;">\';\n}\nfunction fl(l,v){\n  if(!v||v===\'-\'||v===\'0年0月\')return\'\';\n  return \'<div style="display:grid;grid-template-columns:110px 1fr;gap:6px;padding:7px 0;border-bottom:0.5px solid #ece8e2;">\'\n    +\'<span style="font-size:13px;color:#5a4e40;font-weight:500;line-height:1.5;">\'+l+\'</span>\'\n    +\'<span style="font-size:14px;font-weight:400;color:#2c2820;line-height:1.5;">\'+v+\'</span></div>\';\n}\nfunction fl2(items){\n  var h=\'<div style="display:grid;grid-template-columns:1fr 1fr;gap:0 28px;">\';\n  items.forEach(function(x){h+=fl(x[0],x[1]);});\n  return h+\'</div>\';\n}\n\nfunction exportPDF(){/* overridden by inject */}\n\n// page-init\n</script>\n</body>\n</html>\n'
+    # teal/深藍 重上皮：只在原 <style> 尾端插入覆寫 CSS，不動任何 HTML/JS/欄位（存檔 100% 不受影響）
+    _NC_RESKIN_CSS = r"""
+/* ===== teal / navy 重上皮（override）===== */
+body{background:#f5f8fb!important;color:#182234!important;font-family:"Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,-apple-system,sans-serif!important;font-size:13px!important}
+.topnav{background:linear-gradient(90deg,#0d2237,#1d2d40)!important;height:auto!important;padding:9px 18px!important;box-shadow:0 2px 8px rgba(13,34,55,.15)}
+.topnav a{color:#c7d6e3!important;font-weight:700!important;border-radius:8px!important;padding:9px 13px!important}
+.topnav a.active,.topnav a:hover{background:#14aaa7!important;color:#fff!important}
+.page{max-width:1000px!important}
+.page-header{border-bottom:2px solid #e5ebf2!important;padding-bottom:12px!important}
+h2{color:#182234!important;font-size:24px!important;font-weight:800!important}
+.card{background:#fff!important;border:1px solid #e5ebf2!important;border-radius:14px!important;box-shadow:0 10px 24px rgba(25,44,74,.06)!important;padding:16px!important;margin-bottom:12px!important}
+.section-title{color:#0b7f82!important;font-size:14px!important;font-weight:800!important;border-bottom:1px solid #e5ebf2!important;padding:0 0 10px 10px!important;margin-bottom:14px!important;letter-spacing:0!important;border-left:3px solid #14aaa7;position:relative}
+label{color:#344158!important;font-size:11px!important;font-weight:800!important}
+.req{color:#e55353!important}
+input,select,textarea{border:1px solid #ccd5df!important;border-radius:9px!important;background:#fff!important;color:#182234!important;font-size:13px!important}
+input:focus,select:focus,textarea:focus{border-color:#76d0cd!important;box-shadow:0 0 0 3px rgba(20,170,167,.10)!important;background:#fff!important}
+.hint{color:#718096!important;font-size:10px!important}
+.auto-val{color:#e55353!important;font-weight:900!important}
+.vehicle-card{background:#f4f9f9!important;border:1px solid #d6e6e5!important;border-radius:12px!important}
+.add-btn{border:1px dashed #b6c2cf!important;background:#f8fbfc!important;color:#0b7f82!important;border-radius:9px!important;font-weight:800!important}
+.add-btn:hover{background:#eef7f7!important}
+.btn{border-radius:9px!important;font-weight:800!important;font-size:14px!important}
+.btn-primary{background:#14aaa7!important;color:#fff!important}
+.btn-primary:hover{background:#0b7f82!important}
+.btn-cancel{background:#fff!important;color:#425067!important;border:1px solid #e5ebf2!important}
+.btn-export{background:#2f9f6f!important;color:#fff!important}
+.ig span{color:#425067!important;font-weight:700!important}
+.btn-row{position:sticky!important;bottom:0!important;z-index:40;background:rgba(255,255,255,.96)!important;-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);border-top:1px solid #e5ebf2!important;box-shadow:0 -6px 20px rgba(28,47,75,.08);margin:22px -16px -40px!important;padding:12px 16px!important;flex-wrap:wrap;align-items:center}
+"""
+    HTML_PAGE = HTML_PAGE.replace('</style>', _NC_RESKIN_CSS + '</style>')
     # 在表單前面插入智能填入區塊
     HTML_PAGE = HTML_PAGE.replace('<option>B群</option><option>C群</option>', group_opts)
     # 注入前端驗證JS
@@ -19465,6 +20469,10 @@ window.addEventListener('DOMContentLoaded',function(){restoreForm();document.get
 // page-init
 """
     HTML_PAGE = HTML_PAGE.replace('// page-init', inject_js + '\n' + (pdf_js or ''))
+    # 統一頂部導覽：把自帶的 3 連結頂欄換成全站 _page_topnav
+    HTML_PAGE = HTML_PAGE.replace(
+        '<div class="topnav">\n  <a href="/">&#128202; 日報</a>\n  <a href="/pending-customers">&#128203; 客戶資料庫</a>\n  <a href="/new-customer" class="active">&#10133; 新增客戶</a>\n</div>',
+        _page_topnav(role, "new"))
     return HTML_PAGE
 
 
@@ -19727,6 +20735,7 @@ td {{ background: #fff; }}
   <div><div class="header-name">{v("customer_name")}</div><div class="header-sub">群組：{gname}　建立日期：{created}</div></div>
   <div style="font-size:13px;color:#c8bfb5;font-weight:600;">客戶資料表</div>
 </div>
+{_build_case_status_html(r)}
 <table>
 <colgroup><col class="c-th"><col class="c-td"><col class="c-th"><col class="c-td"></colgroup>
 <tr class="sec"><td colspan="4">基本資料</td></tr>
@@ -19894,6 +20903,61 @@ def _build_unloan_html(unloan_data):
     return out
 
 
+def _build_case_status_html(r: dict) -> str:
+    """案件送件／核准／撥款／結案 狀態區塊（客戶卡 PDF 用，沿用現有 .sec / th / td 樣式，不改色）"""
+    stt = (r.get("status") or "").upper()
+    route = parse_route_json(r.get("route_plan") or "")
+    order = route.get("order", []) or []
+    hist = route.get("history", []) or []
+    cur_co = re.sub(r"\s*\([^)]*\)\s*", "", (get_current_company(r.get("route_plan") or "") or r.get("current_company") or "")).strip()
+    concur = [c.strip() for c in (r.get("concurrent_companies") or "").split(",") if c.strip()]
+    approved = (r.get("approved_amount") or "").strip()
+    disb = (r.get("disbursement_date") or "").strip()
+    disbursed = bool(disb) or any((hh.get("disbursed") or hh.get("status") == "撥款") for hh in hist)
+    if stt == "REJECTED": st_label = "全部婉拒（已結案）"
+    elif stt == "ABANDONED": st_label = "客戶取消（已結案）"
+    elif stt == "PENALTY": st_label = "違約金結案"
+    elif stt == "CLOSED": st_label = "已撥款結案" if disbursed else "已結案"
+    elif stt == "PENDING": st_label = "待建流程"
+    else: st_label = "進行中"
+    is_closed = stt in ("CLOSED", "PENALTY", "ABANDONED", "REJECTED")
+
+    def _amt(a):
+        a = str(a or "").strip()
+        if not a: return ""
+        return a if ("萬" in a or "元" in a) else a + "萬"
+
+    cur_str = cur_co or "—"
+    if concur:
+        cur_str += "（同送：" + "、".join(concur) + "）"
+    order_str = " → ".join(order) if order else "—"
+
+    hist_lines = []
+    for hh in hist:
+        co = h(hh.get("company", "") or "")
+        parts = []
+        stx = h(hh.get("status", "") or "")
+        if stx: parts.append(stx)
+        am = _amt(hh.get("amount", ""))
+        if am: parts.append(h(am))
+        if hh.get("disbursed"): parts.append("撥款 " + h(str(hh.get("disbursed"))))
+        elif hh.get("date"): parts.append(h(str(hh.get("date"))))
+        hist_lines.append(f"{co or '—'}：{'　'.join(parts) or '—'}")
+    hist_block = f'<tr><th>送件歷程</th><td colspan="3" style="line-height:1.9">{"<br>".join(hist_lines)}</td></tr>' if hist_lines else ""
+
+    st_td_style = "font-weight:700;color:#b91c1c;background:#fef2f2" if is_closed else "font-weight:700"
+    return (
+        '<table>'
+        '<colgroup><col class="c-th"><col class="c-td"><col class="c-th"><col class="c-td"></colgroup>'
+        '<tr class="sec"><td colspan="4">案件狀態</td></tr>'
+        f'<tr><th>目前狀態</th><td style="{st_td_style}">{h(st_label)}</td><th>送件公司</th><td>{h(cur_str)}</td></tr>'
+        f'<tr><th>送件順序</th><td colspan="3">{h(order_str)}</td></tr>'
+        f'<tr><th>核准金額</th><td>{_amt(approved) or "—"}</td><th>撥款日期</th><td>{h(disb) or "—"}</td></tr>'
+        f'{hist_block}'
+        '</table>'
+    )
+
+
 def _build_customer_pdf_body(r: dict) -> str:
     """組出單一客戶在 PDF 內的內容（header + 兩頁表格），給單筆與批次共用"""
     def v(k): return h(r.get(k, "") or "")
@@ -19931,6 +20995,7 @@ def _build_customer_pdf_body(r: dict) -> str:
   <div><div class="header-name">{v("customer_name")}</div><div class="header-sub">群組：{gname}　建立日期：{created}</div></div>
   <div style="font-size:13px;color:#c8bfb5;font-weight:600;">客戶資料表</div>
 </div>
+{_build_case_status_html(r)}
 <table>
 <colgroup><col class="c-th"><col class="c-td"><col class="c-th"><col class="c-td"></colgroup>
 <tr class="sec"><td colspan="4">基本資料</td></tr>
