@@ -6784,8 +6784,16 @@ def _field_display_label(field_name: str) -> str:
         "status": "狀態",
         "id_no": "身分證",
         "customer_name": "姓名",
+        "name": "姓名",
         "route_plan": "送件順序",
         "source_group_id": "所屬群組",
+        "company_status": "各家狀態",
+        "pending_docs": "缺件",
+        "signing_area": "對保區域",
+        "signing_salesperson": "對保員",
+        "signing_company": "對保公司",
+        "signing_time": "對保時間",
+        "signing_location": "對保地點",
     }.get(field_name, field_name)
 
 
@@ -6832,7 +6840,10 @@ def update_with_verify(case_id: str, changes: Dict, from_group_id: str = "", tex
             continue
         old_v = before_dict.get(k)
         new_v = after_dict.get(k)
-        if old_v != new_v:
+        # None 與 "" 都算「空」，兩邊都空就不是變動（避免印一堆「(空) → (空)」）
+        old_norm = "" if old_v is None else str(old_v)
+        new_norm = "" if new_v is None else str(new_v)
+        if old_norm != new_norm:
             old_disp = old_v if old_v not in (None, "") else "(空)"
             new_disp = new_v if new_v not in (None, "") else "(空)"
             diffs.append(f"• {_field_display_label(k)}: {old_disp} → {new_disp}")
