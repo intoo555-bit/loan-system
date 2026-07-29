@@ -16070,22 +16070,47 @@ def _page_topnav(role, active):
         'transform:rotate(45deg);box-shadow:0 3px 11px rgba(18,168,166,.5);flex:0 0 auto"></div>'
         '<div style="line-height:1.16">'
         '<div style="color:#fff;font-weight:800;font-size:15px;letter-spacing:.5px">送件管理系統</div>'
-        '<div style="color:#8296ad;font-size:9px;letter-spacing:1.3px;text-transform:uppercase;margin-top:1px">Submission Management System</div>'
+        '<div class="ptn-brand-sub" style="color:#8296ad;font-size:9px;letter-spacing:1.3px;text-transform:uppercase;margin-top:1px">Submission Management System</div>'
         '</div></div>')
+
+    # 手機漢堡選單：把所有連結（含管理與登出）收進 ☰
+    _burger_items = items + admin_items
+    _burger_links = "".join(
+        f'<a class="ptn-lnk{" ptn-on" if a==active else ""}" href="{u}" style="display:block;'
+        f'color:{"#fff" if a==active else "#c7d6e3"};background:{"#12a8a6" if a==active else "transparent"};'
+        f'padding:11px 14px;font-size:14px;font-weight:700;border-radius:9px;text-decoration:none">{n}</a>'
+        for n, u, a in _burger_items)
+    _burger_links += ('<div style="height:1px;background:#1d3a54;margin:5px 4px"></div>'
+                      '<a class="ptn-lnk" href="/logout" style="display:block;color:#ff9b9b;'
+                      'padding:11px 14px;font-size:14px;font-weight:700;border-radius:9px;text-decoration:none">登出</a>')
+    burger = (
+        '<details class="ptn-burger" style="position:relative;flex:0 0 auto;margin-left:auto">'
+        '<summary class="ptn-sum" style="list-style:none;cursor:pointer;color:#fff;background:rgba(255,255,255,.12);'
+        'padding:7px 13px;font-size:20px;line-height:1;border-radius:9px">☰</summary>'
+        '<div style="position:absolute;top:calc(100% + 8px);right:0;background:#0d2237;border:1px solid #1d3a54;'
+        'border-radius:12px;padding:8px;min-width:210px;max-height:80vh;overflow:auto;display:flex;flex-direction:column;'
+        f'gap:2px;box-shadow:0 18px 40px rgba(0,0,0,.55);z-index:90">{_burger_links}</div></details>')
 
     return (
         '<style>.ptn-adm>summary::-webkit-details-marker{display:none}.ptn-adm>summary::marker{content:""}'
+        '.ptn-burger>summary::-webkit-details-marker{display:none}.ptn-burger>summary::marker{content:""}'
         '.ptn-lnk,.ptn-sum{transition:background .14s,color .14s,box-shadow .14s}'
         '.ptn-lnk:hover,.ptn-sum:hover{background:rgba(255,255,255,.10);color:#fff}'
-        '.ptn-on,.ptn-on:hover,.ptn-adm[open]>summary{background:#12a8a6;color:#fff;box-shadow:0 4px 14px rgba(18,168,166,.42)}</style>'
+        '.ptn-on,.ptn-on:hover,.ptn-adm[open]>summary{background:#12a8a6;color:#fff;box-shadow:0 4px 14px rgba(18,168,166,.42)}'
+        '.ptn-burger{display:none}'
+        '@media(max-width:640px){.ptn-desktop{display:none!important}.ptn-burger{display:block!important}.ptn-brand-sub{display:none}}'
+        '</style>'
         '<div style="position:sticky;top:0;z-index:60;background:linear-gradient(100deg,#0b1e33,#123350 62%,#12a8a6 190%);'
         'padding:8px 18px;display:flex;gap:5px;align-items:center;border-bottom:1px solid rgba(255,255,255,.07);'
         'box-shadow:0 3px 14px rgba(13,34,55,.25)">'
         f'{brand}'
+        '<div class="ptn-desktop" style="display:flex;gap:5px;align-items:center;flex:1 1 auto;min-width:0">'
         f'<div style="display:flex;gap:5px;align-items:center;overflow-x:auto;min-width:0;flex:1 1 auto">{links}</div>'
         f'{drop}'
         '<a class="ptn-lnk" href="/logout" style="flex:0 0 auto;color:#9fb3c4;padding:9px 13px;font-size:13px;'
         'font-weight:700;border-radius:9px;white-space:nowrap;text-decoration:none">登出</a>'
+        '</div>'
+        f'{burger}'
         '</div>')
 
 
@@ -16128,6 +16153,16 @@ a{text-decoration:none}button,input,select{font:inherit}button{cursor:pointer}.n
 .history-row:last-child{border-bottom:0}.history-time{color:#7d8898}.history-source{color:#5a687c;font-weight:700}.history-text{color:#37445a;line-height:1.5;white-space:pre-wrap;word-break:break-word}
 .empty-state{padding:56px 20px;text-align:center;color:var(--muted);background:#fff;border:1px dashed #ced7e2;border-radius:14px}
 @media(max-width:980px){.customer-main{grid-template-columns:1fr}.card-actions{justify-content:flex-start}.read-only-note{text-align:left}.info-grid{grid-template-columns:1fr 1fr}.history-row{grid-template-columns:1fr}}
+@media(max-width:640px){
+  .spage{padding:12px 10px}
+  .topbar{flex-direction:column;align-items:stretch;gap:8px}.topbar h1{font-size:19px}
+  .top-actions{flex-wrap:wrap}
+  .search-grid{flex-direction:column;align-items:stretch}.search-card input,.search-card select,.field{width:100%}
+  .info-grid{grid-template-columns:1fr 1fr;gap:8px 12px}
+  .customer-main{padding:12px}.customer-title h2{font-size:16px}
+  .card-actions{flex-wrap:wrap}.card-actions .sbtn{flex:1 1 auto}
+  .history-list{overflow-x:auto}
+}
 """
 
 _SEARCH_JS = r"""
@@ -17139,6 +17174,11 @@ label{{display:block;font-size:11px;font-weight:800;color:#344158;margin-bottom:
 .btn-s{{background:#14aaa7;color:#fff;border:none;padding:11px 30px;border-radius:9px;font-size:15px;font-weight:800;cursor:pointer;font-family:inherit;}}
 .btn-s:hover{{background:#0b7f82;}}
 .btn-b{{background:#fff;color:#425067;border:1px solid #e5ebf2;padding:11px 22px;border-radius:9px;font-size:14px;text-decoration:none;display:inline-block;}}
+@media(max-width:640px){{
+  .page{{max-width:100%;padding:0 10px 40px;}}
+  .g2,.g3{{grid-template-columns:1fr;gap:10px;}}
+  .card{{padding:14px;}}
+}}
 </style></head><body>
 {_page_topnav(role, "pending")}
 <div class="page">
@@ -17904,6 +17944,16 @@ label{{display:block;font-size:12px;font-weight:700;color:#374151;margin-bottom:
 .b2{{min-height:38px;border:1px solid #e5ebf2;background:#fff;color:#405065;border-radius:9px;padding:0 14px;font-size:12px;font-weight:700;display:inline-flex;align-items:center;gap:6px;cursor:pointer;text-decoration:none}}
 .b2.primary{{background:#12a8a6;color:#fff;border-color:#12a8a6}}.b2.soft{{background:#eaf9f8;color:#0b7f82;border-color:#c9ecea}}.b2.warn{{background:#fff8df;color:#9d6500;border-color:#efd38c}}
 @media(max-width:1080px){{.layout2{{grid-template-columns:1fr}}.side2{{position:static}}.meta-strip{{grid-template-columns:1fr 1fr}}}}
+@media(max-width:640px){{
+  .wrap2{{padding:12px 10px}}
+  .meta-strip{{grid-template-columns:1fr}}
+  .grid3,.grid2{{grid-template-columns:1fr}}
+  .card-body2{{padding:12px}}
+  .stepper2,.route-strip{{overflow-x:auto;-webkit-overflow-scrolling:touch}}
+  .notice{{flex-direction:column;align-items:flex-start;gap:8px}}
+  .save-bar,.savebar2{{flex-wrap:wrap;gap:8px}}
+  .save-bar .b2,.savebar2 .b2{{flex:1 1 auto}}
+}}
 </style></head><body>
 {_page_topnav(role, "case-edit")}
 <div class="page ce2"><div class="container">
@@ -18766,6 +18816,16 @@ tbody tr:hover{background:#fafdfd}tbody tr:last-child td{border-bottom:0}
 .table-footer{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:12px 14px;border-top:1px solid var(--line);background:#fbfcfe;flex-wrap:wrap}
 .empty-state{padding:56px 20px;text-align:center;color:var(--muted);background:#fff;border:1px dashed #ced7e2;border-radius:14px}
 input[type=checkbox]{width:15px;height:15px;cursor:pointer}
+@media(max-width:640px){
+  .container{padding:0 10px}
+  .topbar{flex-direction:column;align-items:stretch;gap:8px}
+  .filters{flex-direction:column;align-items:stretch}.filters>*{width:100%}
+  /* 手機塞不下就隱藏次要欄位（建立日期、身分證），不用左右滑 */
+  table{min-width:0}
+  th:nth-child(2),td:nth-child(2),th:nth-child(4),td:nth-child(4){display:none}
+  th,td{padding:9px 8px;font-size:13px}
+  .row-actions{flex-direction:column;gap:5px}.small-btn{width:100%;justify-content:center}
+}
 """
 
     shell = f"""<div class="pcpage"><div class="container">
@@ -18884,7 +18944,16 @@ tbody tr{cursor:pointer}tbody tr:hover{background:#fafdfd}tbody tr.selected{back
 .detail-row:last-child{border-bottom:0;padding-bottom:0}.detail-row span{color:var(--muted)}
 .hist-empty{padding:40px;text-align:center;color:var(--muted)}
 @media(max-width:1360px){.main{grid-template-columns:minmax(0,1fr) 340px}.kpis{grid-template-columns:repeat(2,1fr)}}
-@media(max-width:1080px){.app{grid-template-columns:70px 1fr}.brand strong,.brand span,.nav-item span:not(.ic),.sidebar-footer{display:none}.main{grid-template-columns:1fr}.drawer{position:fixed;right:0;top:0;width:min(390px,94vw);z-index:30;transform:translateX(100%);transition:transform .2s}.drawer.show{transform:translateX(0)}}
+@media(max-width:1080px){.app{grid-template-columns:1fr}.main{grid-template-columns:1fr}.drawer{position:fixed;right:0;top:0;width:min(390px,94vw);z-index:30;transform:translateX(100%);transition:transform .2s}.drawer.show{transform:translateX(0)}}
+@media(max-width:640px){
+  .workspace{padding:12px 10px}
+  .topbar{flex-direction:column;align-items:stretch;gap:8px}.topbar h1{font-size:19px}
+  .top-actions{flex-wrap:wrap}
+  .kpis{grid-template-columns:repeat(2,1fr);gap:8px}
+  .filters{flex-direction:column;align-items:stretch}.filters .control,.filters select,.filters input,.filters .hbtn{width:100%}
+  .table-card{overflow-x:auto;-webkit-overflow-scrolling:touch}.table-card table{min-width:560px}
+  .drawer{width:100%!important;max-width:100%!important}
+}
 """
 
 _HIST_JS = r"""
@@ -19855,6 +19924,26 @@ tbody tr:last-child td{border-bottom:none}tbody tr.clk{cursor:pointer}tbody tr.c
 .rowchk{width:15px;height:15px;cursor:pointer;vertical-align:middle}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 @media(max-width:1080px){.stats{grid-template-columns:repeat(4,1fr)}.app{grid-template-columns:64px 1fr}.brand .bt,.brand .bs,.nav a span.tx,.side-h,.glist a span.gn,.side-foot{display:none}}
+.r2-burger{display:none;background:#eef2f7;color:#0d2237;border:1px solid #d7e0ea;font-size:18px;line-height:1;padding:6px 11px;border-radius:9px;cursor:pointer;flex:0 0 auto}
+.side-scrim{display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:69}
+@media(max-width:640px){
+  .app{grid-template-columns:1fr}
+  .side{position:fixed;left:0;top:0;bottom:0;width:min(260px,82vw);z-index:70;transform:translateX(-100%);transition:transform .22s;box-shadow:6px 0 24px rgba(0,0,0,.35)}
+  .side.side-open{transform:translateX(0)}
+  .brand .bt,.brand .bs,.side-h,.side-foot{display:block}.nav a span.tx,.glist a span.gn{display:inline}
+  .r2-burger{display:inline-flex;align-items:center}
+  .topbar{flex-wrap:wrap;gap:6px;padding:10px 12px}
+  .topbar h1{font-size:17px}.topbar .upd,.topbar .sync,.topbar .who{font-size:11px}
+  .wrap{padding:12px 10px}
+  .stats{grid-template-columns:repeat(2,1fr);gap:8px}
+  .stat{padding:11px 12px}.stat .vl{font-size:20px}
+  .alert{padding:11px 12px}
+  .achips{display:grid;grid-template-columns:1fr 1fr;gap:8px}.achip{width:auto;justify-content:space-between;font-size:12px}
+  .r2-toolbar{flex-wrap:wrap;gap:8px}.r2-toolbar #searchName{flex:1 1 100%}
+  .grp-h{flex-wrap:wrap}.grp-stats{width:100%;gap:8px;font-size:11px;margin-top:4px}
+  .gtable{overflow-x:auto;-webkit-overflow-scrolling:touch}.gtable table{min-width:540px}
+  .detail{width:100%!important;max-width:100%!important}
+}
 """
 
 _REPORT2_JS = r"""
@@ -20171,6 +20260,7 @@ def report2_page(request: Request):
   </aside>
   <div class="main">
     <div class="topbar">
+      <button type="button" class="r2-burger" onclick="toggleSide()" aria-label="選單">☰</button>
       <h1>公司日報</h1><span class="upd">更新：<b class="num">{upd_time}</b></span>
       <div class="spacer"></div>
       <div class="sync">🔄 即時資料</div>
@@ -20195,8 +20285,11 @@ def report2_page(request: Request):
   </div>
 </div>
 <div class="scrim" id="scrim"></div>
+<div class="side-scrim" id="sideScrim" onclick="toggleSide()"></div>
 <aside class="detail" id="detail"><div class="d-h"><span class="dt">客戶詳情</span><button class="d-close" id="dClose">✕</button></div><div id="dBody"></div></aside>
-<div id="toast"></div>"""
+<div id="toast"></div>
+<script>function toggleSide(){{var s=document.querySelector('.side');if(!s)return;var o=s.classList.toggle('side-open');var sc=document.getElementById('sideScrim');if(sc)sc.style.display=o?'block':'none';}}
+document.addEventListener('click',function(e){{var s=document.querySelector('.side');if(s&&s.classList.contains('side-open')&&e.target.closest('.side a')){{s.classList.remove('side-open');var sc=document.getElementById('sideScrim');if(sc)sc.style.display='none';}}}});</script>"""
 
     page = ("<!DOCTYPE html><html lang='zh-Hant'><head><meta charset='utf-8'>"
             "<meta name='viewport' content='width=device-width,initial-scale=1'>"
@@ -20424,6 +20517,15 @@ input:focus,select:focus,textarea:focus{border-color:#76d0cd!important;box-shado
 .btn-export{background:#2f9f6f!important;color:#fff!important}
 .ig span{color:#425067!important;font-weight:700!important}
 .btn-row{position:sticky!important;bottom:0!important;z-index:40;background:rgba(255,255,255,.96)!important;-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);border-top:1px solid #e5ebf2!important;box-shadow:0 -6px 20px rgba(28,47,75,.08);margin:22px -16px -40px!important;padding:12px 16px!important;flex-wrap:wrap;align-items:center}
+@media(max-width:640px){
+  .page{padding:0 10px 40px!important}
+  .grid2,.grid3,.grid4{grid-template-columns:1fr!important;gap:10px!important}
+  .card{padding:14px!important}
+  .debt-header{display:none!important}
+  .debt-row{grid-template-columns:1fr 1fr!important;gap:6px!important}
+  .btn-row .btn{flex:1 1 auto}
+  .topnav{overflow-x:auto}
+}
 """
     HTML_PAGE = HTML_PAGE.replace('</style>', _NC_RESKIN_CSS + '</style>')
     # 在表單前面插入智能填入區塊
