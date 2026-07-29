@@ -6868,6 +6868,74 @@ def update_with_verify(case_id: str, changes: Dict, from_group_id: str = "", tex
     return True, diffs, before_dict.get("customer_name", "")
 
 
+def restore_prev_state(case_id: str, steps: int = 1, from_group_id: str = "", actor: str = "", cust_name_hint: str = ""):
+    """把案件退回到「上 steps 步真的有變化的狀態」——LINE「@AI 姓名 還原」與網頁「退回上一步」共用。
+    自動跳過還原動作本身與沒改到東西的紀錄；退到最初就停。
+    回 (ok: bool, kind: str, message: str)。kind: done / none / overflow / error。"""
+    if steps < 1:
+        steps = 1
+    conn = get_conn(); cur = conn.cursor()
+    cur.execute("""SELECT id, created_at, snapshot_json, message_text FROM case_logs
+                   WHERE case_id=? ORDER BY id DESC LIMIT 60""", (case_id,))
+    logs = cur.fetchall()
+    cur.execute("SELECT * FROM customers WHERE case_id=?", (case_id,))
+    cur_row = cur.fetchone(); conn.close()
+    name = cust_name_hint or (dict(cur_row).get("customer_name", "") if cur_row else "")
+    if not logs or not cur_row:
+        return False, "none", f"ℹ️ {name} 沒有可還原的紀錄"
+
+    def _snap_differs(snap, after):
+        for k, val in snap.items():
+            if k in ("text", "from_group_id"):
+                continue
+            if str(after.get(k) or "") != str(val or ""):
+                return True
+        return False
+
+    # 收集非還原動作的快照（新→舊），相鄰相同的去重
+    snaps = []
+    last_added = None
+    for log in logs:
+        sj = log["snapshot_json"]
+        if not sj:
+            continue
+        _mt = log["message_text"] or ""
+        if "還原（退回" in _mt or "還原到第" in _mt:
+            continue
+        try:
+            snap = json.loads(sj)
+        except Exception:
+            continue
+        if last_added is not None and not _snap_differs(snap, last_added):
+            continue
+        snaps.append((log, snap))
+        last_added = snap
+
+    if not snaps:
+        return False, "none", f"ℹ️ {name} 沒有可退回的動作"
+    cur_state = dict(cur_row)
+    pos = None
+    for i, (lg, sp) in enumerate(snaps):
+        if not _snap_differs(sp, cur_state):
+            pos = i
+            break
+    base = 0 if pos is None else pos + 1
+    target_index = base + (steps - 1)
+    if target_index >= len(snaps):
+        return False, "overflow", f"ℹ️ {name} 已經是最初狀態、沒有可再退回的動作了"
+    log, snapshot = snaps[target_index]
+    ok_v, diffs, cust_name = update_with_verify(
+        case_id, snapshot, from_group_id=from_group_id,
+        text_log=f"{actor or name} 還原（退回「{(log['message_text'] or '')[:16]}」之前）")
+    if not ok_v:
+        return False, "error", "⚠️ 案件不存在，無法還原"
+    ts = (log["created_at"] or "")[5:16].replace("T", " ")
+    what = (log["message_text"] or "")[:30]
+    if diffs:
+        return True, "done", f"✅ {cust_name} 已退回「{what}」之前的狀態（{ts}）\n" + "\n".join(diffs)
+    return True, "done", f"✅ {cust_name} 已還原（狀態沒有變化）"
+
+
 def normalize_command_text(text: str) -> str:
     """@AI 指令文字正規化：全形→半形、異體字統一、多空白合併。
     parse_special_command 進入前先跑，讓 regex 只需寫一套標準寫法。
@@ -8283,73 +8351,9 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
         target = _resolve_target_strict(cmd, name, group_id, reply_token, "還原")
         if not target:
             return
-        case_id = target["case_id"]
-        conn = get_conn(); cur = conn.cursor()
-        cur.execute("""SELECT id, created_at, snapshot_json, message_text FROM case_logs
-                       WHERE case_id=? ORDER BY id DESC LIMIT 60""", (case_id,))
-        logs = cur.fetchall()
-        cur.execute("SELECT * FROM customers WHERE case_id=?", (case_id,))
-        cur_row = cur.fetchone(); conn.close()
-        if not logs or not cur_row:
-            reply_text(reply_token, f"ℹ️ {name} 沒有可還原的紀錄"); return
-
-        def _snap_differs(snap, after):
-            # 只比對快照有記錄的送件狀態欄位，看跟「之後的狀態」有沒有不同
-            for k, val in snap.items():
-                if k in ("text", "from_group_id"):
-                    continue
-                if str(after.get(k) or "") != str(val or ""):
-                    return True
-            return False
-
-        # 收集非還原動作的快照（新→舊），相鄰相同的去重
-        snaps = []   # [(log, snapshot)]
-        last_added = None
-        for log in logs:
-            sj = log["snapshot_json"]
-            if not sj:
-                continue
-            _mt = log["message_text"] or ""
-            if "還原（退回" in _mt or "還原到第" in _mt:   # 還原動作本身不算歷程階段（避免還原還原、且不誤判含「還原」的客戶名）
-                continue
-            try:
-                snap = json.loads(sj)
-            except Exception:
-                continue
-            if last_added is not None and not _snap_differs(snap, last_added):
-                continue   # 跟前一筆收集到的狀態相同、去重
-            snaps.append((log, snap))
-            last_added = snap
-
-        if not snaps:
-            reply_text(reply_token, f"ℹ️ {name} 沒有可退回的動作"); return
-
-        # 定位「現在」在時間軸的位置＝第一個等於現狀的快照；沒有就代表現狀是最新（還沒退過）
-        cur_state = dict(cur_row)
-        pos = None
-        for i, (lg, sp) in enumerate(snaps):
-            if not _snap_differs(sp, cur_state):   # 這個快照 == 現狀
-                pos = i
-                break
-        base = 0 if pos is None else pos + 1        # 要退回的第一個「比現狀更舊」的快照
-        target_index = base + (idx - 1)
-        if target_index >= len(snaps):
-            reply_text(reply_token, f"ℹ️ {name} 已經是最初狀態、沒有可再退回的動作了"); return
-
-        log, snapshot = snaps[target_index]
-        ok_v, diffs, cust_name = update_with_verify(
-            case_id, snapshot, from_group_id=group_id,
-            text_log=f"{name} 還原（退回「{(log['message_text'] or '')[:16]}」之前）")
-        if not ok_v:
-            reply_text(reply_token, "⚠️ 案件不存在，無法還原")
-            return
-        ts = (log["created_at"] or "")[5:16].replace("T", " ")
-        what = (log["message_text"] or "")[:30]
-        if diffs:
-            msg = f"✅ {cust_name} 已退回「{what}」之前的狀態（{ts}）\n" + "\n".join(diffs)
-        else:
-            msg = f"✅ {cust_name} 已還原（狀態沒有變化）"
-        reply_text(reply_token, msg)
+        _ok, _kind, _msg = restore_prev_state(
+            target["case_id"], steps=idx, from_group_id=group_id, actor=name, cust_name_hint=name)
+        reply_text(reply_token, _msg)
         return
 
     if t == "reopen":
@@ -17544,13 +17548,17 @@ def case_edit_get(request: Request, case_id: str = "", saved: str = ""):
 
     # 公司下拉：只列「公司」名（不帶方案、避免下拉太長 + 業務心智一致）
     # 方案資訊存在 各家狀態 文字裡（如「核准 25萬」）、不靠公司名表達
+    # 只列「區塊層級」的公司名（渣打/元大歸銀行、銀角/大哥付等歸零卡、別名不重複）；
+    # 要記哪一家銀行/哪個零卡方案，寫在「各家狀態」文字裡即可
     company_choices = sorted(["21", "亞太", "和裕", "喬美", "貸救補", "第一", "麻吉",
-                              "分貝", "分唄", "鄉民", "銀行", "零卡", "銀角", "商品貸", "代書", "當舖",
-                              "刷卡換現", "信用卡", "月付", "手機分期", "預付手機分期",
-                              "慢點付", "分期趣", "大哥付", "新鑫", "元大", "渣打", "估房", "房地",
-                              "裕融", "和潤", "中租", "合迪", "創鉅", "合信", "興達",
-                              "鼎多", "融易", "預付資融", "預付手機", "維力"])
-    sec_choices = ["", "送件", "待撥款"] + [s for s in REPORT_SECTIONS if s not in ("送件", "待撥款")]
+                              "分貝", "鄉民", "銀行", "零卡", "商品貸", "代書", "當舖",
+                              "月付", "手機分期", "預付手機分期", "房地", "新鑫",
+                              "裕融", "和潤", "中租", "創鉅", "合信", "興達",
+                              "融易", "預付資融"])
+    # 日報區塊只留「非公司」的特殊區塊；公司分區交給「主要公司」自動歸（避免跟主要公司重複、混淆）
+    _sec_special = ["送件", "待撥款", "核准(房地)", "房地"]
+    _sec_cur_val = v("report_section")
+    sec_choices = [""] + _sec_special + ([_sec_cur_val] if _sec_cur_val and _sec_cur_val not in _sec_special else [])
     # 案件狀態：常用只放 3 個。其他狀態（違約金/放棄/全數婉拒/已刪除）保留現值但不下拉
     status_label_common = {
         "ACTIVE": "進行中（在日報上）",
@@ -17575,8 +17583,16 @@ def case_edit_get(request: Request, case_id: str = "", saved: str = ""):
     route_display = (done_html + (" → " if done_html else "") if done_html else "") + (curr_html or "（無 current）")
 
     cur_co = v("current_company")
+    _route_cur = _order[_idx] if 0 <= _idx < len(_order) else ""
+    # 主要公司跟送件順序「目前這家」同步（與日報/LINE 一致）：
+    # current_company 空、或存的是短名對不到選項（如「21機」vs「21機車12萬」）→ 用 route 目前那家
+    if _route_cur and (not cur_co or cur_co not in company_choices):
+        cur_co = _route_cur
+    _co_list = list(company_choices)
+    if cur_co and cur_co not in _co_list:
+        _co_list = [cur_co] + _co_list
     co_opts = '<option value="">（無）</option>' + "".join(
-        f'<option value="{h(c)}" {"selected" if c == cur_co else ""}>{h(c)}</option>' for c in company_choices)
+        f'<option value="{h(c)}" {"selected" if c == cur_co else ""}>{h(c)}</option>' for c in _co_list)
     sec_now = v("report_section")
     sec_opts = "".join(
         f'<option value="{h(s)}" {"selected" if s == sec_now else ""}>{h(s) or "（無 / 公司區塊自動歸類）"}</option>' for s in sec_choices)
@@ -17703,15 +17719,21 @@ def case_edit_get(request: Request, case_id: str = "", saved: str = ""):
     if not line_msgs_html:
         line_msgs_html = '<div style="color:#9ca3af;font-size:12px">（此案目前沒有 LINE 訊息紀錄）</div>'
 
-    # 目前狀態下拉（中欄）— 從主要公司的狀態/最後狀態文字第一行帶入
+    # 目前狀態下拉（中欄）— 跟日報/LINE 顯示的狀態同步（優先用 compute_customer_display 算出來的狀態）
+    try:
+        _disp_st = compute_customer_display(r).get("status", "") or ""
+    except Exception:
+        _disp_st = ""
     _cs_first_lines = (company_status.get(cur_co, "") or v("last_update") or "").splitlines()
     _cs_first = _cs_first_lines[0] if _cs_first_lines else ""
     _cur_status_list = ["", "照會", "送件", "待照會", "補件", "待補件", "已補件", "補申覆", "待補申覆", "已補申覆", "核准", "婉拒", "待撥款", "對保中", "撥款", "追蹤", "退件"]
-    cur_status_val = ""
-    for _o in _cur_status_list[1:]:
-        if _o and _o in _cs_first:
-            cur_status_val = _o
-            break
+
+    def _match_cur_status(_text):
+        for _o in _cur_status_list[1:]:
+            if _o and _o in _text:
+                return _o
+        return ""
+    cur_status_val = _match_cur_status(_disp_st) or _match_cur_status(_cs_first)
     cur_status_opts = "".join(
         f'<option value="{h(o)}" {"selected" if o == cur_status_val else ""}>{h(o) or "（未設定 / 用各家狀態）"}</option>' for o in _cur_status_list)
 
@@ -17900,7 +17922,7 @@ label{{display:block;font-size:12px;font-weight:700;color:#374151;margin-bottom:
   <div class="meta"><small>目前狀態</small><b>{h(cur_status_label)}</b></div>
 </div>
 <div class="notice">
-  <span><b>⚠ 系統目前認定：</b>主要公司 {h(v("current_company")) or "—"} ｜ 同時送件 {h(_conc_disp)} ｜ 缺件 {h(_pend_disp)}。與 LINE 不符請於下方修正。</span>
+  <span><b>⚠ 系統目前認定：</b>主要公司 {h(cur_co) or "—"} ｜ 同時送件 {h(_conc_disp)} ｜ 缺件 {h(_pend_disp)}。與 LINE 不符請於下方修正。</span>
   <button type="button" class="b2 warn" onclick="var b=document.getElementById('lineMsgBox');b.style.display=(b.style.display==='none'?'block':'none')">查看原始 LINE 訊息</button>
 </div>
 <div id="lineMsgBox" style="display:none;background:#fff;border:1px solid #e5ebf2;border-radius:12px;padding:12px;margin-bottom:10px">{line_msgs_html}</div>
@@ -17912,6 +17934,7 @@ label{{display:block;font-size:12px;font-weight:700;color:#374151;margin-bottom:
 
     <section class="card2"><div class="card-head2"><h2>1. 主要公司與送件順序</h2><span class="tagr">最常使用</span></div>
       <div class="card-body2">
+        <div class="helper2" style="margin-bottom:10px">這塊決定「日報上這位客戶顯示送哪一家、什麼狀態」。<b>主要公司</b>＝日報現在送的那家；<b>目前狀態</b>＝照會/送件/補件…；<b>同時送件</b>＝一次送多家；下面的順序方塊＝預設送件順序（綠色＝目前這家）。改完按右下角儲存，日報立刻同步。</div>
         <div class="grid3">
           <div class="field2"><label>案件狀態</label><select name="status">{st_opts}</select></div>
           <div class="field2"><label>主要公司（日報那家）</label><select name="current_company">{co_opts}</select></div>
@@ -17966,19 +17989,22 @@ label{{display:block;font-size:12px;font-weight:700;color:#374151;margin-bottom:
     <section class="card2">
       <div class="acc"><div class="acc-head" onclick="this.parentElement.classList.toggle('closed')"><span>核准明細</span><span>⌄</span></div>
         <div class="acc-body">
-          <div class="helper2">第一列為主要核准（寫到 approved_amount／撥款日）；其他核准公司保留於歷程。</div>
+          <div class="helper2">第一列＝主要核准（會寫進「核准金額／撥款日」）；其他核准的公司會保留在歷程裡。</div>
           <div id="apBox" style="margin-top:8px">{ap_rows_html}</div>
           <button type="button" class="b2" style="margin-top:8px" onclick="addApRow()">＋加一家核准</button>
           <input type="hidden" name="approval_history_json" id="apVal">
           <input type="hidden" name="approved_amount" id="apAmtVal" value="{h(v("approved_amount"))}">
           <input type="hidden" name="disbursement_date" id="apDisbVal" value="{h(v("disbursement_date"))}">
           <div style="height:1px;background:#e5ebf2;margin:10px 0"></div>
-          <div class="field2"><label>日報區塊</label><select name="report_section">{sec_opts}</select></div>
+          <div class="field2"><label>日報區塊</label><select name="report_section">{sec_opts}</select>
+            <div class="helper2" style="margin-top:5px">這是「客戶要出現在日報哪一區」。通常留「(無)」＝系統照主要公司自動歸（送 21 就進 21 區、送亞太進亞太區）。只有「待撥款 / 核准(房地) / 送件」這種特殊狀況才手動選；不確定就別動它。</div>
+          </div>
         </div>
       </div>
 
       <div class="acc"><div class="acc-head" onclick="this.parentElement.classList.toggle('closed')"><span>對保資料</span><span>⌄</span></div>
         <div class="acc-body">
+          <div class="helper2" style="margin-bottom:8px">核准之後、要辦對保時才填。填了會顯示在日報的對保進度；沒對保就留空。</div>
           <div class="field2"><label>對保區域</label><input name="signing_area" value="{h(v("signing_area"))}" placeholder="例：台北"></div>
           <div class="grid2" style="margin-top:8px">
             <input name="signing_salesperson" value="{h(v("signing_salesperson"))}" placeholder="對保員">
@@ -17993,8 +18019,8 @@ label{{display:block;font-size:12px;font-weight:700;color:#374151;margin-bottom:
         <div class="acc-body"><div class="grid2"><input name="penalty_amount" value="{h(penalty_amt)}" placeholder="金額，例：5000"><input name="penalty_date" value="{h(penalty_dt)}" placeholder="付款日期"></div></div>
       </div>
 
-      <div class="acc closed"><div class="acc-head" onclick="this.parentElement.classList.toggle('closed')"><span>操作紀錄（最近 10 筆）</span><span>⌄</span></div>
-        <div class="acc-body">{log_html}</div>
+      <div class="acc closed"><div class="acc-head" onclick="this.parentElement.classList.toggle('closed')"><span>操作紀錄（最近 10 筆）</span><span style="display:flex;gap:10px;align-items:center"><button type="button" onclick="event.stopPropagation();undoStep()" style="background:#e8f7f6;color:#0b7f82;border:1px solid #9fdad7;padding:5px 12px;border-radius:8px;cursor:pointer;font-size:12px;font-weight:800;white-space:nowrap">↩ 退回上一步</button><span>⌄</span></span></div>
+        <div class="acc-body"><div class="helper2">「↩ 退回上一步」＝直接復原最後一個動作（跟 LINE 打「還原」一樣）。展開後每筆右邊的「↶ 還原」＝退回到那一筆之前（可跳回更早的時間點）。</div>{log_html}</div>
       </div>
     </section>
   </aside>
@@ -18294,13 +18320,24 @@ function checkEligibility() {{
 
 // 還原 case_logs 某筆的 snapshot
 function revertLog(logId) {{
-  if (!confirm('確定還原到此筆操作之前的狀態？\\n（current / concurrent / 金額 / 區塊 等會被改回）')) return;
+  if (!confirm('要還原到「這一筆之前」的狀態嗎？\\n（送件公司、同送、金額、日報區塊等會一起改回那個時間點）')) return;
   fetch('/case-edit/revert', {{
     method: 'POST',
     headers: {{'Content-Type':'application/json'}},
     body: JSON.stringify({{case_id: '{h(case_id)}', log_id: logId}})
   }}).then(r=>r.json()).then(d=>{{
     alert(d.message || (d.ok ? '已還原' : '失敗'));
+    if (d.ok) location.reload();
+  }}).catch(e => alert('網路錯誤'));
+}}
+function undoStep() {{
+  if (!confirm('要復原最後一個動作、退回上一個狀態嗎？')) return;
+  fetch('/case-edit/undo', {{
+    method: 'POST',
+    headers: {{'Content-Type':'application/json'}},
+    body: JSON.stringify({{case_id: '{h(case_id)}'}})
+  }}).then(r=>r.json()).then(d=>{{
+    alert(d.message || (d.ok ? '已退回上一步' : '沒有可退回的動作'));
     if (d.ok) location.reload();
   }}).catch(e => alert('網路錯誤'));
 }}
@@ -18567,6 +18604,20 @@ async def case_edit_revert(request: Request):
             (case_id, snap.get("customer_name", ""), snap.get("id_no", ""), snap.get("company", ""),
              f"[網頁還原] 套用 log#{log_id} 之前的快照", "WEB_ADMIN", now_iso()))
     return JSONResponse({"ok": True, "message": "✅ 已還原到該筆操作前的狀態"})
+
+
+@app.post("/case-edit/undo")
+async def case_edit_undo(request: Request):
+    """網頁「退回上一步」：跟 LINE「@AI 姓名 還原」同一套邏輯（退回上一個真的有變的狀態、退到最初就停）。"""
+    role = check_auth(request)
+    if role not in ("admin", "adminB", "ops_admin", "sales_admin"):
+        return JSONResponse({"ok": False, "message": "無權限"})
+    data = await request.json()
+    case_id = data.get("case_id", "")
+    if not case_id:
+        return JSONResponse({"ok": False, "message": "資料不完整"})
+    ok, kind, msg = restore_prev_state(case_id, steps=1, from_group_id="WEB_ADMIN", actor="[網頁]")
+    return JSONResponse({"ok": ok, "message": msg})
 
 
 @app.post("/delete-customer")
@@ -19929,7 +19980,7 @@ function openDetail(gid,idx){
      <div class="kv"><span class="k">最後同步</span><span class="num">${esc(c.up)||"—"}</span></div>
    </div>
    <div class="d-acts">
-     ${CAN_EDIT?`<a class="d-act" href="/case-edit?case_id=${cid}">🔍 查看／編輯案件</a>`:''}
+     ${CAN_EDIT?`<a class="d-act" href="/case-edit?case_id=${cid}">📝 案件狀態修改</a>`:''}
      <a class="d-act" href="/customer-pdf?case_id=${cid}" target="_blank">📄 客戶卡 PDF</a>
      ${CAN_EDIT?`<a class="d-act" href="/edit-pending?case_id=${cid}">✎ 編輯個資</a>`:''}
      <a class="d-act" href="/search?q=${encodeURIComponent(c.n||'')}">🔎 搜尋此客戶</a>
