@@ -3483,6 +3483,24 @@ def get_group_name(group_id: str) -> str:
     return row["group_name"] if row else "未知群組"
 
 
+def get_log_source_name(group_id: str) -> str:
+    """送件流程紀錄／案件歷程的「來源」標籤。
+    A 群（group_type=A_GROUP）一律顯示「行政A群」，不露出實際群名（避免練習/測試群名混淆）。
+    其餘照群組名顯示。"""
+    if not group_id:
+        return ""
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT group_name, group_type FROM groups WHERE group_id=?", (group_id,))
+    row = cur.fetchone()
+    conn.close()
+    if not row:
+        return "未知群組"
+    if row["group_type"] == "A_GROUP":
+        return "行政A群"
+    return row["group_name"] or ""
+
+
 def get_all_group_names() -> Dict[str, str]:
     """一次載入所有群組名稱，避免 N+1 查詢"""
     conn = get_conn(); cur = conn.cursor()
@@ -15990,7 +16008,7 @@ def _build_timeline(case_id: str) -> str:
     lines = []
     for log in logs:
         dt = (log["created_at"] or "")[:16].replace("T", " ")
-        gname = get_group_name(log["from_group_id"])
+        gname = get_log_source_name(log["from_group_id"])
         txt = (log["message_text"] or "")[:60]
         lines.append(f'<div style="padding:4px 0;border-bottom:1px solid #f0ebe4;font-size:11px"><span style="color:#999">{h(dt)}</span> <span style="color:#8b7355">{h(gname)}</span> {h(txt)}</div>')
     return "".join(lines)
@@ -16070,7 +16088,7 @@ def _page_topnav(role, active):
 _SEARCH_CSS = r"""
 :root{--bg:#f5f8fb;--line:#e5ebf2;--text:#172033;--muted:#6f7b8d;--teal:#12a8a6;--teal-dark:#0b7f82;--teal-soft:#eaf9f8;--green-soft:#eaf8f0;--orange-soft:#fff4df;--red-soft:#ffeceb;--blue-soft:#eaf2ff;--purple-soft:#f1edff;--gray-soft:#f1f4f7;--shadow:0 10px 24px rgba(25,44,74,.07);--radius:14px}
 *{box-sizing:border-box}html,body{margin:0;background:var(--bg);color:var(--text)}
-body{font-family:"Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,sans-serif;font-size:13px}
+body{font-family:"Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,sans-serif;font-size:14px}
 a{text-decoration:none}button,input,select{font:inherit}button{cursor:pointer}.num{font-variant-numeric:tabular-nums}
 .spage{padding:18px}.container{max-width:1280px;margin:0 auto}
 .topbar{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:12px}
@@ -16230,7 +16248,7 @@ def search_page(request: Request, q: str = "", grp: str = "", date_from: str = "
             if logs:
                 hrows = "".join(
                     f'<div class="history-row"><div class="history-time num">{h((lg["created_at"] or "")[:16].replace("T"," "))}</div>'
-                    f'<div class="history-source">{h(get_group_name(lg["from_group_id"]) or "")}</div>'
+                    f'<div class="history-source">{h(get_log_source_name(lg["from_group_id"]) or "")}</div>'
                     f'<div class="history-text">{h(lg["message_text"] or "")}</div></div>' for lg in logs)
             else:
                 hrows = '<div class="history-row"><div class="history-text">（無紀錄）</div></div>'
@@ -17680,7 +17698,7 @@ def case_edit_get(request: Request, case_id: str = "", saved: str = ""):
     for lg in log_rows:
         _m = lg["message_text"] or ""
         _w = (lg["created_at"] or "")[5:16].replace("-", "/").replace("T", " ")
-        _s = get_group_name(lg["from_group_id"]) if lg["from_group_id"] else ""
+        _s = get_log_source_name(lg["from_group_id"]) if lg["from_group_id"] else ""
         line_msgs_html += f'<div class="lm"><div class="lm-t">{h(_w)}{" · " + h(_s) if _s else ""}</div><div class="lm-b">{h(_m)}</div></div>'
     if not line_msgs_html:
         line_msgs_html = '<div style="color:#9ca3af;font-size:12px">（此案目前沒有 LINE 訊息紀錄）</div>'
@@ -18665,7 +18683,7 @@ def pending_customers_page(request: Request, q: str = "", grp: str = "", date_fr
     css = r"""
 :root{--bg:#f5f8fb;--line:#e5ebf2;--text:#172033;--muted:#6f7b8d;--teal:#12a8a6;--teal-dark:#0b7f82;--teal-soft:#eaf9f8;--shadow:0 10px 24px rgba(25,44,74,.07)}
 *{box-sizing:border-box}html,body{margin:0;background:var(--bg);color:var(--text)}
-body{font-family:"Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,sans-serif;font-size:13px}
+body{font-family:"Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,sans-serif;font-size:14px}
 a{text-decoration:none}button,input,select{font:inherit}button{cursor:pointer}.num{font-variant-numeric:tabular-nums}
 .pcpage{padding:18px}.container{max-width:1280px;margin:0 auto}
 .topbar{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:12px}
@@ -19446,7 +19464,7 @@ def console_page(request: Request):
     who_txt = {"admin": "管理員", "adminB": "行政B", "ops_admin": "行政管理員", "sales_admin": "業務管理員"}.get(role, "業務")
     css = r"""
 :root{--bg:#f4f7fb;--panel:#fff;--line:#e4eaf1;--text:#182236;--muted:#6f7d91;--navy:#17243a;--navy2:#0f1a2f;--teal:#14aaa7;--teal-dark:#0b7f82;--teal-soft:#eaf9f8;--blue:#2f6cf4;--orange:#f59e0b;--red:#e15353;--green:#28a66a;--green-soft:#eaf8f0;--shadow:0 14px 34px rgba(28,46,76,.08);--radius:16px}
-*{box-sizing:border-box}html,body{margin:0}body{background:var(--bg);color:var(--text);font-family:"Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,sans-serif;font-size:13px}
+*{box-sizing:border-box}html,body{margin:0}body{background:var(--bg);color:var(--text);font-family:"Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,sans-serif;font-size:14px}
 button,input,select,textarea{font:inherit}button{cursor:pointer}a{text-decoration:none}
 .cpage{min-height:100vh;padding:20px}.container{max-width:1320px;margin:0 auto}
 .topbar{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:14px}
@@ -20098,7 +20116,7 @@ def report2_page(request: Request):
     <nav class="nav">{nav_html}</nav>
     <div class="side-h">業務群組（LINE）</div>
     <div class="glist" id="glist"></div>
-    <div class="side-foot">👤 {h(who_txt)}　·　<a href="/logout" style="color:#7d8ca6">登出</a></div>
+    <div class="side-foot">👤 {h(who_txt)}</div>
   </aside>
   <div class="main">
     <div class="topbar">
@@ -20106,6 +20124,7 @@ def report2_page(request: Request):
       <div class="spacer"></div>
       <div class="sync">🔄 即時資料</div>
       <div class="who"><span class="av">{h(who_txt[0])}</span>{h(who_txt)}</div>
+      <a href="/logout" style="margin-left:10px;background:#fff;border:1px solid #f0c9c9;color:#b91c1c;font-weight:700;font-size:13px;padding:7px 14px;border-radius:9px;text-decoration:none;white-space:nowrap">登出</a>
     </div>
     <div class="wrap">
       <div class="stats">{stats_html}</div>
@@ -20329,7 +20348,7 @@ def new_customer_page(request: Request):
     # teal/深藍 重上皮：只在原 <style> 尾端插入覆寫 CSS，不動任何 HTML/JS/欄位（存檔 100% 不受影響）
     _NC_RESKIN_CSS = r"""
 /* ===== teal / navy 重上皮（override）===== */
-body{background:#f5f8fb!important;color:#182234!important;font-family:"Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,-apple-system,sans-serif!important;font-size:13px!important}
+body{background:#f5f8fb!important;color:#182234!important;font-family:"Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,-apple-system,sans-serif!important;font-size:14px!important}
 .topnav{background:linear-gradient(90deg,#0d2237,#1d2d40)!important;height:auto!important;padding:9px 18px!important;box-shadow:0 2px 8px rgba(13,34,55,.15)}
 .topnav a{color:#c7d6e3!important;font-weight:700!important;border-radius:8px!important;padding:9px 13px!important}
 .topnav a.active,.topnav a:hover{background:#14aaa7!important;color:#fff!important}
@@ -20788,14 +20807,13 @@ td {{ background: #fff; }}
 </head><body>
 <div class="no-print" style="text-align:center;margin-bottom:16px;">
   <button id="pdf-btn" onclick="downloadPDF()" style="background:#4e7055;color:#fff;border:none;padding:10px 28px;border-radius:6px;font-size:14px;cursor:pointer;font-weight:600;">📄 下載 PDF</button>
-  <button onclick="history.back()" style="background:#6a5e4e;color:#fff;border:none;padding:10px 28px;border-radius:6px;font-size:14px;cursor:pointer;font-weight:600;margin-left:8px;">返回</button>
+  <button onclick="if(document.referrer){{location.href=document.referrer}}else if(history.length>1){{history.back()}}else{{location.href='/pending-customers'}}" style="background:#6a5e4e;color:#fff;border:none;padding:10px 28px;border-radius:6px;font-size:14px;cursor:pointer;font-weight:600;margin-left:8px;">返回</button>
 </div>
 <div id="pdf-content">
 <div class="header">
   <div><div class="header-name">{v("customer_name")}</div><div class="header-sub">群組：{gname}　建立日期：{created}</div></div>
   <div style="font-size:13px;color:#c8bfb5;font-weight:600;">客戶資料表</div>
 </div>
-{_build_case_status_html(r)}
 <table>
 <colgroup><col class="c-th"><col class="c-td"><col class="c-th"><col class="c-td"></colgroup>
 <tr class="sec"><td colspan="4">基本資料</td></tr>
@@ -21055,7 +21073,6 @@ def _build_customer_pdf_body(r: dict) -> str:
   <div><div class="header-name">{v("customer_name")}</div><div class="header-sub">群組：{gname}　建立日期：{created}</div></div>
   <div style="font-size:13px;color:#c8bfb5;font-weight:600;">客戶資料表</div>
 </div>
-{_build_case_status_html(r)}
 <table>
 <colgroup><col class="c-th"><col class="c-td"><col class="c-th"><col class="c-td"></colgroup>
 <tr class="sec"><td colspan="4">基本資料</td></tr>
