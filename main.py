@@ -19715,6 +19715,10 @@ body{font-family:"PingFang TC","Microsoft JhengHei","Noto Sans TC",system-ui,-ap
 .achip{display:flex;align-items:center;gap:8px;background:var(--surface);border:1px solid #fde68a;border-radius:9px;padding:7px 12px;font-size:13px;color:#78350f}
 .achip b{background:#f59e0b;color:#fff;border-radius:6px;padding:1px 7px;font-size:12px;font-weight:700}
 .achip.crit{border-color:#fecaca}.achip.crit b{background:#ef4444}
+.stat[data-flt],.achip[data-flt]{cursor:pointer;transition:box-shadow .12s,border-color .12s,transform .05s}
+.stat[data-flt]:hover,.achip[data-flt]:hover{border-color:#12a8a6;box-shadow:0 4px 14px rgba(18,168,166,.18)}
+.stat[data-flt]:active,.achip[data-flt]:active{transform:translateY(1px)}
+.stat.acton,.achip.acton{border-color:#12a8a6;box-shadow:0 0 0 2px #12a8a6 inset}
 .card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);margin-bottom:16px;overflow:hidden}
 .card-h{display:flex;align-items:center;gap:10px;padding:14px 16px;border-bottom:1px solid var(--line-2)}
 .card-h .ct{font-size:14.5px;font-weight:700}.card-h .cc{font-size:12px;color:var(--ink-2)}
@@ -19790,10 +19794,54 @@ const TLC={x:"#94a3b8",doc:"#f59e0b",docok:"#16a34a",send:"#2563eb",call:"#7c3ae
 function esc(s){return (s==null?"":String(s)).replace(/[&<>"]/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[m]))}
 function pill(c){return `<span class="pill ${PC[c.st]||'p-send'}">${esc(c.stl)}</span>`}
 function toast(msg){const t=document.getElementById("toast");t.textContent=msg;t.classList.add("show");clearTimeout(t._h);t._h=setTimeout(()=>t.classList.remove("show"),1900);}
+// ---- 點統計卡／提醒 → 篩選出那批客戶 ----
+const FLT_LABEL={today:"今日進件",send:"送件中",doc:"待補／補件",call:"照會中",money:"待撥款",rej:"婉拒未處理／全數婉拒",send2:"送件中超過 2 天",resupp:"已補件超過 3 天未動",disb5:"待撥款超過 5 天"};
+let catFilter=null;
+function _matchCat(c,key){
+  if(key==="today")return !!c.today;
+  if(key==="send")return c.st==="send";
+  if(key==="doc")return c.st==="doc"||c.st==="docok";
+  if(key==="call")return c.st==="call";
+  if(key==="money")return c.st==="money";
+  if(key==="send2"||key==="resupp"||key==="disb5")return (c.al||[]).indexOf(key)>=0;
+  return false;
+}
+function filterByCat(key){
+  const label=FLT_LABEL[key]||key;
+  const s=document.getElementById("searchName");if(s)s.value="";
+  catFilter=key;
+  document.querySelectorAll("[data-flt]").forEach(x=>x.classList.toggle("acton",x.getAttribute("data-flt")===key));
+  const gv=document.getElementById("groups"),mg=document.getElementById("moreGroups"),sr=document.getElementById("searchResults");
+  gv.style.display="none";if(mg)mg.style.display="none";sr.style.display="";
+  let body="",cnt=0;
+  if(key==="rej"){
+    const rs=DATA.rejected||[];cnt=rs.length;
+    body=rs.length?`<table><thead><tr><th>客戶姓名</th><th>群組</th><th>最後公司</th><th>最後更新</th><th style="width:64px"></th></tr></thead><tbody>`+
+      rs.map(c=>`<tr><td style="font-weight:600">${esc(c.n)}</td><td><span class="gtag" style="background:${c.gcolor}">${esc(c.gcode)}</span> ${esc(c.src)}</td><td>${esc(c.co)}</td><td class="mono">${esc(c.up)}</td><td><a class="d-act" style="padding:3px 10px;font-size:12px" href="/search?q=${encodeURIComponent(c.n||'')}">查看</a></td></tr>`).join("")+`</tbody></table>`
+      :`<div class="empty">目前沒有婉拒未處理的客戶 🎉</div>`;
+  }else{
+    const hits=[];GROUPS.forEach(g=>(g.customers||[]).forEach((c,i)=>{if(_matchCat(c,key))hits.push({g,c,i});}));cnt=hits.length;
+    body=hits.length?`<table><thead><tr><th style="width:30px"></th><th>客戶姓名</th><th>群組</th><th>目前狀態</th><th>目前公司</th><th>最後更新</th></tr></thead><tbody>`+
+      hits.map(x=>`<tr class="clk" data-g="${esc(x.g.id)}" data-i="${x.i}"><td><input type="checkbox" class="rowchk" data-cid="${esc(x.c.caseid)}" ${SEL.has(x.c.caseid)?"checked":""} onclick="event.stopPropagation()"></td><td style="font-weight:600">${esc(x.c.n)}</td><td>${esc(x.g.name)}</td><td>${pill(x.c)}</td><td>${esc(x.c.co)}</td><td class="mono">${esc(x.c.up)}</td></tr>`).join("")+`</tbody></table>`
+      :`<div class="empty">目前沒有符合「${esc(label)}」的客戶</div>`;
+  }
+  sr.innerHTML=`<div class="card"><div class="card-h"><span class="ct">篩選：${esc(label)}</span><span class="cc num" style="margin-left:8px">${cnt} 筆</span><button class="r2-btn" style="margin-left:auto" onclick="clearCat()">✕ 清除篩選</button></div>${body}</div>`;
+  sr.querySelectorAll("tr.clk").forEach(r=>r.onclick=()=>openDetail(r.dataset.g,+r.dataset.i));
+  const mn=document.querySelector(".main");if(mn)mn.scrollTop=0;
+}
+function clearCat(){
+  catFilter=null;
+  document.querySelectorAll("[data-flt].acton").forEach(x=>x.classList.remove("acton"));
+  const gv=document.getElementById("groups"),mg=document.getElementById("moreGroups"),sr=document.getElementById("searchResults");
+  sr.style.display="none";sr.innerHTML="";gv.style.display="";if(mg)mg.style.display=(groupFilter||GROUPS.length<=4)?"none":"";
+}
 document.body.addEventListener("click",function(e){
-  const el=e.target.closest(".pill-btn,.date-nav,.icon-btn,.who,.achip,.btn,.stat");
-  if(!el) return;const label=(el.textContent||"").replace(/\s+/g," ").trim().slice(0,12);
-  toast("🔧 這個先示意（正式版會接功能）"+(label?("："+label):""));
+  const el=e.target.closest("[data-flt]");
+  if(!el) return;
+  const key=el.getAttribute("data-flt");
+  if(key==="done"){location.href="/history";return;}   // 本月結案 → 結案管理頁
+  if(catFilter===key){clearCat();return;}               // 再點一次 = 取消篩選
+  filterByCat(key);
 });
 const GROUPS=DATA.groups;
 let shown=4, groupFilter=null;
@@ -19919,6 +19967,7 @@ def report2_page(request: Request):
     groups_data = []
     stats = {"groups": 0, "today": 0, "send": 0, "doc": 0, "call": 0, "money": 0, "done": 0}
     alerts = {"rej": 0, "send2": 0, "resupp": 0, "disb5": 0}
+    rejected = []   # 全數婉拒／未處理（正常不顯示、只在點「婉拒未處理」提醒時列出）
     gids_all = []
     for gi, g in enumerate(grows):
         gid = g["group_id"]; gname = g["group_name"] or gid
@@ -19947,12 +19996,22 @@ def report2_page(request: Request):
                     "fund": _rv(row, "eval_fund_need", ""),
                     "cat": _rv(row, "selected_plans", "") or _rv(row, "product_type", ""),
                     "route": [], "ridx": 0, "his": [], "caseid": _rv(row, "case_id", ""), "src": gname,
+                    "today": _rv(row, "created_at", "")[:10] == today_date, "al": [],
                 })
                 continue
             if not sec:
                 alerts["rej"] += 1
+                rejected.append({
+                    "n": _rv(row, "customer_name", ""), "src": gname, "gcolor": color,
+                    "gcode": f"{gi+1:02d}",
+                    "co": (disp.get("current_co", "") or _rv(row, "current_company", "") or "—"),
+                    "up": (_rv(row, "updated_at", "") or "")[5:16].replace("-", "/"),
+                    "caseid": _rv(row, "case_id", ""),
+                })
                 continue
             c = _report2_cust(row, disp, gname)
+            c["today"] = _rv(row, "created_at", "")[:10] == today_date
+            c["al"] = []
             custs.append(c)
             if c["st"] in ("doc", "docok"):
                 g_doc += 1; stats["doc"] += 1
@@ -19963,11 +20022,11 @@ def report2_page(request: Request):
             if c["st"] == "call":
                 stats["call"] += 1
             if sec == "送件" and _r2_days_since(_rv(row, "updated_at", "")) >= 2:
-                alerts["send2"] += 1
+                alerts["send2"] += 1; c["al"].append("send2")
             if c["st"] == "docok" and _r2_days_since(_rv(row, "updated_at", "")) >= 3:
-                alerts["resupp"] += 1
+                alerts["resupp"] += 1; c["al"].append("resupp")
             if sec == "待撥款" and not _rv(row, "disbursement_date", "") and _r2_days_since(_rv(row, "approved_at", "") or _rv(row, "updated_at", "")) >= 5:
-                alerts["disb5"] += 1
+                alerts["disb5"] += 1; c["al"].append("disb5")
         groups_data.append({"id": gid, "name": gname, "color": color, "code": f"{gi+1:02d}", "today": 0, "new": g_new, "doc": g_doc, "disb": g_disb, "done": gclosed, "customers": custs})
         stats["done"] += gclosed
     stats["groups"] = len(groups_data)
@@ -20010,27 +20069,28 @@ def report2_page(request: Request):
     nav_html = "".join(navs)
 
     # ---- 統計卡 ----
-    def sc(icls, icon, label, val, hero=False):
+    def sc(icls, icon, label, val, hero=False, flt=""):
         ic = "" if hero else f'<span class="ic {icls}">{icon}</span>'
         unit = "組" if hero else "件"
-        return f'<div class="stat{" hero" if hero else ""}"><div class="lb">{ic}{h(label)}</div><div class="vl num">{val}<small>{unit}</small></div></div>'
+        fa = f' data-flt="{flt}"' if flt else ""
+        return f'<div class="stat{" hero" if hero else ""}"{fa}><div class="lb">{ic}{h(label)}</div><div class="vl num">{val}<small>{unit}</small></div></div>'
     stats_html = (sc("", "📦", "全部群組總覽", stats["groups"], True)
-                  + sc("i-all", "📋", "今日進件", stats["today"])
-                  + sc("i-send", "✈", "送件中", stats["send"])
-                  + sc("i-doc", "📂", "待補／補件", stats["doc"])
-                  + sc("i-call", "📞", "照會中", stats["call"])
-                  + sc("i-money", "＄", "待撥款", stats["money"])
-                  + sc("i-done", "✓", "本月結案", stats["done"]))
+                  + sc("i-all", "📋", "今日進件", stats["today"], flt="today")
+                  + sc("i-send", "✈", "送件中", stats["send"], flt="send")
+                  + sc("i-doc", "📂", "待補／補件", stats["doc"], flt="doc")
+                  + sc("i-call", "📞", "照會中", stats["call"], flt="call")
+                  + sc("i-money", "＄", "待撥款", stats["money"], flt="money")
+                  + sc("i-done", "✓", "本月結案", stats["done"], flt="done"))
 
-    # ---- 異常提醒 ----
-    al = [("婉拒未處理／全數婉拒", alerts["rej"], True), ("送件中超過 2 天", alerts["send2"], False),
-          ("已補件超過 3 天未動", alerts["resupp"], False), ("待撥款超過 5 天", alerts["disb5"], True)]
-    achips = "".join(f'<div class="achip{" crit" if crit else ""}">{h(lbl)} <b class="num">{cnt}</b> 件</div>' for lbl, cnt, crit in al)
+    # ---- 異常提醒 ----（第 4 個元素 = 篩選 key）
+    al = [("婉拒未處理／全數婉拒", alerts["rej"], True, "rej"), ("送件中超過 2 天", alerts["send2"], False, "send2"),
+          ("已補件超過 3 天未動", alerts["resupp"], False, "resupp"), ("待撥款超過 5 天", alerts["disb5"], True, "disb5")]
+    achips = "".join(f'<div class="achip{" crit" if crit else ""}" data-flt="{fk}">{h(lbl)} <b class="num">{cnt}</b> 件</div>' for lbl, cnt, crit, fk in al)
     alert_total = sum(a[1] for a in al)
 
     who_txt = {"admin": "管理員", "adminB": "行政B", "ops_admin": "行政管理員", "sales_admin": "業務管理員"}.get(role, "業務")
     upd_time = now_tw().strftime("%Y/%m/%d %H:%M")
-    data_json = json.dumps({"groups": groups_data}, ensure_ascii=False).replace("</", "<\\/")
+    data_json = json.dumps({"groups": groups_data, "rejected": rejected}, ensure_ascii=False).replace("</", "<\\/")
 
     shell = f"""<div class="app">
   <aside class="side">
