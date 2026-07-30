@@ -18760,7 +18760,8 @@ function previewDailyLine() {{
     if (!d.ok) {{ box.innerHTML = '<span style="color:#dc2626">' + (d.message||'失敗') + '</span>'; return; }}
     const secs = d.sections || {{}};
     if (!Object.keys(secs).length) {{
-      box.innerHTML = '<span style="color:#dc2626">⚠️ 此客戶不會出現在任何日報區塊（可能 status 非 ACTIVE）</span>';
+      box.innerHTML = '<div style="font-weight:700;margin-bottom:6px;color:#92400e">📊 日報預覽：這位客戶目前不會出現在日報</div>'
+        + '<div style="color:#7a4c08;line-height:1.8;font-size:13px">' + ((d.reason||'').replace(/</g,"&lt;") || '（原因不明）') + '</div>';
       return;
     }}
     let html = '<div style="font-weight:700;margin-bottom:8px;color:#854d0e">📊 日報預覽（這個客戶會這樣顯示）</div>';
@@ -18928,7 +18929,9 @@ async def case_edit_preview(request: Request):
     if "approval_history_json" in data:
         try:
             ap_hist_list = json.loads(data["approval_history_json"] or "[]")
-            if isinstance(ap_hist_list, list):
+            # 只有「真的有核准明細」才重建 route_plan；空的話保留 DB 原本的送件順序+婉拒歷程
+            # （否則會把 history 清掉、order 砍成只剩 current 那家 → 婉拒的 current reroute 不到後面有效那家 → 誤判「不出現」）
+            if isinstance(ap_hist_list, list) and ap_hist_list:
                 try:
                     _rp_preview = parse_route_json(r.get("route_plan") or "")
                 except Exception:
@@ -18963,10 +18966,25 @@ async def case_edit_preview(request: Request):
             return self._d.get(k, default)
     fake_row = FakeRow(r)
     section_map = build_section_map([fake_row])
-    lines_by_section = {}
-    for sec, lines in section_map.items():
-        lines_by_section[sec] = lines
-    return JSONResponse({"ok": True, "sections": lines_by_section})
+    lines_by_section = {sec: lines for sec, lines in section_map.items()}
+    reason = ""
+    if not lines_by_section:
+        st = (r.get("status") or "ACTIVE").upper()
+        st_label = {"CLOSED": "已結案", "PENALTY": "違約金結案", "ABANDONED": "放棄",
+                    "REJECTED": "全數婉拒", "PENDING": "待建相簿"}.get(st, "")
+        if st != "ACTIVE":
+            reason = f"這個客戶目前是「{st_label or st}」狀態——結案的客戶不會出現在日報。要先按上面「案件狀態」改回「進行中」，日報才會顯示。"
+        else:
+            _has_co = bool((r.get("current_company") or "").strip() or (r.get("concurrent_companies") or "").strip())
+            try:
+                _ro = parse_route_json(r.get("route_plan") or "").get("order", [])
+            except Exception:
+                _ro = []
+            if _has_co or _ro:
+                reason = "目前在送的公司全部都「婉拒」了，所以日報上會暫時消失。要在下面「各家狀態」把某一家的婉拒改掉（救回）、或送下一家，日報才會再顯示這位客戶。"
+            else:
+                reason = "還沒設「主要公司／送件順序」，所以日報上還不會顯示。設好要送哪一家之後就會出現。"
+    return JSONResponse({"ok": True, "sections": lines_by_section, "reason": reason})
 
 
 @app.post("/case-edit")
