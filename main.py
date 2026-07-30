@@ -20698,6 +20698,8 @@ def report2_page(request: Request):
         navs.append(nl("📋", "行政B作業", "/adminb"))
     if role in ("admin", "adminB", "ops_admin", "sales_admin") or role.startswith("group_"):
         navs.append(nl("💬", "指令台", "/console"))
+    if role in ("admin", "sales_admin"):
+        navs.append(nl("💻", "裝置管理", "/admin/devices"))
     if role == "admin":
         navs.append(nl("⚙️", "群組管理", "/admin/groups"))
     nav_html = "".join(navs)
