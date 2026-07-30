@@ -18086,6 +18086,30 @@ def case_edit_get(request: Request, case_id: str = "", saved: str = ""):
     _rd = parse_route_json(v("route_plan") or "")
     _order = _rd.get("order", [])
     _idx = _rd.get("current_index", 0)
+    # 跟 LINE 日報同一套：算出 reroute 後的「目前公司」+ 各家婉拒狀態（給送件順序方塊/主要公司同步用）
+    try:
+        _disp = compute_customer_display(r)
+    except Exception:
+        _disp = {}
+    _disp_cur = (_disp.get("current_co", "") or "").strip()
+    _rej_cos = set()
+    for _hh in (_rd.get("history", []) or []):
+        if (_hh.get("status", "") or "").strip() == "婉拒":
+            _hco = (_hh.get("company", "") or "").strip()
+            if _hco:
+                _rej_cos.add(normalize_section(_hco))
+    # 管理員除錯：原始資料（截圖給工程師對照 LINE）
+    _dbg_html = ""
+    if role == "admin":
+        _dbg_txt = (f'status: {v("status")}\ncurrent_company: {v("current_company")}\ncompany(舊欄): {v("company")}\n'
+                    f'concurrent: {v("concurrent_companies")}\nreport_section: {v("report_section")}\n'
+                    f'route order: {_order}\nroute current_index: {_idx}\nroute history: {_rd.get("history", [])}\n'
+                    f'company_status: {v("company_status")}\n'
+                    f'—— compute_customer_display（跟 LINE 同一套）——\n'
+                    f'section = {_disp.get("section")}\ncurrent_co = {_disp.get("current_co")}\nstatus = {_disp.get("status")}')
+        _dbg_html = ('<details style="margin-bottom:10px"><summary style="cursor:pointer;color:#0b7f82;font-size:12px;font-weight:700">🔧 原始資料（除錯用，截圖給工程師）</summary>'
+                     '<pre style="background:#0f2233;color:#d7f5f3;padding:12px;border-radius:10px;font-size:11px;overflow:auto;white-space:pre-wrap;word-break:break-all;margin:8px 0 0">'
+                     + h(_dbg_txt) + '</pre></details>')
     done_html = " → ".join(f'<span style="color:#9ca3af">{h(c)}</span>' for c in _order[:_idx]) if _idx > 0 else ""
     curr_html = f'<b style="color:#dc2626">{h(_order[_idx])}</b>' if 0 <= _idx < len(_order) else ""
     rest_default = "/".join(_order[_idx+1:]) if _idx + 1 < len(_order) else ""
@@ -18093,9 +18117,15 @@ def case_edit_get(request: Request, case_id: str = "", saved: str = ""):
 
     cur_co = v("current_company")
     _route_cur = _order[_idx] if 0 <= _idx < len(_order) else ""
-    # 主要公司跟送件順序「目前這家」同步（與日報/LINE 一致）：
-    # current_company 空、或存的是短名對不到選項（如「21機」vs「21機車12萬」）→ 用 route 目前那家
-    if _route_cur and (not cur_co or cur_co not in company_choices):
+    # 主要公司預設 = LINE/日報 reroute 後「真正在送的那家」（compute_customer_display）
+    # 這一步最優先：避免 current_company 欄位停在已婉拒那家（如分貝機婉拒→LINE 已跳到貸救補）
+    # 導致開頁下拉選錯、一按預覽就把錯的 current 送進 build_section_map。
+    if _disp_cur:
+        # 對不到選項（短名 vs 全名）時、_co_list 下面會自動補進去
+        _matched = next((c for c in company_choices if normalize_section(c) == normalize_section(_disp_cur)), "")
+        cur_co = _matched or _disp_cur
+    elif _route_cur and (not cur_co or cur_co not in company_choices):
+        # compute 算不出（全婉拒/結案）→ 退回用 route 目前那家
         cur_co = _route_cur
     _co_list = list(company_choices)
     if cur_co and cur_co not in _co_list:
@@ -18272,11 +18302,17 @@ def case_edit_get(request: Request, case_id: str = "", saved: str = ""):
     if not stepper_html:
         stepper_html = '<div style="color:#9ca3af;font-size:13px;padding:8px 0">尚未設定送件順序</div>'
 
-    # ---- 兩欄版（mockup）用的 HTML 片段 ----
+    # ---- 兩欄版（mockup）用的 HTML 片段 ----（婉拒標紅、目前公司用 compute 判定，跟 LINE 一致）
     route_nodes_html = ""
+    _cur_norm = normalize_section(_disp_cur) if _disp_cur else ""
     for _i, _co in enumerate(_order):
-        _rc = "current" if _i == _idx else ("next" if _i == _idx + 1 else "")
-        _rcap = "目前公司" if _i == _idx else ("下一家" if _i == _idx + 1 else "尚未送件")
+        _con = normalize_section(_co)
+        if _con in _rej_cos:
+            _rc, _rcap = "rej", "婉拒"
+        elif _cur_norm and _con == _cur_norm:
+            _rc, _rcap = "current", "目前公司"
+        else:
+            _rc, _rcap = "", "尚未送件"
         route_nodes_html += f'<div class="route-node {_rc}"><div class="route-num">{_i+1}</div><b>{h(_co)}</b><small>{_rcap}</small></div>'
         if _i < len(_order) - 1:
             route_nodes_html += '<div class="arrow">→</div>'
@@ -18377,6 +18413,7 @@ label{{display:block;font-size:12px;font-weight:700;color:#374151;margin-bottom:
 .route-inline{{display:flex;align-items:center;gap:6px;overflow:auto;padding-bottom:4px}}
 .route-node{{min-width:88px;border:1px solid #d1dae5;border-radius:10px;padding:8px;text-align:center;background:#fff;flex:0 0 auto}}
 .route-node.current{{border:2px solid #1fa86b;background:#f3fcf7}}.route-node.next{{border:2px solid #f59e0b;background:#fffaf0}}
+.route-node.rej{{border:1.5px solid #f0c0c0;background:#fff5f5}}.route-node.rej b{{color:#c8494e;text-decoration:line-through}}.route-node.rej small{{color:#c8494e;font-weight:700}}.route-node.rej .route-num{{background:#f0c0c0;color:#8a2b2f}}
 .route-num{{width:21px;height:21px;border-radius:50%;display:grid;place-items:center;margin:0 auto 5px;background:#e6ebf1;color:#7c8797;font-size:11px;font-weight:900}}
 .route-node.current .route-num{{background:#1fa86b;color:#fff}}.route-node.next .route-num{{background:#f59e0b;color:#fff}}
 .route-node b{{font-size:12px}}.route-node small{{display:block;margin-top:4px;color:#6f7b8d;font-size:10px}}
@@ -18447,6 +18484,7 @@ label{{display:block;font-size:12px;font-weight:700;color:#374151;margin-bottom:
   <button type="button" class="b2 warn" onclick="var b=document.getElementById('lineMsgBox');b.style.display=(b.style.display==='none'?'block':'none')">查看原始 LINE 訊息</button>
 </div>
 <div id="lineMsgBox" style="display:none;background:#fff;border:1px solid #e5ebf2;border-radius:12px;padding:12px;margin-bottom:10px">{line_msgs_html}</div>
+{_dbg_html}
 {saved_msg}
 <form method="post" action="/case-edit">
 <input type="hidden" name="case_id" value="{h(case_id)}">
