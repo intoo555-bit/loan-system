@@ -15207,6 +15207,15 @@ def get_auth_group_id(request: Request) -> str:
         return role.replace("group_","")
     return ""
 
+
+def can_edit_customer_data(role: str, auth_group: str, cust_group: str) -> bool:
+    """能否編輯此客戶「個資」：管理類(含行政A/行政B)可改全部；業務只能改自己群組。"""
+    if role in ("admin", "adminB", "ops_admin", "sales_admin", "normal"):
+        return True
+    if role.startswith("group_") and auth_group and cust_group and cust_group == auth_group:
+        return True
+    return False
+
 def make_topnav(role: str, active: str) -> str:
     """全站頂部導覽（已統一）——直接委派到 _page_topnav，讓所有頁面共用同一條 teal 頂欄。"""
     return _page_topnav(role, active)
@@ -15662,7 +15671,7 @@ async def report_update_progress(request: Request):
 async def report_reorder_route(request: Request):
     """改送件順序：保留 history/current、覆寫剩餘 route（admin/adminB/ops_admin/sales_admin 限定）。"""
     role = check_auth(request)
-    if role not in ("admin", "adminB", "ops_admin", "sales_admin"):
+    if role not in ("admin", "ops_admin", "sales_admin"):
         return JSONResponse({"ok": False, "message": "需要管理員權限"}, status_code=403)
     data = await request.json()
     case_id = data.get("case_id", "")
@@ -16177,7 +16186,7 @@ def search_page(request: Request, q: str = "", grp: str = "", date_from: str = "
     if not role:
         return RedirectResponse("/login")
     auth_group = get_auth_group_id(request)
-    is_admin_type = role in ("admin", "adminB", "ops_admin", "sales_admin")
+    is_admin_type = role in ("admin", "adminB", "ops_admin", "sales_admin", "normal")
 
     conn2 = get_conn(); cur2 = conn2.cursor()
     cur2.execute("SELECT group_id, group_name FROM groups WHERE group_type='SALES_GROUP' AND is_active=1 ORDER BY group_name")
@@ -17136,6 +17145,9 @@ def edit_pending_get(request: Request, case_id: str = ""):
     row = cur.fetchone()
     if not row: conn.close(); return RedirectResponse("/pending-customers")
     r = dict(row)
+    # 業務只能改自己群組的客戶個資（管理類全部可改）
+    if not can_edit_customer_data(role, get_auth_group_id(request), r.get("source_group_id", "")):
+        conn.close(); return RedirectResponse("/pending-customers?error=noperm")
     cur.execute("SELECT group_id, group_name FROM groups WHERE group_type='SALES_GROUP' AND is_active=1 ORDER BY group_name")
     all_groups = cur.fetchall()
     conn.close()
@@ -17503,6 +17515,12 @@ async def edit_pending_post(request: Request):
     f = dict(form)
     case_id = f.get("case_id","")
     if not case_id: return RedirectResponse("/pending-customers")
+    # 業務只能改自己群組的客戶個資（管理類全部可改）— 用 DB 現有群組驗證
+    _cg = get_conn(); _cgc = _cg.cursor()
+    _cgc.execute("SELECT source_group_id FROM customers WHERE case_id=?", (case_id,))
+    _cgr = _cgc.fetchone(); _cg.close()
+    if _cgr and not can_edit_customer_data(role, get_auth_group_id(request), _cgr["source_group_id"] or ""):
+        return RedirectResponse("/pending-customers?error=noperm", status_code=303)
     # 居住=自有 → 房屋私設必填（server-side 防呆、前端 JS 已有但可被繞）
     if (f.get("lstatus","") or "").strip() == "自有" and not (f.get("hprivate","") or "").strip():
         return HTMLResponse(
@@ -17572,7 +17590,7 @@ def case_edit_get(request: Request, case_id: str = "", saved: str = ""):
     role = check_auth(request)
     if not role:
         return RedirectResponse("/login")
-    if role not in ("admin", "adminB", "ops_admin", "sales_admin"):
+    if role not in ("admin", "ops_admin", "sales_admin"):
         return HTMLResponse("無權限（只有管理員/行政管理員/業務管理員可改案件狀態）", status_code=403)
     if not case_id:
         return RedirectResponse("/pending-customers")
@@ -17945,14 +17963,16 @@ label{{display:block;font-size:12px;font-weight:700;color:#374151;margin-bottom:
 .b2.primary{{background:#12a8a6;color:#fff;border-color:#12a8a6}}.b2.soft{{background:#eaf9f8;color:#0b7f82;border-color:#c9ecea}}.b2.warn{{background:#fff8df;color:#9d6500;border-color:#efd38c}}
 @media(max-width:1080px){{.layout2{{grid-template-columns:1fr}}.side2{{position:static}}.meta-strip{{grid-template-columns:1fr 1fr}}}}
 @media(max-width:640px){{
-  .wrap2{{padding:12px 10px}}
-  .meta-strip{{grid-template-columns:1fr}}
+  .page{{padding:0 10px 90px}}
+  .topbar{{flex-direction:column;align-items:stretch;gap:8px}}
+  .top-actions{{display:flex;gap:8px;flex-wrap:wrap}}.top-actions .b2{{flex:1 1 auto;justify-content:center}}
+  .meta-strip{{grid-template-columns:1fr 1fr;gap:8px}}
   .grid3,.grid2{{grid-template-columns:1fr}}
-  .card-body2{{padding:12px}}
-  .stepper2,.route-strip{{overflow-x:auto;-webkit-overflow-scrolling:touch}}
-  .notice{{flex-direction:column;align-items:flex-start;gap:8px}}
-  .save-bar,.savebar2{{flex-wrap:wrap;gap:8px}}
-  .save-bar .b2,.savebar2 .b2{{flex:1 1 auto}}
+  .card2{{padding:14px}}.card-body2{{padding:0}}
+  .notice{{flex-direction:column;align-items:flex-start;gap:8px}}.notice .b2{{width:100%;justify-content:center}}
+  .route-inline{{overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:4px}}
+  .route-actions{{flex-wrap:wrap}}
+  .sticky-save{{padding:8px 10px}}.save-inner{{flex-wrap:wrap;gap:8px}}.save-actions{{width:100%;display:flex;gap:8px}}.save-actions .b2{{flex:1 1 auto;justify-content:center}}
 }}
 </style></head><body>
 {_page_topnav(role, "case-edit")}
@@ -18425,7 +18445,7 @@ def api_check_eligibility(request: Request, case_id: str = ""):
 async def case_edit_preview(request: Request):
     """以表單值模擬該客戶在日報的顯示、回傳每個 section 的那一行文字"""
     role = check_auth(request)
-    if role not in ("admin", "adminB", "ops_admin", "sales_admin"):
+    if role not in ("admin", "ops_admin", "sales_admin"):
         return JSONResponse({"ok": False, "message": "無權限"})
     data = await request.json()
     case_id = data.get("case_id", "")
@@ -18504,7 +18524,7 @@ async def case_edit_post(request: Request):
     role = check_auth(request)
     if not role:
         return RedirectResponse("/login")
-    if role not in ("admin", "adminB", "ops_admin", "sales_admin"):
+    if role not in ("admin", "ops_admin", "sales_admin"):
         return HTMLResponse("無權限", status_code=403)
     form = await request.form()
     f = dict(form)
@@ -18614,7 +18634,7 @@ async def case_edit_post(request: Request):
 async def case_edit_revert(request: Request):
     """從 case_logs.snapshot_json 還原指定那筆紀錄之前的狀態"""
     role = check_auth(request)
-    if role not in ("admin", "adminB", "ops_admin", "sales_admin"):
+    if role not in ("admin", "ops_admin", "sales_admin"):
         return JSONResponse({"ok": False, "message": "無權限"})
     data = await request.json()
     case_id = data.get("case_id", "")
@@ -18660,7 +18680,7 @@ async def case_edit_revert(request: Request):
 async def case_edit_undo(request: Request):
     """網頁「退回上一步」：跟 LINE「@AI 姓名 還原」同一套邏輯（退回上一個真的有變的狀態、退到最初就停）。"""
     role = check_auth(request)
-    if role not in ("admin", "adminB", "ops_admin", "sales_admin"):
+    if role not in ("admin", "ops_admin", "sales_admin"):
         return JSONResponse({"ok": False, "message": "無權限"})
     data = await request.json()
     case_id = data.get("case_id", "")
@@ -18724,7 +18744,8 @@ def pending_customers_page(request: Request, q: str = "", grp: str = "", date_fr
     from fastapi.responses import RedirectResponse
     role = check_auth(request)
     if not role: return RedirectResponse("/login")
-    is_admin_type = role in ("admin", "adminB", "ops_admin", "sales_admin")  # 查看/編輯按鈕只有管理員看得到
+    is_admin_type = role in ("admin", "adminB", "ops_admin", "sales_admin", "normal")  # 管理類可改全部
+    auth_group = get_auth_group_id(request)  # 業務只能改自己群組
     PAGE_SIZE = 50
     if page < 1: page = 1
     conn = get_conn(); cur = conn.cursor()
@@ -18775,7 +18796,7 @@ def pending_customers_page(request: Request, q: str = "", grp: str = "", date_fr
             <td><span class="cname"><i class="dot {dot_cls}" title="完整度 {pct}%"></i>{h(name)}</span></td>
             <td class="num">{h(id_no) or "—"}</td>
             <td><span class="group-tag" style="background:{gcol}">{h(gname)}</span></td>
-            <td><div class="row-actions">{(f'<a class="small-btn" href="/customer-pdf?case_id={h(case_id)}" target="_blank">查看</a><a class="small-btn primary" href="/edit-pending?case_id={h(case_id)}">編輯</a>') if is_admin_type else '<span style="color:#a7b2c0;font-size:12px">—</span>'}</div></td>
+            <td><div class="row-actions">{(f'<a class="small-btn" href="/customer-pdf?case_id={h(case_id)}" target="_blank">查看</a><a class="small-btn primary" href="/edit-pending?case_id={h(case_id)}">編輯</a>') if can_edit_customer_data(role, auth_group, r.get("source_group_id","")) else '<span style="color:#a7b2c0;font-size:12px">—</span>'}</div></td>
         </tr>'''
     empty = "" if rows else '<tr><td colspan="6" style="text-align:center;padding:40px;color:#8a95a5;">目前沒有待建相簿的客戶</td></tr>'
 
@@ -19878,6 +19899,8 @@ tbody tr:last-child td{border-bottom:none}tbody tr.clk{cursor:pointer}tbody tr.c
 .grp-h:hover{background:var(--surface-2)}.grp-h .gname{font-size:15px;font-weight:700}
 .grp-stats{display:flex;gap:18px;margin-left:6px;font-size:12.5px;color:var(--ink-2)}
 .grp-stats b{color:var(--ink);font-weight:700}.grp-stats .s-doc b{color:var(--amber)}.grp-stats .s-money b{color:var(--teal)}.grp-stats .s-done b{color:var(--green)}
+.grp-stats .gclk{cursor:pointer;border-radius:6px;padding:2px 5px;transition:background .12s,color .12s}
+.grp-stats .gclk:hover{background:var(--surface-2);color:var(--accent)}
 .grp-h .caret{margin-left:auto;color:var(--ink-3);font-size:13px;transition:transform .2s}.grp.open .caret{transform:rotate(180deg)}
 .grp-body{display:none;border-top:1px solid var(--line-2)}.grp.open .grp-body{display:block}
 .tabs{display:flex;gap:4px;padding:10px 14px 0;border-bottom:1px solid var(--line-2);flex-wrap:wrap}
@@ -19953,10 +19976,11 @@ function esc(s){return (s==null?"":String(s)).replace(/[&<>"]/g,m=>({"&":"&amp;"
 function pill(c){return `<span class="pill ${PC[c.st]||'p-send'}">${esc(c.stl)}</span>`}
 function toast(msg){const t=document.getElementById("toast");t.textContent=msg;t.classList.add("show");clearTimeout(t._h);t._h=setTimeout(()=>t.classList.remove("show"),1900);}
 // ---- 點統計卡／提醒 → 篩選出那批客戶 ----
-const FLT_LABEL={today:"今日進件",send:"送件中",doc:"待補／補件",call:"照會中",money:"待撥款",rej:"婉拒未處理／全數婉拒",send2:"送件中超過 2 天",resupp:"已補件超過 3 天未動",disb5:"待撥款超過 5 天"};
+const FLT_LABEL={today:"今日進件",new:"尚未排順序",send:"送件中",doc:"待補／補件",call:"照會中",money:"待撥款",rej:"婉拒未處理／全數婉拒",send2:"送件中超過 2 天",resupp:"已補件超過 3 天未動",disb5:"待撥款超過 5 天"};
 let catFilter=null;
 function _matchCat(c,key){
   if(key==="today")return !!c.today;
+  if(key==="new")return c.st==="new";
   if(key==="send")return c.st==="send";
   if(key==="doc")return c.st==="doc"||c.st==="docok";
   if(key==="call")return c.st==="call";
@@ -19964,21 +19988,22 @@ function _matchCat(c,key){
   if(key==="send2"||key==="resupp"||key==="disb5")return (c.al||[]).indexOf(key)>=0;
   return false;
 }
-function filterByCat(key){
-  const label=FLT_LABEL[key]||key;
+function filterByCat(key, gid){
+  const g0=gid?GROUPS.find(x=>x.id===gid):null;
+  const label=(g0?g0.name+"／":"")+(FLT_LABEL[key]||key);
   const s=document.getElementById("searchName");if(s)s.value="";
-  catFilter=key;
-  document.querySelectorAll("[data-flt]").forEach(x=>x.classList.toggle("acton",x.getAttribute("data-flt")===key));
+  catFilter=gid?(gid+":"+key):key;
+  document.querySelectorAll("[data-flt]").forEach(x=>x.classList.toggle("acton",!gid&&x.getAttribute("data-flt")===key));
   const gv=document.getElementById("groups"),mg=document.getElementById("moreGroups"),sr=document.getElementById("searchResults");
   gv.style.display="none";if(mg)mg.style.display="none";sr.style.display="";
   let body="",cnt=0;
   if(key==="rej"){
-    const rs=DATA.rejected||[];cnt=rs.length;
+    const rs=(DATA.rejected||[]).filter(c=>!gid||c.gid===gid);cnt=rs.length;
     body=rs.length?`<table><thead><tr><th>客戶姓名</th><th>群組</th><th>最後公司</th><th>最後更新</th><th style="width:64px"></th></tr></thead><tbody>`+
       rs.map(c=>`<tr><td style="font-weight:600">${esc(c.n)}</td><td><span class="gtag" style="background:${c.gcolor}">${esc(c.gcode)}</span> ${esc(c.src)}</td><td>${esc(c.co)}</td><td class="mono">${esc(c.up)}</td><td><a class="d-act" style="padding:3px 10px;font-size:12px" href="/search?q=${encodeURIComponent(c.n||'')}">查看</a></td></tr>`).join("")+`</tbody></table>`
       :`<div class="empty">目前沒有婉拒未處理的客戶 🎉</div>`;
   }else{
-    const hits=[];GROUPS.forEach(g=>(g.customers||[]).forEach((c,i)=>{if(_matchCat(c,key))hits.push({g,c,i});}));cnt=hits.length;
+    const hits=[];GROUPS.forEach(g=>{if(gid&&g.id!==gid)return;(g.customers||[]).forEach((c,i)=>{if(_matchCat(c,key))hits.push({g,c,i});});});cnt=hits.length;
     body=hits.length?`<table><thead><tr><th style="width:30px"></th><th>客戶姓名</th><th>群組</th><th>目前狀態</th><th>目前公司</th><th>最後更新</th></tr></thead><tbody>`+
       hits.map(x=>`<tr class="clk" data-g="${esc(x.g.id)}" data-i="${x.i}"><td><input type="checkbox" class="rowchk" data-cid="${esc(x.c.caseid)}" ${SEL.has(x.c.caseid)?"checked":""} onclick="event.stopPropagation()"></td><td style="font-weight:600">${esc(x.c.n)}</td><td>${esc(x.g.name)}</td><td>${pill(x.c)}</td><td>${esc(x.c.co)}</td><td class="mono">${esc(x.c.up)}</td></tr>`).join("")+`</tbody></table>`
       :`<div class="empty">目前沒有符合「${esc(label)}」的客戶</div>`;
@@ -20027,7 +20052,7 @@ function renderGroups(){
     const tabs=tabNames.map((t,i)=>`<button class="tab ${i===0?'on':''}" data-g="${esc(g.id)}" data-t="${esc(t)}">${esc(t)} <span class="cnt">(${cs.filter(c=>c.tab===t).length})</span></button>`).join("")||'<div style="padding:10px 14px;color:var(--ink-3)">無進行中客戶</div>';
     return `<div class="grp ${gi===0?'open':''}" data-g="${esc(g.id)}">
       <div class="grp-h"><span class="gtag" style="background:${g.color}">${esc(g.code)}</span><span class="gname">${esc(g.name)}</span>
-        <div class="grp-stats"><span>今日 <b class="num">${g.today}</b> 件</span>${g.new?`<span class="s-new">尚未排 <b class="num">${g.new}</b></span>`:""}<span class="s-doc">待補 <b class="num">${g.doc}</b></span><span class="s-money">待撥 <b class="num">${g.disb}</b></span><span class="s-done">已結案 <b class="num">${g.done}</b></span></div>
+        <div class="grp-stats"><span class="gclk" onclick="event.stopPropagation();filterByCat('today','${esc(g.id)}')">今日 <b class="num">${g.today}</b> 件</span>${g.new?`<span class="gclk s-new" onclick="event.stopPropagation();filterByCat('new','${esc(g.id)}')">尚未排 <b class="num">${g.new}</b></span>`:""}<span class="gclk s-doc" onclick="event.stopPropagation();filterByCat('doc','${esc(g.id)}')">待補 <b class="num">${g.doc}</b></span><span class="gclk s-money" onclick="event.stopPropagation();filterByCat('money','${esc(g.id)}')">待撥 <b class="num">${g.disb}</b></span><span class="gclk s-done" onclick="event.stopPropagation();location.href='/history'">已結案 <b class="num">${g.done}</b></span></div>
         <span class="caret">▼</span></div>
       <div class="grp-body"><div class="tabs">${tabs}</div><div class="gtable" data-g="${esc(g.id)}"></div></div></div>`;
   }).join("");
@@ -20069,7 +20094,7 @@ function openDetail(gid,idx){
      <div class="kv"><span class="k">最後同步</span><span class="num">${esc(c.up)||"—"}</span></div>
    </div>
    <div class="d-acts">
-     ${CAN_EDIT?`<a class="d-act" href="/case-edit?case_id=${cid}">📝 案件狀態修改</a>`:''}
+     ${CAN_CASE_EDIT?`<a class="d-act" href="/case-edit?case_id=${cid}">📝 案件狀態修改</a>`:''}
      <a class="d-act" href="/customer-pdf?case_id=${cid}" target="_blank">📄 客戶卡 PDF</a>
      ${CAN_EDIT?`<a class="d-act" href="/edit-pending?case_id=${cid}">✎ 編輯個資</a>`:''}
      <a class="d-act" href="/search?q=${encodeURIComponent(c.n||'')}">🔎 搜尋此客戶</a>
@@ -20295,7 +20320,8 @@ document.addEventListener('click',function(e){{var s=document.querySelector('.si
             "<meta name='viewport' content='width=device-width,initial-scale=1'>"
             "<title>公司日報</title><style>" + _REPORT2_CSS + "</style></head><body>"
             + shell + "<script>const DATA=" + data_json + ";\n"
-            + "const CAN_EDIT=" + ("true" if role in ("admin", "adminB", "ops_admin", "sales_admin") else "false") + ";\n"
+            + "const CAN_EDIT=" + ("true" if (role in ("admin", "adminB", "ops_admin", "sales_admin", "normal") or role.startswith("group_")) else "false") + ";\n"
+            + "const CAN_CASE_EDIT=" + ("true" if role in ("admin", "ops_admin", "sales_admin") else "false") + ";\n"
             + _REPORT2_JS + "</script></body></html>")
     return HTMLResponse(page)
 
