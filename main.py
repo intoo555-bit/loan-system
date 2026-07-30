@@ -4468,6 +4468,21 @@ def init_db():
         created_at TEXT NOT NULL,
         expires_at TEXT NOT NULL
     )""")
+    ensure_column(cur, "sessions", "device_id", "TEXT")  # 綁定裝置、供強制登出用
+    # devices 表（裝置管理：新裝置需管理員核准才能登入；總管理員 admin 豁免）
+    cur.execute("""CREATE TABLE IF NOT EXISTS devices (
+        device_id TEXT NOT NULL,
+        role TEXT NOT NULL,
+        group_id TEXT DEFAULT '',
+        label TEXT DEFAULT '',
+        user_agent TEXT DEFAULT '',
+        ip TEXT DEFAULT '',
+        status TEXT DEFAULT 'pending',
+        created_at TEXT DEFAULT '',
+        last_login TEXT DEFAULT '',
+        approved_by TEXT DEFAULT '',
+        PRIMARY KEY (device_id, role, group_id)
+    )""")
     # form_tokens 表（客戶自助填單一次性連結）
     cur.execute("""CREATE TABLE IF NOT EXISTS form_tokens (
         token TEXT PRIMARY KEY NOT NULL,
@@ -14946,8 +14961,8 @@ def _ensure_sessions_table():
         pass
 
 
-def _create_session(role: str, group_id: str = "") -> str:
-    """產生隨機 session token 並存入 DB"""
+def _create_session(role: str, group_id: str = "", device_id: str = "") -> str:
+    """產生隨機 session token 並存入 DB（device_id 供裝置強制登出用）"""
     from datetime import timedelta
     _ensure_sessions_table()
     token = secrets.token_urlsafe(32)
@@ -14955,12 +14970,95 @@ def _create_session(role: str, group_id: str = "") -> str:
     expires = (now_tw() + timedelta(days=7)).strftime("%Y-%m-%d %H:%M:%S")
     try:
         conn = get_conn(); cur = conn.cursor()
-        cur.execute("INSERT INTO sessions (token,role,group_id,created_at,expires_at) VALUES (?,?,?,?,?)",
-            (token, role, group_id, now, expires))
+        try:
+            cur.execute("INSERT INTO sessions (token,role,group_id,created_at,expires_at,device_id) VALUES (?,?,?,?,?,?)",
+                (token, role, group_id, now, expires, device_id))
+        except Exception:
+            # 舊 schema 沒 device_id 欄位時的相容
+            cur.execute("INSERT INTO sessions (token,role,group_id,created_at,expires_at) VALUES (?,?,?,?,?)",
+                (token, role, group_id, now, expires))
         conn.commit(); conn.close()
     except Exception as e:
         print(f"Session create error: {e}")
     return token
+
+
+def _client_ip(request: Request) -> str:
+    """取得使用者 IP（Render 走 proxy、看 X-Forwarded-For）"""
+    xff = request.headers.get("x-forwarded-for", "") or ""
+    if xff:
+        return xff.split(",")[0].strip()[:45]
+    try:
+        return (request.client.host or "")[:45]
+    except Exception:
+        return ""
+
+
+def _device_login_check(device_id: str, role: str, group_id: str, request: Request) -> str:
+    """登入時記錄/檢查裝置，回傳狀態 approved / pending / rejected。
+    require_device_approval 關閉時：一律 approved（只記錄、不擋）。
+    開啟時：新裝置 = pending（擋）、既有維持原狀態。總管理員 admin 不會走到這裡（豁免）。"""
+    require = get_setting("require_device_approval") == "1"
+    ua = (request.headers.get("user-agent", "") or "")[:250]
+    ip = _client_ip(request)
+    now = now_iso()
+    try:
+        with db_conn(commit=True) as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT status FROM devices WHERE device_id=? AND role=? AND group_id=?",
+                        (device_id, role, group_id))
+            row = cur.fetchone()
+            if not require:
+                status = "approved"
+            elif row:
+                status = row["status"] or "pending"
+            else:
+                status = "pending"
+            if row:
+                cur.execute("UPDATE devices SET last_login=?,user_agent=?,ip=?,status=? WHERE device_id=? AND role=? AND group_id=?",
+                            (now, ua, ip, status, device_id, role, group_id))
+            else:
+                cur.execute("INSERT INTO devices (device_id,role,group_id,label,user_agent,ip,status,created_at,last_login) VALUES (?,?,?,?,?,?,?,?,?)",
+                            (device_id, role, group_id, "", ua, ip, status, now, now))
+        return status
+    except Exception as e:
+        print(f"[device_check] {e}")
+        return "approved"  # 出錯時放行、不鎖住人
+
+
+_device_naming = {}  # 命名 token -> {role, group, device_id, exp}；本人第一次登入新裝置時用
+
+
+def _device_exists(device_id: str, role: str, group_id: str) -> bool:
+    try:
+        with db_conn() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT 1 FROM devices WHERE device_id=? AND role=? AND group_id=?",
+                        (device_id, role, group_id))
+            return cur.fetchone() is not None
+    except Exception:
+        return True  # 出錯當已存在、不強迫命名（不擋人）
+
+
+def _make_naming_token(role: str, group_id: str, device_id: str) -> str:
+    from datetime import timedelta
+    now = now_tw()
+    for k in [k for k, v in list(_device_naming.items()) if v.get("exp") and v["exp"] < now]:
+        _device_naming.pop(k, None)
+    tok = secrets.token_urlsafe(20)
+    _device_naming[tok] = {"role": role, "group": group_id, "device_id": device_id,
+                           "exp": now + timedelta(minutes=20)}
+    return tok
+
+
+def _get_naming_token(tok: str):
+    v = _device_naming.get(tok)
+    if not v:
+        return None
+    if v.get("exp") and v["exp"] < now_tw():
+        _device_naming.pop(tok, None)
+        return None
+    return v
 
 
 def _is_session_expired(expires_at_str) -> bool:
@@ -15621,12 +15719,35 @@ async def login_post(request: Request):
                     set_setting("report_pw", hash_pw(pw))
             except Exception as e:
                 print(f"[pw_upgrade] failed: {e}")
-        token = _create_session(session_role, session_group)
+        _secure = os.getenv("ENV", "production").lower() != "local"
+        # ── 裝置管理：總管理員(admin)豁免；其他角色新裝置需核准 ──
+        dev_id = request.cookies.get("device_id", "")
+        need_set_dev = False
+        if session_role not in ("admin", "sales_admin", "ops_admin"):  # 總管理/業務管理員/行政管理員 豁免、不受核准限制
+            if not dev_id:
+                dev_id = secrets.token_urlsafe(16); need_set_dev = True
+            if not _device_exists(dev_id, session_role, session_group):
+                # 全新裝置 → 先讓本人填「這台是誰」，命名後才登記＋判斷核准
+                ntok = _make_naming_token(session_role, session_group, dev_id)
+                resp = RedirectResponse("/device-name?t=" + ntok, status_code=303)
+                resp.set_cookie("device_id", dev_id, max_age=86400*365,
+                                httponly=True, samesite="Lax", secure=_secure)
+                return resp
+            dev_status = _device_login_check(dev_id, session_role, session_group, request)
+            if dev_status in ("pending", "rejected"):
+                # 不發登入 session，導到等待核准頁
+                resp = RedirectResponse("/device-pending" + ("?rejected=1" if dev_status == "rejected" else ""), status_code=303)
+                resp.set_cookie("device_id", dev_id, max_age=86400*365,
+                                httponly=True, samesite="Lax", secure=_secure)
+                return resp
+        token = _create_session(session_role, session_group, dev_id)
         resp = RedirectResponse("/report", status_code=303)
         # Bug 2：加 secure 旗標（本地開發可用 ENV=local 關閉）
-        _secure = os.getenv("ENV", "production").lower() != "local"
         resp.set_cookie("auth_token", token, max_age=86400*7,
                         httponly=True, samesite="Lax", secure=_secure)
+        if need_set_dev:
+            resp.set_cookie("device_id", dev_id, max_age=86400*365,
+                            httponly=True, samesite="Lax", secure=_secure)
         return resp
     record_login_fail(identifier)
     return RedirectResponse("/login?error=1", status_code=303)
@@ -15640,6 +15761,333 @@ def logout(request: Request):
     resp = RedirectResponse("/login", status_code=303)
     resp.delete_cookie("auth_token")
     return resp
+
+
+@app.get("/device-pending", response_class=HTMLResponse)
+def device_pending_page(request: Request, rejected: str = ""):
+    """新裝置等待核准（或被拒絕）的提示頁——沒有登入 session。"""
+    if rejected:
+        icon = "⛔"; title = "此裝置已被拒絕"
+        msg = "這台裝置／瀏覽器已被管理員停用，無法登入。如需使用，請聯絡總管理員重新開通。"
+    else:
+        icon = "🔒"; title = "新裝置待核准"
+        msg = "為了帳號安全，第一次用這台裝置／瀏覽器登入需要<b>總管理員核准</b>。<br>請聯絡管理員在「裝置管理」按「允許」，之後你就能正常登入了。"
+    return f"""<!DOCTYPE html><html lang="zh-Hant"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{title}</title></head>
+<body style="margin:0;font-family:'Noto Sans TC','Microsoft JhengHei',sans-serif;background:linear-gradient(135deg,#0d2237,#123350);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px">
+  <div style="background:#fff;border-radius:18px;padding:36px 30px;max-width:420px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,.35);text-align:center">
+    <div style="font-size:48px;margin-bottom:10px">{icon}</div>
+    <div style="font-size:21px;font-weight:800;color:#182234;margin-bottom:12px">{title}</div>
+    <div style="font-size:14px;color:#4a5a70;line-height:1.9;margin-bottom:24px">{msg}</div>
+    <a href="/login" style="display:inline-block;background:#12a8a6;color:#fff;font-weight:700;padding:11px 26px;border-radius:10px;text-decoration:none;font-size:14px">重新登入</a>
+    <div style="margin-top:16px;font-size:12px;color:#9aa8b8">核准後重新登入即可進入系統</div>
+  </div>
+</body></html>"""
+
+
+@app.get("/device-name", response_class=HTMLResponse)
+def device_name_page(request: Request, t: str = "", err: str = ""):
+    """第一次用新裝置登入 → 本人填『這台是誰』（沒有登入 session）。"""
+    from fastapi.responses import RedirectResponse
+    if not _get_naming_token(t):
+        return RedirectResponse("/login")
+    err_html = ('<div style="background:#fff0f1;color:#e5484d;font-size:13px;padding:9px 12px;border-radius:9px;margin-bottom:12px">請先輸入這台裝置是誰</div>' if err else '')
+    chips = "".join(f'<button type="button" class="chip" onclick="fillType(\'{c}\')">{c}</button>'
+                    for c in ["公司電腦", "家裡筆電", "工作手機", "個人手機", "平板"])
+    return f"""<!DOCTYPE html><html lang="zh-Hant"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>這台裝置是誰</title>
+<style>
+*{{box-sizing:border-box}}body{{margin:0;font-family:'Noto Sans TC','Microsoft JhengHei',sans-serif;background:linear-gradient(135deg,#0d2237,#123350);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}}
+.card{{background:#fff;border-radius:18px;padding:30px 26px;max-width:430px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,.35)}}
+h2{{margin:0 0 6px;font-size:21px;color:#182234}}.sub{{color:#5a6b80;font-size:13px;line-height:1.8;margin-bottom:18px}}
+label{{font-size:12px;font-weight:800;color:#344158;display:block;margin-bottom:6px}}
+input{{width:100%;padding:12px 13px;border:1px solid #ccd5df;border-radius:11px;font-size:15px;outline:none}}
+input:focus{{border-color:#76d0cd;box-shadow:0 0 0 3px rgba(18,168,166,.12)}}
+.chips{{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}}
+.chip{{background:#eef3f8;border:0;color:#42566b;border-radius:9px;padding:8px 12px;font-size:13px;font-weight:700;cursor:pointer}}
+.chip:hover{{background:#e2ebf4}}
+.go{{width:100%;margin-top:20px;background:#12a8a6;color:#fff;border:0;border-radius:11px;padding:13px;font-size:15px;font-weight:800;cursor:pointer}}
+</style></head>
+<body><form class="card" method="post" action="/device-name">
+  <div style="font-size:38px;margin-bottom:6px">👋</div>
+  <h2>這台裝置是誰？</h2>
+  <div class="sub">你是第一次用這台裝置登入。請填一下這台是誰，方便管理員辨識（例：林小明的公司電腦）。</div>
+  {err_html}
+  <input type="hidden" name="t" value="{h(t)}">
+  <label>你的名字＋裝置</label>
+  <input id="nm" name="name" placeholder="例：林小明的公司電腦" autofocus maxlength="40">
+  <div class="chips">{chips}</div>
+  <button class="go" type="submit">確認，繼續登入</button>
+</form>
+<script>
+function fillType(t){{var i=document.getElementById('nm');var v=i.value.trim();var base=v.replace(/(的)?(公司電腦|家裡筆電|工作手機|個人手機|平板|電腦|手機)$/,'').replace(/的$/,'');i.value=(base?base+'的':'')+t;i.focus();}}
+</script>
+</body></html>"""
+
+
+@app.post("/device-name")
+async def device_name_post(request: Request):
+    from fastapi.responses import RedirectResponse
+    form = await request.form()
+    t = form.get("t", "")
+    name = (form.get("name", "") or "").strip()[:40]
+    info = _get_naming_token(t)
+    if not info:
+        return RedirectResponse("/login", status_code=303)
+    if not name:
+        return RedirectResponse("/device-name?t=" + t + "&err=1", status_code=303)
+    role = info["role"]; group = info["group"]; dev_id = info["device_id"]
+    status = _device_login_check(dev_id, role, group, request)  # 登記裝置（依開關 pending/approved）
+    try:
+        with db_conn(commit=True) as conn:
+            conn.cursor().execute("UPDATE devices SET label=? WHERE device_id=? AND role=? AND group_id=?",
+                                  (name, dev_id, role, group))
+    except Exception:
+        pass
+    _device_naming.pop(t, None)
+    _secure = os.getenv("ENV", "production").lower() != "local"
+    if status in ("pending", "rejected"):
+        resp = RedirectResponse("/device-pending", status_code=303)
+        resp.set_cookie("device_id", dev_id, max_age=86400*365, httponly=True, samesite="Lax", secure=_secure)
+        return resp
+    token = _create_session(role, group, dev_id)
+    resp = RedirectResponse("/report", status_code=303)
+    resp.set_cookie("auth_token", token, max_age=86400*7, httponly=True, samesite="Lax", secure=_secure)
+    resp.set_cookie("device_id", dev_id, max_age=86400*365, httponly=True, samesite="Lax", secure=_secure)
+    return resp
+
+
+def _ua_short(ua: str) -> str:
+    ua = ua or ""
+    os_ = "裝置"
+    if "Windows" in ua: os_ = "Windows"
+    elif "iPhone" in ua or "iPad" in ua: os_ = "iPhone/iPad"
+    elif "Android" in ua: os_ = "Android"
+    elif "Macintosh" in ua or "Mac OS" in ua: os_ = "Mac"
+    elif "Linux" in ua: os_ = "Linux"
+    br = ""
+    if "Edg" in ua: br = "Edge"
+    elif "Line" in ua or "LINE" in ua: br = "LINE"
+    elif "Chrome" in ua: br = "Chrome"
+    elif "Firefox" in ua: br = "Firefox"
+    elif "Safari" in ua: br = "Safari"
+    return os_ + ("・" + br if br else "")
+
+
+def _device_role_label(role: str, group_id: str) -> str:
+    if role == "group":
+        return get_group_name(group_id) or "業務群組"
+    return {"adminB": "行政B", "ops_admin": "行政管理員",
+            "sales_admin": "業務管理員", "normal": "行政A", "admin": "總管理員"}.get(role, role)
+
+
+@app.get("/admin/devices", response_class=HTMLResponse)
+def admin_devices_page(request: Request):
+    from fastapi.responses import RedirectResponse
+    role = check_auth(request)
+    if role not in ("admin", "sales_admin"):  # 裝置管理：總管理員 + 業務管理員
+        return RedirectResponse("/report")
+    require_on = get_setting("require_device_approval") == "1"
+    conn = get_conn(); cur = conn.cursor()
+    cur.execute("SELECT * FROM devices ORDER BY (status='pending') DESC, last_login DESC")
+    devs = [dict(r) for r in cur.fetchall()]
+    conn.close()
+    pending = [d for d in devs if d.get("status") == "pending"]
+    approved = [d for d in devs if d.get("status") == "approved"]
+    rejected = [d for d in devs if d.get("status") == "rejected"]
+
+    def _dev_card(d, kind):
+        did = h(d.get("device_id", "")); rl = h(_device_role_label(d.get("role", ""), d.get("group_id", "")))
+        _r = h(d.get("role", "")); _g = h(d.get("group_id", ""))
+        ua = d.get("user_agent", "") or ""
+        if "iPad" in ua:
+            kicon, kname = "📲", "平板"
+        elif ("iPhone" in ua) or ("Android" in ua):
+            kicon, kname = "📱", "手機"
+        else:
+            kicon, kname = "💻", "電腦"
+        who = h(d.get("label", "") or "")
+        title = who or '<span style="color:#a7b2c0;font-weight:600">（未命名 — 按「命名」設定這台是誰）</span>'
+        uas = h(_ua_short(ua)); ip = h(d.get("ip", "") or "—")
+        last = h((d.get("last_login", "") or "")[:16].replace("T", " ")) or "—"
+        created = h((d.get("created_at", "") or "")[:16].replace("T", " ")) or "—"
+        if kind == "pending":
+            btns = (f'<button class="dbtn soft" onclick="devRename(\'{did}\',\'{_r}\',\'{_g}\')">✎ 命名</button>'
+                    f'<button class="dbtn ok" onclick="devAct(\'approve\',\'{did}\',\'{_r}\',\'{_g}\')">允許</button>'
+                    f'<button class="dbtn no" onclick="devAct(\'reject\',\'{did}\',\'{_r}\',\'{_g}\')">拒絕</button>')
+        elif kind == "approved":
+            btns = (f'<button class="dbtn soft" onclick="devRename(\'{did}\',\'{_r}\',\'{_g}\')">✎ 命名（這台是誰）</button>'
+                    f'<button class="dbtn soft" onclick="devAct(\'logout\',\'{did}\',\'{_r}\',\'{_g}\')">強制登出</button>'
+                    f'<button class="dbtn no" onclick="devAct(\'remove\',\'{did}\',\'{_r}\',\'{_g}\')">移除授權</button>')
+        else:
+            btns = (f'<button class="dbtn ok" onclick="devAct(\'approve\',\'{did}\',\'{_r}\',\'{_g}\')">重新開通</button>'
+                    f'<button class="dbtn no" onclick="devAct(\'remove\',\'{did}\',\'{_r}\',\'{_g}\')">刪除</button>')
+        return (f'<div class="drow"><div class="dic">{kicon}</div>'
+                f'<div class="dinfo"><div class="dttl">{title} <span class="dkind">{kicon} {kname}</span> <span class="drole">{rl}</span></div>'
+                f'<div class="dmeta">{uas}・IP {ip}<br>申請：{created}　｜　最後登入：{last}</div></div>'
+                f'<div class="dacts">{btns}</div></div>')
+
+    def _section(title, arr, kind, empty):
+        if not arr:
+            return f'<div class="dcard"><div class="dhead">{title}</div><div class="dempty">{empty}</div></div>'
+        return f'<div class="dcard"><div class="dhead">{title}<span class="dcount">{len(arr)}</span></div>' + "".join(_dev_card(d, kind) for d in arr) + "</div>"
+
+    toggle_html = (
+        f'<div class="tglrow"><div><b>新裝置需管理員核准</b>'
+        f'<div class="tgldesc">{"目前：開啟 — 沒核准的新裝置無法登入（管理員永遠豁免）" if require_on else "目前：關閉 — 大家照常登入，系統只記錄裝置。建議先開一陣子讓現有裝置都被記錄，再打開。"}</div></div>'
+        f'<button class="tgl {"on" if require_on else ""}" onclick="devToggle({str(require_on).lower()})">{"已開啟" if require_on else "已關閉"}</button></div>'
+        f'<div class="tglrow"><div><b>要求全部重新登入</b>'
+        f'<div class="tgldesc">把大家登出一次（你自己不會被登出）。每個人重新登入時就會跳「這台是誰？」讓他填名字，你就能一次認齊所有裝置。上班時間用會打斷大家，建議挑上線時機按。</div></div>'
+        f'<button class="tgl" style="background:#fff0f1;color:#e5484d" onclick="devKickAll()">要求重新登入</button></div>')
+
+    css = """
+:root{--teal:#12a8a6;--line:#e5ebf2;--ink:#182234;--muted:#6f7b8d}
+*{box-sizing:border-box}body{margin:0;background:#f5f8fb;color:var(--ink);font-family:"Noto Sans TC","Microsoft JhengHei",system-ui,sans-serif;font-size:14px}
+.wrap{max-width:900px;margin:0 auto;padding:20px 14px 60px}
+h1{font-size:23px;margin:6px 0 4px}.sub{color:var(--muted);font-size:13px;margin-bottom:16px}
+.dcard{background:#fff;border:1px solid var(--line);border-radius:14px;box-shadow:0 10px 24px rgba(25,44,74,.06);margin-bottom:16px;overflow:hidden}
+.dhead{display:flex;align-items:center;gap:8px;font-weight:800;padding:14px 16px;border-bottom:1px solid var(--line)}
+.dcount{background:#eaf9f8;color:var(--teal);border-radius:999px;padding:1px 9px;font-size:12px}
+.dempty{padding:22px;text-align:center;color:var(--muted);font-size:13px}
+.drow{display:grid;grid-template-columns:44px 1fr auto;gap:12px;align-items:center;padding:13px 16px;border-bottom:1px solid #eef2f6}
+.drow:last-child{border-bottom:0}
+.dic{width:44px;height:44px;border-radius:12px;background:#eaf9f8;display:flex;align-items:center;justify-content:center;font-size:20px}
+.dttl{font-weight:800}.drole{background:#eef3f8;color:#4a5a70;border-radius:6px;padding:1px 7px;font-size:11px;font-weight:700;margin-left:4px}
+.dkind{background:#eaf9f8;color:#0b7f82;border-radius:6px;padding:1px 7px;font-size:11px;font-weight:700;margin-left:4px}
+.dmeta{color:var(--muted);font-size:12px;line-height:1.7;margin-top:3px}
+.dacts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.dbtn{border:0;border-radius:9px;padding:8px 12px;font-size:13px;font-weight:800;cursor:pointer}
+.dbtn.ok{background:var(--teal);color:#fff}.dbtn.no{background:#fff0f1;color:#e5484d}.dbtn.soft{background:#eef3f5;color:#42566b}
+.tglrow{display:flex;align-items:center;justify-content:space-between;gap:14px;background:#fff;border:1px solid var(--line);border-radius:14px;box-shadow:0 10px 24px rgba(25,44,74,.06);padding:16px;margin-bottom:16px}
+.tgldesc{color:var(--muted);font-size:12px;margin-top:5px;line-height:1.6}
+.tgl{border:0;border-radius:999px;padding:9px 18px;font-weight:800;font-size:13px;cursor:pointer;background:#e3e9ef;color:#5a6b80;white-space:nowrap}
+.tgl.on{background:var(--teal);color:#fff}
+.dmask{position:fixed;inset:0;background:rgba(13,32,48,.5);-webkit-backdrop-filter:blur(2px);backdrop-filter:blur(2px);display:none;align-items:center;justify-content:center;padding:20px;z-index:100}
+.dmask.show{display:flex}
+.dmodal{background:#fff;border-radius:18px;padding:24px 22px;width:min(420px,100%);box-shadow:0 30px 80px rgba(0,0,0,.32);animation:dpop .16s ease}
+@keyframes dpop{from{transform:translateY(10px) scale(.98);opacity:.4}to{transform:none;opacity:1}}
+.dmodal h3{margin:0 0 10px;font-size:18px;font-weight:800;color:var(--ink)}
+.dmodal p{margin:0;color:#4a5a70;line-height:1.8;font-size:14px}
+.dmodal input{width:100%;padding:11px 12px;border:1px solid var(--line);border-radius:10px;font-size:14px;margin-top:12px;outline:none}
+.dmodal input:focus{border-color:#76d0cd;box-shadow:0 0 0 3px rgba(18,168,166,.12)}
+.dmacts{display:flex;justify-content:flex-end;gap:10px;margin-top:20px}
+.dmacts .dbtn{padding:10px 18px}
+.dtoast{position:fixed;left:50%;bottom:28px;transform:translateX(-50%) translateY(20px);background:#182234;color:#fff;padding:12px 22px;border-radius:12px;font-size:14px;font-weight:700;opacity:0;pointer-events:none;transition:.25s;z-index:110;box-shadow:0 12px 30px rgba(0,0,0,.3)}
+.dtoast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+@media(max-width:640px){.drow{grid-template-columns:40px 1fr}.dacts{grid-column:1/-1;justify-content:stretch}.dacts .dbtn{flex:1}.tglrow{flex-direction:column;align-items:stretch}}
+"""
+    js = """
+var _dmOnOk=null;
+function dmClose(){document.getElementById('dmask').classList.remove('show');_dmOnOk=null;}
+function dmToast(msg){var t=document.getElementById('dtoast');t.textContent=msg;t.classList.add('show');clearTimeout(t._h);t._h=setTimeout(function(){t.classList.remove('show');},2000);}
+function dmConfirm(title,text,danger,okText,onOk){
+  document.getElementById('dmTitle').textContent=title;
+  document.getElementById('dmText').innerHTML=text;
+  document.getElementById('dmInputWrap').style.display='none';
+  var ok=document.getElementById('dmOk');ok.textContent=okText||'確認';ok.className='dbtn '+(danger?'no':'ok');
+  _dmOnOk=onOk;document.getElementById('dmask').classList.add('show');
+}
+function dmPrompt(title,text,cur,onOk){
+  document.getElementById('dmTitle').textContent=title;
+  document.getElementById('dmText').innerHTML=text;
+  var w=document.getElementById('dmInputWrap');w.style.display='block';
+  var inp=document.getElementById('dmInput');inp.value=cur||'';
+  var ok=document.getElementById('dmOk');ok.textContent='儲存';ok.className='dbtn ok';
+  _dmOnOk=function(){onOk(inp.value);};document.getElementById('dmask').classList.add('show');
+  setTimeout(function(){inp.focus();},60);
+}
+document.getElementById('dmOk').onclick=function(){var f=_dmOnOk;dmClose();if(f)f();};
+document.getElementById('dmask').addEventListener('click',function(e){if(e.target===this)dmClose();});
+document.addEventListener('keydown',function(e){if(e.key==='Escape')dmClose();});
+function _post(body){return fetch('/admin/devices/action',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json());}
+function _run(body,okmsg){_post(body).then(function(d){if(d.ok){dmToast(okmsg||'已完成');setTimeout(function(){location.reload();},550);}else{dmToast(d.message||'操作失敗');}});}
+function devAct(action,did,role,gid){
+  var M={approve:['允許這台裝置登入？','允許後，這台裝置即可進入系統。',false,'允許','已允許登入'],
+         reject:['拒絕這台裝置？','拒絕後這台裝置無法登入；若目前在線會被立刻登出。',true,'拒絕','已拒絕'],
+         remove:['移除這台裝置的授權？','會立刻登出，且下次登入需重新申請核准。（離職用這個）',true,'移除授權','已移除'],
+         logout:['強制登出這台裝置？','會結束目前登入狀態，但保留授權、之後仍可再登入。',false,'強制登出','已登出該裝置']}[action];
+  if(!M)return;
+  dmConfirm(M[0],M[1],M[2],M[3],function(){_run({action:action,device_id:did,role:role,group_id:gid},M[4]);});
+}
+function devRename(did,role,gid){
+  dmPrompt('這台裝置是誰？','幫這台裝置取個好認的名字，例：林小明的公司電腦、櫃檯手機。','',function(n){_run({action:'rename',device_id:did,role:role,group_id:gid,label:(n||'').trim()},'已更新名稱');});
+}
+function devToggle(cur){
+  var on=!cur;
+  dmConfirm(on?'開啟「新裝置需核准」？':'關閉「新裝置需核准」？',
+    on?'開啟後，沒核准過的新裝置將無法登入，需你在此頁按「允許」。<b>總管理員不受影響。</b>':'關閉後就不再擋新裝置，大家照常登入（系統仍會記錄裝置）。',
+    false, on?'開啟':'關閉',
+    function(){_run({action:'toggle',value:on?'1':'0'}, on?'已開啟':'已關閉');});
+}
+function devKickAll(){
+  dmConfirm('要求全部重新登入？','會把目前登入中的人全部登出（<b>你自己不會被登出</b>）。他們重新登入時就會被要求填「這台是誰」。上班時間會打斷大家，確定嗎？',
+    true,'確定登出全部',function(){_post({action:'kick_all'}).then(function(d){if(d.ok)dmToast('已要求 '+(d.count||0)+' 個登入重新登入');else dmToast(d.message||'失敗');});});
+}
+"""
+    modal_html = ('<div class="dmask" id="dmask"><div class="dmodal">'
+                  '<h3 id="dmTitle">確認</h3><p id="dmText"></p>'
+                  '<div id="dmInputWrap" style="display:none"><input id="dmInput" placeholder="例：林小明的公司電腦"></div>'
+                  '<div class="dmacts"><button class="dbtn soft" onclick="dmClose()">取消</button>'
+                  '<button class="dbtn ok" id="dmOk">確認</button></div>'
+                  '</div></div><div class="dtoast" id="dtoast"></div>')
+    body = (f'<div class="wrap"><h1>💻 裝置管理</h1>'
+            f'<div class="sub">控制哪些裝置能登入後台，新裝置需你核准才能進。</div>'
+            f'{toggle_html}'
+            f'{_section("⏳ 待核准的新裝置", pending, "pending", "目前沒有待核准的新裝置")}'
+            f'{_section("✅ 已授權裝置", approved, "approved", "尚無已授權裝置")}'
+            + (_section("⛔ 已拒絕／停用", rejected, "rejected", "") if rejected else "")
+            + '</div>')
+    return (f"<!DOCTYPE html><html lang='zh-Hant'><head><meta charset='utf-8'>"
+            f"<meta name='viewport' content='width=device-width,initial-scale=1'><title>裝置管理</title>"
+            f"<style>{css}</style></head><body>{_page_topnav(role, 'devices')}{body}{modal_html}"
+            f"<script>{js}</script></body></html>")
+
+
+@app.post("/admin/devices/action")
+async def admin_devices_action(request: Request):
+    role = check_auth(request)
+    if role not in ("admin", "sales_admin"):
+        return JSONResponse({"ok": False, "message": "需要管理權限"}, status_code=403)
+    data = await request.json()
+    action = data.get("action", "")
+    now = now_iso()
+    if action == "toggle":
+        set_setting("require_device_approval", "1" if data.get("value") == "1" else "0")
+        return JSONResponse({"ok": True})
+    if action == "kick_all":
+        # 登出除了自己以外所有人 → 他們重新登入時會被要求命名裝置
+        my_token = request.cookies.get("auth_token", "")
+        cnt = 0
+        try:
+            with db_conn(commit=True) as conn:
+                cur = conn.cursor()
+                cur.execute("SELECT COUNT(*) c FROM sessions WHERE token!=?", (my_token,))
+                cnt = cur.fetchone()["c"]
+                cur.execute("DELETE FROM sessions WHERE token!=?", (my_token,))
+        except Exception as e:
+            return JSONResponse({"ok": False, "message": f"失敗：{e}"})
+        return JSONResponse({"ok": True, "count": cnt})
+    did = data.get("device_id", ""); drole = data.get("role", ""); gid = data.get("group_id", "")
+    if not did:
+        return JSONResponse({"ok": False, "message": "缺少裝置"})
+    with db_conn(commit=True) as conn:
+        cur = conn.cursor()
+        if action == "approve":
+            cur.execute("UPDATE devices SET status='approved',approved_by='總管理員' WHERE device_id=? AND role=? AND group_id=?", (did, drole, gid))
+        elif action == "reject":
+            cur.execute("UPDATE devices SET status='rejected' WHERE device_id=? AND role=? AND group_id=?", (did, drole, gid))
+            cur.execute("DELETE FROM sessions WHERE device_id=?", (did,))  # 踢下線
+        elif action == "remove":
+            cur.execute("DELETE FROM devices WHERE device_id=? AND role=? AND group_id=?", (did, drole, gid))
+            cur.execute("DELETE FROM sessions WHERE device_id=?", (did,))
+        elif action == "logout":
+            cur.execute("DELETE FROM sessions WHERE device_id=?", (did,))  # 保留授權、只登出
+        elif action == "rename":
+            cur.execute("UPDATE devices SET label=? WHERE device_id=? AND role=? AND group_id=?", ((data.get("label", "") or "")[:40], did, drole, gid))
+        else:
+            return JSONResponse({"ok": False, "message": "未知動作"})
+    return JSONResponse({"ok": True})
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -16038,9 +16486,12 @@ def _page_topnav(role, active):
         items.append(("📋 行政B", "/adminb", "adminb"))
     if role in ("admin", "adminB", "ops_admin", "sales_admin") or role.startswith("group_"):
         items.append(("💬 指令台", "/console", "console"))
+    if role == "sales_admin":  # 業務管理員：裝置管理(admin 版在「管理」下拉裡)
+        items.append(("💻 裝置管理", "/admin/devices", "devices"))
     admin_items = []
     if role == "admin":
         admin_items = [("⚙️ 群組管理", "/admin/groups", "admin"),
+                       ("💻 裝置管理", "/admin/devices", "devices"),
                        ("🔑 密碼管理", "/admin/passwords", "passwords"),
                        ("📝 操作紀錄", "/admin/logs", "logs"),
                        ("📄 申請書範本", "/admin/templates", "templates"),
