@@ -18263,7 +18263,10 @@ def case_edit_get(request: Request, case_id: str = "", saved: str = ""):
         _disp_st = compute_customer_display(r).get("status", "") or ""
     except Exception:
         _disp_st = ""
-    _cs_first_lines = (company_status.get(cur_co, "") or v("last_update") or "").splitlines()
+    # ⚠️ 只認「目前這家自己」的狀態、絕不 fallback 到 last_update：
+    # last_update 常是上一則訊息（別家的婉拒），會害「目前狀態」誤抓婉拒、
+    # 再被預覽 JS 塞進 cs → compute 誤判目前這家婉拒 → 日報往後推一家（羅慶彬 case）
+    _cs_first_lines = (company_status.get(cur_co, "") or "").splitlines()
     _cs_first = _cs_first_lines[0] if _cs_first_lines else ""
     _cur_status_list = ["", "照會", "送件", "待照會", "補件", "待補件", "已補件", "補申覆", "待補申覆", "已補申覆", "核准", "婉拒", "待撥款", "對保中", "撥款", "追蹤", "退件"]
 
