@@ -19036,13 +19036,27 @@ async def case_edit_preview(request: Request):
                 + ("/撥" if _hh.get("disbursed") else "")
                 for _hh in _hist_dbg) or "(空)"
             _disp_dbg = compute_customer_display(_orig)
+            # 預覽實際用的 fake_row（套了表單值）→ 這才是黃色預覽線的真正來源
+            _rp_fake = parse_route_json(r.get("route_plan") or "")
+            _hist_fake = _rp_fake.get("history", []) or []
+            _hist_fake_txt = "; ".join(
+                f'{_hh.get("company","")}={_hh.get("status","") or "-"}'
+                + (f'/{_hh.get("amount","")}' if _hh.get("amount") else "")
+                for _hh in _hist_fake) or "(空)"
+            _disp_fake = compute_customer_display(fake_row)
             _dbg = (
-                f'DB current_company={_orig.get("current_company") or "(空)"} | company(舊)={_orig.get("company") or "(空)"}\n'
-                f'DB concurrent={_orig.get("concurrent_companies") or "(空)"} | report_section={_orig.get("report_section") or "(空)"}\n'
-                f'route order={_rp_dbg.get("order", [])} | current_index={_rp_dbg.get("current_index", 0)}\n'
-                f'route history=[{_hist_txt}]\n'
-                f'company_status={_orig.get("company_status") or "(空)"}\n'
-                f'→ compute(跟LINE同): section={_disp_dbg.get("section")} | current_co={_disp_dbg.get("current_co")} | status={_disp_dbg.get("status")}'
+                f'【DB 原始】current_company={_orig.get("current_company") or "(空)"} | company(舊)={_orig.get("company") or "(空)"}\n'
+                f'  route order={_rp_dbg.get("order", [])} | idx={_rp_dbg.get("current_index", 0)}\n'
+                f'  history=[{_hist_txt}] | cs={_orig.get("company_status") or "(空)"}\n'
+                f'  → compute: section={_disp_dbg.get("section")} | current_co={_disp_dbg.get("current_co")}\n'
+                f'【表單送來】current_company={data.get("current_company") or "(空)"} | concurrent={data.get("concurrent_companies") or "(空)"}\n'
+                f'  report_section={data.get("report_section") or "(空)"} | cs_json={data.get("company_status_json") or "(空)"}\n'
+                f'  approval_json={data.get("approval_history_json") or "(空)"}\n'
+                f'【預覽用 fake_row】current_company={r.get("current_company") or "(空)"}\n'
+                f'  route order={_rp_fake.get("order", [])} | idx={_rp_fake.get("current_index", 0)}\n'
+                f'  history=[{_hist_fake_txt}]\n'
+                f'  → compute(fake): section={_disp_fake.get("section")} | current_co={_disp_fake.get("current_co")}\n'
+                f'★ 預覽實際輸出 section={list(lines_by_section.keys())}'
             )
         except Exception as _e:
             _dbg = f"(debug 失敗: {_e})"
