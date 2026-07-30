@@ -18797,9 +18797,10 @@ function previewDailyLine() {{
   }}).then(r=>r.json()).then(d=>{{
     if (!d.ok) {{ box.innerHTML = '<span style="color:#dc2626">' + (d.message||'失敗') + '</span>'; return; }}
     const secs = d.sections || {{}};
+    const dbgHtml = d.debug ? '<details style="margin-top:10px"><summary style="cursor:pointer;color:#0b7f82;font-size:12px;font-weight:700">🔧 原始資料（除錯用，截圖給工程師）</summary><pre style="background:#0f2233;color:#d7f5f3;padding:10px;border-radius:8px;font-size:11px;overflow:auto;white-space:pre-wrap;word-break:break-all;margin:6px 0 0">' + d.debug.replace(/</g,'&lt;') + '</pre></details>' : '';
     if (!Object.keys(secs).length) {{
       box.innerHTML = '<div style="font-weight:700;margin-bottom:6px;color:#92400e">📊 日報預覽：這位客戶目前不會出現在日報</div>'
-        + '<div style="color:#7a4c08;line-height:1.8;font-size:13px">' + ((d.reason||'').replace(/</g,"&lt;") || '（原因不明）') + '</div>';
+        + '<div style="color:#7a4c08;line-height:1.8;font-size:13px">' + ((d.reason||'').replace(/</g,"&lt;") || '（原因不明）') + '</div>' + dbgHtml;
       return;
     }}
     let html = '<div style="font-weight:700;margin-bottom:8px;color:#854d0e">📊 日報預覽（這個客戶會這樣顯示）</div>';
@@ -18809,7 +18810,7 @@ function previewDailyLine() {{
         html += '<div style="padding:4px 12px;background:#fff;border-radius:4px;margin-bottom:4px">' + ln.replace(/</g,'&lt;') + '</div>';
       }});
     }}
-    box.innerHTML = html;
+    box.innerHTML = html + dbgHtml;
   }}).catch(e => box.innerHTML = '<span style="color:#dc2626">網路錯誤</span>');
 }}
 
@@ -19022,7 +19023,30 @@ async def case_edit_preview(request: Request):
                 reason = "目前在送的公司全部都「婉拒」了，所以日報上會暫時消失。要在下面「各家狀態」把某一家的婉拒改掉（救回）、或送下一家，日報才會再顯示這位客戶。"
             else:
                 reason = "還沒設「主要公司／送件順序」，所以日報上還不會顯示。設好要送哪一家之後就會出現。"
-    return JSONResponse({"ok": True, "sections": lines_by_section, "reason": reason})
+    # 除錯（admin only）：把真實 route_plan / history / cs / compute 結果吐出來對照
+    _dbg = ""
+    if role == "admin":
+        try:
+            _orig = dict(row)
+            _rp_dbg = parse_route_json(_orig.get("route_plan") or "")
+            _hist_dbg = _rp_dbg.get("history", []) or []
+            _hist_txt = "; ".join(
+                f'{_hh.get("company","")}={_hh.get("status","") or "-"}'
+                + (f'/{_hh.get("amount","")}' if _hh.get("amount") else "")
+                + ("/撥" if _hh.get("disbursed") else "")
+                for _hh in _hist_dbg) or "(空)"
+            _disp_dbg = compute_customer_display(_orig)
+            _dbg = (
+                f'DB current_company={_orig.get("current_company") or "(空)"} | company(舊)={_orig.get("company") or "(空)"}\n'
+                f'DB concurrent={_orig.get("concurrent_companies") or "(空)"} | report_section={_orig.get("report_section") or "(空)"}\n'
+                f'route order={_rp_dbg.get("order", [])} | current_index={_rp_dbg.get("current_index", 0)}\n'
+                f'route history=[{_hist_txt}]\n'
+                f'company_status={_orig.get("company_status") or "(空)"}\n'
+                f'→ compute(跟LINE同): section={_disp_dbg.get("section")} | current_co={_disp_dbg.get("current_co")} | status={_disp_dbg.get("status")}'
+            )
+        except Exception as _e:
+            _dbg = f"(debug 失敗: {_e})"
+    return JSONResponse({"ok": True, "sections": lines_by_section, "reason": reason, "debug": _dbg})
 
 
 @app.post("/case-edit")
