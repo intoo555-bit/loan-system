@@ -15621,46 +15621,159 @@ def guide_page(request: Request):
 @app.get("/login", response_class=HTMLResponse)
 def login_page(request: Request, error: str = ""):
     if error == "locked":
-        err_html = '<div style="background:#fef2f2;color:#dc2626;padding:8px 12px;border-radius:6px;font-size:12px;margin-bottom:14px">帳號已鎖定，請 15 分鐘後再試或聯繫管理員解鎖</div>'
+        err_html = '<div class="lg-err">帳號已鎖定，請 15 分鐘後再試或聯繫管理員解鎖</div>'
     elif error:
-        err_html = '<div style="background:#fef2f2;color:#dc2626;padding:8px 12px;border-radius:6px;font-size:12px;margin-bottom:14px">密碼錯誤，請重新輸入</div>'
+        err_html = '<div class="lg-err">密碼錯誤，請重新輸入</div>'
     else:
         err_html = ""
     conn = get_conn(); cur = conn.cursor()
     cur.execute("SELECT group_id, group_name FROM groups WHERE group_type='SALES_GROUP' AND is_active=1 ORDER BY group_name")
     sales_groups = cur.fetchall(); conn.close()
     grp_opts = "".join(f'<option value="{h(g["group_id"])}">{h(g["group_name"])}</option>' for g in sales_groups)
-    return f"""<!DOCTYPE html><html><head>{PAGE_CSS}<title>登入</title></head><body>
-    <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:#f5f0eb">
-    <div style="background:#faf7f4;border:1px solid #ddd5ca;border-radius:12px;padding:36px 32px;width:360px;box-shadow:0 4px 24px rgba(0,0,0,.06)">
-      <div style="text-align:center;margin-bottom:24px">
-        <div style="font-size:22px;font-weight:700;color:#3a3530">貸款案件管理</div>
-        <div style="font-size:12px;color:#9ca3af;margin-top:6px">請選擇身份並輸入密碼</div>
-      </div>
-      {err_html}
-      <form method="post" action="/login">
-        <div style="margin-bottom:14px">
-          <label style="font-size:12px;color:#5a4e40;font-weight:600;display:block;margin-bottom:6px">身份</label>
-          <select name="role" class="input" style="padding:9px 12px" onchange="document.getElementById('grp_sec').style.display=this.value==='group'?'block':'none'">
-            <option value="admin">管理員</option>
-            <option value="ops_admin">行政管理員</option>
-            <option value="sales_admin">業務管理員</option>
-            <option value="normal">行政A</option>
-            <option value="adminB">行政B</option>
-            <option value="group">業務（選群組）</option>
-          </select>
-        </div>
-        <div id="grp_sec" style="display:none;margin-bottom:14px">
-          <label style="font-size:12px;color:#5a4e40;font-weight:600;display:block;margin-bottom:6px">群組</label>
-          <select name="group_id" class="input" style="padding:9px 12px">{grp_opts}</select>
-        </div>
-        <div style="margin-bottom:16px">
-          <label style="font-size:12px;color:#5a4e40;font-weight:600;display:block;margin-bottom:6px">密碼</label>
-          <input class="input" type="password" name="password" placeholder="輸入密碼" autofocus style="padding:10px 14px;font-size:15px">
-        </div>
-        <button type="submit" class="btn btn-primary" style="width:100%;justify-content:center;padding:10px;font-size:14px;background:#6a5e4e;border-color:#6a5e4e">登入</button>
-      </form>
-    </div></div></body></html>"""
+    return f"""<!DOCTYPE html><html lang="zh-Hant"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>登入 · 貸款案件管理</title>
+<style>
+*{{box-sizing:border-box}}
+body{{margin:0;font-family:'Noto Sans TC','PingFang TC','Microsoft JhengHei',sans-serif;
+  min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;
+  background:linear-gradient(135deg,#eaf6f4 0%,#f4faf9 55%,#eef7f6 100%);position:relative;overflow:hidden}}
+/* 背景裝飾 */
+.bg-deco{{position:fixed;inset:0;pointer-events:none;z-index:0;overflow:hidden}}
+.bg-circle{{position:absolute;border-radius:50%;background:radial-gradient(circle at 30% 30%,rgba(150,220,214,.38),rgba(150,220,214,0));}}
+.bc1{{width:340px;height:340px;left:-90px;top:180px}}
+.bc2{{width:300px;height:300px;right:-70px;bottom:-60px;background:radial-gradient(circle at 30% 30%,rgba(120,205,200,.30),rgba(120,205,200,0))}}
+.bg-dots{{position:absolute;width:130px;height:110px;
+  background-image:radial-gradient(rgba(120,200,196,.55) 2px,transparent 2px);background-size:20px 20px}}
+.bd1{{right:60px;top:44px}}.bd2{{left:44px;bottom:80px;width:150px;height:90px}}.bd3{{left:120px;top:340px;width:80px;height:80px;opacity:.7}}
+.bg-wave{{position:absolute;left:0;right:0;bottom:0;width:100%;height:60%;opacity:.5}}
+/* 卡片 */
+.lg-card{{position:relative;z-index:1;background:#fff;border-radius:22px;width:420px;max-width:100%;
+  padding:40px 38px 26px;box-shadow:0 24px 60px rgba(24,110,104,.14),0 4px 14px rgba(24,110,104,.06)}}
+.lg-logo{{width:96px;height:96px;margin:0 auto 20px;display:flex;align-items:center;justify-content:center;
+  border-radius:50%;background:radial-gradient(circle at 50% 40%,#e4f6f4,#f2fbfa 70%,transparent)}}
+.lg-title{{text-align:center;font-size:30px;font-weight:900;letter-spacing:2px;color:#16324a;margin:0}}
+.lg-sub{{text-align:center;font-size:14px;color:#7b93a5;margin:8px 0 0}}
+.lg-accent{{width:44px;height:4px;border-radius:3px;margin:14px auto 26px;
+  background:linear-gradient(90deg,#17b8ad,#1a6f9e)}}
+.lg-field{{margin-bottom:18px}}
+.lg-lab{{display:flex;align-items:center;gap:7px;font-size:14px;font-weight:800;color:#3d5266;margin-bottom:8px}}
+.lg-lab svg{{color:#12a89f}}
+.lg-input,.lg-select{{width:100%;padding:14px 15px;border:1.5px solid #d7e3e6;border-radius:12px;
+  font-size:15px;color:#1f3448;background:#fff;outline:none;transition:.15s;appearance:none}}
+.lg-input::placeholder{{color:#a9bac4}}
+.lg-input:focus,.lg-select:focus{{border-color:#4fc9c0;box-shadow:0 0 0 4px rgba(20,168,159,.13)}}
+.lg-select-wrap,.lg-pass-wrap{{position:relative}}
+.lg-select-wrap::after{{content:"";position:absolute;right:16px;top:50%;width:9px;height:9px;
+  border-right:2px solid #7d95a4;border-bottom:2px solid #7d95a4;transform:translateY(-70%) rotate(45deg);pointer-events:none}}
+.lg-eye{{position:absolute;right:12px;top:50%;transform:translateY(-50%);background:none;border:0;
+  cursor:pointer;color:#8aa0ad;padding:6px;display:flex;border-radius:8px}}
+.lg-eye:hover{{color:#12a89f;background:#eefaf9}}
+.lg-row{{display:flex;align-items:center;justify-content:space-between;margin:2px 0 22px}}
+.lg-check{{display:flex;align-items:center;gap:8px;font-size:14px;color:#42586b;cursor:pointer;user-select:none}}
+.lg-check input{{width:18px;height:18px;accent-color:#12a89f;cursor:pointer}}
+.lg-forgot{{font-size:13px;color:#12a89f;font-weight:700;text-decoration:none;cursor:pointer}}
+.lg-forgot:hover{{text-decoration:underline}}
+.lg-btn{{width:100%;border:0;border-radius:13px;padding:15px;font-size:16px;font-weight:800;letter-spacing:2px;
+  color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:9px;
+  background:linear-gradient(100deg,#16bdae 0%,#1391a0 52%,#1a5f92 100%);
+  box-shadow:0 10px 22px rgba(21,140,150,.30);transition:.15s}}
+.lg-btn:hover{{filter:brightness(1.05);box-shadow:0 12px 26px rgba(21,140,150,.38)}}
+.lg-btn:active{{transform:translateY(1px)}}
+.lg-foot{{display:flex;align-items:center;justify-content:center;gap:7px;margin-top:22px;padding-top:16px;
+  border-top:1px solid #eef3f4;font-size:12.5px;color:#9db0bb}}
+.lg-err{{background:#fff0f1;color:#e5484d;border:1px solid #f9d4d6;padding:10px 13px;border-radius:11px;
+  font-size:13px;margin-bottom:16px;text-align:center}}
+@media(max-width:460px){{.lg-card{{padding:32px 22px 22px}}.lg-title{{font-size:26px}}}}
+</style></head>
+<body>
+<div class="bg-deco">
+  <div class="bg-circle bc1"></div><div class="bg-circle bc2"></div>
+  <div class="bg-dots bd1"></div><div class="bg-dots bd2"></div><div class="bg-dots bd3"></div>
+  <svg class="bg-wave" viewBox="0 0 1440 600" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M0,320 C300,220 560,420 820,360 C1080,300 1280,400 1440,340 L1440,600 L0,600 Z" fill="rgba(190,232,228,.30)"/>
+    <path d="M0,420 C280,340 620,500 900,440 C1160,384 1300,470 1440,430 L1440,600 L0,600 Z" fill="rgba(214,242,239,.45)"/>
+    <path d="M0,240 C360,300 640,160 980,240 C1200,290 1330,240 1440,270" fill="none" stroke="rgba(160,220,214,.35)" stroke-width="2"/>
+  </svg>
+</div>
+<form class="lg-card" method="post" action="/login" id="lgForm">
+  <div class="lg-logo">
+    <svg width="60" height="60" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <defs><linearGradient id="shg" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0" stop-color="#39d3c4"/><stop offset="1" stop-color="#0f7fa8"/></linearGradient></defs>
+      <path d="M12 2.5l7 2.6v5.4c0 4.4-3 8.3-7 9.5-4-1.2-7-5.1-7-9.5V5.1l7-2.6z" fill="url(#shg)"/>
+      <path d="M12 2.5l7 2.6v5.4c0 4.4-3 8.3-7 9.5V2.5z" fill="#0e6f95" opacity=".25"/>
+      <rect x="9.1" y="11" width="5.8" height="4.6" rx="1.1" fill="#fff"/>
+      <path d="M10.2 11v-1.2a1.8 1.8 0 013.6 0V11" stroke="#fff" stroke-width="1.3" fill="none"/>
+      <circle cx="12" cy="13" r=".8" fill="#12a89f"/>
+    </svg>
+  </div>
+  <h1 class="lg-title">貸款案件管理</h1>
+  <div class="lg-sub">請選擇身分並輸入密碼登入系統</div>
+  <div class="lg-accent"></div>
+  {err_html}
+  <div class="lg-field">
+    <label class="lg-lab"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 12a5 5 0 100-10 5 5 0 000 10zm0 2c-4.4 0-8 2.5-8 5.5V21h16v-1.5c0-3-3.6-5.5-8-5.5z"/></svg>身分</label>
+    <div class="lg-select-wrap">
+      <select class="lg-select" name="role" id="lgRole" onchange="document.getElementById('grp_sec').style.display=this.value==='group'?'block':'none'">
+        <option value="admin">管理員</option>
+        <option value="ops_admin">行政管理員</option>
+        <option value="sales_admin">業務管理員</option>
+        <option value="normal">行政A</option>
+        <option value="adminB">行政B</option>
+        <option value="group">業務（選群組）</option>
+      </select>
+    </div>
+  </div>
+  <div class="lg-field" id="grp_sec" style="display:none">
+    <label class="lg-lab"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M16 11a3 3 0 100-6 3 3 0 000 6zm-8 0a3 3 0 100-6 3 3 0 000 6zm0 2c-2.7 0-6 1.3-6 4v2h8v-2c0-1 .5-1.9 1.3-2.6C10.4 13.3 9.2 13 8 13zm8 0c-.3 0-.7 0-1 .1 1 .8 1.7 1.8 1.7 2.9v2H22v-2c0-2.7-3.3-4-6-4z"/></svg>群組</label>
+    <div class="lg-select-wrap"><select class="lg-select" name="group_id">{grp_opts}</select></div>
+  </div>
+  <div class="lg-field">
+    <label class="lg-lab"><svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M17 9V7a5 5 0 00-10 0v2H5v13h14V9h-2zM9 7a3 3 0 016 0v2H9V7z"/></svg>密碼</label>
+    <div class="lg-pass-wrap">
+      <input class="lg-input" type="password" name="password" id="lgPass" placeholder="輸入密碼" autofocus style="padding-right:46px">
+      <button type="button" class="lg-eye" id="lgEye" aria-label="顯示密碼" onclick="togPass()">
+        <svg id="eyeIcon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>
+      </button>
+    </div>
+  </div>
+  <div class="lg-row">
+    <label class="lg-check"><input type="checkbox" id="lgRemember">記住我的身分</label>
+    <a class="lg-forgot" onclick="alert('忘記密碼請聯絡總管理員於「密碼管理」重設。')">忘記密碼？</a>
+  </div>
+  <button type="submit" class="lg-btn">
+    <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M15 3h4a2 2 0 012 2v14a2 2 0 01-2 2h-4M10 17l5-5-5-5M15 12H3"/></svg>
+    登入系統
+  </button>
+  <div class="lg-foot">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l8 3v6c0 5-3.4 9.4-8 11-4.6-1.6-8-6-8-11V5l8-3z"/></svg>
+    您的資料安全受到保護
+  </div>
+</form>
+<script>
+function togPass(){{var p=document.getElementById('lgPass');var i=document.getElementById('eyeIcon');
+  if(p.type==='password'){{p.type='text';i.innerHTML='<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx=\\'12\\' cy=\\'12\\' r=\\'3\\'/><line x1=\\'3\\' y1=\\'3\\' x2=\\'21\\' y2=\\'21\\'/>';}}
+  else{{p.type='password';i.innerHTML='<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx=\\'12\\' cy=\\'12\\' r=\\'3\\'/>';}}}}
+// 記住我的身分（存在瀏覽器、不含密碼）
+(function(){{
+  var role=document.getElementById('lgRole'),grp=document.getElementById('grp_sec'),rem=document.getElementById('lgRemember');
+  try{{
+    if(localStorage.getItem('lg_remember')==='1'){{
+      rem.checked=true;
+      var r=localStorage.getItem('lg_role');if(r){{role.value=r;grp.style.display=(r==='group'?'block':'none');}}
+      var g=localStorage.getItem('lg_group');var gs=document.querySelector('select[name=group_id]');if(g&&gs)gs.value=g;
+    }}
+  }}catch(e){{}}
+  document.getElementById('lgForm').addEventListener('submit',function(){{
+    try{{
+      if(rem.checked){{localStorage.setItem('lg_remember','1');localStorage.setItem('lg_role',role.value);
+        var gs=document.querySelector('select[name=group_id]');localStorage.setItem('lg_group',gs?gs.value:'');}}
+      else{{localStorage.removeItem('lg_remember');localStorage.removeItem('lg_role');localStorage.removeItem('lg_group');}}
+    }}catch(e){{}}
+  }});
+}})();
+</script>
+</body></html>"""
 
 
 @app.post("/login")
