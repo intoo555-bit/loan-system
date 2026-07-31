@@ -16285,6 +16285,131 @@ async def admin_devices_action(request: Request):
     return JSONResponse({"ok": True})
 
 
+def _find_dup_sets():
+    """掃描所有『同群組 + 同身分證』有 ≥2 筆（未刪除）的重複組。回 list of (gid, nid, rows)。"""
+    from collections import defaultdict
+    conn = get_conn(); cur = conn.cursor()
+    cur.execute("""SELECT case_id,customer_name,id_no,source_group_id,status,route_plan,
+                   current_company,approved_amount,company_status,updated_at,created_at
+                   FROM customers WHERE status!='DELETED'""")
+    rows = [dict(r) for r in cur.fetchall()]; conn.close()
+    buckets = defaultdict(list)
+    for r in rows:
+        nid = normalize_id_no(r["id_no"] or "")
+        gid = r["source_group_id"] or ""
+        if not nid or not gid:
+            continue
+        buckets[(gid, nid)].append(r)
+    return [(gid, nid, rs) for (gid, nid), rs in buckets.items() if len(rs) >= 2]
+
+
+@app.get("/admin/merge-dups", response_class=HTMLResponse)
+def admin_merge_dups_page(request: Request):
+    """掃描並預覽『同群組同身分證』的既有重複，讓管理員一鍵合併（admin 限定）。"""
+    from fastapi.responses import RedirectResponse
+    role = check_auth(request)
+    if not role:
+        return RedirectResponse("/login")
+    if role != "admin":
+        return HTMLResponse("無權限（只有總管理員可用）", status_code=403)
+    dup_sets = _find_dup_sets()
+
+    def _has_data(r):
+        try:
+            if json.loads(r.get("route_plan") or "{}").get("history"):
+                return True
+        except Exception:
+            pass
+        return bool((r.get("current_company") or "").strip()
+                    or (r.get("approved_amount") or "").strip()
+                    or str(r.get("company_status") or "").strip() not in ("", "{}"))
+
+    body = ""
+    total_merge = 0
+    for gid, nid, rs in dup_sets:
+        gname = get_group_name(gid) or gid[:8]
+        # 跟 helper 同一套排序：最完整的排最前（保留），其餘合併
+        def _rich(r):
+            s = 0
+            try:
+                if json.loads(r.get("route_plan") or "{}").get("history"): s += 200
+            except Exception: pass
+            if (r.get("current_company") or "").strip(): s += 80
+            if str(r.get("company_status") or "").strip() not in ("", "{}"): s += 80
+            if (r.get("approved_amount") or "").strip(): s += 80
+            if (r.get("status") or "") == "ACTIVE": s += 100
+            s += sum(1 for v in r.values() if v not in (None, "") and str(v).strip() not in ("", "{}"))
+            return s
+        rs_sorted = sorted(rs, key=lambda r: (_rich(r), r.get("updated_at") or ""), reverse=True)
+        total_merge += len(rs_sorted) - 1
+        rows_html = ""
+        for i, r in enumerate(rs_sorted):
+            keep = (i == 0)
+            tag = ('<span style="background:#dcfce7;color:#166534;padding:2px 8px;border-radius:6px;font-size:11px;font-weight:800">保留</span>'
+                   if keep else '<span style="background:#fee2e2;color:#b91c1c;padding:2px 8px;border-radius:6px;font-size:11px;font-weight:800">合併掉</span>')
+            data_tag = "有送件/資料" if _has_data(r) else "空案"
+            rows_html += (f'<tr><td>{tag}</td><td>{h(r["customer_name"] or "")}</td>'
+                          f'<td>{h((r.get("status") or ""))}</td><td>{h(data_tag)}</td>'
+                          f'<td style="color:#94a3b8;font-size:11px">{h((r.get("updated_at") or "")[:16])}</td></tr>')
+        body += (f'<div style="background:#fff;border:1px solid #e6edf3;border-radius:12px;padding:14px 16px;margin-bottom:12px">'
+                 f'<div style="font-weight:800;color:#16324a;margin-bottom:8px">👤 {h(rs_sorted[0]["customer_name"] or "")}'
+                 f' <span style="color:#64748b;font-weight:600;font-size:13px">· 身分證 {h(nid)} · 群組 {h(gname)}</span></div>'
+                 f'<table style="width:100%;border-collapse:collapse;font-size:13px">'
+                 f'<thead><tr style="color:#64748b;text-align:left;font-size:11px">'
+                 f'<th>處理</th><th>姓名</th><th>狀態</th><th>內容</th><th>最後更新</th></tr></thead>'
+                 f'<tbody>{rows_html}</tbody></table></div>')
+
+    if not dup_sets:
+        body = ('<div style="background:#fff;border:1px solid #e6edf3;border-radius:12px;padding:30px;text-align:center;color:#16a34a;font-weight:700">'
+                '✅ 目前沒有「同群組同身分證」的重複案件</div>')
+        btn = ""
+    else:
+        btn = (f'<button onclick="doMerge()" style="background:linear-gradient(100deg,#16bdae,#1a5f92);color:#fff;'
+               f'border:0;border-radius:11px;padding:13px 22px;font-size:15px;font-weight:800;cursor:pointer;'
+               f'box-shadow:0 8px 20px rgba(21,140,150,.28)">🧹 一鍵合併全部（共 {total_merge} 筆會被合併掉）</button>')
+
+    nav = _page_topnav(role, "merge-dups")
+    return HTMLResponse(f"""<!DOCTYPE html><html lang="zh-Hant"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>合併重複案件</title>
+<style>*{{box-sizing:border-box}}body{{margin:0;font-family:'Noto Sans TC','Microsoft JhengHei',sans-serif;background:#eef3f6}}
+.wrap{{max-width:820px;margin:0 auto;padding:20px 16px 60px}}
+h2{{color:#16324a;margin:6px 0 4px}}.hint{{color:#5c7488;font-size:13px;line-height:1.8;margin-bottom:16px}}
+table th,table td{{padding:6px 8px;border-bottom:1px solid #f0f4f7}}
+</style></head><body>{nav}
+<div class="wrap">
+  <h2>🧹 合併重複案件</h2>
+  <div class="hint">掃描出「<b>同一群組、同一身分證</b>」卻有多筆的客戶（通常是身分證打錯又改回來殘留的空案）。<br>
+  合併規則：<b>保留資料最完整/有送件那筆</b>，其餘筆的非空欄位先併進保留筆（不覆蓋、不弄丟資料），多餘筆標記為已刪除（軟刪、可救回）。<b>只在同群組合併，跨群組同身分證不動。</b></div>
+  {btn}
+  <div style="margin-top:16px">{body}</div>
+</div>
+<script>
+function doMerge(){{
+  if(!confirm('確定要合併全部重複嗎？（保留有資料那筆、空案軟刪，可救回）')) return;
+  fetch('/admin/merge-dups',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:'{{}}'}})
+    .then(r=>r.json()).then(d=>{{
+      if(d.ok){{alert('✅ 完成，共合併 '+d.merged+' 筆');location.reload();}}
+      else alert('失敗：'+(d.message||''));
+    }}).catch(e=>alert('網路錯誤'));
+}}
+</script>
+</body></html>""")
+
+
+@app.post("/admin/merge-dups")
+async def admin_merge_dups_action(request: Request):
+    role = check_auth(request)
+    if role != "admin":
+        return JSONResponse({"ok": False, "message": "無權限"}, status_code=403)
+    merged = 0
+    for gid, nid, rs in _find_dup_sets():
+        try:
+            merged += _dedupe_same_id_in_group(nid, gid)
+        except Exception as e:
+            print(f"[merge-dups] {gid}/{nid} failed: {e}")
+    return JSONResponse({"ok": True, "merged": merged})
+
+
 @app.get("/", response_class=HTMLResponse)
 def home_redirect(request: Request):
     from fastapi.responses import RedirectResponse
@@ -16691,6 +16816,7 @@ def _page_topnav(role, active):
                        ("📝 操作紀錄", "/admin/logs", "logs"),
                        ("📄 申請書範本", "/admin/templates", "templates"),
                        ("📋 日報還原", "/admin/restore-from-report", "restore-report"),
+                       ("🧹 合併重複", "/admin/merge-dups", "merge-dups"),
                        ("💾 下載備份", "/admin/download-db", "download"),
                        ("☁️ Drive 備份", "/admin/gdrive-backup", "gdrive-backup"),
                        ("🗑️ 清除資料", "/admin/reset_data", "reset")]
