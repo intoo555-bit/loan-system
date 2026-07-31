@@ -4580,6 +4580,16 @@ def create_customer_record(name, id_no, company, source_group_id, text,
             pending = cur.fetchone()
         else:
             pending = None
+        # 身分證對不上 → 用「同群組同姓名」的 PENDING 補找（網頁預先建檔常身分證打錯一碼、
+        # 或群組建立時打錯，靠姓名把預建那筆對上、轉成正式，避免殘留在客戶資料庫）。
+        # 安全：只在該群組『剛好一筆』同名 PENDING 才對上，避免同名不同人誤併。
+        # 保留 PENDING 原本的身分證（網頁仔細填的通常較正確），不被群組打的覆蓋。
+        if not pending and name and source_group_id:
+            cur.execute("SELECT * FROM customers WHERE customer_name=? AND source_group_id=? AND status='PENDING'",
+                        (name, source_group_id))
+            _same_name_pending = cur.fetchall()
+            if len(_same_name_pending) == 1:
+                pending = _same_name_pending[0]
         if pending:
             case_id = pending["case_id"]
             cur.execute("""UPDATE customers SET
