@@ -4001,7 +4001,10 @@ def reply_text(reply_token: str, text: str):
 
 
 def make_quick_reply_item(label: str, text: str):
-    return {"type": "action", "action": {"type": "message", "label": label[:20], "text": text}}
+    # postback：按下去把 data 送到 webhook 觸發指令，但「不會顯示在聊天室」
+    # （不設 displayText → 群組不會冒出 SAME_PERSON|xxx 這種英文代碼）
+    # data 上限 300 字；所有 callback payload 都遠短於此
+    return {"type": "action", "action": {"type": "postback", "label": label[:20], "data": text[:300]}}
 
 
 def push_text_with_buttons(to_group_id: str, text: str, items):
@@ -11639,6 +11642,15 @@ def process_event(event: dict):
 def _process_event_inner(event: dict):
     # Bug 12: 防呆檢查 event 型別與必要欄位
     if not isinstance(event, dict):
+        return
+    # Quick Reply 按鈕改用 postback（按下去不會在群組冒出英文代碼）
+    # → 把 postback.data 當指令丟給同一個 handle_command_text 分派器
+    if event.get("type") == "postback":
+        pb = event.get("postback") or {}
+        data = (pb.get("data") or "").strip() if isinstance(pb, dict) else ""
+        reply_token = event.get("replyToken") or ""
+        if data and reply_token:
+            handle_command_text(data, reply_token)
         return
     if event.get("type") != "message":
         return
