@@ -4601,6 +4601,70 @@ def create_customer_record(name, id_no, company, source_group_id, text,
             return case_id
 
 
+def _dedupe_same_id_in_group(id_no, group_id, prefer_case_id=""):
+    """改身分證後去重：同一群組內若有多筆相同身分證 → 合併成一筆。
+
+    背景：客戶被用「打錯的身分證」與「正確身分證」各建過一次（常見：網頁先開一份 PENDING、
+    業務又在 LINE 打錯一碼另建一份），事後把身分證改成一樣，就殘留兩筆同身分證的重複。
+
+    作法（安全、不會弄丟資料）：
+    - 只在**同一群組**內去重（跨群組同身分證是刻意允許的獨立案、絕不動）。
+    - 保留「資料最完整 / 有送件歷程」那筆；其餘筆的**非空欄位先補進保留筆**
+      （保留筆已有值就不覆蓋 → 不會蓋掉正確資料），再把多餘筆標 `DELETED`（軟刪、可救回）。
+    回傳被併掉的筆數。
+    """
+    nid = normalize_id_no(id_no or "")
+    if not nid or not group_id:
+        return 0
+    with db_conn(commit=True) as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM customers WHERE source_group_id=? AND status!='DELETED'", (group_id,))
+        rows = [dict(r) for r in cur.fetchall() if normalize_id_no(r["id_no"] or "") == nid]
+        if len(rows) < 2:
+            return 0
+
+        def _richness(r):
+            s = 0
+            try:
+                if json.loads(r.get("route_plan") or "{}").get("history"):
+                    s += 200
+            except Exception:
+                pass
+            if (r.get("current_company") or "").strip():
+                s += 80
+            if str(r.get("company_status") or "").strip() not in ("", "{}"):
+                s += 80
+            if (r.get("approved_amount") or "").strip():
+                s += 80
+            if (r.get("status") or "") == "ACTIVE":
+                s += 100
+            s += sum(1 for v in r.values() if v not in (None, "") and str(v).strip() not in ("", "{}"))
+            return s
+
+        rows.sort(key=lambda r: (_richness(r), r.get("updated_at") or ""), reverse=True)
+        keep = rows[0]
+        # 保留欄位（不從重複筆覆蓋）：主鍵/建立時間/狀態/身分證/姓名（用已修正的值）
+        SKIP = {"case_id", "created_at", "status", "id_no", "customer_name"}
+        merged = 0
+        for d in rows[1:]:
+            ups = {}
+            for col, val in d.items():
+                if col in SKIP:
+                    continue
+                kv = keep.get(col)
+                if (kv is None or str(kv).strip() in ("", "{}")) and val not in (None, "") and str(val).strip() not in ("", "{}"):
+                    ups[col] = val
+            if ups:
+                sets = ",".join(f"{c}=?" for c in ups)
+                cur.execute(f"UPDATE customers SET {sets},updated_at=? WHERE case_id=?",
+                            (*ups.values(), now_iso(), keep["case_id"]))
+                keep.update(ups)
+            cur.execute("UPDATE customers SET status='DELETED',updated_at=? WHERE case_id=?",
+                        (now_iso(), d["case_id"]))
+            merged += 1
+        return merged
+
+
 def update_customer(case_id, company=None, text=None, from_group_id="", status=None,
                     name=None, source_group_id=None, route_plan=None,
                     current_company=None, report_section=None,
@@ -8158,7 +8222,10 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
         update_customer(target["case_id"],
                         text=f"{name} 改身分證 {old_id} → {new_id}",
                         from_group_id=group_id)
-        reply_text(reply_token, f"✅ {name} 身分證已更新為 {new_id}\n（原 {old_id} → 新 {new_id}）")
+        # 去重：改完身分證若跟同群組另一筆撞號 → 合併掉重複空案
+        _dup = _dedupe_same_id_in_group(new_id, group_id, target["case_id"])
+        _dup_msg = f"\n🧹 已自動合併 {_dup} 筆重複空案" if _dup else ""
+        reply_text(reply_token, f"✅ {name} 身分證已更新為 {new_id}\n（原 {old_id} → 新 {new_id}）{_dup_msg}")
         return
 
     if t == "disbursed":
@@ -10868,7 +10935,10 @@ def handle_command_text(text: str, reply_token: str) -> bool:
                         text=block_text + f"\n[身分證 {old_id} → {new_id}]",
                         from_group_id=source_group_id,
                         name=p.get("new_name", c["customer_name"]))
-        reply_text(reply_token, f"✅ 已更新 {c['customer_name']} 身分證：{old_id} → {new_id}\n日報會顯示既有案件")
+        # 去重：改完身分證若跟同群組另一筆（常是空 PENDING）撞號 → 合併掉重複
+        _dup = _dedupe_same_id_in_group(new_id, source_group_id, case_id)
+        _dup_msg = f"\n🧹 已自動合併 {_dup} 筆重複空案" if _dup else ""
+        reply_text(reply_token, f"✅ 已更新 {c['customer_name']} 身分證：{old_id} → {new_id}\n日報會顯示既有案件{_dup_msg}")
         delete_pending_action(action_id); return True
 
     if text.startswith("NEW_PERSON|"):
@@ -18152,6 +18222,11 @@ async def edit_pending_post(request: Request):
     if unloan_json_str:
         cur.execute("UPDATE customers SET unloan_vehicles=?, updated_at=? WHERE case_id=?", (unloan_json_str, now, case_id))
     conn.commit(); conn.close()
+    # 去重：若改個資時把身分證改成跟同群組另一筆一樣 → 合併掉重複空案
+    try:
+        _dedupe_same_id_in_group(f.get("idno", "").upper(), f.get("grp", ""), case_id)
+    except Exception as _e:
+        print(f"[dedupe] edit-pending failed: {_e}")
     # 註：原本會 push「📝 XX 網頁更新個資」通知到業務群、user 2026-05-20 要求拿掉（LINE 訊息費用控管）
     # 業務從日報能看到客戶最新狀態、不需要每次編輯都推 push
     return RedirectResponse("/edit-pending?case_id=" + case_id + "&saved=1", status_code=303)
