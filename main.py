@@ -18613,7 +18613,7 @@ label{{display:block;font-size:12px;font-weight:700;color:#374151;margin-bottom:
         <div class="grid3">
           <div class="field2"><label>案件狀態</label><select name="status">{st_opts}</select></div>
           <div class="field2"><label>主要公司（日報那家）</label><select name="current_company">{co_opts}</select></div>
-          <div class="field2"><label>目前狀態</label><select name="cur_status">{cur_status_opts}</select></div>
+          <div class="field2"><label>目前狀態</label><select name="cur_status" data-orig="{h(cur_status_val)}">{cur_status_opts}</select></div>
         </div>
         <div style="height:1px;background:#e5ebf2;margin:12px 0"></div>
         <div class="field2"><label>同時送件（多家用 / 或 , 分隔）</label>
@@ -18815,10 +18815,11 @@ document.querySelector('form[action="/case-edit"]').addEventListener('submit', f
     const tx = txEl ? txEl.value.trim() : '';
     if (co) obj[co] = tx;
   }});
-  // 目前狀態 → 主要公司狀態第一行（保留原有詳細行、不清空）
+  // 目前狀態 → 主要公司狀態第一行：只有「使用者真的手動改過下拉」才覆蓋
+  // （沒改過就保留 cs 原文，避免把「已補照會時段」壓成下拉的「照會」→ 跟 LINE 不一致/損壞資料）
   var _cs = document.querySelector('select[name="cur_status"]');
   var _cc = document.querySelector('select[name="current_company"]');
-  if (_cs && _cc && _cc.value && _cs.value) {{
+  if (_cs && _cc && _cc.value && _cs.value && _cs.value !== (_cs.getAttribute('data-orig')||'')) {{
     var _ex = (obj[_cc.value] || '').split('\\n');
     _ex[0] = _cs.value;
     obj[_cc.value] = _ex.join('\\n').trim();
@@ -18868,7 +18869,8 @@ function previewDailyLine() {{
   }});
   var _pcs = document.querySelector('select[name="cur_status"]');
   var _pcc = document.querySelector('select[name="current_company"]');
-  if (_pcs && _pcc && _pcc.value && _pcs.value) {{
+  // 只有「使用者真的手動改過目前狀態下拉」才覆蓋 cs；沒改過 → 用跟 LINE 一模一樣的原始 cs
+  if (_pcs && _pcc && _pcc.value && _pcs.value && _pcs.value !== (_pcs.getAttribute('data-orig')||'')) {{
     var _pex = (csObj[_pcc.value] || '').split('\\n'); _pex[0] = _pcs.value; csObj[_pcc.value] = _pex.join('\\n').trim();
   }}
   // 收集核准明細（跟 submit handler 同邏輯、預覽要看到 + 加一家核准 的效果）
