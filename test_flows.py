@@ -390,6 +390,7 @@ print("\n=== 31. 批次結案 ===")
 for i, nm in enumerate(["張飛", "趙子龍", "黃忠"]):
     bc(f"4/21-{nm}B{i+1:09d}", gid="TEST_B")
     bc(f"4/21-{nm}-亞太機", gid="TEST_B")
+pushes.clear()   # 下一行執行時不該產生任何 push（同群靠 reply 彙總）
 bc("@AI 批次結案\n張飛\n趙子龍\n黃忠", gid="TEST_B")
 closed = 0
 for i, nm in enumerate(["張飛", "趙子龍", "黃忠"]):
@@ -397,6 +398,9 @@ for i, nm in enumerate(["張飛", "趙子龍", "黃忠"]):
     if c and c.get("status") == "CLOSED":
         closed += 1
 check("批次結案 3 筆全部結案", closed == 3, f"closed={closed}/3")
+# 迴圈內 push 會洗版（3 人 = 3 則）+ 燒 3 倍配額。同群一則都不該推。
+check("批次結案不洗版（同群 0 則 push）", len(pushes) == 0,
+      f"多發了 {len(pushes)} 則：{[t for _, t in pushes][:3]}")
 
 # ========== 32. 違約金連續改金額 ==========
 print("\n=== 32. 違約金 pending 狀態連續改金額 ===")

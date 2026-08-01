@@ -7910,6 +7910,10 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
                    f"  王陽明")
         return
 
+    # ⛔ 批次類指令（結案/婉拒/未來的批次撥款…）共同規則：
+    #    push 一律在迴圈外彙總，同群一則都不推 —— 迴圈內 push = 洗版 + 燒 N 倍配額。
+    #    跨群那段不可整段刪除：客戶屬於別的業務群時，業務員需要收到通知，只是要聚合。
+    #    test_flows.py「批次結案不洗版」會擋這件事。
     if t == "batch_close":
         names = cmd["names"]
         results = []
