@@ -1268,3 +1268,86 @@ JSON 內 `company_notes: {公司: 狀態}` 會匯入到 `customer.company_status
 - **修法**：`get_status_type` 改用 `compute_customer_display(row)["section"]` 判待撥款（跟 LINE 單一來源）。無撥款日→未對保、有撥款日→已對保
 - **順手**：表頭「⏳待撥款」統計從「全域 SQL 數 raw 欄位」改成迴圈累加 `未對保+已對保`（跟其他統計卡同源、依群組過濾、不再漏數）
 - **通則**：網頁日報顯示/分類一律走 `compute_customer_display`、不要自己讀 raw 欄位判斷、否則會跟 LINE 不一致
+
+### 帶日期的申覆結果/核貸金額明細行不被切成新案件
+
+- **問題**：A 群批次訊息中「7/6申覆結果 :XXX」被 `looks_like_case_start` 用 `SHORT_DATE_NAME_RE`（日期+2~6中文字）誤判成新案件（name=申覆結果）→ 回「找不到對應客戶：申覆結果」
+- **為什麼帶日期才中招**：沒日期的明細行（如「最高核貸金額9萬」）不符 `SHORT_DATE_NAME_RE`、不會被切
+- **修法**：`_CASE_START_BLOCKLIST` 加「申覆」「核貸金額」→ 含這些字的行不當新案件起始、歸回上一筆。這兩個是結果/金額明細詞、永遠不是客戶姓名
+
+### 喬美申請書換新範本 + 網頁加「分期付款標的」4 欄位
+
+- **換範本**：`申請書/喬美3-14萬.pdf` → `申請書/喬美申請書.pdf`（單頁版「中古商品買賣暨分期付款約定書」）。新範本部署時**PDF 檔要一起 commit**（否則線上「範本檔不存在」）
+- **網頁**：/adminb 喬美專屬區加 4 個手填數字欄位：辦理分期金額 / 期數 / 期付款 / 分期總額（`data-plans="喬美"` 區塊）
+- **DB**：加 `qm_inst_amount / qm_inst_periods / qm_inst_payment / qm_inst_total` 4 欄 + `/adminb/save` handler 接
+- **PDF（`_fill_qiaomei_pdf`）**：喬美是 **reportlab 疊字**（不是 Excel），單頁；申請日期移到第 1 頁頂部、簽名落「申請人正楷簽名」欄、「分期付款標的」表格印 4 數字 + 商品名稱/IMEI
+- **改座標的方法**：用 pdfplumber `extract_words()` 抽新範本每個標籤 (x0, top)、值放標籤旁空白、產測試 PDF 用 Read 工具目視對位、微調。座標系原點左下、`yp(top)=page_h-top`
+
+---
+
+## 2026/07 大改版（網頁重構 + 權限矩陣 + 裝置管理）
+
+### 角色一覽（登入頁下拉）
+`admin`=總管理員、`ops_admin`=行政管理員、`sales_admin`=業務管理員、`adminB`=行政B、`normal`=**行政A**（report_pw 登入）、`group_xxx`=業務（選群組）。
+注意：who_txt 把 normal 顯示成「業務」，但實際 normal=行政A。
+
+### 網頁全站重構
+- **統一頂欄 `_page_topnav`**：make_topnav 委派給它。teal/navy 配色、鑽石 logo；核心連結平鋪，`admin` 的管理功能收進「⚙️ 管理」`<details>` 下拉。
+- **手機版**（`@media(max-width:640px)`，只手機生效、桌面完全不動）：頂欄改漢堡 ☰（`.ptn-burger`）；多欄表單收單欄；表格處理。
+- **`/report2`（公司日報）用自己的左側欄**（`nl()` 產生 `nav_html`，**不是** `_page_topnav`）→ 要加連結得改兩個地方（頂欄 items + report2 側欄 navs）。手機版側欄改滑入抽屜（`.side-open` + `toggleSide()` + `#sideScrim`）。
+- **report2 統計卡/群組統計/異常提醒可點篩選**：`filterByCat(key, gid)` + `_matchCat(c,key)`；群組統計 span 用 inline onclick + `event.stopPropagation()`（避免展開手風琴）；「已結案」→跳 /history；「婉拒未處理」用 `DATA.rejected`（平常隱藏的全數婉拒客戶）。
+
+### 權限矩陣（重要，別再搞混）
+| 面向 | 誰可以 |
+|------|--------|
+| 編輯客戶**個資**（/edit-pending、客戶資料庫/查詢編輯鈕、report2 `CAN_EDIT`） | admin/ops_admin/sales_admin/adminB/normal 全部；**業務只能改自己群組** |
+| **案件狀態修改**（/case-edit 系列 + /report/reorder-route、report2 `CAN_CASE_EDIT`） | 只有 admin/ops_admin/sales_admin（行政A、行政B **不行**） |
+| /adminb（行政B作業） | admin/adminB/ops_admin（不含 normal） |
+- **`can_edit_customer_data(role, auth_group, cust_group)`**：管理類全部可改；業務只能改自己群組。`/edit-pending` GET+POST **路由層把關**（不只是隱藏按鈕）。
+- **`get_log_source_name(group_id)`**：送件流程紀錄/案件歷程的「來源」欄，`group_type='A_GROUP'` 一律顯示「行政A群」（不露出練習/測試群名）。
+
+### 還原邏輯共用 `restore_prev_state(case_id, steps)`
+- LINE「@AI 姓名 還原」與網頁案件編輯「↩ 退回上一步」（/case-edit/undo）**共用同一套**。
+- 邏輯：由新到舊收集「非還原動作」的快照、相鄰去重、定位現狀在時間軸的位置、退 steps 步、退到最初就停。
+- 跳過含「還原（退回」或「還原到第」的 log（避免還原還原、且不誤判含「還原」的客戶名）。
+- `update_with_verify` 的 diff：`None` 與 `""` 都當「空」、兩邊都空不算變動（不再印一堆「(空)→(空)」）；`_field_display_label` 補齊中文（對保區域/對保員/…、不露英文欄位名）。
+- 網頁案件編輯每筆 log 旁的「↶ 還原」＝跳到那筆之前（/case-edit/revert 依 log_id）；上方「↩ 退回上一步」＝退一步（/case-edit/undo）。
+
+### 裝置管理（中等版）— 新裝置需管理員核准才能登入
+- **DB**：`devices` 表（PK `device_id+role+group_id`、`status` pending/approved/rejected、label/user_agent/ip/created_at/last_login/approved_by）；`sessions.device_id` 欄位（供強制登出、皆為新增）。
+- **登入流程（login_post）**：非豁免角色用**新裝置**（`_device_exists` 查無）→ 跳 `/device-name` 自助命名頁（填「這台是誰」）→ POST 後 `_device_login_check` 登記 → 依開關：approved 發 session 進系統 / pending 導 `/device-pending`。
+- **豁免（不受核准限制、永不被鎖）**：`admin` / `sales_admin` / `ops_admin`（`if session_role not in (...)`）。
+- **能管理裝置（/admin/devices + /admin/devices/action）**：`admin` / `sales_admin`。導覽連結：頂欄「管理」下拉(admin) + 業務管理員頂欄 chip + report2 側欄(admin/sales_admin)。
+- **開關 `require_device_approval`**（settings，預設**關閉**）：關閉時一律 approved（只記錄不擋）；開啟時新裝置=pending、既有維持原狀態。**安全上線：先關記錄→大家重登命名→再開只擋全新裝置**（既有裝置早已 approved、不會被鎖）。
+- **`kick_all` 動作**：`DELETE FROM sessions WHERE token!=自己` → 逼大家重登、順便命名裝置。
+- **移除授權/拒絕**：`DELETE FROM devices` + `DELETE FROM sessions WHERE device_id=?`（踢下線）；強制登出只刪 session、保留授權。
+- **裝置卡**：電腦/手機/平板分類（看 user_agent）、IP、申請/最後登入時間、可命名「這台是誰」。彈窗全用**自訂中文 modal**（`dmConfirm`/`dmPrompt`/toast），不用原生 confirm/prompt（會冒英文）。
+- **⚠️ 已知風險**：命名 token 存記憶體 `_device_naming`（單 worker、命名在數秒內完成→通常 OK；若 Render 重啟或多 worker，token 找不到會把命名頁踢回 /login → 進不去。若正式出現「登入卡住」就把 token 改成 DB-backed）。
+- **客戶卡 PDF**：拿掉「案件狀態」區塊（案件狀態改看網頁）；返回鈕改用 `document.referrer`（新分頁沒有 history.back）。
+
+---
+
+## 2026/07/30 修正：日報預覽/案件頁「送X卻顯示下一家」根因
+
+### 症狀
+多位客戶（羅慶彬送21→顯示貸就補、陳怡卉送零卡→顯示商品貸、黃子純送貸救補→顯示分貝機）在 `/case-edit` 的「日報預覽」黃色那條，顯示 route order 內**當前公司的下一家**，跟 LINE 日報不一致。
+
+### 根因（很隱蔽、debug 才抓到）
+1. `/case-edit` 頁面「目前狀態」下拉（`cur_status`）決定預設值時（`_cs_first`），當**正在送的公司在 `company_status` 沒紀錄**，會 fallback 去撈 `last_update`（上一則訊息）。
+2. `last_update` 常是**別家的婉拒**（如剛婉拒的喬美/21商品）→ `_match_cur_status` 撈到「婉拒」→ 目前狀態下拉誤選「婉拒」。
+3. 預覽 JS（`previewDailyLine`，L18753-18757）會把「目前狀態下拉值」注入 `csObj[current_company]` → 送出的 `company_status_json` 變成 `{"正在送那家":"婉拒"}`。
+4. 預覽後端拿這份 `fake_row` 跑 `build_section_map` → `compute_customer_display` 看到 current 那家「婉拒」→ **reroute 往後推一家**。
+
+### 修法（L18261-18267）
+「目前狀態」下拉只認 `compute_customer_display(r).status` + 該公司自己的 `company_status[cur_co]`，**移除 `or v("last_update")` fallback**。
+→ 正在送但沒各家狀態的公司，目前狀態下拉＝空 → 預覽 JS 不注入（`_pcs.value` 空 = falsy）→ cs_json 乾淨 → 不再誤 reroute。
+
+### 除錯基礎建設（保留、admin only）
+- `/case-edit` 頁 + `/case-edit/preview` 回傳都有「🔧 原始資料」摺疊區（`if role == "admin"`）。
+- 預覽版 debug 印**三段**：【DB 原始】compute（永遠對）/【表單送來】current_company+cs_json+approval_json（抓污染源）/【預覽用 fake_row】compute(fake)+實際輸出 section。
+- **教訓**：預覽是拿「頁面表單當下值」重算（fake_row），不是 DB row。debug 一定要印 fake_row 那條、不然永遠看到「原始 row 是對的」卻對不上畫面。
+
+### 案件頁下拉/送件順序方塊對齊 LINE（同批 commit）
+- 「主要公司」下拉預設改用 `compute_customer_display` reroute 後的 current（跳過婉拒家），不再停在已婉拒/route idx 那家。
+- 送件順序方塊：送過婉拒的標紅「婉拒」+刪除線、目前公司綠、下一家「尚未送件」。
+- **通則**：`/case-edit` 任何「目前在送哪家」的判斷一律走 `compute_customer_display`，不要自己讀 raw current_company / route current_index（會跟 LINE 不一致）。
