@@ -7913,6 +7913,7 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
     if t == "batch_close":
         names = cmd["names"]
         results = []
+        cross: Dict[str, List[str]] = {}   # 跨群通知：來源群 → 姓名清單（同群不推，避免洗版）
         for name in names:
             rows = find_active_by_name(name)
             same = [r for r in rows if r["source_group_id"] == group_id]
@@ -7922,8 +7923,12 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
             else:
                 update_customer(target["case_id"], status="CLOSED",
                                 text=f"{name} 結案", from_group_id=group_id)
-                push_text(target["source_group_id"], f"{name} 結案")
+                src = target["source_group_id"]
+                if src and src != group_id:
+                    cross.setdefault(src, []).append(name)
                 results.append(f"  {name} ✅ 已結案")
+        for src, ns in cross.items():
+            push_text(src, f"📋 批次結案 {len(ns)} 筆\n" + "\n".join(f"  {n} ✅ 已結案" for n in ns))
         ok = sum(1 for r in results if "✅" in r)
         fail = len(results) - ok
         header = f"📋 批次結案 {len(names)} 筆（成功 {ok}"
@@ -7936,6 +7941,7 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
     if t == "batch_reject":
         names = cmd["names"]
         results = []
+        cross: Dict[str, List[str]] = {}   # 跨群通知：來源群 → 通知行（同群不推，避免洗版）
         for name in names:
             rows = find_active_by_name(name)
             same = [r for r in rows if r["source_group_id"] == group_id]
@@ -7950,11 +7956,15 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
                 update_customer(target["case_id"], route_plan=new_route,
                                 current_company=next_co or current,
                                 text=f"{name} {current} 婉拒", from_group_id=group_id)
-                push_text(target["source_group_id"], f"{name} {current} 婉拒")
+                src = target["source_group_id"]
+                if src and src != group_id:
+                    cross.setdefault(src, []).append(f"  {name} ✅ {current}婉拒" + (f" → {next_co}" if next_co else "（無下一家）"))
                 if next_co:
                     results.append(f"  {name} ✅ {current}婉拒 → {next_co}")
                 else:
                     results.append(f"  {name} ✅ {current}婉拒（無下一家）")
+        for src, lines in cross.items():
+            push_text(src, f"📋 批次婉拒 {len(lines)} 筆\n" + "\n".join(lines))
         ok = sum(1 for r in results if "✅" in r)
         fail = len(results) - ok
         header = f"📋 批次婉拒 {len(names)} 筆（成功 {ok}"
