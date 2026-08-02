@@ -1353,3 +1353,71 @@ JSON 內 `company_notes: {公司: 狀態}` 會匯入到 `customer.company_status
 - 「主要公司」下拉預設改用 `compute_customer_display` reroute 後的 current（跳過婉拒家），不再停在已婉拒/route idx 那家。
 - 送件順序方塊：送過婉拒的標紅「婉拒」+刪除線、目前公司綠、下一家「尚未送件」。
 - **通則**：`/case-edit` 任何「目前在送哪家」的判斷一律走 `compute_customer_display`，不要自己讀 raw current_company / route current_index（會跟 LINE 不一致）。
+
+---
+
+## 2026/08/02 資料庫備份策略（決策紀錄，別重新調查一遍）
+
+### 現況：Render 磁碟本來就有每日快照
+
+`/var/data` 那顆磁碟（1 GB），Render **每 24 小時自動拍一次快照、保留 7 天**，後台
+Settings → Disk → Snapshots 可以看到清單、每筆有 Restore 按鈕。Instance Type = Standard。
+
+**所以「主機掛掉／資料全毀」這類最嚴重的情況已經有解，不需要再做任何事。**
+
+快照的三個限制（= 手動備份要補的洞）：
+
+| 限制 | 影響 |
+|------|------|
+| 只留 7 天 | 超過一週才發現的資料損壞救不回來 |
+| **整顆磁碟還原**、不是挑檔案 | 還原＝那個時間點之後的異動全沒。是災難救援、不是「撿回一筆舊資料」。⛔ 沒出大事不要按 Restore |
+| 綁在 Render 帳號 | 帳號出事／服務被刪／沒繳費 → 快照一起沒 |
+
+### 決策：只做「每週 LINE 提醒 + 手動下載」
+
+評估過四種做法，選最輕的那個：
+
+| | 做法 | 結論 |
+|---|------|------|
+| A | LINE 每週提醒、人工點連結下載 | ✅ **採用** |
+| B | Email（Gmail 應用程式密碼）自動寄 | ❌ 不做 |
+| C | Google Drive 自動上傳 | ❌ 不做（**程式其實已經寫好**，見下） |
+| D | 自己電腦定時抓進 OneDrive | ❌ 不做 |
+
+理由：Render 快照已經蓋住高頻風險，剩下的洞（超過一週、Render 帳號出事）**一週抓一次就夠**。
+B/C 都是把含個資的資料庫往外送到第二個地方，多一個要保護的東西；用不到就不要裝。
+
+⚠️ **Google Drive 備份的程式碼是完整的**（`do_backup_now` / `_prune_gdrive_backups` /
+`/admin/gdrive-backup` 頁 / 每日 19:00 UTC 排程 / 30 天每日＋12 個月每月的保留策略）。
+沒啟用**純粹是三個環境變數沒填**：`BACKUP_ENABLED=true`、`GOOGLE_SERVICE_ACCOUNT_JSON`、
+`GOOGLE_DRIVE_FOLDER_ID`。哪天要開，工作全在 Google Cloud 那邊（建服務帳號、下載金鑰、
+分享資料夾），**不用寫程式**。別再重寫一套。
+
+### 系統通知群（NOTIFY_GROUP）
+
+新群組類型，BOT **只發不收**：推備份提醒等系統訊息、不解析裡面的訊息。
+
+- 群 ID 在 `NOTIFY_GROUP_ID`（可用同名環境變數覆蓋），`seed_groups()` 會建
+- 查詢用 `get_notify_group_ids()`
+- **程式安全網在 `_process_event_inner` 開頭**：`group_id in get_notify_group_ids()` → 直接
+  `return`。就算哪天有人在 `/admin/groups` 把它誤設成業務群，這行也擋得住
+- `/admin/groups` 下拉有「系統通知群（只發不收）」選項，可以再加別的通知群
+
+**改「BOT 要不要理某個群」這類邏輯，一定要同時測反面**：通知群不理 ✓ **而且**業務群照常
+建案 ✓。只測前者的話，誤擋業務群不會噴任何錯誤，只會安靜地漏案子 —— 最難發現的壞法。
+
+### 每週提醒排程
+
+- `send_backup_reminder()`，每週一 **09:00 台灣時間**
+- ⚠️ **明確指定 UTC+8**（`timezone=timezone(timedelta(hours=8))`），不要依賴主機時區。
+  Render 容器目前是 UTC，但那是別人可以改的東西；寫死 `hour=1` 哪天時區變了就悄悄跑錯時間
+- `add_job` 外面包 try/except：這個 scheduler 同時掛著 PDF 逾時／清理兩個 job，
+  加排程失敗不能炸掉整包
+- 啟動時會 print 每個 job 的 `next_run`，可在 Render log 確認排程真的排到
+- **`/admin/test-backup-reminder`**（admin 限定）立刻發一次，不用等到週一
+
+### 順手修：RedirectResponse 沒有全域 import
+
+這個檔以前每個函式各自 `from fastapi.responses import RedirectResponse`，漏掉的兩處
+（`download_db` / `report_export`）在「權限不足要導回 `/login`」那行會炸 NameError →
+使用者看到 **500 而不是登入頁**。已改成**檔案最上面統一 import**（結構化，以後寫不出這個錯）。
