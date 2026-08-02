@@ -1,5 +1,8 @@
 from fastapi import FastAPI, Request, BackgroundTasks
-from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
+# RedirectResponse 放全域：以前每個函式各自 `from fastapi.responses import ...`，
+# 漏掉的就會在「權限不足要導回 /login」那行炸 NameError（500 而不是登入頁）。
+# 放這裡之後就不可能再漏；函式內既有的區域 import 留著也不衝突。
+from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, RedirectResponse
 import uvicorn
 import requests as req_lib
 import os
@@ -40,6 +43,10 @@ BACKUP_KEEP_MONTHLY = int(os.getenv("BACKUP_KEEP_MONTHLY", "12"))
 A_GROUP_ID = os.getenv("A_GROUP_ID", "Cb3579e75c94437ed22aafc7b1f6aecdd")
 B_GROUP_ID = "Cd14f3ee775f1d9f5cfdafb223173cbef"
 C_GROUP_ID = "C1a647fcb29a74842eceeb18e7a53823d"
+# 系統通知群（group_type=NOTIFY_GROUP）：BOT 只發不收，用來推備份提醒等系統訊息。
+# ⚠️ 這個群「絕對不能」設成業務群/A群，否則在裡面打字會被當成報案件。
+# 程式安全網在 _process_event_inner 開頭（直接 return，不論群型別怎麼設都不會解析）。
+NOTIFY_GROUP_ID = os.getenv("NOTIFY_GROUP_ID", "C09b860125607b6419079668fd96c704d")
 DB_PATH = os.getenv("DB_PATH", "/var/data/loan_system.db")
 
 # 申請書範本自訂上傳目錄（與 DB 同目錄，保證 Render 持久磁碟保留）
@@ -3538,6 +3545,22 @@ def get_a_group_ids() -> List[str]:
     return [r["group_id"] for r in rows]
 
 
+def get_notify_group_ids() -> List[str]:
+    """系統通知群 ID（NOTIFY_GROUP 類型）+ 環境變數/預設那一個。
+
+    只發不收：BOT 往這裡推系統訊息（備份提醒等），不解析裡面的訊息。
+    """
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT group_id FROM groups WHERE group_type='NOTIFY_GROUP' AND is_active=1")
+    rows = cur.fetchall()
+    conn.close()
+    ids = [r["group_id"] for r in rows]
+    if NOTIFY_GROUP_ID and NOTIFY_GROUP_ID not in ids:
+        ids.append(NOTIFY_GROUP_ID)
+    return ids
+
+
 def get_a_group_for_sales(sales_group_id: str) -> str:
     """決定業務群的案件要推到哪個 A 群。
     - 業務群有設定 linked_a_group_id → 用設定的
@@ -4517,7 +4540,10 @@ def seed_groups():
         (A_GROUP_ID, "A群", "A_GROUP", 1, now),
         (B_GROUP_ID, "B群", "SALES_GROUP", 1, now),
         (C_GROUP_ID, "C群", "SALES_GROUP", 1, now),
+        (NOTIFY_GROUP_ID, "系統通知", "NOTIFY_GROUP", 1, now),
     ]:
+        if not row[0]:
+            continue
         cur.execute("INSERT OR IGNORE INTO groups (group_id,group_name,group_type,is_active,created_at) VALUES (?,?,?,?,?)", row)
     conn.commit()
     conn.close()
@@ -11759,6 +11785,13 @@ def _process_event_inner(event: dict):
     user_id = source.get("userId") or ""
     reply_token = event.get("replyToken") or ""
 
+    # ⛔ 系統通知群：只發不收。這裡直接 return，不解析任何訊息（文字/圖片都不理）。
+    # 理由：那個群是拿來收系統推播的（備份提醒等），管理員在裡面隨手打字
+    # 不該被當成報案件。這是程式安全網——就算哪天有人在 /admin/groups
+    # 把它誤設成業務群，這行也擋得住。
+    if group_id and group_id in get_notify_group_ids():
+        return
+
     # 圖片訊息：若該業務員開了收件 session、加進去
     if msg_type == "image":
         msg_id = message.get("id", "")
@@ -14889,7 +14922,7 @@ def reset_data_page(request: Request):
     </body></html>""")
 
 
-VALID_GROUP_TYPES = {"SALES_GROUP", "ADMIN_GROUP", "A_GROUP", "UNASSIGNED"}
+VALID_GROUP_TYPES = {"SALES_GROUP", "ADMIN_GROUP", "A_GROUP", "NOTIFY_GROUP", "UNASSIGNED"}
 
 @app.post("/admin/add_group")
 async def add_group(request: Request):
@@ -20201,6 +20234,7 @@ def list_groups(request: Request):
             <option value="SALES_GROUP">業務群</option>
             <option value="ADMIN_GROUP">行政群</option>
             <option value="A_GROUP">A群/進度群</option>
+            <option value="NOTIFY_GROUP">系統通知群（只發不收）</option>
           </select>
         </div>
         <div class="form-row" id="linked-row" style="display:none"><label>對應業務群（行政群才需要）</label><select class="input" id="f_linked">{sales_opts}</select></div>
@@ -20488,7 +20522,8 @@ def console_page(request: Request):
     if not _console_can_access(role):
         return RedirectResponse("/login")
     grows = _console_allowed_groups(role)
-    type_label = {"A_GROUP": "行政A群", "SALES_GROUP": "業務群", "ADMIN_GROUP": "行政群"}
+    type_label = {"A_GROUP": "行政A群", "SALES_GROUP": "業務群", "ADMIN_GROUP": "行政群",
+                  "NOTIFY_GROUP": "系統通知群"}
     _single_group = role.startswith("group_")
     opts = [] if _single_group else ['<option value="">— 請先選群組 —</option>']
     for g in grows:
@@ -24761,6 +24796,22 @@ async def download_db(request: Request):
                         media_type="application/octet-stream")
 
 
+@app.get("/admin/test-backup-reminder")
+async def test_backup_reminder(request: Request):
+    """立刻發一次備份提醒（測試用，不用等到週一）。admin 限定。"""
+    from fastapi.responses import RedirectResponse  # 這個檔沒有全域 import，要在函式內拿
+    role = check_auth(request)
+    if role != "admin":
+        return RedirectResponse("/login")
+    result = send_backup_reminder()
+    if result.get("ok"):
+        body = f"✅ 已發送到 {len(result['sent'])} 個群組，去 LINE 看一下。"
+    else:
+        body = f"❌ 沒發出去：{h(str(result))}"
+    return HTMLResponse(
+        f"<div style='padding:40px;font-family:sans-serif;font-size:16px'>{body}</div>")
+
+
 @app.get("/admin/gdrive-backup", response_class=HTMLResponse)
 async def gdrive_backup_page(request: Request):
     from fastapi.responses import RedirectResponse
@@ -25599,6 +25650,38 @@ def list_gdrive_backups() -> list:
         return []
 
 
+def send_backup_reminder() -> dict:
+    """每週一 09:00（台灣時間）推備份提醒到系統通知群。
+
+    為什麼還要手動備份（Render 明明每天自動快照）：
+    - Render 快照只留 7 天 → 超過一週才發現的問題救不回來
+    - Render 快照是「整顆磁碟還原」→ 那個時間點之後的異動全沒，是災難救援不是撿檔案
+    - Render 快照綁在 Render 帳號上 → 帳號本身出事就一起沒
+    這則提醒補的就是這三個洞：一份不在 Render 上、想留多久留多久的備份。
+    """
+    base_url = (os.getenv("PUBLIC_BASE_URL", "") or "https://loan-system-a7xd.onrender.com").rstrip("/")
+    msg = (
+        "💾 每週備份提醒\n"
+        # 星期不要寫死「週一」——測試觸發是隨時可能發的，寫死會出現「週三卻說週一」
+        f"{now_tw().strftime('%Y/%m/%d')}（週{'一二三四五六日'[now_tw().weekday()]}）\n\n"
+        "點下面的連結下載這週的資料庫備份，存到自己電腦：\n"
+        f"{base_url}/admin/download-db\n\n"
+        "（要先用管理員帳號登入才下載得到）\n\n"
+        "ℹ️ Render 每天會自動快照、但只留 7 天，\n"
+        "這份手動的是留給「超過一週」跟「Render 出事」用的。"
+    )
+    targets = get_notify_group_ids()
+    if not targets:
+        print("[backup-reminder] 沒有系統通知群、跳過")
+        return {"ok": False, "reason": "no_notify_group"}
+    sent, failed = [], []
+    for gid in targets:
+        ok, err = push_text(gid, msg)
+        (sent if ok else failed).append(gid if ok else f"{gid}:{err}")
+    print(f"[backup-reminder] sent={len(sent)} failed={len(failed)} {failed}")
+    return {"ok": bool(sent), "sent": sent, "failed": failed}
+
+
 def _start_backup_scheduler():
     try:
         from apscheduler.schedulers.background import BackgroundScheduler
@@ -25607,6 +25690,20 @@ def _start_backup_scheduler():
             # 19:00 UTC = 03:00 Asia/Taipei
             sched.add_job(do_backup_now, "cron", hour=19, minute=0, id="daily_gdrive_backup")
             print("[backup] scheduler enabled: daily 19:00 UTC (03:00 Taipei)")
+        # 每週一 09:00（台灣時間）備份提醒（不論 Google Drive 備份有沒有開都要跑）
+        # ⚠️ 明確指定 UTC+8，不要依賴主機時區——Render 容器現在是 UTC，
+        #    但這是「別人可以改的東西」，寫死 hour=1 的話哪天時區變了就悄悄跑錯時間。
+        from datetime import timezone as _tz, timedelta as _td
+        try:
+            sched.add_job(send_backup_reminder, "cron", day_of_week="mon", hour=9, minute=0,
+                          timezone=_tz(_td(hours=8)), id="weekly_backup_reminder")
+        except Exception as _e:
+            # 保險：舊版 APScheduler 若不吃固定 offset 時區，退回用 UTC 換算
+            # （01:00 UTC = 09:00 台灣）。不能讓這行炸掉整個 scheduler、
+            # 否則連 PDF 逾時/清理那兩個 job 都跟著不會跑。
+            print(f"[scheduler] 週一提醒改用 UTC fallback：{_e}")
+            sched.add_job(send_backup_reminder, "cron", day_of_week="mon", hour=1, minute=0,
+                          id="weekly_backup_reminder")
         # PDF 收件相關（不論 backup 開關都跑）：
         # - 每分鐘檢查 session timeout（5 分鐘無動作自動合 PDF）
         # - 每小時清過期 PDF（24 hr TTL）
@@ -25614,6 +25711,9 @@ def _start_backup_scheduler():
         sched.add_job(_cleanup_expired_pdfs, "interval", hours=1, id="pdf_cleanup")
         sched.start()
         print("[scheduler] PDF session timeout + cleanup tasks started")
+        # 啟動時把下次執行時間印出來，方便在 Render log 確認排程真的有排到
+        for _j in sched.get_jobs():
+            print(f"[scheduler] job={_j.id} next_run={_j.next_run_time}")
     except Exception as e:
         print(f"[scheduler] start failed: {e}")
 
