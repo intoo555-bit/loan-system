@@ -431,7 +431,8 @@ print("\n=== 34. 網頁新增客戶 POST ===")
 from fastapi.testclient import TestClient
 client = TestClient(m.app)
 # 登入取 cookie
-resp = client.post("/login", data={"role": "admin", "password": m.ADMIN_PASSWORD})
+m.set_setting("admin_pw", m.hash_pw("tstpw123"))   # 啟動時密碼是隨機產生的，測試要自己設
+resp = client.post("/login", data={"role": "admin", "password": "tstpw123"})
 # 建客戶
 form = {
     "grp": "TEST_B", "cname": "網頁小明", "idno": "W123456789",
@@ -468,6 +469,27 @@ conn5 = sqlite3.connect(TEST_DB)
 log_cnt = conn5.execute("SELECT COUNT(*) FROM case_logs WHERE case_id=?", (c["case_id"],)).fetchone()[0]
 conn5.close()
 check("並發 5 筆 case_logs 都寫入", log_cnt >= 5, f"log_cnt={log_cnt}")
+
+# ========== 37. 網頁編輯案件不砍送件順序 ==========
+# 潘藝中 2026-08-03：在網頁按一次儲存，送件順序從 11 家剩 1 家、婉拒歷史清空。
+# 網頁編輯是拿來修日報顯示的，不該重建 route。
+print("\n=== 37. 網頁編輯不砍送件順序 ===")
+bc("4/21-馬超D222222222", gid="TEST_B")
+bc("4/21-馬超-亞太機25萬/第一/21商品/和裕機", gid="TEST_B")
+c = get_cust("D222222222")
+order_before = json.loads(c.get("route_plan") or "{}").get("order", [])
+check("前置：送件順序有 4 家", len(order_before) == 4, f"order={order_before}")
+m.check_auth = lambda req: "admin"   # TestClient 下 session cookie 不生效，直接繞過認證
+client.post("/case-edit", data={"case_id": c["case_id"], "current_company": "第一",
+                                "status": "ACTIVE", "company_status_json": "{}"})
+c = get_cust("D222222222")
+rp = json.loads(c.get("route_plan") or "{}")
+order_after = rp.get("order", [])
+check("網頁儲存後送件順序沒被砍", len(order_after) == len(order_before),
+      f"{order_before} → {order_after}")
+_idx = rp.get("current_index", 0)
+check("current_index 移到「第一」", 0 <= _idx < len(order_after) and order_after[_idx] == "第一",
+      f"idx={_idx} order={order_after}")
 
 # ========== 總結 ==========
 print(f"\n{'='*50}")

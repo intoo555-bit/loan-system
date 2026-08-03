@@ -19549,13 +19549,28 @@ async def case_edit_post(request: Request):
         _new_cur = (f.get("current_company") or "").strip()
         _new_concur_str = (f.get("concurrent_companies") or "").strip()
         _new_concur = [c.strip() for c in _new_concur_str.split(",") if c.strip()]
+        # ⛔ 只移動指標／補進新家，絕不砍既有 order。
+        #    舊寫法是 _rp["order"] = [current] + concurrent，等於把還沒送的家全部丟掉：
+        #    潘藝中 2026-08-03 在網頁按一次儲存，送件順序就從 11 家剩 1 家（後面 10 家消失）。
+        #    網頁編輯是拿來「修日報顯示」的，不是拿來重設送件順序的。
+        _order = list(_rp.get("order") or [])
+        def _same_co(a, b):
+            return normalize_section(a) == normalize_section(b)
         if _new_cur:
-            _new_order = [_new_cur] + [c for c in _new_concur if c != _new_cur]
-            _rp["order"] = _new_order
-            _rp["current_index"] = 0
+            _idx_found = next((i for i, co in enumerate(_order) if _same_co(co, _new_cur)), -1)
+            if _idx_found >= 0:
+                _rp["current_index"] = _idx_found          # 已在順序裡 → 只移指標
+            else:
+                _ins = min(_rp.get("current_index", 0), len(_order))
+                _order.insert(_ins, _new_cur)              # 不在 → 插進來，後面的家照樣保留
+                _rp["current_index"] = _ins
         elif _new_concur:
-            _rp["order"] = _new_concur
-            _rp["current_index"] = 0
+            _rp["current_index"] = min(_rp.get("current_index", 0), max(len(_order) - 1, 0))
+        # 同送的家不在 order 裡才補到尾巴（一樣不刪任何既有的家）
+        for _c in _new_concur:
+            if not any(_same_co(o, _c) for o in _order):
+                _order.append(_c)
+        _rp["order"] = _order
         cur.execute("UPDATE customers SET route_plan=? WHERE case_id=?",
                     (json.dumps(_rp, ensure_ascii=False), case_id))
     # 註：原本會 push「📝 XX 網頁修改案件狀態」通知到業務群、user 2026-05-20 要求拿掉（LINE 訊息費用控管）
