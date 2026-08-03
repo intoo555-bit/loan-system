@@ -6182,6 +6182,32 @@ def send_ambiguous_case_buttons(reply_token, block_text, matches):
     reply_quick_reply(reply_token, "⚠️ 多筆同名客戶，請選擇要回貼的案件", items)
 
 
+def _transfer_lock_reason(customer) -> str:
+    """已核准／已撥款的案子不給在 LINE 上跨群轉移，回傳擋下的理由（空字串＝可轉移）。
+
+    ⛔ 轉移是「把整筆案件搬到新群組」，案號、建案日期、核准金額、撥款紀錄全部跟著走。
+       用在已撥款的舊案上，等於把原群組跑出來的業績搬給新群組。
+       2026-08-03 鍾志文就是這樣：優選跑到撥款，客戶又去問幸福貸，
+       業務在幸福貸群按了「轉移」，撥款紀錄和建案日期整包搬過去。
+       LINE 上分不出誰是管理員（群裡誰都能按），所以一律擋；
+       真的要搬由管理員在網頁 /admin/move-customer 處理。
+    """
+    if customer is None:
+        return ""
+    def _get(k):
+        try:
+            return (customer[k] or "").strip()
+        except (KeyError, IndexError, TypeError):
+            return ""
+    disb = _get("disbursement_date")
+    if disb:
+        return f"已撥款（{disb}）"
+    appr = _get("approved_amount")
+    if appr:
+        return f"已核准 {appr}"
+    return ""
+
+
 def send_transfer_case_buttons(reply_token, customer, source_group_id, block_text, allow_new=True):
     # Bug 6: 驗證 source_group_id 合法性，避免按鈕回調寫入不存在的群組
     new_g = get_group_name(source_group_id) if source_group_id else ""
@@ -6195,10 +6221,18 @@ def send_transfer_case_buttons(reply_token, customer, source_group_id, block_tex
     })
     old_g = get_group_name(customer["source_group_id"])
     # 三按鈕語意：沿用 = 兩邊各有獨立案件；轉移 = 原群組搬到新群組；取消
-    items = [make_quick_reply_item(f"沿用(兩邊都有)", f"CREATE_NEW_FROM_TRANSFER|{action_id}"),
-             make_quick_reply_item(f"轉移到{new_g}", f"CONFIRM_TRANSFER|{action_id}"),
-             make_quick_reply_item("取消", f"CANCEL_TRANSFER|{action_id}")]
-    reply_quick_reply(reply_token, f"⚠️ {old_g} 已有同名客戶，請選擇：沿用(兩邊各建獨立案)/轉移(搬到{new_g})/取消", items)
+    _lock = _transfer_lock_reason(customer)
+    items = [make_quick_reply_item(f"沿用(兩邊都有)", f"CREATE_NEW_FROM_TRANSFER|{action_id}")]
+    if not _lock:
+        items.append(make_quick_reply_item(f"轉移到{new_g}", f"CONFIRM_TRANSFER|{action_id}"))
+    items.append(make_quick_reply_item("取消", f"CANCEL_TRANSFER|{action_id}"))
+    if _lock:
+        reply_quick_reply(reply_token,
+                          f"⚠️ {old_g} 已有同名客戶，而且該案{_lock}\n"
+                          f"不可轉移（會把撥款紀錄和建案日期一起搬走）\n"
+                          f"請選擇：沿用(兩邊各建獨立案)/取消", items)
+    else:
+        reply_quick_reply(reply_token, f"⚠️ {old_g} 已有同名客戶，請選擇：沿用(兩邊各建獨立案)/轉移(搬到{new_g})/取消", items)
 
 
 def send_same_name_supplement_buttons(reply_token, block_text, matches, source_group_id, want_push_a):
@@ -6250,10 +6284,18 @@ def send_confirm_new_case_buttons(reply_token, block_text, existing_customer, so
     old_g, new_g = get_group_name(existing_customer["source_group_id"]), get_group_name(source_group_id)
     name = extract_name(block_text) or existing_customer["customer_name"]
     # 三按鈕語意：沿用 = 兩邊各有獨立案件（新群組建新案、原群組保留）；轉移 = 搬到新群組；取消
-    items = [make_quick_reply_item(f"沿用(兩邊都有)", f"FORCE_CREATE_NEW|{action_id}"),
-             make_quick_reply_item(f"轉移到{new_g}", f"TRANSFER_FROM_CONFIRM|{action_id}"),
-             make_quick_reply_item("取消", f"CANCEL_NEW_CASE|{action_id}")]
-    reply_quick_reply(reply_token, f"⚠️ {name} 身分證已存在於{old_g}，請選擇：沿用(兩邊各建獨立案)/轉移(搬到{new_g})/取消", items)
+    _lock = _transfer_lock_reason(existing_customer)
+    items = [make_quick_reply_item(f"沿用(兩邊都有)", f"FORCE_CREATE_NEW|{action_id}")]
+    if not _lock:
+        items.append(make_quick_reply_item(f"轉移到{new_g}", f"TRANSFER_FROM_CONFIRM|{action_id}"))
+    items.append(make_quick_reply_item("取消", f"CANCEL_NEW_CASE|{action_id}"))
+    if _lock:
+        reply_quick_reply(reply_token,
+                          f"⚠️ {name} 身分證已存在於{old_g}，而且該案{_lock}\n"
+                          f"不可轉移（會把撥款紀錄和建案日期一起搬走）\n"
+                          f"請選擇：沿用(兩邊各建獨立案)/取消", items)
+    else:
+        reply_quick_reply(reply_token, f"⚠️ {name} 身分證已存在於{old_g}，請選擇：沿用(兩邊各建獨立案)/轉移(搬到{new_g})/取消", items)
 
 
 # =========================
@@ -6933,6 +6975,34 @@ def _field_display_label(field_name: str) -> str:
     }.get(field_name, field_name)
 
 
+def _fmt_diff_value(field_name: str, val) -> str:
+    """把欄位值轉成業務看得懂的顯示。
+    route_plan 是 JSON，直接印會在群裡噴出一大串 {"order": [...], "current_index": ...}，
+    業務看不懂也洗版（2026-08-03 使用者回報「還原會打英文」）。
+    改成「第N家 公司名（共M家）」——順序被砍時「共11家 → 共1家」一眼就看得出來。
+    """
+    if val in (None, ""):
+        return "(空)"
+    if field_name == "route_plan":
+        try:
+            d = json.loads(val)
+        except Exception:
+            return str(val)[:60]
+        order = d.get("order") or []
+        if not order:
+            return "(無送件順序)"
+        idx = d.get("current_index", 0)
+        cur_co = order[idx] if 0 <= idx < len(order) else "?"
+        return f"第{idx + 1}家 {cur_co}（共{len(order)}家）"
+    if field_name == "company_status":
+        try:
+            d = json.loads(val)
+            return "、".join(d.keys()) if d else "(空)"
+        except Exception:
+            return str(val)[:60]
+    return str(val)
+
+
 def update_with_verify(case_id: str, changes: Dict, from_group_id: str = "", text_log: str = ""):
     """執行 update_customer 並實測 DB 前後變化，回傳 (ok, diff_lines, customer_name)。
     changes 是要 update 的欄位 dict；diff_lines 是實際變動的欄位摘要（「欄位: 舊 → 新」）。
@@ -6980,8 +7050,8 @@ def update_with_verify(case_id: str, changes: Dict, from_group_id: str = "", tex
         old_norm = "" if old_v is None else str(old_v)
         new_norm = "" if new_v is None else str(new_v)
         if old_norm != new_norm:
-            old_disp = old_v if old_v not in (None, "") else "(空)"
-            new_disp = new_v if new_v not in (None, "") else "(空)"
+            old_disp = _fmt_diff_value(k, old_v)
+            new_disp = _fmt_diff_value(k, new_v)
             diffs.append(f"• {_field_display_label(k)}: {old_disp} → {new_disp}")
     return True, diffs, before_dict.get("customer_name", "")
 
@@ -10861,6 +10931,13 @@ def handle_command_text(text: str, reply_token: str) -> bool:
         if not c: reply_text(reply_token, "⚠️ 原案件不存在"); delete_pending_action(action_id); return True
         original_sg = c["source_group_id"] or ""
         cust_name = c["customer_name"]
+        # 第二道防護：按鈕可能是稍早發的（那時還沒核准），隔一段時間才被點
+        _lock = _transfer_lock_reason(c)
+        if _lock:
+            reply_text(reply_token, f"⛔ {cust_name} 此案{_lock}，不可轉移\n"
+                                    f"（會把撥款紀錄和建案日期一起搬走）\n"
+                                    f"真的要搬請管理員在網頁處理")
+            delete_pending_action(action_id); return True
         update_customer(c["case_id"], company=extract_company(block_text) or c["company"] or "",
                         text=block_text, from_group_id=sg,
                         name=extract_name(block_text) or cust_name, source_group_id=sg)
@@ -11092,6 +11169,13 @@ def handle_command_text(text: str, reply_token: str) -> bool:
         cur.execute("SELECT * FROM customers WHERE case_id=?", (p.get("case_id",""),))
         c = cur.fetchone(); conn.close()
         if not c: reply_text(reply_token, "⚠️ 原案件不存在"); delete_pending_action(action_id); return True
+        # 第二道防護：按鈕可能是稍早發的（那時還沒核准），隔一段時間才被點
+        _lock = _transfer_lock_reason(c)
+        if _lock:
+            reply_text(reply_token, f"⛔ {c['customer_name']} 此案{_lock}，不可轉移\n"
+                                    f"（會把撥款紀錄和建案日期一起搬走）\n"
+                                    f"真的要搬請管理員在網頁處理")
+            delete_pending_action(action_id); return True
         update_customer(c["case_id"], company=extract_company(block_text) or c["company"] or "",
                         text=block_text, from_group_id=tg, name=p.get("name", c["customer_name"]), source_group_id=tg)
         reply_text(reply_token, f"✅ 已改到{get_group_name(tg)}")
@@ -16483,9 +16567,10 @@ async def report_update_progress(request: Request):
     progress = data.get("progress", "").strip()
     if not case_id:
         return JSONResponse({"ok": False, "message": "資料不完整"})
-    conn = get_conn(); cur = conn.cursor()
-    cur.execute("UPDATE customers SET last_update=?, updated_at=? WHERE case_id=?", (progress, now_iso(), case_id))
-    conn.commit(); conn.close()
+    # ⛔ 不要在這裡直接下 SQL。舊寫法直接 UPDATE customers，不寫 case_logs、不存快照 →
+    #    網頁改錯進度時查不到誰改的、也沒有快照可以還原，而 LINE 改進度本來就走 update_customer。
+    #    （2026-08-03 盤點 LINE vs 網頁不一致時發現，見記憶 web_edit_must_not_rebuild_route）
+    update_customer(case_id, text=progress, from_group_id="WEB")
     # 同步刷新 company_status 的 stale section、避免日報仍顯示 A 群舊訊息（NA/缺X/待補）
     if progress:
         _refresh_company_status_after_docs(case_id, progress)

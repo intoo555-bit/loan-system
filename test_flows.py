@@ -491,6 +491,56 @@ _idx = rp.get("current_index", 0)
 check("current_index 移到「第一」", 0 <= _idx < len(order_after) and order_after[_idx] == "第一",
       f"idx={_idx} order={order_after}")
 
+# ========== 38. 網頁改進度要留紀錄（可還原） ==========
+# 舊寫法直接下 SQL，不寫 case_logs、不存快照 → 改錯查不到也還原不了。
+# LINE 改進度本來就走 update_customer，網頁要一致。
+print("\n=== 38. 網頁改進度要留紀錄 ===")
+bc("4/21-黃忠E333333333", gid="TEST_B")
+bc("4/21-黃忠-亞太機25萬/第一", gid="TEST_B")
+c = get_cust("E333333333")
+conn6 = sqlite3.connect(TEST_DB)
+log_before = conn6.execute("SELECT COUNT(*) FROM case_logs WHERE case_id=?", (c["case_id"],)).fetchone()[0]
+conn6.close()
+m.check_auth = lambda req: "admin"
+client.post("/report/update-progress", json={"case_id": c["case_id"], "progress": "待補薪轉"})
+conn6 = sqlite3.connect(TEST_DB); conn6.row_factory = sqlite3.Row
+rows6 = conn6.execute("""SELECT snapshot_json FROM case_logs WHERE case_id=?
+                         ORDER BY created_at DESC LIMIT 1""", (c["case_id"],)).fetchall()
+log_after = conn6.execute("SELECT COUNT(*) FROM case_logs WHERE case_id=?", (c["case_id"],)).fetchone()[0]
+conn6.close()
+c = get_cust("E333333333")
+check("進度有寫入", (c.get("last_update") or "") == "待補薪轉", c.get("last_update"))
+check("網頁改進度有留案件歷程", log_after > log_before, f"{log_before} → {log_after}")
+check("有存快照（可還原）", bool(rows6 and rows6[0]["snapshot_json"]),
+      "snapshot 是空的" if rows6 else "沒有 log")
+
+# ========== 39. 已撥款的案子不給跨群轉移 ==========
+# 鍾志文 2026-08-03：優選跑到撥款，客戶又去問幸福貸，業務在幸福貸群按「轉移」，
+# 撥款紀錄和建案日期整包被搬到幸福貸。LINE 分不出誰是管理員，所以一律擋。
+print("\n=== 39. 已撥款案不給跨群轉移 ===")
+conn7 = sqlite3.connect(TEST_DB)
+conn7.execute("INSERT OR REPLACE INTO groups (group_id, group_name, group_type, is_active, created_at) VALUES (?,?,?,?,?)",
+              ("TEST_C2", "C2群", "SALES_GROUP", 1, datetime.now().isoformat()))
+conn7.commit(); conn7.close()
+# 未核准的客戶：轉移選項要還在
+bc("4/21-關羽F444444444", gid="TEST_B")
+bc("4/21-關羽-亞太機25萬", gid="TEST_B")
+quick_replies.clear()
+bc("4/21-關羽F444444444", gid="TEST_C2")
+check("未核准案：轉移選項保留", not any("不可轉移" in q for q in quick_replies),
+      quick_replies[-1][:40] if quick_replies else "沒跳按鈕")
+# 已撥款的客戶：轉移要被擋
+bc("4/21-馬岱F555555555", gid="TEST_B")
+bc("4/21-馬岱-亞太機25萬", gid="TEST_B")
+bc("@AI 馬岱 亞太機25萬 核准 20萬", gid="TEST_B")
+bc("@AI 馬岱 亞太機25萬 撥款 4/21", gid="TEST_B")
+c = get_cust("F555555555")
+check("前置：馬岱已撥款", (c.get("disbursement_date") or "") != "", c.get("disbursement_date"))
+quick_replies.clear()
+bc("4/21-馬岱F555555555", gid="TEST_C2")
+check("已撥款案：轉移被擋", any("不可轉移" in q for q in quick_replies),
+      quick_replies[-1][:60] if quick_replies else "沒跳按鈕")
+
 # ========== 總結 ==========
 print(f"\n{'='*50}")
 print(f"結果：{PASS} 通過、{FAIL} 失敗")
