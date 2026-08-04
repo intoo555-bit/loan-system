@@ -8771,7 +8771,14 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
                 _candidates.append(_c)
         # 只在輸入是「概略名稱」（normalize 後跟自己一樣、如 "21"）時、才用 _candidates 具體方案
         # 輸入已經是具體名稱（慢點付、亞太機車25萬 等）就保留原值
-        if _candidates and company not in _candidates and company == _co_norm:
+        # ⛔ 一定要用「業務原始打的字」判斷，不可以用 alias 之後的 company：
+        #    「21」會先被 COMPANY_ALIAS 換成「21商品」，normalize 回來是「21」，
+        #    兩者永遠不相等 → 條件永遠 False → 客戶明明在送 21機車12萬，
+        #    打「21 核准」卻把 current 改成 21商品，route order 還留著 21機車12萬（資料自相矛盾）。
+        #    test_flows 第 7 項擋這件事。
+        _raw_co = (cmd.get("company") or "").strip()
+        _is_generic_input = bool(_raw_co) and normalize_section(_raw_co) == _raw_co
+        if _candidates and company not in _candidates and _is_generic_input:
             company = _candidates[0]
         route = target["route_plan"] or ""
         new_route = update_company_amount_in_history(route, company, amount)
