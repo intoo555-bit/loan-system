@@ -562,6 +562,27 @@ conn8.close()
 check("去重不動已結案的舊案（併掉 0 筆）", merged == 0, f"併掉 {merged} 筆")
 check("8 月新案還在（沒被標 DELETED）", "DELETED" not in states, f"狀態={list(states)}")
 check("5 月舊案仍是 CLOSED", "CLOSED" in states, f"狀態={list(states)}")
+# 真的該合併的情況（兩筆都還在跑）→ 要合併，而且必須留下紀錄
+bc("8/6-併測試S111222333", gid="TEST_B")
+c_a = m.find_active_by_name("併測試")[0]["case_id"]
+conn9 = sqlite3.connect(TEST_DB)
+conn9.execute("""INSERT INTO customers (case_id, customer_name, id_no, source_group_id, status,
+                 created_at, updated_at) VALUES ('dup_test','併測試','S111222333','TEST_B','ACTIVE',?,?)""",
+              (datetime.now().isoformat(), datetime.now().isoformat()))
+conn9.commit(); conn9.close()
+merged2 = m._dedupe_same_id_in_group("S111222333", "TEST_B")
+conn9 = sqlite3.connect(TEST_DB); conn9.row_factory = sqlite3.Row
+killed = [r["case_id"] for r in conn9.execute(
+    "SELECT case_id FROM customers WHERE customer_name='併測試' AND status='DELETED'")]
+logs9 = conn9.execute("""SELECT message_text, from_group_id, snapshot_json FROM case_logs
+                         WHERE case_id=? ORDER BY created_at DESC LIMIT 1""",
+                      (killed[0] if killed else "",)).fetchone()
+conn9.close()
+check("兩筆都在跑時仍會合併", merged2 >= 1, f"併掉 {merged2} 筆")
+check("被軟刪那筆有留紀錄（查得到誰刪的）", bool(logs9) and logs9["from_group_id"] == "SYSTEM_DEDUPE",
+      f"log={dict(logs9) if logs9 else None}")
+check("紀錄含刪除前快照（可還原）", bool(logs9) and bool(logs9["snapshot_json"]),
+      "snapshot 是空的")
 
 # ========== 總結 ==========
 print(f"\n{'='*50}")

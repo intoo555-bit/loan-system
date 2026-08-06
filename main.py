@@ -4703,8 +4703,29 @@ def _dedupe_same_id_in_group(id_no, group_id, prefer_case_id=""):
                 cur.execute(f"UPDATE customers SET {sets},updated_at=? WHERE case_id=?",
                             (*ups.values(), now_iso(), keep["case_id"]))
                 keep.update(ups)
+            # ⛔ 軟刪前一定要留紀錄 + 快照，否則案子消失時完全查不到線索。
+            #    2026-08-06 黃俊仁：案子 15:06 被這行標成 DELETED，case_logs 一筆都沒有，
+            #    業務只看到「案子不見了」，最後是比對三份資料庫備份的 updated_at 才拼出時間軸。
+            #    快照欄位跟 update_customer 一致，這樣「還原」功能救得回來。
+            #    （不能在這裡呼叫 update_customer —— 它自己會開交易，巢狀會鎖住。）
+            _snap_fields = ["company", "current_company", "concurrent_companies",
+                            "route_plan", "report_section", "approved_amount",
+                            "notify_amount", "notify_period", "disbursement_date",
+                            "status", "id_no", "customer_name", "source_group_id",
+                            "signing_area", "signing_salesperson", "signing_company",
+                            "signing_time", "signing_location", "company_status",
+                            "pending_docs"]
+            _snap = json.dumps({k: d.get(k) for k in _snap_fields if k in d},
+                               ensure_ascii=False)
+            _now = now_iso()
+            cur.execute("INSERT INTO case_logs (case_id,customer_name,id_no,company,message_text,"
+                        "from_group_id,created_at,snapshot_json) VALUES (?,?,?,?,?,?,?,?)",
+                        (d["case_id"], d.get("customer_name", ""), d.get("id_no", ""),
+                         d.get("company", ""),
+                         f"⚠️ 系統自動合併重複案件：本筆併入 {keep.get('case_id', '')} 後軟刪除（可還原）",
+                         "SYSTEM_DEDUPE", _now, _snap))
             cur.execute("UPDATE customers SET status='DELETED',updated_at=? WHERE case_id=?",
-                        (now_iso(), d["case_id"]))
+                        (_now, d["case_id"]))
             merged += 1
         return merged
 
