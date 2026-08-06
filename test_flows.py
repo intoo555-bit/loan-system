@@ -541,6 +541,28 @@ bc("4/21-馬岱F555555555", gid="TEST_C2")
 check("已撥款案：轉移被擋", any("不可轉移" in q for q in quick_replies),
       quick_replies[-1][:60] if quick_replies else "沒跳按鈕")
 
+# ========== 40. 舊案已結案時，同客戶再送一次不可被去重刪掉 ==========
+# 黃俊仁 2026-08-06：5 月送過 21商品、核准 7 萬、5/8 撥款結案；8 月客戶再來送，
+# 去重看「誰的送件歷程完整」→ 保留 5 月那筆已結案的、把 8 月正在跑的新案標 DELETED。
+print("\n=== 40. 結案舊案不參與去重 ===")
+bc("5/6-黃測試S999888777", gid="TEST_B")
+bc("5/6-黃測試-和裕/21商品/零卡", gid="TEST_B")
+old_case = m.find_active_by_name("黃測試")[0]["case_id"]
+m.update_customer(old_case, current_company="21商品", approved_amount="7萬", disbursement_date="5/8",
+                  route_plan=m.make_route_json(["和裕", "21商品", "零卡"], 1,
+                                               [{"company": "和裕", "status": "婉拒"},
+                                                {"company": "21", "status": "核准", "amount": "7萬"}]),
+                  status="CLOSED", text="結案", from_group_id="TEST_B")
+bc("8/6-黃測試S999888777", gid="TEST_B")   # 同客戶三個月後再送一次
+merged = m._dedupe_same_id_in_group("S999888777", "TEST_B")
+conn8 = sqlite3.connect(TEST_DB); conn8.row_factory = sqlite3.Row
+states = {r["status"]: r["case_id"] for r in conn8.execute(
+    "SELECT case_id, status FROM customers WHERE customer_name='黃測試'")}
+conn8.close()
+check("去重不動已結案的舊案（併掉 0 筆）", merged == 0, f"併掉 {merged} 筆")
+check("8 月新案還在（沒被標 DELETED）", "DELETED" not in states, f"狀態={list(states)}")
+check("5 月舊案仍是 CLOSED", "CLOSED" in states, f"狀態={list(states)}")
+
 # ========== 總結 ==========
 print(f"\n{'='*50}")
 print(f"結果：{PASS} 通過、{FAIL} 失敗")

@@ -4654,7 +4654,15 @@ def _dedupe_same_id_in_group(id_no, group_id, prefer_case_id=""):
         return 0
     with db_conn(commit=True) as conn:
         cur = conn.cursor()
-        cur.execute("SELECT * FROM customers WHERE source_group_id=? AND status!='DELETED'", (group_id,))
+        # ⛔ 只對「還在進行中」的筆去重（ACTIVE / PENDING）。
+        #    已結案／已撥款／違約金／放棄／全數婉拒那些是**歷史案件**，不是重複建檔。
+        #    2026-08-06 黃俊仁：5 月送過 21商品、核准 7 萬、5/8 撥款、5/8 結案；
+        #    8 月客戶再來送一次（同身分證同群組，這是**第二次獨立申請**），
+        #    結果去重看「誰的送件歷程比較完整」→ 保留 5 月那筆已結案的、
+        #    把 8 月正在跑的新案標成 DELETED，業務的案子當場消失。
+        #    → 舊案已經走完流程時，同一個客戶再送一次本來就該是新的一筆。
+        cur.execute("SELECT * FROM customers WHERE source_group_id=? AND status IN ('ACTIVE','PENDING')",
+                    (group_id,))
         rows = [dict(r) for r in cur.fetchall() if normalize_id_no(r["id_no"] or "") == nid]
         if len(rows) < 2:
             return 0
