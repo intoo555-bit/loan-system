@@ -6089,8 +6089,11 @@ def build_segment(sections: List[str], section_map: Dict, shown: set) -> str:
     return "\n".join(lines)
 
 
-def data_health_check(group_id: str = "") -> str:
-    """資料健檢：掃出「資料自相矛盾」的客戶，回中文報告。
+def _data_health_findings(group_id: str = ""):
+    """資料健檢的檢查邏輯，回 [(標題, [問題描述], 怎麼處理), ...]。
+
+    ⛔ 這是唯一一份檢查邏輯，LINE（data_health_check）和網頁（/admin/data-health）
+       都用它。不要為了網頁再寫一套。
 
     每一項都是真的踩過的坑（2026-08 那幾天連續出事後加的）：
     案子被自動刪掉、送件順序被砍、核准跑錯公司、結案日期跑掉…
@@ -6166,6 +6169,14 @@ def data_health_check(group_id: str = "") -> str:
                      "重新部署會自動補；仍未補上再找工程師"))
     conn.close()
 
+    return findings
+
+
+def data_health_check(group_id: str = "") -> str:
+    """資料健檢的文字版（LINE 用）。⛔ 檢查邏輯只有 _data_health_findings 一份，
+    網頁跟 LINE 共用它 —— 不要為了網頁再寫一套（2026-08 的教訓：同一件事兩套實作必走岔）。
+    """
+    findings = _data_health_findings(group_id)
     total = sum(len(items) for _, items, _ in findings)
     scope = "全部群組" if not group_id else get_group_name(group_id)
     if total == 0:
@@ -17193,6 +17204,7 @@ def _page_topnav(role, active):
                        ("🧹 合併重複", "/admin/merge-dups", "merge-dups"),
                        ("💾 下載備份", "/admin/download-db", "download"),
                        ("☁️ Drive 備份", "/admin/gdrive-backup", "gdrive-backup"),
+                       ("🩺 資料健檢", "/admin/data-health", "data-health"),
                        ("🗑️ 清除資料", "/admin/reset_data", "reset")]
 
     def _chip(n, u, a, block=False):
@@ -25144,6 +25156,71 @@ async def test_backup_reminder(request: Request):
         f"<div style='padding:40px;font-family:sans-serif;font-size:16px'>{body}</div>")
 
 
+@app.get("/admin/data-health", response_class=HTMLResponse)
+async def data_health_page(request: Request):
+    """資料健檢（⛔ 只有總管理員看得到）。
+
+    檢查邏輯跟 LINE 的「@AI 健檢」共用 _data_health_findings()，不是另寫一套。
+    放網頁的理由：不吃 LINE 推播配額、不會被 4900 字截斷、排版看得清楚。
+    """
+    from fastapi.responses import RedirectResponse
+    role = check_auth(request)
+    if role != "admin":
+        return RedirectResponse("/login", status_code=303)
+    gid = (request.query_params.get("gid") or "").strip()
+    findings = _data_health_findings(gid)
+    total = sum(len(items) for _, items, _ in findings)
+
+    conn = get_conn(); cur = conn.cursor()
+    cur.execute("SELECT group_id, group_name FROM groups WHERE is_active=1 ORDER BY group_name")
+    groups = cur.fetchall(); conn.close()
+    opts = ['<option value="">全部群組</option>']
+    for g in groups:
+        sel = " selected" if gid == g["group_id"] else ""
+        opts.append(f'<option value="{h(g["group_id"])}"{sel}>{h(g["group_name"])}</option>')
+
+    if total == 0:
+        cards = ('<div style="background:#dcfce7;color:#15803d;padding:18px;border-radius:8px;'
+                 'font-size:15px">✅ 沒有發現異常，資料乾淨。</div>')
+    else:
+        blocks = []
+        for title, items, howto in findings:
+            if not items:
+                blocks.append(f'<div style="padding:10px 14px;color:#64748b;font-size:13px">'
+                              f'✅ {h(title)}：正常</div>')
+                continue
+            lis = "".join(f'<li style="padding:3px 0">{h(x)}</li>' for x in items)
+            blocks.append(
+                f'<div style="border:1px solid #fecaca;border-radius:8px;margin-bottom:14px;overflow:hidden">'
+                f'<div style="background:#fef2f2;color:#b91c1c;padding:10px 14px;font-weight:600">'
+                f'⚠️ {h(title)} — {len(items)} 筆</div>'
+                f'<ul style="margin:0;padding:10px 14px 10px 32px;font-size:14px;line-height:1.7">{lis}</ul>'
+                f'<div style="background:#f8fafc;padding:9px 14px;font-size:13px;color:#475569;'
+                f'border-top:1px solid #e2e8f0">→ 怎麼處理：{h(howto)}</div></div>')
+        cards = "".join(blocks)
+
+    scope = "全部群組" if not gid else get_group_name(gid)
+    return HTMLResponse(f"""<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>資料健檢</title></head>
+<body style="margin:0;background:#f1f5f9;font-family:system-ui,-apple-system,'Microsoft JhengHei',sans-serif">
+{make_topnav(role, "data-health")}
+<div style="max-width:900px;margin:0 auto;padding:20px 16px 60px">
+  <h1 style="font-size:20px;margin:0 0 6px">🩺 資料健檢</h1>
+  <p style="color:#64748b;font-size:13px;margin:0 0 16px">
+    找出「資料互相矛盾」的客戶。這些狀況系統照常運作、畫面看起來正常，
+    只有資料悄悄不一致，通常要等日報顯示怪怪的才會發現。<br>
+    每週一早上系統也會自動跑一次，有異常才通知。
+  </p>
+  <form method="get" style="margin-bottom:16px">
+    <select name="gid" onchange="this.form.submit()"
+      style="padding:8px 10px;border:1px solid #cbd5e1;border-radius:6px;font-size:14px">{''.join(opts)}</select>
+    <span style="margin-left:10px;color:#64748b;font-size:13px">目前：{h(scope)}，
+      共 {total} 筆需要確認</span>
+  </form>
+  {cards}
+</div></body></html>""")
+
+
 @app.get("/admin/gdrive-backup", response_class=HTMLResponse)
 async def gdrive_backup_page(request: Request):
     from fastapi.responses import RedirectResponse
@@ -26021,15 +26098,20 @@ def send_weekly_health_check():
        （跟 closed_at 回填那則重複通知同一個道理）。
     """
     try:
-        report = data_health_check("")      # 空 = 掃全部群組
-        if "沒有發現異常" in report:
+        findings = _data_health_findings("")      # 空 = 掃全部群組
+        total = sum(len(items) for _, items, _ in findings)
+        if total == 0:
             print("[health] 每週健檢：資料乾淨，不推播")
             return
+        # ⛔ 只推一行提醒，完整清單去網頁看 —— push 會吃 LINE 配額，
+        #    健檢報告動輒幾十行，每週推一次太浪費（使用者 2026-08-08 指正）。
+        top = "、".join(f"{t}{len(items)}筆" for t, items, _ in findings if items)
+        msg = (f"🩺 每週資料健檢：發現 {total} 筆需要確認\n"
+               f"（{top[:120]}）\n\n"
+               f"完整清單和處理方式：網頁「⚙️ 管理 → 🩺 資料健檢」")
         for gid in get_notify_group_ids():
-            push_text(gid, ("📅 每週資料健檢\n"
-                            "（這是系統自動跑的，發現下列資料互相矛盾，請確認）\n\n")
-                      + report[:4500])
-        print("[health] 每週健檢：發現異常，已推播")
+            push_text(gid, msg)
+        print(f"[health] 每週健檢：發現 {total} 筆異常，已推提醒")
     except Exception as e:
         print(f"[health] 每週健檢失敗：{e}")
         try:
