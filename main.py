@@ -3580,6 +3580,19 @@ def get_notify_group_ids() -> List[str]:
     return ids
 
 
+def _notify_startup(msg: str):
+    """啟動流程中的系統通知（推到系統通知群）。
+
+    ⛔ 絕不可以讓通知失敗擋住啟動 —— 全部包在 try 裡。
+       啟動時 groups 表可能還沒 seed，所以直接用 NOTIFY_GROUP_ID 常數、不查 DB。
+    """
+    try:
+        if NOTIFY_GROUP_ID and CHANNEL_ACCESS_TOKEN:
+            push_text(NOTIFY_GROUP_ID, msg)
+    except Exception as _e:
+        print(f"[startup-notify] 推播失敗（不影響啟動）：{_e}")
+
+
 def get_a_group_for_sales(sales_group_id: str) -> str:
     """決定業務群的案件要推到哪個 A 群。
     - 業務群有設定 linked_a_group_id → 用設定的
@@ -4503,10 +4516,21 @@ def init_db():
             "  WHERE l.case_id = customers.case_id AND l.message_text LIKE '%結案%')"
             " WHERE status IN ('CLOSED','PENALTY','ABANDONED','REJECTED')"
             "   AND (closed_at IS NULL OR closed_at='')")
-        if cur.rowcount:
-            print(f"[migrate] closed_at 回填 {cur.rowcount} 筆")
+        _filled = cur.rowcount or 0
+        if _filled:
+            print(f"[migrate] closed_at 回填 {_filled} 筆")
+            _notify_startup(
+                f"✅ 系統更新：已補上 {_filled} 位已結案客戶的「結案日期」"
+                + "\n統計的「本月結案」從此以真正結案那天計算，舊案之後被修改也不會再跑到當月。")
     except Exception as e:
-        print(f"[migrate] closed_at 回填略過：{e}")
+        # ⛔ 不可以只印 log 就跳過：回填沒做成，統計會 fallback 回 updated_at，
+        #    網站照常運作、數字卻還是錯的，沒人會發現。所以一定要推通知出來。
+        print(f"[migrate] closed_at 回填失敗：{e}")
+        _notify_startup(
+            "⚠️ 系統更新未完成：補「結案日期」時發生錯誤"
+            + f"\n錯誤：{type(e).__name__}: {e}"
+            + "\n影響：統計的「本月結案」會退回用最後異動時間，舊案被修改過就會算進當月、"
+              "數字偏高。系統其他功能正常。")
 
     # groups 表新增業務群對應欄位
     ensure_column(cur, "groups", "linked_sales_group_id", "TEXT")

@@ -609,6 +609,27 @@ check("重啟後再結案，closed_at 會更新", (c.get("closed_at") or "") != 
 check("status_zh 把代碼轉中文", m.status_zh("CLOSED") == "已結案" and m.status_zh("ACTIVE") == "進行中",
       f"CLOSED→{m.status_zh('CLOSED')} ACTIVE→{m.status_zh('ACTIVE')}")
 
+# ========== 42. 啟動期通知：失敗要出聲，但不能擋住啟動 ==========
+# closed_at 回填若失敗而只印 log，統計會 fallback 回 updated_at ——
+# 網站照常運作、數字卻還是錯的，沒人會發現。
+print("\n=== 42. 啟動期通知 ===")
+_sent = []
+_orig_push, _orig_token = m.push_text, m.CHANNEL_ACCESS_TOKEN
+m.push_text = lambda gid, msg: (_sent.append((gid, msg)), (True, ""))[1]
+m.CHANNEL_ACCESS_TOKEN = "dummy"
+m._notify_startup("✅ 測試通知")
+check("啟動期通知會推出去", len(_sent) == 1 and "測試通知" in _sent[0][1],
+      f"sent={_sent}")
+def _boom(gid, msg):
+    raise RuntimeError("LINE API 掛了")
+m.push_text = _boom
+try:
+    m._notify_startup("這則會失敗")
+    check("通知失敗不會擋住啟動", True)
+except Exception as _e:
+    check("通知失敗不會擋住啟動", False, f"往外炸了：{_e}")
+m.push_text, m.CHANNEL_ACCESS_TOKEN = _orig_push, _orig_token
+
 # ========== 總結 ==========
 print(f"\n{'='*50}")
 print(f"結果：{PASS} 通過、{FAIL} 失敗")
