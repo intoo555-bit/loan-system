@@ -875,6 +875,25 @@ ACTION_KEYWORDS = [
     "缺", "申覆",
 ]
 
+# 「已經結案」的四種狀態（日報不顯示、算進結案統計）
+# ⛔ 判斷結案一律用這個，不要寫 status != 'ACTIVE' —— PENDING（網頁預建、還沒進日報）
+#    會被誤當成結案。
+CLOSED_STATES = ("CLOSED", "PENALTY", "ABANDONED", "REJECTED")
+
+# 狀態代碼 → 中文。⛔ 任何要給業務看的訊息都用 status_zh()，不要直接印 status。
+# 業務看不懂 ACTIVE/CLOSED，跟看到 route_plan、pending_docs 一樣。
+STATUS_ZH = {
+    "ACTIVE": "進行中", "CLOSED": "已結案", "PENDING": "待建檔",
+    "PENALTY": "違約金結案", "ABANDONED": "放棄", "REJECTED": "全數婉拒",
+    "DELETED": "已刪除",
+}
+
+
+def status_zh(code: str) -> str:
+    """狀態代碼轉中文（給業務看的訊息一律用這個）。"""
+    return STATUS_ZH.get((code or "").strip().upper(), (code or "").strip())
+
+
 DELETE_KEYWORDS = [
     "結案", "刪掉", "不追了", "全部不送", "已撥款結案",
     "違約金結案", "已支付違約金", "違約金已支付",
@@ -4465,8 +4484,30 @@ def init_db():
         # 房屋私設（2026/05/05 加）— 自有時才填、"有"/"無"/空
         # 不影響 adminB 邏輯、純 PDF 顯示用
         ("eval_house_private", "TEXT"),
+        # 真正結案的時刻（2026/08/08 加）— 統計「本月結案幾件」用
+        # ⛔ 不可以用 updated_at 代替：那是「最後被動到的時間」，
+        #    舊案只要這個月被碰一下（改資料、救資料）就會被算成本月結案，
+        #    而且它在原本那個月的統計裡會消失 → 歷史數字被之後的操作侵蝕。
+        ("closed_at", "TEXT"),
     ]:
         ensure_column(cur, "customers", col, defn)
+
+    # closed_at 一次性回填（2026/08/08 新增欄位）：舊資料沒有結案時刻，
+    # 從 case_logs 找最後一筆含「結案」的紀錄當結案日。
+    # 找不到的（測試起來 1549 筆裡有 7 筆）留空，統計會 fallback updated_at。
+    # 只補 closed_at 還是空的那些，所以重複啟動不會重跑、也不會蓋掉新寫入的值。
+    try:
+        cur.execute(
+            "UPDATE customers SET closed_at = ("
+            "  SELECT MAX(l.created_at) FROM case_logs l"
+            "  WHERE l.case_id = customers.case_id AND l.message_text LIKE '%結案%')"
+            " WHERE status IN ('CLOSED','PENALTY','ABANDONED','REJECTED')"
+            "   AND (closed_at IS NULL OR closed_at='')")
+        if cur.rowcount:
+            print(f"[migrate] closed_at 回填 {cur.rowcount} 筆")
+    except Exception as e:
+        print(f"[migrate] closed_at 回填略過：{e}")
+
     # groups 表新增業務群對應欄位
     ensure_column(cur, "groups", "linked_sales_group_id", "TEXT")
     ensure_column(cur, "groups", "linked_a_group_id", "TEXT")
@@ -4795,6 +4836,14 @@ def update_customer(case_id, company=None, text=None, from_group_id="", status=N
             new_amt = (approved_amount or "").strip()
             if new_amt and not old_amt:
                 fields.append("approved_at = ?"); values.append(now)
+        # 從「非結案」變成「結案」→ 記 closed_at（統計「本月結案幾件」用）
+        # ⛔ 統計不可以用 updated_at：那是最後異動時間，舊案這個月被碰一下
+        #    （改資料、救資料）就會被算成本月結案，而且會從原本那個月的統計裡消失。
+        #    2026-08-06 救黃俊仁的資料時，他 5/8 的結案就跑到 8 月去了。
+        if status in CLOSED_STATES:
+            _was = ((before_row["status"] if before_row else "") or "")
+            if _was not in CLOSED_STATES:
+                fields.append("closed_at = ?"); values.append(now)
         fields.append("updated_at = ?"); values.append(now); values.append(case_id)
         snapshot = None
         if before_row:
@@ -8273,15 +8322,24 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
         # 今日
         cur.execute(f"SELECT COUNT(*) as c FROM customers WHERE date(created_at)=?{grp_filter}", [today] + grp_param)
         today_new = cur.fetchone()["c"]
-        cur.execute(f"SELECT COUNT(*) as c FROM customers WHERE status IN ('CLOSED','PENALTY','ABANDONED','REJECTED') AND date(updated_at)=?{grp_filter}", [today] + grp_param)
+        # ⛔ 用 closed_at（真正結案那一刻），不是 updated_at（最後被動到的時間）。
+        #    舊案這個月被碰一下就會被算成本月結案，而且會從原本那個月的統計消失。
+        #    closed_at 是 2026/08/08 才加的欄位，舊資料由 migrate 從 case_logs 回填；
+        #    真的沒有就 fallback updated_at（總比漏掉好）。
+        cur.execute(f"SELECT COUNT(*) as c FROM customers WHERE status IN {CLOSED_STATES} "
+                    f"AND date(COALESCE(NULLIF(closed_at,''), updated_at))=?{grp_filter}", [today] + grp_param)
         today_closed = cur.fetchone()["c"]
         # 本月
         cur.execute(f"SELECT COUNT(*) as c FROM customers WHERE created_at>=?{grp_filter}", [month_start] + grp_param)
         month_new = cur.fetchone()["c"]
-        cur.execute(f"SELECT COUNT(*) as c FROM customers WHERE status IN ('CLOSED','PENALTY','ABANDONED','REJECTED') AND updated_at>=?{grp_filter}", [month_start] + grp_param)
+        cur.execute(f"SELECT COUNT(*) as c FROM customers WHERE status IN {CLOSED_STATES} "
+                    f"AND COALESCE(NULLIF(closed_at,''), updated_at)>=?{grp_filter}", [month_start] + grp_param)
         month_closed = cur.fetchone()["c"]
         # 核准
-        cur.execute(f"SELECT route_plan FROM customers WHERE status='ACTIVE' AND route_plan IS NOT NULL AND route_plan!=''{grp_filter}", grp_param)
+        # ⛔ 不可以只算 status='ACTIVE'：核准→撥款→結案的客戶（跑完整個流程、最成功的那些）
+        #    會全部被漏掉。2026-08-08 實測：只算 ACTIVE 是 27 件，含已結案的實際有 62 件，漏了一半以上。
+        cur.execute(f"SELECT route_plan FROM customers WHERE status!='DELETED' "
+                    f"AND route_plan IS NOT NULL AND route_plan!=''{grp_filter}", grp_param)
         all_routes = cur.fetchall()
         today_approved = 0
         month_approved = 0
@@ -9126,7 +9184,7 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
             if new_concurrent:
                 msgs.append(f"還在送：{'、'.join(new_concurrent)}")
         elif disbursed_archived_co:
-            msgs.append(f"✅ {disbursed_archived_co} 已刪除（route_plan 跟撥款記錄都清掉）")
+            msgs.append(f"✅ {disbursed_archived_co} 已刪除（送件順序和撥款紀錄都清掉）")
             if promoted_co:
                 if _promoted_entry:
                     msgs.append(f"🆕 {promoted_co} 已核准 {_promoted_entry.get('amount','')}、留在「待撥款」區塊")
@@ -9953,7 +10011,7 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
             msg = f"✅ {name} {target_company} 已補 {doc}"
             if old_list and len(new_list) < len(old_list):
                 removed = [d for d in old_list if d not in new_list]
-                msg += f"\n（pending_docs 也清掉：{'、'.join(removed)}）"
+                msg += f"\n（缺件清單也清掉：{'、'.join(removed)}）"
             reply_text(reply_token, msg)
             return
         # Phase 1 fallback: pending_docs 邏輯
@@ -10364,7 +10422,7 @@ def _handle_a_case_block_locked(block_text, reply_token, id_no, name, forced_cas
         cur.execute("SELECT * FROM customers WHERE case_id=?", (forced_case_id,))
         customer = cur.fetchone(); conn.close()
         if not customer:
-            return f"⚠️ 選中的案件不存在（case_id={forced_case_id}）"
+            return f"⚠️ 選中的案件不存在，可能已被刪除或合併（編號 {forced_case_id}）"
     if not customer and id_no:
         # 同身分證可能有多筆獨立案（B 群、C 群各一）→ 跳按鈕讓 A 群選
         candidates = find_all_active_by_id_no(id_no)
@@ -21448,7 +21506,7 @@ async def customer_lookup(
     old_warning = ""
     if old_cases:
         oc = old_cases[0]
-        old_warning = f"⚠️ 此客戶有舊案記錄\n舊案日期：{(oc['created_at'] or '')[:10]}\n舊案狀態：{oc['status']}\n請確認您填的是新案資料"
+        old_warning = f"⚠️ 此客戶有舊案記錄\n舊案日期：{(oc['created_at'] or '')[:10]}\n舊案狀態：{status_zh(oc['status'])}\n請確認您填的是新案資料"
     return JSONResponse({
         "ok": True,
         "old_warning": old_warning,

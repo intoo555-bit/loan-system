@@ -584,6 +584,31 @@ check("被軟刪那筆有留紀錄（查得到誰刪的）", bool(logs9) and log
 check("紀錄含刪除前快照（可還原）", bool(logs9) and bool(logs9["snapshot_json"]),
       "snapshot 是空的")
 
+# ========== 41. 結案時刻要記在 closed_at，之後被動到也不變 ==========
+# 統計「本月結案」原本用 updated_at（最後異動時間），舊案這個月被碰一下
+# 就會被算成本月結案，而且從原本那個月的統計消失（黃俊仁 5/8 結案跑到 8 月）。
+print("\n=== 41. 結案時刻不受後續異動影響 ===")
+bc("4/21-馬謖G666666666", gid="TEST_B")
+bc("4/21-馬謖-亞太機25萬", gid="TEST_B")
+bc("@AI 馬謖 結案", gid="TEST_B")
+c = get_cust("G666666666")
+closed_at_1 = (c.get("closed_at") or "")[:10]
+check("結案時有寫 closed_at", closed_at_1 != "", f"closed_at={c.get('closed_at')}")
+# 之後又去動這筆（模擬救資料／改欄位）
+m.update_customer(c["case_id"], text="事後修改資料", from_group_id="WEB")
+c = get_cust("G666666666")
+check("事後被動到，closed_at 不變", (c.get("closed_at") or "")[:10] == closed_at_1,
+      f"{closed_at_1} → {(c.get('closed_at') or '')[:10]}")
+# 重啟後再次結案 → closed_at 要更新成新的結案日（那是新的申請週期）
+bc("@AI 馬謖 重啟", gid="TEST_B")
+bc("@AI 馬謖 結案", gid="TEST_B")
+c = get_cust("G666666666")
+check("重啟後再結案，closed_at 會更新", (c.get("closed_at") or "") != "",
+      f"closed_at={c.get('closed_at')}")
+# 狀態英文不可外洩
+check("status_zh 把代碼轉中文", m.status_zh("CLOSED") == "已結案" and m.status_zh("ACTIVE") == "進行中",
+      f"CLOSED→{m.status_zh('CLOSED')} ACTIVE→{m.status_zh('ACTIVE')}")
+
 # ========== 總結 ==========
 print(f"\n{'='*50}")
 print(f"結果：{PASS} 通過、{FAIL} 失敗")
