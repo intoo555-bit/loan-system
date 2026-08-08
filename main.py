@@ -6103,8 +6103,21 @@ def _data_health_findings(group_id: str = ""):
     group_id 空 = 掃全部群組（給系統通知群的每週健檢用）。
     """
     conn = get_conn(); cur = conn.cursor()
-    gf = "" if not group_id else " AND source_group_id=?"
-    gp = [] if not group_id else [group_id]
+    if group_id:
+        # 明確指定群組（網頁下拉選的）→ 就算是測試群也照掃，使用者是自己要看的
+        gf = " AND source_group_id=?"
+        gp = [group_id]
+    else:
+        # 掃全部時排除測試／練習群：那裡的資料本來就是隨便打的，
+        # 掃進來只會變雜訊，久了就沒人看健檢報告了。
+        cur.execute("SELECT group_id FROM groups WHERE group_name LIKE '%測試%' "
+                    "OR group_name LIKE '%練習%' OR group_name LIKE '%demo%'")
+        _skip = [r["group_id"] for r in cur.fetchall()]
+        if _skip:
+            gf = f" AND source_group_id NOT IN ({','.join('?' * len(_skip))})"
+            gp = list(_skip)
+        else:
+            gf, gp = "", []
     findings = []   # [(標題, [說明字串], 怎麼修)]
 
     def _g(gid):
