@@ -16800,7 +16800,7 @@ def report_web(request: Request):
     total_new = 0; total_supp = 0; total_active = 0; total_unverified = 0; total_verified = 0; total_closed = 0
     month_start = now_tw().strftime("%Y-%m-01")
     today_date = now_tw().strftime("%Y-%m-%d")
-    cur.execute("SELECT COUNT(*) as c FROM customers WHERE status IN ('CLOSED','PENALTY','ABANDONED','REJECTED') AND updated_at>=?", (month_start,))
+    cur.execute("SELECT COUNT(*) as c FROM customers WHERE status IN ('CLOSED', 'PENALTY', 'ABANDONED', 'REJECTED') AND COALESCE(NULLIF(closed_at,''), updated_at)>=?", (month_start,))
     total_closed = cur.fetchone()["c"]
     cur.execute("SELECT COUNT(*) as c FROM customers WHERE date(created_at)=?", (today_date,))
     today_new = cur.fetchone()["c"]
@@ -16811,7 +16811,7 @@ def report_web(request: Request):
         gid, gname = grp["group_id"], grp["group_name"]
         cur.execute("SELECT * FROM customers WHERE source_group_id=? AND status='ACTIVE' ORDER BY updated_at DESC", (gid,))
         active_rows = cur.fetchall()
-        cur.execute("SELECT * FROM customers WHERE source_group_id=? AND status IN ('CLOSED','PENALTY','ABANDONED','REJECTED') AND updated_at>=? ORDER BY updated_at DESC", (gid, month_start))
+        cur.execute("SELECT * FROM customers WHERE source_group_id=? AND status IN ('CLOSED', 'PENALTY', 'ABANDONED', 'REJECTED') AND COALESCE(NULLIF(closed_at,''), updated_at)>=? ORDER BY COALESCE(NULLIF(closed_at,''), updated_at) DESC", (gid, month_start))
         closed_rows = cur.fetchall()
 
         cats = classify_rows(active_rows)
@@ -21287,7 +21287,7 @@ def report2_page(request: Request):
         color = GROUP_COLORS[gi % len(GROUP_COLORS)]
         cur.execute("SELECT * FROM customers WHERE source_group_id=? AND status='ACTIVE' ORDER BY updated_at DESC", (gid,))
         arows = cur.fetchall()
-        cur.execute("SELECT COUNT(*) c FROM customers WHERE source_group_id=? AND status IN ('CLOSED','PENALTY','ABANDONED','REJECTED') AND updated_at>=?", (gid, month_start))
+        cur.execute("SELECT COUNT(*) c FROM customers WHERE source_group_id=? AND status IN ('CLOSED', 'PENALTY', 'ABANDONED', 'REJECTED') AND COALESCE(NULLIF(closed_at,''), updated_at)>=?", (gid, month_start))
         gclosed = cur.fetchone()["c"]
         custs = []; g_doc = 0; g_disb = 0; g_new = 0
         for row in arows:
