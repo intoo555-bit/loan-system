@@ -4510,10 +4510,15 @@ def init_db():
     # 找不到的（測試起來 1549 筆裡有 7 筆）留空，統計會 fallback updated_at。
     # 只補 closed_at 還是空的那些，所以重複啟動不會重跑、也不會蓋掉新寫入的值。
     try:
+        # ⛔ 一定要用 COALESCE 包 fallback：找不到結案紀錄的老資料（實測 1595 筆裡有 7 筆，
+        #    多半是早期匯入的）如果留 NULL，每次重新啟動都會再撈到、再 UPDATE 一次，
+        #    然後又推一則「已補上 7 位」的通知 → 變成雜訊，久了真的失敗時也不會有人看。
+        #    退而求其次填 updated_at（可能差幾天，但統計本來就是這樣 fallback）。
         cur.execute(
-            "UPDATE customers SET closed_at = ("
-            "  SELECT MAX(l.created_at) FROM case_logs l"
-            "  WHERE l.case_id = customers.case_id AND l.message_text LIKE '%結案%')"
+            "UPDATE customers SET closed_at = COALESCE("
+            "  (SELECT MAX(l.created_at) FROM case_logs l"
+            "   WHERE l.case_id = customers.case_id AND l.message_text LIKE '%結案%'),"
+            "  updated_at)"
             " WHERE status IN ('CLOSED','PENALTY','ABANDONED','REJECTED')"
             "   AND (closed_at IS NULL OR closed_at='')")
         _filled = cur.rowcount or 0
