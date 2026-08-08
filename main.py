@@ -6089,6 +6089,101 @@ def build_segment(sections: List[str], section_map: Dict, shown: set) -> str:
     return "\n".join(lines)
 
 
+def data_health_check(group_id: str = "") -> str:
+    """資料健檢：掃出「資料自相矛盾」的客戶，回中文報告。
+
+    每一項都是真的踩過的坑（2026-08 那幾天連續出事後加的）：
+    案子被自動刪掉、送件順序被砍、核准跑錯公司、結案日期跑掉…
+    這些的共同點是**系統照常運作、畫面看起來正常**，只有資料悄悄不一致，
+    要等業務發現日報怪怪的才會知道。健檢就是主動去翻這些。
+
+    group_id 空 = 掃全部群組（給系統通知群的每週健檢用）。
+    """
+    conn = get_conn(); cur = conn.cursor()
+    gf = "" if not group_id else " AND source_group_id=?"
+    gp = [] if not group_id else [group_id]
+    findings = []   # [(標題, [說明字串], 怎麼修)]
+
+    def _g(gid):
+        return get_group_name(gid) or (gid or "")[:8]
+
+    # 1. 同群組同身分證有多筆進行中 → 重複建檔，日報會出現兩個一樣的人
+    cur.execute(f"""SELECT source_group_id, id_no, GROUP_CONCAT(customer_name) nm, COUNT(*) n
+                    FROM customers WHERE status='ACTIVE' AND id_no IS NOT NULL AND id_no!=''{gf}
+                    GROUP BY source_group_id, id_no HAVING n>1""", gp)
+    dup = [f"{_g(r['source_group_id'])} {r['nm']}（{r['id_no']}）" for r in cur.fetchall()]
+    findings.append(("同一個人在同群組有多筆進行中", dup,
+                     "確認哪筆是對的，另一筆結案或刪除"))
+
+    # 2. 進行中但沒有任何在送的公司 → 日報會顯示不出送哪家
+    cur.execute(f"""SELECT customer_name, source_group_id FROM customers
+                    WHERE status='ACTIVE' AND (current_company IS NULL OR current_company='')
+                      AND (concurrent_companies IS NULL OR concurrent_companies=''){gf}""", gp)
+    nocom = [f"{_g(r['source_group_id'])} {r['customer_name']}" for r in cur.fetchall()]
+    findings.append(("進行中但沒有在送任何公司", nocom,
+                     "打「@AI 姓名 轉XXX」指定要送哪家，或結案"))
+
+    # 3. 有核准金額但沒歸到待撥款 → 日報看不到、業務以為還沒核准
+    cur.execute(f"""SELECT customer_name, source_group_id, approved_amount, report_section
+                    FROM customers WHERE status='ACTIVE' AND approved_amount IS NOT NULL
+                      AND approved_amount!='' AND report_section NOT IN ('待撥款','核准(房地)'){gf}""", gp)
+    appr = [f"{_g(r['source_group_id'])} {r['customer_name']} 核准{r['approved_amount']}"
+            f"（現在在「{r['report_section'] or '無'}」區）" for r in cur.fetchall()]
+    findings.append(("有核准金額卻不在待撥款區", appr,
+                     "網頁案件頁把「日報區塊」改成待撥款"))
+
+    # 4. 已撥款但案子還開著 → 撥完通常要結案，不然一直佔著日報
+    cur.execute(f"""SELECT customer_name, source_group_id, disbursement_date FROM customers
+                    WHERE status='ACTIVE' AND disbursement_date IS NOT NULL
+                      AND disbursement_date!=''{gf}""", gp)
+    disb = [f"{_g(r['source_group_id'])} {r['customer_name']} 撥款{r['disbursement_date']}"
+            for r in cur.fetchall()]
+    findings.append(("已撥款但案子還開著", disb,
+                     "確認是否該結案：@AI 姓名 結案"))
+
+    # 5. 目前送件的公司不在送件順序裡 → 資料自相矛盾（送件順序被砍過的典型跡象）
+    cur.execute(f"""SELECT customer_name, source_group_id, current_company, route_plan
+                    FROM customers WHERE status='ACTIVE' AND current_company IS NOT NULL
+                      AND current_company!='' AND route_plan IS NOT NULL AND route_plan!=''{gf}""", gp)
+    mism = []
+    for r in cur.fetchall():
+        try:
+            order = parse_route_json(r["route_plan"]).get("order") or []
+        except Exception:
+            continue
+        if order and not any(normalize_section(o) == normalize_section(r["current_company"]) for o in order):
+            mism.append(f"{_g(r['source_group_id'])} {r['customer_name']}："
+                        f"在送 {r['current_company']}，但順序裡沒有這家")
+    findings.append(("目前送件的公司不在送件順序裡", mism,
+                     "打「@AI 姓名 改順序 公司1/公司2」重設（注意是空格不是冒號）"))
+
+    # 6. 已結案但沒有結案日期 → 統計會退回用最後異動時間、數字不準
+    cur.execute(f"""SELECT COUNT(*) n FROM customers
+                    WHERE status IN ('CLOSED','PENALTY','ABANDONED','REJECTED')
+                      AND (closed_at IS NULL OR closed_at=''){gf}""", gp)
+    nc = cur.fetchone()["n"]
+    findings.append(("已結案但沒有結案日期", [f"{nc} 筆"] if nc else [],
+                     "重新部署會自動補；仍未補上再找工程師"))
+    conn.close()
+
+    total = sum(len(items) for _, items, _ in findings)
+    scope = "全部群組" if not group_id else get_group_name(group_id)
+    if total == 0:
+        return f"🩺 資料健檢（{scope}）\n\n✅ 沒有發現異常，資料乾淨。"
+    out = [f"🩺 資料健檢（{scope}）\n共發現 {total} 筆需要確認\n"]
+    for title, items, howto in findings:
+        if not items:
+            out.append(f"✅ {title}：正常")
+            continue
+        out.append(f"\n⚠️ {title}：{len(items)} 筆")
+        for it in items[:5]:
+            out.append(f"　• {it}")
+        if len(items) > 5:
+            out.append(f"　…還有 {len(items) - 5} 筆")
+        out.append(f"　→ 怎麼處理：{howto}")
+    return "\n".join(out)
+
+
 def generate_report_lines(group_id: str) -> List[str]:
     """
     產生日報，分三段對話框：
@@ -6436,6 +6531,10 @@ def parse_special_command(text: str, group_id: str) -> Optional[Dict]:
         return {"type": "follow_up_list"}
 
     # 統計：@AI 統計
+    # 資料健檢：@AI 健檢 / 資料健檢 / 體檢
+    if re.match(r"^(?:資料)?(?:健檢|體檢)$", clean):
+        return {"type": "health_check"}
+
     if re.match(r"^統計$", clean):
         return {"type": "stats"}
 
@@ -8339,6 +8438,16 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
 
         lines.append(f"\n💡 處理：補件補完打「@AI 姓名 已補XX」、卡關打「@AI 姓名 轉下一家」")
         reply_text(reply_token, "\n".join(lines))
+        return
+
+    if t == "health_check":
+        # A 群掃全部群組，業務群只掃自己的
+        try:
+            scope = "" if group_id == A_GROUP_ID else group_id
+            reply_text(reply_token, data_health_check(scope)[:4900])
+        except Exception as e:
+            import traceback; traceback.print_exc()
+            reply_text(reply_token, f"❌ 健檢失敗，請截圖給管理員\n錯誤代碼：{type(e).__name__}")
         return
 
     if t == "stats":
@@ -25905,6 +26014,31 @@ def send_backup_reminder() -> dict:
     return {"ok": bool(sent), "sent": sent, "failed": failed}
 
 
+def send_weekly_health_check():
+    """每週一自動資料健檢 → 只有發現異常才推系統通知群。
+
+    ⛔ 沒異常不推：每週都收到「一切正常」，久了就不會看，真的有事也跟著漏掉
+       （跟 closed_at 回填那則重複通知同一個道理）。
+    """
+    try:
+        report = data_health_check("")      # 空 = 掃全部群組
+        if "沒有發現異常" in report:
+            print("[health] 每週健檢：資料乾淨，不推播")
+            return
+        for gid in get_notify_group_ids():
+            push_text(gid, ("📅 每週資料健檢\n"
+                            "（這是系統自動跑的，發現下列資料互相矛盾，請確認）\n\n")
+                      + report[:4500])
+        print("[health] 每週健檢：發現異常，已推播")
+    except Exception as e:
+        print(f"[health] 每週健檢失敗：{e}")
+        try:
+            for gid in get_notify_group_ids():
+                push_text(gid, f"⚠️ 每週資料健檢執行失敗：{type(e).__name__}: {e}")
+        except Exception:
+            pass
+
+
 def _start_backup_scheduler():
     try:
         from apscheduler.schedulers.background import BackgroundScheduler
@@ -25932,6 +26066,15 @@ def _start_backup_scheduler():
         # - 每小時清過期 PDF（24 hr TTL）
         sched.add_job(_check_pdf_session_timeouts, "interval", minutes=1, id="pdf_session_timeout")
         sched.add_job(_cleanup_expired_pdfs, "interval", hours=1, id="pdf_cleanup")
+        # 每週一 09:30（台灣時間）自動資料健檢 → 有異常才推系統通知群
+        # ⛔ 沒異常不推：每週都收到「一切正常」，久了就不會看，真的有事也漏掉。
+        try:
+            sched.add_job(send_weekly_health_check, "cron", day_of_week="mon", hour=9, minute=30,
+                          timezone=_tz(_td(hours=8)), id="weekly_health_check")
+        except Exception as _e:
+            print(f"[scheduler] 週一健檢改用 UTC fallback：{_e}")
+            sched.add_job(send_weekly_health_check, "cron", day_of_week="mon", hour=1, minute=30,
+                          id="weekly_health_check")
         sched.start()
         print("[scheduler] PDF session timeout + cleanup tasks started")
         # 啟動時把下次執行時間印出來，方便在 Render log 確認排程真的有排到

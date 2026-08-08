@@ -630,6 +630,36 @@ except Exception as _e:
     check("通知失敗不會擋住啟動", False, f"往外炸了：{_e}")
 m.push_text, m.CHANNEL_ACCESS_TOKEN = _orig_push, _orig_token
 
+# ========== 43. 資料健檢 ==========
+# 2026-08 連續踩到的坑共同點：系統照常運作、畫面正常，只有資料悄悄自相矛盾，
+# 要等業務發現日報怪怪的才知道。健檢主動去翻這些。
+print("\n=== 43. 資料健檢 ===")
+conn10 = sqlite3.connect(TEST_DB)
+conn10.execute("INSERT OR REPLACE INTO groups (group_id, group_name, group_type, is_active, created_at) VALUES (?,?,?,?,?)",
+               ("HC_G", "健檢群", "SALES_GROUP", 1, datetime.now().isoformat()))
+conn10.commit(); conn10.close()
+check("乾淨資料回報正常", "沒有發現異常" in m.data_health_check("HC_G"),
+      m.data_health_check("HC_G")[:60])
+bc("4/21-健檢客H777777777", gid="HC_G")
+bc("4/21-健檢客-亞太機25萬/第一", gid="HC_G")
+_hc = m.find_active_by_name("健檢客")[0]
+m.update_customer(_hc["case_id"], current_company="喬美", approved_amount="20萬",
+                  disbursement_date="4/25", report_section="",
+                  text="製造異常", from_group_id="HC_G")
+_rep = m.data_health_check("HC_G")
+check("抓到：送的公司不在送件順序裡", "不在送件順序裡" in _rep and "喬美" in _rep, _rep[:80])
+check("抓到：有核准金額卻不在待撥款區", "不在待撥款區" in _rep, _rep[:80])
+check("抓到：已撥款但案子還開著", "已撥款但案子還開著" in _rep, _rep[:80])
+check("報告有寫怎麼處理", "怎麼處理" in _rep, "沒有處理建議")
+# 每週自動健檢：乾淨不推播（避免變雜訊），有異常才推
+_hsent = []
+_op, _ot = m.push_text, m.CHANNEL_ACCESS_TOKEN
+m.push_text = lambda gid, msg: (_hsent.append(msg), (True, ""))[1]
+m.CHANNEL_ACCESS_TOKEN = "dummy"
+m.send_weekly_health_check()
+check("每週健檢有異常會推播", len(_hsent) >= 1, f"推了 {len(_hsent)} 則")
+m.push_text, m.CHANNEL_ACCESS_TOKEN = _op, _ot
+
 # ========== 總結 ==========
 print(f"\n{'='*50}")
 print(f"結果：{PASS} 通過、{FAIL} 失敗")
