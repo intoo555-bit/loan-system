@@ -15238,7 +15238,7 @@ def reset_data_page(request: Request):
     role = check_auth(request)
     if role != "admin":
         return RedirectResponse("/login", status_code=303)
-    return HTMLResponse("""<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>清除測試資料</title></head><body>
+    return HTMLResponse("""<!DOCTYPE html><html><head><meta charset="UTF-8"><link rel="icon" type="image/png" href="/favicon.ico?v=2"><meta name="viewport" content="width=device-width,initial-scale=1"><title>清除測試資料</title></head><body>
     <h2>⚠️ 清除測試資料</h2>
     <p>此操作將清除所有客戶案件紀錄，群組設定不受影響。</p>
     <p><b>清除後無法復原（除非從 Render Snapshot 還原）</b></p>
@@ -15653,6 +15653,9 @@ def list_form_tokens(limit: int = 100):
 
 PAGE_CSS = """
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<!-- 書籤/分頁的小圖示。⛔ 光有 /favicon.ico 路由不夠、瀏覽器不一定會自己去要，
+     要在頁面明講；?v=2 是為了讓已經快取舊圖的瀏覽器重新抓。 -->
+<link rel="icon" type="image/png" href="/favicon.ico?v=2">
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f4f6f9;color:#1a1a2e;font-size:14px}
@@ -16109,7 +16112,7 @@ def login_page(request: Request, error: str = ""):
     cur.execute("SELECT group_id, group_name FROM groups WHERE group_type='SALES_GROUP' AND is_active=1 ORDER BY group_name")
     sales_groups = cur.fetchall(); conn.close()
     grp_opts = "".join(f'<option value="{h(g["group_id"])}">{h(g["group_name"])}</option>' for g in sales_groups)
-    return f"""<!DOCTYPE html><html lang="zh-Hant"><head><meta charset="UTF-8">
+    return f"""<!DOCTYPE html><html lang="zh-Hant"><head><meta charset="UTF-8"><link rel="icon" type="image/png" href="/favicon.ico?v=2">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>登入 · 貸款案件管理</title>
 <style>
 *{{box-sizing:border-box}}
@@ -16364,7 +16367,7 @@ def device_pending_page(request: Request, rejected: str = ""):
     else:
         icon = "🔒"; title = "新裝置待核准"
         msg = "為了帳號安全，第一次用這台裝置／瀏覽器登入需要<b>總管理員核准</b>。<br>請聯絡管理員在「裝置管理」按「允許」，之後你就能正常登入了。"
-    return f"""<!DOCTYPE html><html lang="zh-Hant"><head><meta charset="UTF-8">
+    return f"""<!DOCTYPE html><html lang="zh-Hant"><head><meta charset="UTF-8"><link rel="icon" type="image/png" href="/favicon.ico?v=2">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{title}</title></head>
 <body style="margin:0;font-family:'Noto Sans TC','Microsoft JhengHei',sans-serif;background:linear-gradient(135deg,#0d2237,#123350);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px">
@@ -16387,7 +16390,7 @@ def device_name_page(request: Request, t: str = "", err: str = ""):
     err_html = ('<div style="background:#fff0f1;color:#e5484d;font-size:13px;padding:9px 12px;border-radius:9px;margin-bottom:12px">請先輸入這台裝置是誰</div>' if err else '')
     chips = "".join(f'<button type="button" class="chip" onclick="fillType(\'{c}\')">{c}</button>'
                     for c in ["公司電腦", "家裡筆電", "工作手機", "個人手機", "平板"])
-    return f"""<!DOCTYPE html><html lang="zh-Hant"><head><meta charset="UTF-8">
+    return f"""<!DOCTYPE html><html lang="zh-Hant"><head><meta charset="UTF-8"><link rel="icon" type="image/png" href="/favicon.ico?v=2">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>這台裝置是誰</title>
 <style>
 *{{box-sizing:border-box}}body{{margin:0;font-family:'Noto Sans TC','Microsoft JhengHei',sans-serif;background:linear-gradient(135deg,#0d2237,#123350);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}}
@@ -16630,7 +16633,7 @@ function devKickAll(){
             f'{_section("✅ 已授權裝置", approved, "approved", "尚無已授權裝置")}'
             + (_section("⛔ 已拒絕／停用", rejected, "rejected", "") if rejected else "")
             + '</div>')
-    return (f"<!DOCTYPE html><html lang='zh-Hant'><head><meta charset='utf-8'>"
+    return (f"<!DOCTYPE html><html lang='zh-Hant'><head><meta charset='utf-8'><link rel='icon' type='image/png' href='/favicon.ico?v=2'>"
             f"<meta name='viewport' content='width=device-width,initial-scale=1'><title>裝置管理</title>"
             f"<style>{css}</style></head><body>{_page_topnav(role, 'devices')}{body}{modal_html}"
             f"<script>{js}</script></body></html>")
@@ -16766,7 +16769,7 @@ def admin_merge_dups_page(request: Request):
                f'box-shadow:0 8px 20px rgba(21,140,150,.28)">🧹 一鍵合併全部（共 {total_merge} 筆會被合併掉）</button>')
 
     nav = _page_topnav(role, "merge-dups")
-    return HTMLResponse(f"""<!DOCTYPE html><html lang="zh-Hant"><head><meta charset="UTF-8">
+    return HTMLResponse(f"""<!DOCTYPE html><html lang="zh-Hant"><head><meta charset="UTF-8"><link rel="icon" type="image/png" href="/favicon.ico?v=2">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>合併重複案件</title>
 <style>*{{box-sizing:border-box}}body{{margin:0;font-family:'Noto Sans TC','Microsoft JhengHei',sans-serif;background:#eef3f6}}
 .wrap{{max-width:820px;margin:0 auto;padding:20px 16px 60px}}
@@ -17524,7 +17527,7 @@ def search_page(request: Request, q: str = "", grp: str = "", date_from: str = "
   <div style="margin-top:12px">{pager}</div>
 </div></div>"""
 
-    return ("<!DOCTYPE html><html lang='zh-Hant'><head><meta charset='utf-8'>"
+    return ("<!DOCTYPE html><html lang='zh-Hant'><head><meta charset='utf-8'><link rel='icon' type='image/png' href='/favicon.ico?v=2'>"
             "<meta name='viewport' content='width=device-width,initial-scale=1'>"
             "<title>跨群組客戶查詢</title><style>" + _SEARCH_CSS + "</style></head><body>"
             + _page_topnav(role, "search") + shell + "<script>" + _SEARCH_JS + "</script></body></html>")
@@ -18341,7 +18344,7 @@ def edit_pending_get(request: Request, case_id: str = ""):
     except Exception:
         unloan_data = []
     unloan_json = _json2.dumps(unloan_data, ensure_ascii=False)
-    return f"""<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+    return f"""<!DOCTYPE html><html><head><meta charset="UTF-8"><link rel="icon" type="image/png" href="/favicon.ico?v=2"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>編輯 {h(v("customer_name"))}</title>
 {PAGE_CSS}
 <style>
@@ -18695,7 +18698,7 @@ async def edit_pending_post(request: Request):
     # 居住=自有 → 房屋私設必填（server-side 防呆、前端 JS 已有但可被繞）
     if (f.get("lstatus","") or "").strip() == "自有" and not (f.get("hprivate","") or "").strip():
         return HTMLResponse(
-            """<!DOCTYPE html><html><head><meta charset="UTF-8"><style>body{font-family:'Microsoft JhengHei',sans-serif;background:#ece8e2;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;}.box{background:#faf7f4;border:1px solid #ddd5ca;border-radius:12px;padding:32px;max-width:480px;}.title{font-size:18px;font-weight:700;color:#991b1b;margin-bottom:12px;}.btn{background:#6a5e4e;color:#fff;border:none;padding:10px 24px;border-radius:8px;font-size:14px;cursor:pointer;text-decoration:none;display:inline-block;margin-top:16px;}</style></head><body><div class="box"><div class="title">⚠️ 居住「自有」時、房屋私設必填（有 / 無）</div><a href="javascript:history.back()" class="btn">← 返回修正</a></div></body></html>""",
+            """<!DOCTYPE html><html><head><meta charset="UTF-8"><link rel="icon" type="image/png" href="/favicon.ico?v=2"><style>body{font-family:'Microsoft JhengHei',sans-serif;background:#ece8e2;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;}.box{background:#faf7f4;border:1px solid #ddd5ca;border-radius:12px;padding:32px;max-width:480px;}.title{font-size:18px;font-weight:700;color:#991b1b;margin-bottom:12px;}.btn{background:#6a5e4e;color:#fff;border:none;padding:10px 24px;border-radius:8px;font-size:14px;cursor:pointer;text-decoration:none;display:inline-block;margin-top:16px;}</style></head><body><div class="box"><div class="title">⚠️ 居住「自有」時、房屋私設必填（有 / 無）</div><a href="javascript:history.back()" class="btn">← 返回修正</a></div></body></html>""",
             status_code=400)
     live_same = "1" if f.get("sameck") else "0"
     now = now_iso()
@@ -19062,7 +19065,7 @@ def case_edit_get(request: Request, case_id: str = "", saved: str = ""):
 
     saved_msg = '<div style="background:#dcfce7;color:#166534;padding:10px 14px;border-radius:6px;margin-bottom:14px;font-weight:600">✅ 已儲存</div>' if saved else ""
 
-    return HTMLResponse(f"""<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+    return HTMLResponse(f"""<!DOCTYPE html><html><head><meta charset="UTF-8"><link rel="icon" type="image/png" href="/favicon.ico?v=2"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>案件狀態 - {h(v("customer_name"))}</title>
 {PAGE_CSS}
 <style>
@@ -20172,7 +20175,7 @@ function exportSel(){{var ids=[...document.querySelectorAll('.case-chk:checked')
 function exportAll(){{var ids=[...document.querySelectorAll('.case-chk')].map(function(c){{return c.value;}});if(!ids.length){{alert('目前沒有可匯出的客戶');return;}}window.open('/customer-pdf-batch?ids='+encodeURIComponent(ids.join(',')));}}
 </script>"""
 
-    return ("<!DOCTYPE html><html lang='zh-Hant'><head><meta charset='utf-8'>"
+    return ("<!DOCTYPE html><html lang='zh-Hant'><head><meta charset='utf-8'><link rel='icon' type='image/png' href='/favicon.ico?v=2'>"
             "<meta name='viewport' content='width=device-width,initial-scale=1'>"
             "<title>客戶資料庫</title><style>" + css + "</style></head><body>"
             + _page_topnav(role, "pending") + shell + "</body></html>")
@@ -20496,7 +20499,7 @@ def history_page(request: Request, group: str = "", month: str = "", q: str = ""
   </main>
 </div>"""
 
-    return ("<!DOCTYPE html><html lang='zh-Hant'><head><meta charset='utf-8'>"
+    return ("<!DOCTYPE html><html lang='zh-Hant'><head><meta charset='utf-8'><link rel='icon' type='image/png' href='/favicon.ico?v=2'>"
             "<meta name='viewport' content='width=device-width,initial-scale=1'>"
             "<title>案件結案</title><style>" + _HIST_CSS + "</style></head><body>"
             + shell + "<script>const HDATA=" + data_json + ";\n" + _HIST_JS + "</script></body></html>")
@@ -21044,7 +21047,7 @@ th{text-align:left;padding:10px 11px;color:var(--muted);background:#f8fafc;borde
 })();
 </script>
 """
-    page = ("<!DOCTYPE html><html lang='zh-Hant'><head><meta charset='utf-8'>"
+    page = ("<!DOCTYPE html><html lang='zh-Hant'><head><meta charset='utf-8'><link rel='icon' type='image/png' href='/favicon.ico?v=2'>"
             "<meta name='viewport' content='width=device-width,initial-scale=1'>"
             "<title>網頁指令台</title><style>" + css + "</style></head><body>"
             + _page_topnav(role, "console") + shell + js + "</body></html>")
@@ -21610,7 +21613,7 @@ def report2_page(request: Request):
 <script>function toggleSide(){{var s=document.querySelector('.side');if(!s)return;var o=s.classList.toggle('side-open');var sc=document.getElementById('sideScrim');if(sc)sc.style.display=o?'block':'none';}}
 document.addEventListener('click',function(e){{var s=document.querySelector('.side');if(s&&s.classList.contains('side-open')&&e.target.closest('.side a')){{s.classList.remove('side-open');var sc=document.getElementById('sideScrim');if(sc)sc.style.display='none';}}}});</script>"""
 
-    page = ("<!DOCTYPE html><html lang='zh-Hant'><head><meta charset='utf-8'>"
+    page = ("<!DOCTYPE html><html lang='zh-Hant'><head><meta charset='utf-8'><link rel='icon' type='image/png' href='/favicon.ico?v=2'>"
             "<meta name='viewport' content='width=device-width,initial-scale=1'>"
             "<title>公司日報</title><style>" + _REPORT2_CSS + "</style></head><body>"
             + shell + "<script>const DATA=" + data_json + ";\n"
@@ -22119,7 +22122,7 @@ async def new_customer_post(request: Request):
                 errs.append(f"{pkeys[i]}與{pkeys[j]}電話相同（{phones[pkeys[i]]}），請確認")
     if errs:
         err_html = "<ul>" + "".join(f"<li>{h(e)}</li>" for e in errs) + "</ul>"
-        return HTMLResponse(f"""<!DOCTYPE html><html><head><meta charset="UTF-8"><style>body{{font-family:'Microsoft JhengHei',sans-serif;background:#ece8e2;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;}}.box{{background:#faf7f4;border:1px solid #ddd5ca;border-radius:12px;padding:32px;max-width:480px;}}.title{{font-size:18px;font-weight:700;color:#991b1b;margin-bottom:12px;}}.btn{{background:#6a5e4e;color:#fff;border:none;padding:10px 24px;border-radius:8px;font-size:14px;cursor:pointer;text-decoration:none;display:inline-block;margin-top:16px;}}</style></head><body><div class="box"><div class="title">⚠️ 請修正以下欄位</div>{err_html}<a href="javascript:history.back()" class="btn">← 返回修正</a></div></body></html>""", status_code=400)
+        return HTMLResponse(f"""<!DOCTYPE html><html><head><meta charset="UTF-8"><link rel="icon" type="image/png" href="/favicon.ico?v=2"><style>body{{font-family:'Microsoft JhengHei',sans-serif;background:#ece8e2;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;}}.box{{background:#faf7f4;border:1px solid #ddd5ca;border-radius:12px;padding:32px;max-width:480px;}}.title{{font-size:18px;font-weight:700;color:#991b1b;margin-bottom:12px;}}.btn{{background:#6a5e4e;color:#fff;border:none;padding:10px 24px;border-radius:8px;font-size:14px;cursor:pointer;text-decoration:none;display:inline-block;margin-top:16px;}}</style></head><body><div class="box"><div class="title">⚠️ 請修正以下欄位</div>{err_html}<a href="javascript:history.back()" class="btn">← 返回修正</a></div></body></html>""", status_code=400)
     source_group_id = f.get("grp","")
     live_same = "1" if f.get("sameck") else "0"
     conn = get_conn(); cur = conn.cursor()
@@ -22130,7 +22133,7 @@ async def new_customer_post(request: Request):
         case_id = existing["case_id"]
         conn.close()
         existing_name = existing["customer_name"]
-        return HTMLResponse(f"""<!DOCTYPE html><html><head><meta charset="UTF-8">
+        return HTMLResponse(f"""<!DOCTYPE html><html><head><meta charset="UTF-8"><link rel="icon" type="image/png" href="/favicon.ico?v=2">
 <style>body{{font-family:'Microsoft JhengHei',sans-serif;background:#ece8e2;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;}}
 .box{{background:#faf7f4;border:1px solid #ddd5ca;border-radius:12px;padding:32px;max-width:480px;text-align:center;}}
 .icon{{font-size:48px;margin-bottom:16px;}}
@@ -22193,7 +22196,7 @@ async def new_customer_post(request: Request):
     conn.commit(); conn.close()
     gname = get_group_name(source_group_id)
     # 行政A填完 → 顯示提示頁，告知業務去 LINE 建相簿
-    return HTMLResponse(f"""<!DOCTYPE html><html><head><meta charset="UTF-8">
+    return HTMLResponse(f"""<!DOCTYPE html><html><head><meta charset="UTF-8"><link rel="icon" type="image/png" href="/favicon.ico?v=2">
 <style>body{{font-family:'Microsoft JhengHei',sans-serif;background:#ece8e2;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;}}
 .box{{background:#faf7f4;border:1px solid #ddd5ca;border-radius:12px;padding:32px;max-width:480px;text-align:center;}}
 .title{{font-size:20px;font-weight:700;color:#2c2820;margin-bottom:12px;}}
@@ -22260,7 +22263,7 @@ def customer_pdf(request: Request, case_id: str = ""):
     reg_addr = f'{v("reg_city")}{v("reg_district")}{v("reg_address")}'
     company_addr = f'{v("company_city")}{v("company_district")}{v("company_address")}'
 
-    return f"""<!DOCTYPE html><html lang="zh-TW"><head><meta charset="UTF-8">
+    return f"""<!DOCTYPE html><html lang="zh-TW"><head><meta charset="UTF-8"><link rel="icon" type="image/png" href="/favicon.ico?v=2">
 <title>客戶資料 - {v("customer_name")}</title>
 <style>
 @media print {{ @page {{ size: A4 portrait; margin: 10mm 12mm; }} .no-print {{ display: none !important; }} }}
@@ -22664,7 +22667,7 @@ def customer_pdf_batch(request: Request, ids: str = ""):
     else:
         pdf_filename = f"{first_name}_客戶資料.pdf"
 
-    return f"""<!DOCTYPE html><html lang="zh-TW"><head><meta charset="UTF-8">
+    return f"""<!DOCTYPE html><html lang="zh-TW"><head><meta charset="UTF-8"><link rel="icon" type="image/png" href="/favicon.ico?v=2">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>客戶資料批次列印（{len(ordered)} 筆）</title>
 {_PDF_STYLE}
@@ -25229,7 +25232,7 @@ async def data_health_page(request: Request):
         cards = "".join(blocks)
 
     scope = "全部群組" if not gid else get_group_name(gid)
-    return HTMLResponse(f"""<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8">
+    return HTMLResponse(f"""<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><link rel="icon" type="image/png" href="/favicon.ico?v=2">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>資料健檢</title></head>
 <body style="margin:0;background:#f1f5f9;font-family:system-ui,-apple-system,'Microsoft JhengHei',sans-serif">
 {make_topnav(role, "data-health")}
@@ -25944,7 +25947,7 @@ function exportPDF(){
     'table.main th{background:#f0ebe4;color:#3a3020;font-weight:600;width:90px;white-space:nowrap;}'+
     'table.main td{background:#fff;}tr.sh th{background:#3a3530;color:#fff;font-size:12px;font-weight:700;padding:5px 10px;}'+
     '@media print{@page{size:A4 portrait;margin:10mm 12mm;}.np{display:none!important;}}';
-  var html='<!DOCTYPE html><html lang="zh-TW"><head><meta charset="UTF-8">'+
+  var html='<!DOCTYPE html><html lang="zh-TW"><head><meta charset="UTF-8"><link rel="icon" type="image/png" href="/favicon.ico?v=2">'+
     '<title>客戶資料表 - '+name+'</title><style>'+css+'</style></head><body>'+
     '<div class="hdr"><div><div class="hdr-name">'+name+'</div>'+
     '<div class="hdr-sub">群組：'+grpName+'　日期：'+today+'</div></div>'+
