@@ -25169,6 +25169,22 @@ async def test_backup_reminder(request: Request):
         f"<div style='padding:40px;font-family:sans-serif;font-size:16px'>{body}</div>")
 
 
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    """瀏覽器分頁的小圖示（原本是預設的地球圖）。
+
+    ⛔ 用路由提供，不要去改 42 個頁面的 <head>：瀏覽器本來就會自動請求
+       /favicon.ico，一個路由蓋全站；改 42 處一定會漏掉幾個。
+    圖檔在 static/favicon.png（256x256，從「貸款案件管理」那張圖裁掉下面的字）。
+    """
+    from fastapi.responses import FileResponse, Response
+    _p = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", "favicon.png")
+    if os.path.exists(_p):
+        return FileResponse(_p, media_type="image/png",
+                            headers={"Cache-Control": "public, max-age=86400"})
+    return Response(status_code=404)
+
+
 @app.get("/admin/data-health", response_class=HTMLResponse)
 async def data_health_page(request: Request):
     """資料健檢（⛔ 只有總管理員看得到）。
