@@ -6131,20 +6131,27 @@ def _data_health_findings(group_id: str = ""):
     findings.append(("同一個人在同群組有多筆進行中", dup,
                      "確認哪筆是對的，另一筆結案或刪除"))
 
-    # 2. 進行中但沒有任何在送的公司 → 日報會顯示不出送哪家
-    cur.execute(f"""SELECT customer_name, source_group_id FROM customers
-                    WHERE status='ACTIVE' AND (current_company IS NULL OR current_company='')
-                      AND (concurrent_companies IS NULL OR concurrent_companies=''){gf}""", gp)
-    nocom = [f"{_g(r['source_group_id'])} {r['customer_name']}" for r in cur.fetchall()]
+    # 2 & 3：⛔ 一定要用 compute_customer_display（日報那套）判斷，不可以自己看欄位。
+    #   日報有兩層 fallback，只看欄位會誤報：
+    #   - 沒有 current_company 時會退回用 company 欄位
+    #   - 送件順序裡只要有核准紀錄，就自動歸「待撥款」，不管 report_section 是什麼
+    #   2026-08-11 就誤報過：郭晉瑋 report_section 是空的但日報明明在待撥款區。
+    cur.execute(f"SELECT * FROM customers WHERE status='ACTIVE'{gf}", gp)
+    nocom, appr = [], []
+    for r in cur.fetchall():
+        try:
+            info = compute_customer_display(r)
+        except Exception:
+            continue
+        who = f"{_g(r['source_group_id'])} {r['customer_name']}"
+        concur = (r["concurrent_companies"] or "").strip()
+        if not (info.get("current_co") or "").strip() and not concur:
+            nocom.append(who)
+        amt = (r["approved_amount"] or "").strip()
+        if amt and info.get("section") not in ("待撥款", "核准(房地)"):
+            appr.append(f"{who} 核准{amt}（日報顯示在「{info.get('section') or '無'}」區）")
     findings.append(("進行中但沒有在送任何公司", nocom,
                      "打「@AI 姓名 轉XXX」指定要送哪家，或結案"))
-
-    # 3. 有核准金額但沒歸到待撥款 → 日報看不到、業務以為還沒核准
-    cur.execute(f"""SELECT customer_name, source_group_id, approved_amount, report_section
-                    FROM customers WHERE status='ACTIVE' AND approved_amount IS NOT NULL
-                      AND approved_amount!='' AND report_section NOT IN ('待撥款','核准(房地)'){gf}""", gp)
-    appr = [f"{_g(r['source_group_id'])} {r['customer_name']} 核准{r['approved_amount']}"
-            f"（現在在「{r['report_section'] or '無'}」區）" for r in cur.fetchall()]
     findings.append(("有核准金額卻不在待撥款區", appr,
                      "網頁案件頁把「日報區塊」改成待撥款"))
 

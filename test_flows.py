@@ -651,6 +651,23 @@ check("抓到：送的公司不在送件順序裡", "不在送件順序裡" in _
 check("抓到：有核准金額卻不在待撥款區", "不在待撥款區" in _rep, _rep[:80])
 check("抓到：已撥款但案子還開著", "已撥款但案子還開著" in _rep, _rep[:80])
 check("報告有寫怎麼處理", "怎麼處理" in _rep, "沒有處理建議")
+# ⛔ 健檢的判斷要跟日報一致，不可以自己看欄位。
+# 2026-08-11 誤報過：郭晉瑋 report_section 是空的，但送件順序裡有核准紀錄，
+# 日報的「核准補強」會自動把他歸到待撥款 —— 健檢卻報「不在待撥款區」。
+bc("7/31-甲健檢H881111111", gid="HC_G")
+bc("7/31-甲健檢-和裕", gid="HC_G")
+_a = m.find_active_by_name("甲健檢")[0]["case_id"]
+m.update_customer(_a, approved_amount="5萬", report_section="",
+                  route_plan=m.make_route_json(["和裕"], 0,
+                      [{"company": "和裕", "status": "核准", "amount": "5萬"}]),
+                  text="核准", from_group_id="HC_G")
+bc("7/31-乙健檢H882222222", gid="HC_G")
+bc("7/31-乙健檢-和裕", gid="HC_G")
+_b = m.find_active_by_name("乙健檢")[0]["case_id"]
+m.update_customer(_b, approved_amount="5萬", report_section="", text="核准", from_group_id="HC_G")
+_rep2 = m.data_health_check("HC_G")
+check("日報已歸待撥款的不誤報", "甲健檢" not in _rep2, "甲健檢被誤報了")
+check("送件順序沒核准紀錄的照樣抓到", "乙健檢" in _rep2, "乙健檢漏掉了")
 # 每週自動健檢：乾淨不推播（避免變雜訊），有異常才推
 _hsent = []
 _op, _ot = m.push_text, m.CHANNEL_ACCESS_TOKEN
