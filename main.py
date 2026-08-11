@@ -4704,7 +4704,64 @@ def create_customer_record(name, id_no, company, source_group_id, text,
                 (case_id,customer_name,id_no,source_group_id,company,route_plan,current_company,report_section,last_update,status,created_at,updated_at)
                 VALUES (?,?,?,?,?,?,?,?,?,'ACTIVE',?,?)""",
                 (case_id, name, id_no, source_group_id, company, route_plan, current_company, report_section, text, now, now))
+            _copy_personal_from_previous_case(cur, case_id, id_no, name)
             return case_id
+
+
+# 建新案時「不」從舊案帶過來的欄位 —— 其餘個資一律帶。
+# 理由：同一個人再來辦，身分證、生日、公司、聯絡人這些不會變，讓業務重打一次
+#       既浪費時間又容易打錯；但下面這些是「這一次申請專屬」或不該沿用的。
+_NO_COPY_FIELDS = {
+    "id", "case_id", "customer_name", "id_no", "source_group_id",
+    "created_at", "updated_at", "status", "closed_at", "approved_at",
+    # 案件狀態
+    "company", "current_company", "concurrent_companies", "route_plan",
+    "report_section", "approved_amount", "disbursement_date", "company_status",
+    "last_update", "pending_docs", "notify_amount", "notify_period",
+    "penalty_amount", "penalty_date", "penalty_pending",
+    "signing_area", "signing_salesperson", "signing_company",
+    "signing_time", "signing_location",
+    # 這次申請專屬
+    "product_type", "product_model", "product_imei", "selected_plans",
+    "qm_inst_amount", "qm_inst_periods", "qm_inst_payment", "qm_inst_total",
+    # 簽名是法律文件，新案要重簽
+    "signature_img", "signature_applicant", "signature_legal_rep",
+    # 業務員／建立者跟著新群組走
+    "sales_name", "created_by_role",
+}
+
+
+def _copy_personal_from_previous_case(cur, new_case_id: str, id_no: str, name: str) -> int:
+    """同一個客人再次申請時，把個資從舊案帶過來（回傳帶了幾個欄位）。
+
+    2026-08-11 使用者反映：黃宏棋在別的群組已結案，新群組重新建檔卻是一片空白，
+    身分證、電話、公司、聯絡人全部要重打。同一個人的個資不會變，沒理由重打。
+
+    ⛔ 只帶「人」的資料，不帶「案件」的資料（見 _NO_COPY_FIELDS）——
+       否則新案會繼承舊案的核准金額、撥款日期、送件順序，變成假資料。
+    ⛔ 跨群組也帶：同一個客人本來就可能先在 A 群送、後來換 B 群再送。
+    """
+    if not id_no:
+        return 0
+    try:
+        cur.execute("""SELECT * FROM customers
+                       WHERE id_no=? AND case_id!=? AND status!='DELETED'
+                       ORDER BY updated_at DESC LIMIT 1""", (normalize_id_no(id_no), new_case_id))
+        prev = cur.fetchone()
+        if not prev:
+            return 0
+        keys = [k for k in prev.keys() if k not in _NO_COPY_FIELDS]
+        pairs = [(k, prev[k]) for k in keys
+                 if prev[k] is not None and str(prev[k]).strip() not in ("", "{}", "[]")]
+        if not pairs:
+            return 0
+        cur.execute(f"UPDATE customers SET {','.join(f'{k}=?' for k, _ in pairs)} WHERE case_id=?",
+                    (*[v for _, v in pairs], new_case_id))
+        print(f"[新案] {name} 從舊案帶入 {len(pairs)} 個個資欄位")
+        return len(pairs)
+    except Exception as e:
+        print(f"[新案] 帶入舊案個資失敗（不影響建檔）：{e}")
+        return 0
 
 
 def _dedupe_same_id_in_group(id_no, group_id, prefer_case_id=""):

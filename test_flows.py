@@ -677,6 +677,38 @@ m.send_weekly_health_check()
 check("每週健檢有異常會推播", len(_hsent) >= 1, f"推了 {len(_hsent)} 則")
 m.push_text, m.CHANNEL_ACCESS_TOKEN = _op, _ot
 
+# ========== 44. 同客戶再次申請：個資要帶過來、案件資料不可繼承 ==========
+# 2026-08-11 黃宏棋：在別的群組已結案，新群組重新建檔卻一片空白，
+# 身分證、電話、公司、聯絡人全部要重打。同一個人的個資不會變。
+print("\n=== 44. 同客戶再次申請帶入個資 ===")
+conn11 = sqlite3.connect(TEST_DB)
+conn11.execute("INSERT OR REPLACE INTO groups (group_id, group_name, group_type, is_active, created_at) VALUES (?,?,?,?,?)",
+               ("CP_B", "帶資料B群", "SALES_GROUP", 1, datetime.now().isoformat()))
+conn11.commit(); conn11.close()
+bc("5/1-帶測客C888888888", gid="TEST_B")
+_old = m.find_active_by_name("帶測客")[0]["case_id"]
+conn11 = sqlite3.connect(TEST_DB)
+conn11.execute("""UPDATE customers SET birth_date='080/05/12', phone='0912345678',
+    reg_city='高雄市', company_name_detail='大耀工程', contact1_name='王小美',
+    approved_amount='7萬', disbursement_date='5/8', status='CLOSED' WHERE case_id=?""", (_old,))
+conn11.commit(); conn11.close()
+bc("8/11-帶測客C888888888", gid="CP_B")       # 換群組重新申請
+conn11 = sqlite3.connect(TEST_DB); conn11.row_factory = sqlite3.Row
+_new = conn11.execute("SELECT * FROM customers WHERE id_no='C888888888' AND source_group_id='CP_B'").fetchone()
+conn11.close()
+check("新案有建起來", _new is not None)
+if _new:
+    check("個資有帶過來（生日/電話/公司/聯絡人）",
+          _new["birth_date"] == "080/05/12" and _new["phone"] == "0912345678"
+          and _new["company_name_detail"] == "大耀工程" and _new["contact1_name"] == "王小美",
+          f"birth={_new['birth_date']} phone={_new['phone']} co={_new['company_name_detail']}")
+    check("⛔ 核准金額不可繼承", not (_new["approved_amount"] or "").strip(),
+          f"approved={_new['approved_amount']}")
+    check("⛔ 撥款日期不可繼承", not (_new["disbursement_date"] or "").strip(),
+          f"disb={_new['disbursement_date']}")
+    check("新案是進行中、屬於新群組", _new["status"] == "ACTIVE" and _new["source_group_id"] == "CP_B",
+          f"status={_new['status']} gid={_new['source_group_id']}")
+
 # ========== 總結 ==========
 print(f"\n{'='*50}")
 print(f"結果：{PASS} 通過、{FAIL} 失敗")
