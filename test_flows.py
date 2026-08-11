@@ -757,6 +757,17 @@ check("空欄位有補上", _fp_r["phone"] == "0912345678" and _fp_r["company_na
       f"phone={_fp_r['phone']} co={_fp_r['company_name_detail']}")
 check("⛔ 已填好的不可被覆蓋", _fp_r["contact1_name"] == "現場填的聯絡人",
       f"contact1={_fp_r['contact1_name']}")
+# 建檔訊息要告訴業務「資料是帶過來的、記得確認」，不然他不知道那是舊資料
+_hint_new = bc("8/11-提示客H555666777", gid="TEST_B")
+check("全新客戶不加提示", "帶入" not in (_hint_new or ""), _hint_new)
+conn13 = sqlite3.connect(TEST_DB)
+_h_old = conn13.execute("SELECT case_id FROM customers WHERE id_no='H555666777'").fetchone()[0]
+conn13.execute("""UPDATE customers SET phone='0911222333', company_name_detail='測試公司',
+    status='CLOSED' WHERE case_id=?""", (_h_old,))
+conn13.commit(); conn13.close()
+_hint_msg = bc("8/11-提示客H555666777", gid="CP_B")
+check("老客戶建檔會提示帶入幾項", "帶入" in (_hint_msg or "") and "確認" in (_hint_msg or ""),
+      _hint_msg)
 
 # ========== 總結 ==========
 print(f"\n{'='*50}")

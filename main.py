@@ -4731,6 +4731,29 @@ _NO_COPY_FIELDS = {
 }
 
 
+# 記「剛才建檔帶了幾項資料」，給建檔成功訊息用。
+# ⛔ 用 threading.local：LINE webhook 是背景執行緒併發處理的，
+#    用普通全域變數會互相蓋掉，甲客戶的筆數跑到乙客戶的訊息上。
+# ⛔ 不改 create_customer_record 的回傳值：它有 18 個呼叫點，改介面一定會漏掉幾個。
+_last_copy_ctx = _threading.local()
+
+
+def _pop_copied_count() -> int:
+    """取出並清掉「剛才建檔帶入幾項個資」。取過就歸零，避免下一筆誤用。"""
+    n = getattr(_last_copy_ctx, "n", 0)
+    _last_copy_ctx.n = 0
+    return n
+
+
+def _copied_hint() -> str:
+    """建檔成功訊息要附加的提示（沒帶入資料就回空字串）。"""
+    n = _pop_copied_count()
+    if not n:
+        return ""
+    return (f"\n📋 已從舊案帶入 {n} 項資料"
+            f"\n⚠️ 請跟客戶確認有沒有變動（公司、月薪、住址、電話）")
+
+
 def _copy_personal_from_previous_case(cur, new_case_id: str, id_no: str, name: str,
                                       only_empty: bool = False) -> int:
     """同一個客人再次申請時，把個資從舊案帶過來（回傳帶了幾個欄位）。
@@ -4766,6 +4789,8 @@ def _copy_personal_from_previous_case(cur, new_case_id: str, id_no: str, name: s
         cur.execute(f"UPDATE customers SET {','.join(f'{k}=?' for k, _ in pairs)} WHERE case_id=?",
                     (*[v for _, v in pairs], new_case_id))
         print(f"[新案] {name} 從舊案帶入 {len(pairs)} 個個資欄位")
+        if not only_empty:
+            _last_copy_ctx.n = len(pairs)    # 給建檔成功訊息用（補資料指令自己會回報，不用這個）
         return len(pairs)
     except Exception as e:
         print(f"[新案] 帶入舊案個資失敗（不影響建檔）：{e}")
@@ -10564,7 +10589,7 @@ def handle_new_case_block(block_text, source_group_id, reply_token) -> Optional[
         send_confirm_new_case_buttons(reply_token, block_text, existing, source_group_id)
         return "QUICK_REPLY_SENT"
     create_customer_record(name, id_no, company, source_group_id, block_text)
-    msg = f"🆕 已建立客戶：{name}"
+    msg = f"🆕 已建立客戶：{name}" + _copied_hint()
     if warnings:
         msg += "\n⚠️ 資料檢查：\n" + "\n".join(f"  • {w}" for w in warnings) + \
                "\n（客戶仍已建立，如需修正可用 @AI 姓名 改身分證/改名）"
@@ -10621,7 +10646,7 @@ def handle_route_order_block(block_text, source_group_id, reply_token) -> Option
         cur.execute("UPDATE customers SET notify_amount=?, notify_period=? WHERE case_id=(SELECT case_id FROM customers WHERE customer_name=? AND source_group_id=? AND status='ACTIVE' ORDER BY created_at DESC LIMIT 1)",
                     (n_amt, n_per or "", name, source_group_id))
     conn.commit(); conn.close()
-    return f"🆕 已建立客戶 {name}，送件順序：{'/'.join(companies)}{dupe_suffix}"
+    return f"🆕 已建立客戶 {name}，送件順序：{'/'.join(companies)}{dupe_suffix}" + _copied_hint()
 
 
 def parse_transfer_line(line: str) -> Dict:
@@ -11982,7 +12007,7 @@ def _handle_bc_case_block_locked(block_text, source_group_id, reply_token, sourc
         target = same[0] if same else (rows[0] if rows else None)
         if not target:
             create_customer_record(name, "", company, source_group_id, block_text)
-            return f"🆕 已建立客戶：{name}（{company} {status}）"
+            return f"🆕 已建立客戶：{name}（{company} {status}）" + _copied_hint()
         route = target["route_plan"] or ""
         # 婉拒：
         # - 房地/銀行/C（零卡）是「類別底下多家」→ 不推、加提示要業務確認是否所有方案都無法送
@@ -12109,7 +12134,7 @@ def _handle_bc_case_block_locked(block_text, source_group_id, reply_token, sourc
         pushed = False
         if want_push_a:
             ok, _ = push_text(get_a_group_for_sales(source_group_id), block_text); pushed = ok
-        msg = f"🆕 已建立客戶：{name}"
+        msg = f"🆕 已建立客戶：{name}" + _copied_hint()
         if pushed: msg += f"\n✅ 已回貼A群：{name}"
         return msg
 
