@@ -4731,7 +4731,8 @@ _NO_COPY_FIELDS = {
 }
 
 
-def _copy_personal_from_previous_case(cur, new_case_id: str, id_no: str, name: str) -> int:
+def _copy_personal_from_previous_case(cur, new_case_id: str, id_no: str, name: str,
+                                      only_empty: bool = False) -> int:
     """同一個客人再次申請時，把個資從舊案帶過來（回傳帶了幾個欄位）。
 
     2026-08-11 使用者反映：黃宏棋在別的群組已結案，新群組重新建檔卻是一片空白，
@@ -4753,6 +4754,13 @@ def _copy_personal_from_previous_case(cur, new_case_id: str, id_no: str, name: s
         keys = [k for k in prev.keys() if k not in _NO_COPY_FIELDS]
         pairs = [(k, prev[k]) for k in keys
                  if prev[k] is not None and str(prev[k]).strip() not in ("", "{}", "[]")]
+        if only_empty:
+            # 補資料模式（@AI 姓名 補資料）：只填目前是空的欄位，不覆蓋已經填好的
+            cur.execute("SELECT * FROM customers WHERE case_id=?", (new_case_id,))
+            _now_row = cur.fetchone()
+            if _now_row is not None:
+                pairs = [(k, v) for k, v in pairs
+                         if _now_row[k] is None or str(_now_row[k]).strip() in ("", "{}", "[]")]
         if not pairs:
             return 0
         cur.execute(f"UPDATE customers SET {','.join(f'{k}=?' for k, _ in pairs)} WHERE case_id=?",
@@ -6622,6 +6630,11 @@ def parse_special_command(text: str, group_id: str) -> Optional[Dict]:
     # 資料健檢：@AI 健檢 / 資料健檢 / 體檢
     if re.match(r"^(?:資料)?(?:健檢|體檢)$", clean):
         return {"type": "health_check"}
+
+    # 從舊案補個資：@AI 姓名 補資料 / 帶資料
+    m = re.match(r"^([㐀-鿿豈-﫿𠀀-𯨟.．·•・‧]{2,12})\s*(?:補|帶)資料$", clean)
+    if m:
+        return {"type": "fill_personal", "name": m.group(1)}
 
     if re.match(r"^統計$", clean):
         return {"type": "stats"}
@@ -8528,6 +8541,28 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
         reply_text(reply_token, "\n".join(lines))
         return
 
+    if t == "fill_personal":
+        # 既有案子個資空白時，從同身分證的舊案補過來（只補空的，不覆蓋已填的）
+        name = cmd["name"]
+        target = _resolve_target_strict(cmd, name, group_id, reply_token, "補資料")
+        if not target:
+            return
+        if not (target["id_no"] or "").strip():
+            reply_text(reply_token, f"⚠️ {name} 沒有身分證，無法比對舊案\n"
+                                    f"請先補身分證：@AI {name} 改身分證 A123456789")
+            return
+        with db_conn(commit=True) as _cn:
+            _c = _cn.cursor()
+            n = _copy_personal_from_previous_case(_c, target["case_id"], target["id_no"], name,
+                                                  only_empty=True)
+        if n:
+            reply_text(reply_token, f"✅ {name} 已從舊案補上 {n} 項資料\n"
+                                    f"（電話、地址、公司、聯絡人等，請到網頁確認有沒有變動）")
+        else:
+            reply_text(reply_token, f"ℹ️ {name} 沒有可以補的資料\n"
+                                    f"（找不到同身分證的舊案，或該填的都填了）")
+        return
+
     if t == "health_check":
         # A 群掃全部群組，業務群只掃自己的
         try:
@@ -8877,10 +8912,38 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
     if t == "reopen":
         name = cmd["name"]
         conn = get_conn(); cur = conn.cursor()
-        cur.execute("SELECT * FROM customers WHERE customer_name=? AND status IN ('CLOSED','PENALTY','ABANDONED','REJECTED') ORDER BY updated_at DESC LIMIT 1", (name,))
-        target = cur.fetchone(); conn.close()
+        # ⛔ 一定要先限本群組。舊寫法整個資料庫撈同名最近一筆，
+        #    在幸福群打「@AI 黃宏棋 重啟」會把勞工群那筆重啟掉：
+        #    系統回「已重啟」但案子還屬於勞工群，打指令的群組日報什麼都沒有，
+        #    而勞工群的日報卻突然冒出一個早就結案的客戶。同名不同人更慘。
+        cur.execute("""SELECT * FROM customers WHERE customer_name=? AND source_group_id=?
+                       AND status IN ('CLOSED','PENALTY','ABANDONED','REJECTED')
+                       ORDER BY updated_at DESC""", (name, group_id))
+        _same = cur.fetchall()
+        target = _same[0] if _same else None
         if not target:
+            # 本群組沒有 → 看別群組有沒有，有的話明講，不要默默動別人的案子
+            cur.execute("""SELECT source_group_id FROM customers WHERE customer_name=?
+                           AND status IN ('CLOSED','PENALTY','ABANDONED','REJECTED')""", (name,))
+            _others = {r["source_group_id"] for r in cur.fetchall()}
+            conn.close()
+            if _others:
+                _gn = "、".join(get_group_name(g) or "未知群組" for g in list(_others)[:3])
+                reply_text(reply_token,
+                           f"⚠️ 這個群組沒有已結案的「{name}」\n"
+                           f"（{_gn} 才有這位客戶）\n\n"
+                           f"要在這個群組重新申請 → 用建檔格式重新建一筆：\n"
+                           f"  {now_iso()[5:10].replace('-', '/')}-{name} 身分證\n"
+                           f"  （個資會自動從舊案帶過來，不用重打）\n"
+                           f"要重啟那邊那筆 → 請到 {_gn} 打「@AI {name} 重啟」")
+                return
             reply_text(reply_token, f"❌ 找不到已結案客戶：{name}"); return
+        if len(_same) > 1:
+            conn.close()
+            reply_text(reply_token,
+                       f"⚠️ 這個群組有 {len(_same)} 筆已結案的「{name}」，不確定要重啟哪一筆\n"
+                       f"請到網頁「客戶資料庫」找到那筆，把案件狀態改成「進行中」")
+            return
         update_customer(target["case_id"], status="ACTIVE",
                         report_section="",
                         text=f"{name} 重啟案件",

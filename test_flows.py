@@ -709,6 +709,55 @@ if _new:
     check("新案是進行中、屬於新群組", _new["status"] == "ACTIVE" and _new["source_group_id"] == "CP_B",
           f"status={_new['status']} gid={_new['source_group_id']}")
 
+# ========== 45. 重啟不可以跨群組動到別人的案子 ==========
+# 舊寫法整個資料庫撈同名最近一筆：在 B 群打「@AI 姓名 重啟」會把 A 群那筆重啟掉，
+# 系統回「已重啟」但案子還屬於 A 群，B 群日報什麼都沒有。同名不同人更慘。
+print("\n=== 45. 重啟限本群組 ===")
+conn12 = sqlite3.connect(TEST_DB)
+conn12.execute("INSERT OR REPLACE INTO groups (group_id, group_name, group_type, is_active, created_at) VALUES (?,?,?,?,?)",
+               ("RO_B", "重啟B群", "SALES_GROUP", 1, datetime.now().isoformat()))
+conn12.commit(); conn12.close()
+bc("5/1-重啟客R999111222", gid="TEST_B")
+_ro = m.find_active_by_name("重啟客")[0]["case_id"]
+m.update_customer(_ro, status="CLOSED", text="結案", from_group_id="TEST_B")
+def _ro_status():
+    cn = sqlite3.connect(TEST_DB)
+    v = cn.execute("SELECT status FROM customers WHERE case_id=?", (_ro,)).fetchone()[0]
+    cn.close(); return v
+replies.clear()
+bc("@AI 重啟客 重啟", gid="RO_B")          # 在別的群組打重啟
+check("跨群組重啟被擋下", _ro_status() == "CLOSED", f"狀態變成 {_ro_status()}")
+check("有告訴業務該怎麼做", any("重新申請" in r or "才有這位客戶" in r for r in replies),
+      replies[-1][:60] if replies else "沒有回覆")
+replies.clear()
+bc("@AI 重啟客 重啟", gid="TEST_B")        # 本群組打重啟
+check("本群組重啟正常", _ro_status() == "ACTIVE", f"狀態={_ro_status()}")
+
+# ========== 46. @AI 姓名 補資料：既有空白案子從舊案補個資 ==========
+# 「建檔自動帶入」只對之後建的生效，功能上線前就建好的空白案子要能手動補。
+print("\n=== 46. 補資料指令 ===")
+bc("5/1-補測客F111222333", gid="TEST_B")
+_fp_old = m.find_active_by_name("補測客")[0]["case_id"]
+conn13 = sqlite3.connect(TEST_DB)
+conn13.execute("""UPDATE customers SET birth_date='080/05/12', phone='0912345678',
+    company_name_detail='大耀工程', contact1_name='王小美', status='CLOSED' WHERE case_id=?""", (_fp_old,))
+conn13.commit(); conn13.close()
+bc("8/11-補測客F111222333", gid="CP_B")
+conn13 = sqlite3.connect(TEST_DB)
+_fp_new = conn13.execute("SELECT case_id FROM customers WHERE id_no='F111222333' AND source_group_id='CP_B'").fetchone()[0]
+# 模擬功能上線前建的：個資空白，但聯絡人已經有人填了
+conn13.execute("""UPDATE customers SET birth_date=NULL, phone=NULL, company_name_detail=NULL,
+    contact1_name='現場填的聯絡人' WHERE case_id=?""", (_fp_new,))
+conn13.commit(); conn13.close()
+bc("@AI 補測客 補資料", gid="CP_B")
+conn13 = sqlite3.connect(TEST_DB); conn13.row_factory = sqlite3.Row
+_fp_r = conn13.execute("SELECT * FROM customers WHERE case_id=?", (_fp_new,)).fetchone()
+conn13.close()
+check("空欄位有補上", _fp_r["phone"] == "0912345678" and _fp_r["company_name_detail"] == "大耀工程",
+      f"phone={_fp_r['phone']} co={_fp_r['company_name_detail']}")
+check("⛔ 已填好的不可被覆蓋", _fp_r["contact1_name"] == "現場填的聯絡人",
+      f"contact1={_fp_r['contact1_name']}")
+
 # ========== 總結 ==========
 print(f"\n{'='*50}")
 print(f"結果：{PASS} 通過、{FAIL} 失敗")
