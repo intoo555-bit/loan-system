@@ -6179,6 +6179,27 @@ def build_segment(sections: List[str], section_map: Dict, shown: set) -> str:
     return "\n".join(lines)
 
 
+def _days_since_md(md: str):
+    """「8/10」「08/03」這種只有月/日的日期，距今幾天（回 None = 認不得）。
+
+    ⛔ 系統裡撥款日只存月/日沒有年份，算出來是未來日期時要當成去年，
+       否則 12 月的撥款到了 1 月會變成「還有 300 多天」。
+    """
+    if not md:
+        return None
+    mm = re.match(r"\s*(\d{1,2})\s*/\s*(\d{1,2})", str(md))
+    if not mm:
+        return None
+    try:
+        today = datetime.now().date()
+        d = datetime(today.year, int(mm.group(1)), int(mm.group(2))).date()
+        if d > today:
+            d = datetime(today.year - 1, int(mm.group(1)), int(mm.group(2))).date()
+        return (today - d).days
+    except ValueError:
+        return None
+
+
 def _data_health_findings(group_id: str = ""):
     """資料健檢的檢查邏輯，回 [(標題, [問題描述], 怎麼處理), ...]。
 
@@ -6245,14 +6266,23 @@ def _data_health_findings(group_id: str = ""):
     findings.append(("有核准金額卻不在待撥款區", appr,
                      "網頁案件頁把「日報區塊」改成待撥款"))
 
-    # 4. 已撥款但案子還開著 → 撥完通常要結案，不然一直佔著日報
+    # 4. 撥款很久還沒結案
+    #    ⛔ 不可以「撥款了還開著」就報：使用者的實際做法是**一週批次結案一次**，
+    #       撥款後幾天還開著是正常的（2026-08-13 原本報了 21 筆，幾乎都是正常的）。
+    #       抓「超過 14 天」——那表示至少連兩次批次都漏掉了，才是真的忘了。
+    _DISB_STALE_DAYS = 14
     cur.execute(f"""SELECT customer_name, source_group_id, disbursement_date FROM customers
                     WHERE status='ACTIVE' AND disbursement_date IS NOT NULL
                       AND disbursement_date!=''{gf}""", gp)
-    disb = [f"{_g(r['source_group_id'])} {r['customer_name']} 撥款{r['disbursement_date']}"
-            for r in cur.fetchall()]
-    findings.append(("已撥款但案子還開著", disb,
-                     "確認是否該結案：@AI 姓名 結案"))
+    disb = []
+    for r in cur.fetchall():
+        days = _days_since_md(r["disbursement_date"])
+        if days is None or days < _DISB_STALE_DAYS:
+            continue
+        disb.append(f"{_g(r['source_group_id'])} {r['customer_name']} "
+                    f"撥款{r['disbursement_date']}（已過 {days} 天）")
+    findings.append((f"撥款超過 {_DISB_STALE_DAYS} 天還沒結案", disb,
+                     "確認是否該結案：@AI 姓名 結案（一週批次結案時順便處理）"))
 
     # 【已移除】原本有一項「目前送件的公司不在送件順序裡」。
     #   它想抓潘藝中 2026-08-03 那種「送件順序被網頁編輯砍掉、current 只剩殘留值」，

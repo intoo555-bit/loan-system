@@ -661,6 +661,17 @@ check("已移除容易誤報的「不在送件順序裡」那項", "不在送件
 check("抓到：有核准金額卻不在待撥款區", "不在待撥款區" in _rep, _rep[:80])
 check("抓到：已撥款但案子還開著", "已撥款但案子還開著" in _rep, _rep[:80])
 check("報告有寫怎麼處理", "怎麼處理" in _rep, "沒有處理建議")
+# 撥款日只有月/日沒有年份，算出未來日期要當成去年（12 月的撥款到 1 月不可變成「還有 300 天」）
+_today = datetime.now()
+_recent = f"{_today.month}/{_today.day}"
+check("日期換算：今天 = 0 天", m._days_since_md(_recent) == 0, f"{_recent} → {m._days_since_md(_recent)}")
+check("日期換算：未來日期當成去年", (m._days_since_md("12/25") or 0) > 0, m._days_since_md("12/25"))
+# ⛔ 使用者是一週批次結案一次，撥款後幾天還開著是正常的，不可以報
+bc("8/1-剛撥款客K111000111", gid="HC_G")
+m.update_customer(m.find_active_by_name("剛撥款客")[0]["case_id"],
+                  disbursement_date=_recent, text="今天撥款", from_group_id="HC_G")
+check("剛撥款的不報（一週批次結案是正常流程）",
+      "剛撥款客" not in m.data_health_check("HC_G"), "剛撥款就被報了")
 # ⛔ 健檢的判斷要跟日報一致，不可以自己看欄位。
 # 2026-08-11 誤報過：郭晉瑋 report_section 是空的，但送件順序裡有核准紀錄，
 # 日報的「核准補強」會自動把他歸到待撥款 —— 健檢卻報「不在待撥款區」。
