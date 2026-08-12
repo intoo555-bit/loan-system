@@ -6271,14 +6271,28 @@ def _data_health_findings(group_id: str = ""):
     #       撥款後幾天還開著是正常的（2026-08-13 原本報了 21 筆，幾乎都是正常的）。
     #       抓「超過 14 天」——那表示至少連兩次批次都漏掉了，才是真的忘了。
     _DISB_STALE_DAYS = 14
-    cur.execute(f"""SELECT customer_name, source_group_id, disbursement_date FROM customers
-                    WHERE status='ACTIVE' AND disbursement_date IS NOT NULL
+    cur.execute(f"""SELECT customer_name, source_group_id, disbursement_date, updated_at
+                    FROM customers WHERE status='ACTIVE' AND disbursement_date IS NOT NULL
                       AND disbursement_date!=''{gf}""", gp)
     disb = []
     for r in cur.fetchall():
         days = _days_since_md(r["disbursement_date"])
         if days is None or days < _DISB_STALE_DAYS:
             continue
+        # ⛔ 撥款後還有新動作 → 那筆案子還在跑，不是被忘記的。
+        #    林耘耘 2026-08-13：5/12 撥款（喬美）沒結案，8/12 又拿同一筆案子跑新一輪申請
+        #    （設送件順序→照會→婉拒→轉21商品），舊撥款日期一直殘留。
+        #    這種要看的是「舊撥款紀錄該不該清」，不是「忘了結案」，報出來只會誤導。
+        _upd_days = None
+        try:
+            _upd = str(r["updated_at"] or "")[:10]
+            if _upd:
+                _upd_days = (datetime.now().date()
+                             - datetime.strptime(_upd, "%Y-%m-%d").date()).days
+        except Exception:
+            _upd_days = None
+        if _upd_days is not None and (days - _upd_days) > 7:
+            continue      # 撥款日之後至少過了 7 天還有動作 → 案子還在跑
         disb.append(f"{_g(r['source_group_id'])} {r['customer_name']} "
                     f"撥款{r['disbursement_date']}（已過 {days} 天）")
     findings.append((f"撥款超過 {_DISB_STALE_DAYS} 天還沒結案", disb,
