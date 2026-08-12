@@ -793,6 +793,28 @@ _hint_msg = bc("8/11-提示客H555666777", gid="CP_B")
 check("老客戶建檔會提示帶入幾項", "帶入" in (_hint_msg or "") and "確認" in (_hint_msg or ""),
       _hint_msg)
 
+# ========== 47. A 群回報多筆同名時，依公司自動對到正確那筆 ==========
+# 林耘耘 2026-05-12：A 群打「林耘耘 喬美 撥款05/12」，客戶在專業群和勞工群各有一筆，
+# 撥款卻掛到勞工群 —— 但當時只有專業群那筆在送喬美。業績歸屬錯誤。
+print("\n=== 47. A 群多筆同名依公司自動對 ===")
+conn14 = sqlite3.connect(TEST_DB)
+for _g, _n in [("AG_P", "專業群"), ("AG_L", "勞工群")]:
+    conn14.execute("INSERT OR REPLACE INTO groups (group_id, group_name, group_type, is_active, created_at) VALUES (?,?,?,?,?)",
+                   (_g, _n, "SALES_GROUP", 1, datetime.now().isoformat()))
+conn14.commit(); conn14.close()
+_p = m.create_customer_record("林測客", "A111222333", "喬美", "AG_P", "建檔",
+                              route_plan=m.make_route_json(["喬美", "21商品"], 0), current_company="喬美")
+_l = m.create_customer_record("林測客", "A111222333", "亞太", "AG_L", "建檔",
+                              route_plan=m.make_route_json(["亞太", "和裕"], 0), current_company="亞太")
+quick_replies.clear()
+a("林測客 喬美 撥款05/12")
+check("依公司自動對到，不用人選", len(quick_replies) == 0,
+      f"跳了按鈕：{quick_replies[-1][:40] if quick_replies else ''}")
+# 公司對不到任何一筆時，還是要跳按鈕讓人選（不可以亂猜）
+quick_replies.clear()
+a("林測客 分貝機 撥款05/12")
+check("公司對不到時仍跳按鈕讓人選", len(quick_replies) >= 1, "沒跳按鈕，可能亂對")
+
 # ========== 總結 ==========
 print(f"\n{'='*50}")
 print(f"結果：{PASS} 通過、{FAIL} 失敗")

@@ -10786,8 +10786,36 @@ def _handle_a_case_block_locked(block_text, reply_token, id_no, name, forced_cas
         if len(matches) == 1:
             customer = matches[0]
         elif len(matches) > 1:
-            send_ambiguous_case_buttons(reply_token, block_text, matches)
-            return "QUICK_REPLY_SENT"
+            # 多筆同名先用「訊息裡的公司」自動對：只有一筆在送那家 → 就是它，不用人選。
+            # ⛔ 光靠跳按鈕不夠：A 群的人在群裡當下按，很容易按錯，而且按錯會把整筆
+            #    撥款/核准掛到別的群組，變成業績歸屬錯誤。
+            #    林耘耘 2026-05-12：A 群打「林耘耘 喬美 撥款05/12」，客戶在專業群和勞工群
+            #    各有一筆，結果撥款掛到勞工群 —— 但當時只有專業群那筆在送喬美。
+            _co_hint = extract_company(block_text)
+            _picked = []
+            if _co_hint:
+                _cn = normalize_section(_co_hint)
+                for _m in matches:
+                    _pool = [(_m["current_company"] or "")]
+                    _pool += [x.strip() for x in (_m["concurrent_companies"] or "").split(",") if x.strip()]
+                    try:
+                        _pool += list(json.loads(_m["company_status"] or "{}").keys())
+                    except Exception:
+                        pass
+                    try:
+                        _pool += [h.get("company", "") for h in
+                                  parse_route_json(_m["route_plan"] or "").get("history") or []]
+                    except Exception:
+                        pass
+                    if any(x and normalize_section(x) == _cn for x in _pool):
+                        _picked.append(_m)
+            if len(_picked) == 1:
+                customer = _picked[0]
+                print(f"[A群] {name} 多筆同名，依公司「{_co_hint}」自動對到 "
+                      f"{get_group_name(customer['source_group_id'])} 那筆")
+            else:
+                send_ambiguous_case_buttons(reply_token, block_text, matches)
+                return "QUICK_REPLY_SENT"
     if not customer:
         return f"⚠️ 找不到對應客戶：{name or extract_first_line(block_text)}"
 
