@@ -6254,43 +6254,13 @@ def _data_health_findings(group_id: str = ""):
     findings.append(("已撥款但案子還開著", disb,
                      "確認是否該結案：@AI 姓名 結案"))
 
-    # 5. 目前送件的公司不在送件順序裡，而且完全沒有處理紀錄 → 才是真的異常
-    #    ⛔ 光看「不在 order 裡」會誤報：業務臨時加送一家原順序沒有的公司（例如排了融資
-    #       順序、後來另外加送房地）是**正常操作**，2026-08-13 就誤報過幸福 吳建緻。
-    #    真正要抓的是「順序被砍、current 只剩殘留值」那種（潘藝中 2026-08-03），
-    #    那種的特徵是：這家在 company_status 和同送清單裡都找不到任何處理紀錄。
-    cur.execute(f"""SELECT customer_name, source_group_id, current_company, route_plan,
-                    company_status, concurrent_companies
-                    FROM customers WHERE status='ACTIVE' AND current_company IS NOT NULL
-                      AND current_company!='' AND route_plan IS NOT NULL AND route_plan!=''{gf}""", gp)
-    mism = []
-    for r in cur.fetchall():
-        try:
-            order = parse_route_json(r["route_plan"]).get("order") or []
-        except Exception:
-            continue
-        cur_norm = normalize_section(r["current_company"])
-        if not order or any(normalize_section(o) == cur_norm for o in order):
-            continue
-        # 這家有沒有實際處理紀錄？有就是業務主動加送的，不是殘留值
-        try:
-            _cs = json.loads(r["company_status"] or "{}")
-        except Exception:
-            _cs = {}
-        has_status = any(normalize_section(k) == cur_norm and str(v or "").strip() for k, v in _cs.items())
-        in_concur = any(normalize_section(c.strip()) == cur_norm
-                        for c in (r["concurrent_companies"] or "").split(",") if c.strip())
-        try:
-            _hist = parse_route_json(r["route_plan"]).get("history") or []
-        except Exception:
-            _hist = []
-        in_hist = any(normalize_section(h.get("company", "")) == cur_norm for h in _hist)
-        if has_status or in_concur or in_hist:
-            continue          # 業務確實在處理這家 → 正常加送，不是異常
-        mism.append(f"{_g(r['source_group_id'])} {r['customer_name']}："
-                    f"在送 {r['current_company']}，但順序裡沒有這家、也查不到任何處理紀錄")
-    findings.append(("目前送件的公司查不到任何紀錄", mism,
-                     "打「@AI 姓名 改順序 公司1/公司2」重設（注意是空格不是冒號）"))
+    # 【已移除】原本有一項「目前送件的公司不在送件順序裡」。
+    #   它想抓潘藝中 2026-08-03 那種「送件順序被網頁編輯砍掉、current 只剩殘留值」，
+    #   但實際上抓不到（潘藝中當時的 history 也是空的），卻連續誤報正常操作：
+    #   業務排了融資順序、後來另外加送房地（吳建緻 2026-08-13）——
+    #   current 不在原順序裡是很常見的正常狀態，不是資料矛盾。
+    #   而且「網頁編輯砍送件順序」的根因已經修掉、有 test_flows 第 37 項守著，
+    #   這個檢查只剩誤報價值。⛔ 誤報會讓人不信任整份健檢報告，寧可少一項。
 
     # 6. 已結案但沒有結案日期 → 統計會退回用最後異動時間、數字不準
     cur.execute(f"""SELECT COUNT(*) n FROM customers
