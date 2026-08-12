@@ -647,7 +647,16 @@ m.update_customer(_hc["case_id"], current_company="喬美", approved_amount="20�
                   disbursement_date="4/25", report_section="",
                   text="製造異常", from_group_id="HC_G")
 _rep = m.data_health_check("HC_G")
-check("抓到：送的公司不在送件順序裡", "不在送件順序裡" in _rep and "喬美" in _rep, _rep[:80])
+check("抓到：送的公司查不到紀錄", "查不到任何處理紀錄" in _rep and "喬美" in _rep, _rep[:80])
+# ⛔ 業務臨時加送一家原順序沒有的公司是正常操作，不可誤報（2026-08-13 誤報幸福 吳建緻）
+bc("8/1-加送客J777888999", gid="HC_G")
+bc("8/1-加送客-亞太機25萬/第一", gid="HC_G")
+_add = m.find_active_by_name("加送客")[0]["case_id"]
+m.update_customer(_add, current_company="房地",
+                  company_status=json.dumps({"房地": "加送客 房地 照會"}, ensure_ascii=False),
+                  text="加送房地", from_group_id="HC_G")
+check("加送原順序沒有的公司不誤報", "加送客" not in m.data_health_check("HC_G"),
+      "加送客被誤報了")
 check("抓到：有核准金額卻不在待撥款區", "不在待撥款區" in _rep, _rep[:80])
 check("抓到：已撥款但案子還開著", "已撥款但案子還開著" in _rep, _rep[:80])
 check("報告有寫怎麼處理", "怎麼處理" in _rep, "沒有處理建議")
