@@ -111,6 +111,29 @@ FastAPI + SQLite，部署在 Render。
    👉 **找對照組**：同樣環境下別的東西是好的，那就是自己的問題，不要再查環境。
    👉 使用者重複回報同一件事＝我的判斷錯了，不是他沒照做。
 
+### ⛔ 版面 CSS：`body` 不可以寫 `overflow:hidden`，也不要用 flex 置中整頁卡片
+
+2026-08-14 使用者回報「**筆電登入介面沒辦法用滾輪上下移動**」。
+`/login` 的 `body` 同時寫了 `overflow:hidden`（關掉整頁捲軸）和
+`display:flex;align-items:center`（上下置中）。
+
+**桌機看不出來、筆電必中**：螢幕一矮（或 Windows 縮放 125%／150%），
+卡片就比視窗高 → flex 置中把**上半截推到視窗外**，`overflow:hidden` 又讓你**捲不回去**。
+
+| 寫法 | 後果 |
+|---|---|
+| `body{overflow:hidden}` | 滾輪整頁失效 |
+| `body{display:flex;align-items:center}` + 內容比視窗高 | 上緣被切掉且無法捲到 |
+| ✅ `body{display:flex;overflow-x:hidden}` + 卡片 `margin:auto` | 有空間就置中、不夠就正常往下捲 |
+
+- 背景裝飾要防它跑出畫面，**是靠裝飾自己那層**（`.bg-deco{position:fixed;overflow:hidden}`），
+  **不需要**也不可以靠 `body` 的 `overflow:hidden`。
+- ⚠️ 例外：管理後台 `.app{height:100vh;overflow:hidden}` 是**刻意的** ——
+  那是左側欄＋主區各自 `overflow-y:auto` 的版面，不要跟這條搞混、不要去「順手修好」。
+- 第②層安全網已就地補在 `main.py` 該段 CSS 上方（`login_page` 的 `<style>` 開頭）。
+  ⚠️ 這類純外觀問題**測試抓不到**（HTTP 200、HTML 也正確），只有真的用矮視窗看才知道
+  → 改完版面請**把瀏覽器視窗拉矮試一次**，不要只看回傳 200。
+
 ### ✅ 收工自檢（開發／優化／解 bug 做完，寫回報前先跑一遍，結果附在回報末尾）
 
 **第一段：五問，逐問回答**
