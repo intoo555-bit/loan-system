@@ -16332,9 +16332,13 @@ def login_page(request: Request, error: str = ""):
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>登入 · 貸款案件管理</title>
 <style>
 *{{box-sizing:border-box}}
+/* ⛔ body 不可以再寫 overflow:hidden，也不要用 align-items/justify-content 置中卡片。
+   筆電螢幕矮（或 Windows 縮放 125%/150%）時卡片會比視窗高：
+   overflow:hidden → 整頁滾輪失效；flex 置中 → 上半截被切掉且捲不回去。
+   置中改用 .lg-card 的 margin:auto（有空間就置中、不夠就正常往下捲）。 */
 body{{margin:0;font-family:'Noto Sans TC','PingFang TC','Microsoft JhengHei',sans-serif;
-  min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;
-  background:linear-gradient(135deg,#eaf6f4 0%,#f4faf9 55%,#eef7f6 100%);position:relative;overflow:hidden}}
+  min-height:100vh;display:flex;padding:24px;overflow-x:hidden;
+  background:linear-gradient(135deg,#eaf6f4 0%,#f4faf9 55%,#eef7f6 100%);position:relative}}
 /* 背景裝飾 */
 .bg-deco{{position:fixed;inset:0;pointer-events:none;z-index:0;overflow:hidden}}
 .bg-circle{{position:absolute;border-radius:50%;background:radial-gradient(circle at 30% 30%,rgba(150,220,214,.38),rgba(150,220,214,0));}}
@@ -16345,7 +16349,7 @@ body{{margin:0;font-family:'Noto Sans TC','PingFang TC','Microsoft JhengHei',san
 .bd1{{right:60px;top:44px}}.bd2{{left:44px;bottom:80px;width:150px;height:90px}}.bd3{{left:120px;top:340px;width:80px;height:80px;opacity:.7}}
 .bg-wave{{position:absolute;left:0;right:0;bottom:0;width:100%;height:60%;opacity:.5}}
 /* 卡片 */
-.lg-card{{position:relative;z-index:1;background:#fff;border-radius:22px;width:420px;max-width:100%;
+.lg-card{{position:relative;z-index:1;margin:auto;background:#fff;border-radius:22px;width:420px;max-width:100%;
   padding:40px 38px 26px;box-shadow:0 24px 60px rgba(24,110,104,.14),0 4px 14px rgba(24,110,104,.06)}}
 .lg-logo{{width:96px;height:96px;margin:0 auto 20px;display:flex;align-items:center;justify-content:center;
   border-radius:50%;background:radial-gradient(circle at 50% 40%,#e4f6f4,#f2fbfa 70%,transparent)}}
