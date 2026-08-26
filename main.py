@@ -5269,19 +5269,25 @@ def parse_disbursement_list(text: str) -> Dict:
 
 
 def is_disbursement_list(text: str) -> bool:
-    """是不是撥款名單（多行：真標頭 + 人名行）。
+    """是不是撥款名單（多行：第一行就是真標頭 + 後面有人名行）。
     標頭判斷與 parse_disbursement_list 共用 match_disb_header，兩邊永遠一致；
-    避免「補撥款確認書」這種把『撥款』夾在詞中間的補件訊息被誤判成名單。"""
+    避免「補撥款確認書」這種把『撥款』夾在詞中間的補件訊息被誤判成名單。
+
+    ⛔ 標頭「只認第一行」，不可以往下找（2026-08-26 出過包）：
+       標頭正則 DISB_HEADER_NODATE_RE 極寬鬆，任何「XXX撥款」結尾的一行都算標頭 ——
+       「機車設定完成後撥款」「已撥款」「尚未撥款」「請問何時撥款」「對保完成後撥款」全部會中。
+       舊寫法會往下掃每一行找標頭，所以客戶回報備註裡隨便一句提到撥款，
+       整則就被當成名單、客戶一筆都不會被處理，只回「✅ 撥款名單處理完成，共0筆」。
+       使用者看到的症狀是「BOT 訊息傳不出去」。
+       規則本來就是「一段的第一行＝客戶名 公司 備註」→ 第一行不是標頭就不是名單。
+       ⚠️ 真名單 4 種格式（日期+公司/無日期/多區段/NOCO）第一行本來就都是標頭，不受影響。
+       安全網：test_flows.py 第 48 組。"""
     lines = [l.strip() for l in (text or "").splitlines() if l.strip()]
     if len(lines) < 2:
         return False
-    header_idx = -1
-    for i, line in enumerate(lines):
-        if match_disb_header(line) is not None:
-            header_idx = i
-            break
-    if header_idx < 0:
+    if match_disb_header(lines[0]) is None:
         return False
+    header_idx = 0
     name_re = re.compile(r"^[㐀-鿿豈-﫿𠀀-𯨟]{2,6}$")
     for line in lines[header_idx + 1:]:
         if name_re.match(line):
@@ -12429,7 +12435,16 @@ def _process_event_inner(event: dict):
     if group_id in a_group_ids_all:
         # 撥款名單（不需要@AI觸發，去掉@AI再判斷）
         disb_text = strip_ai_trigger(text).strip() if has_ai_trigger(text) else text
-        if is_disbursement_list(disb_text):
+        # ⛔ 不可以拿「整包」判撥款名單 —— 一定要先 split_multi_cases 切段、每段都是名單才算
+        #    病根：撥款名單標頭「XXX撥款」極寬鬆（見 DISB_HEADER_NODATE_RE），
+        #    「機車設定完成後撥款」「已撥款」「尚未撥款」「請問何時撥款」全部會被當成標頭。
+        #    2026-08-26 實例：A 群一次貼 4 筆客戶回報，第 3 筆備註裡有「機車設定完成後撥款」，
+        #    整包被當成撥款名單 → 4 筆全部沒處理，只回「✅ 撥款名單處理完成，共0筆」，
+        #    使用者看到的症狀是「BOT 訊息傳不出去」（單筆單筆貼卻正常，因為等於幫它切好段）。
+        #    規則本來就是「每一段第一行＝客戶名 公司 備註」，判斷跑在切段前就違反了這條。
+        #    ⚠️ 真名單切段後每段仍是名單（4 種格式已實測），所以 all() 不會誤傷 → 見 test_flows.py 第 40 組
+        disb_blocks = split_multi_cases(disb_text) or [disb_text]
+        if all(is_disbursement_list(b) for b in disb_blocks):
             handle_disbursement_list(disb_text, reply_token)
             return
 
