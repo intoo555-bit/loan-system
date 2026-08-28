@@ -864,6 +864,45 @@ for _label, _txt in _REAL_LISTS.items():
     check(f"真名單仍認得：{_label}", _is_disb_after_split(_txt),
           "真名單被擋掉了 → 撥款名單功能會失效")
 
+# ========== 49. 東豐（2026-08-28 新增公司）走完整流程 ==========
+# 新增一家公司要同時動：REPORT_SECTION_1（日報區塊）、COMPANY_LIST（訊息辨識）、
+# /case-edit 公司下拉。少改一處的症狀不同：日報沒那一格 / BOT 認不得公司名 / 網頁改不了。
+# 這組釘住「東豐跟既有公司行為一致」，任何一處被改掉都會紅。
+print("\n=== 49. 東豐新公司 ===")
+check("東豐在 COMPANY_LIST（訊息辨識）", "東豐" in m.COMPANY_LIST)
+check("東豐在 REPORT_SECTION_1（日報區塊）", "東豐" in m.REPORT_SECTION_1)
+check("normalize_section 認得東豐", m.normalize_section("東豐") == "東豐", m.normalize_section("東豐"))
+
+bc("8/28-東測甲 B111111111", gid="TEST_B")
+bc("8/28-東測甲-東豐/21商品/亞太", gid="TEST_B")
+_d = get_cust("B111111111")
+check("送件順序第一家=東豐", _d and _d["current_company"] == "東豐", _d and _d.get("current_company"))
+
+bc("@AI 東測甲 送東豐", gid="TEST_B")
+_d = get_cust("B111111111")
+check("送東豐後離開送件區（進東豐區塊）", (_d.get("report_section") or "") == "",
+      f"report_section={_d.get('report_section')!r}")
+
+a("東測甲 東豐 核准10萬")
+_d = get_cust("B111111111")
+check("東豐核准金額有存", (_d.get("approved_amount") or "") != "", _d.get("approved_amount"))
+check("東豐核准後進待撥款", _d.get("report_section") == "待撥款", _d.get("report_section"))
+
+# 婉拒要能推進到下一家（證明東豐有正常接上送件順序引擎）
+bc("8/28-東測乙 B222222222", gid="TEST_B")
+bc("8/28-東測乙-東豐/21商品", gid="TEST_B")
+a("東測乙 東豐 婉拒 信用評分不足")
+_d2 = get_cust("B222222222")
+check("東豐婉拒後推進下一家", _d2.get("current_company") == "21商品", _d2.get("current_company"))
+
+# 日報真的長出「東豐」那一格（原始需求就是這件事）
+bc("8/28-東測丙 B333333333", gid="TEST_B")
+bc("8/28-東測丙-東豐/21商品", gid="TEST_B")
+bc("@AI 東測丙 送東豐", gid="TEST_B")
+_rep = "\n".join(m.generate_report_lines("TEST_B"))
+check("日報有「東豐」區塊標題", any(l.strip() == "東豐" for l in _rep.splitlines()),
+      "日報沒長出東豐那一格")
+
 # ========== 總結 ==========
 print(f"\n{'='*50}")
 print(f"結果：{PASS} 通過、{FAIL} 失敗")
