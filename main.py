@@ -3404,6 +3404,26 @@ def fmt_salary(s) -> str:
         return raw + "萬"
 
 
+def fmt_company_phone(area, num, ext) -> str:
+    """公司電話顯示格式：`03-4626789 分機277`（區碼是 mobile 或空 → 只印號碼）。
+
+    ⛔ 2026-09-08 出過包：公司電話有「區碼／號碼／分機」三格，
+       但顯示的地方有三份各寫各的 —— 前端 JS 版（客戶資料表 PDF）有印分機，
+       另外兩份後端 PDF 表格只印了「區碼-號碼」，**分機整個不見**。
+       行政在後台明明填了分機 277，匯出的 PDF 卻只有 03-4626789，
+       照會打過去接不到人。三份實作＝早晚走岔，所以後端兩處統一走這個函式。
+    安全網：test_flows.py 第 51 組。"""
+    area = (str(area or "")).strip()
+    num = (str(num or "")).strip()
+    ext = (str(ext or "")).strip()
+    if area == "mobile":
+        area = ""
+    tel = f"{area}-{num}".lstrip("-") if area else num
+    if ext:
+        tel = f"{tel} 分機{ext}".strip()
+    return tel
+
+
 def normalize_ai_text(text: str) -> str:
     """統一化文字：全形轉半形、去空白"""
     text = (text or "")
@@ -6639,6 +6659,67 @@ def send_same_name_diff_id_buttons(reply_token, block_text, matches, source_grou
     reply_quick_reply(reply_token,
                       f"⚠️ 本群組已有「{new_name}」，新打的身分證({new_id})不同，是同一人還是新客戶？",
                       items)
+
+
+def _precious_case_reason(row) -> str:
+    """這筆案子是不是「被靜默蓋掉會出大事」的貴重案件。回中文理由，空字串=不是。
+    貴重＝已核准 / 待撥款 / 已撥款 —— 這些是跑到最後、最值錢的案子。"""
+    d = dict(row)
+    if (d.get("disbursement_date") or "").strip():
+        return f"已撥款（{d.get('disbursement_date')}）"
+    if (d.get("report_section") or "").strip() == "待撥款":
+        amt = (d.get("approved_amount") or "").strip()
+        return f"已核准待撥款{('（' + amt + '）') if amt else ''}"
+    if (d.get("approved_amount") or "").strip():
+        return f"已核准（{d.get('approved_amount')}）"
+    return ""
+
+
+def rename_guard_reason(existing_row, new_name: str) -> str:
+    """既有案件要被「改名」時的守門員。回傳理由字串＝要跳確認；空字串＝可以直接改。
+
+    ⛔ 2026-09-02 事故（吳珮嬋／劉永芳）：
+       業務要幫劉永芳建檔，身分證複製貼上貼到吳珮嬋的（S222766336）。
+       系統照身分證找到吳珮嬋那筆（亞太 25萬、當天早上剛撥款），直接把姓名改成劉永芳，
+       只回一句「🔄 已更新客戶：劉永芳」—— 業務完全不知道自己蓋掉了一筆已撥款的案子。
+       後續又排順序、記缺件、改身分證，滾了 4 步才被發現，靠 case_logs 快照才救回來。
+       而且因為那筆已被改名成「劉永芳」，17:42 再打就撞到「同名不同身分證」分支，
+       業務按了「不同人(建新)」→ 又多長出一筆重複的劉永芳。⭐ 全部源頭都是這個沒防護的改名。
+
+    ⚠️ 只擋「貴重案件」（已核准/待撥款/已撥款），一般案子改名照舊直接改 ——
+       改名本身是正常操作（打錯字、同音字），全部都擋會變成每天在按按鈕、業務就會亂按。
+    安全網：test_flows.py 第 50 組。"""
+    d = dict(existing_row)
+    old_name = (d.get("customer_name") or "").strip()
+    new_name = (new_name or "").strip()
+    if not old_name or not new_name or old_name == new_name:
+        return ""          # 沒有要改名
+    return _precious_case_reason(d)
+
+
+def send_rename_guard_buttons(reply_token, block_text, existing_row, source_group_id,
+                              new_name, company, reason):
+    """貴重案件要被改名 → 跳按鈕確認，不准靜默改掉（見 rename_guard_reason）"""
+    action_id = short_id()
+    d = dict(existing_row)
+    save_pending_action(action_id, "confirm_rename_precious", {
+        "block_text": block_text, "source_group_id": source_group_id,
+        "case_id": d.get("case_id", ""), "new_name": new_name,
+        "company": company or "", "old_name": d.get("customer_name") or "",
+    })
+    id4 = (d.get("id_no") or "")[-4:] or "無"
+    old_name = d.get("customer_name") or ""
+    items = [
+        make_quick_reply_item(f"確定改成{new_name}", f"CONFIRM_RENAME|{action_id}"),
+        make_quick_reply_item("取消(身分證打錯)", f"CANCEL_RENAME|{action_id}"),
+    ]
+    reply_quick_reply(
+        reply_token,
+        f"⚠️ 這組身分證（末4:{id4}）現在是「{old_name}」的案子，而且{reason}。\n"
+        f"要把它改名成「{new_name}」嗎？\n"
+        f"👉 如果你是要幫「{new_name}」建新案子，代表身分證打錯了 —— "
+        f"請按取消，確認正確身分證再重打。",
+        items)
 
 
 def send_confirm_new_case_buttons(reply_token, block_text, existing_customer, source_group_id):
@@ -10616,6 +10697,13 @@ def handle_new_case_block(block_text, source_group_id, reply_token) -> Optional[
     # 先查本群組：若本群組已有 ACTIVE（同身分證），直接更新
     same_group = find_active_by_id_no_in_group(id_no, source_group_id)
     if same_group:
+        # ⛔ 貴重案件（已核准/待撥款/已撥款）不可以被靜默改名 —— 2026-09-02 吳珮嬋事故
+        #    見 rename_guard_reason() 的完整說明
+        _guard = rename_guard_reason(same_group, name)
+        if _guard:
+            send_rename_guard_buttons(reply_token, block_text, same_group, source_group_id,
+                                      name, company, _guard)
+            return "QUICK_REPLY_SENT"
         update_customer(same_group["case_id"], company=company or same_group["company"] or "",
                         text=block_text, from_group_id=source_group_id, name=name)
         return f"🔄 已更新客戶：{name}"
@@ -11572,6 +11660,39 @@ def handle_command_text(text: str, reply_token: str) -> bool:
         _, action_id = text.split("|", 1)
         delete_pending_action(action_id); reply_text(reply_token, "✅ 已取消，未建立案件"); return True
 
+    # 貴重案件改名確認（見 rename_guard_reason）——「確定改名」才真的改
+    if text.startswith("CONFIRM_RENAME|"):
+        _, action_id = text.split("|", 1)
+        a = get_action(action_id, "confirm_rename_precious")
+        if not a: return True
+        p = a["payload"]
+        case_id = p.get("case_id", "")
+        new_name = p.get("new_name", "")
+        old_name = p.get("old_name", "")
+        conn = get_conn(); cur = conn.cursor()
+        cur.execute("SELECT company FROM customers WHERE case_id=?", (case_id,))
+        _row = cur.fetchone(); conn.close()
+        if not _row:
+            delete_pending_action(action_id)
+            reply_text(reply_token, "⚠️ 案件不存在"); return True
+        # 只改名（不順帶結案）：貴重案件附帶結案的機率極低，多做多錯；要結案業務會另外打
+        update_customer(case_id, company=p.get("company") or _row["company"] or "",
+                        text=p.get("block_text", ""), from_group_id=p.get("source_group_id", ""),
+                        name=new_name)
+        delete_pending_action(action_id)
+        reply_text(reply_token, f"🔄 已改名：{old_name} → {new_name}\n"
+                                f"（原本的核准/撥款紀錄都保留，如要退回打「@AI {new_name} 還原」）")
+        return True
+
+    if text.startswith("CANCEL_RENAME|"):
+        _, action_id = text.split("|", 1)
+        a = get_pending_action(action_id)
+        old_name = (a["payload"].get("old_name", "") if a else "") or "原客戶"
+        delete_pending_action(action_id)
+        reply_text(reply_token, f"✅ 已取消，「{old_name}」的案子沒有變動。\n"
+                                f"請確認正確身分證後再重打建檔訊息。")
+        return True
+
     # 補件時多筆同名，使用者選了要更新哪筆
     if text.startswith("SELECT_SUPPLEMENT|"):
         parts = text.split("|", 2)
@@ -12185,6 +12306,12 @@ def _handle_bc_case_block_locked(block_text, source_group_id, reply_token, sourc
         # 先查本群組有無 ACTIVE（支援「兩邊獨立案」：跨群組可各有一筆 ACTIVE）
         same_group = find_active_by_id_no_in_group(id_no, source_group_id)
         if same_group:
+            # ⛔ 同上：貴重案件不可被靜默改名（跟建檔那條路共用同一個守門員、不寫兩份規則）
+            _guard = rename_guard_reason(same_group, name)
+            if _guard:
+                send_rename_guard_buttons(reply_token, block_text, same_group, source_group_id,
+                                          name, company, _guard)
+                return "QUICK_REPLY_SENT"
             new_status = "CLOSED" if is_closed_text(block_text) else None
             update_customer(same_group["case_id"], company=company or same_group["company"] or "",
                             text=block_text, from_group_id=source_group_id, status=new_status, name=name)
@@ -22544,7 +22671,7 @@ td {{ background: #fff; }}
 <tr><th>居住狀況</th><td style="{'font-weight:700;color:#b91c1c;background:#fef2f2' if r.get('eval_house_private')=='有' else ''}">{v("live_status")}{(' ⚠️ 房屋有私設' if r.get('eval_house_private')=='有' else '')}</td><th>居住時間</th><td>{v("live_years")}年{v("live_months")}月</td></tr>
 <tr class="sec"><td colspan="4">職業資料</td></tr>
 <tr><th>公司名稱</th><td colspan="3">{v("company_name_detail")}</td></tr>
-<tr><th>公司電話</th><td>{(v("company_phone_area") + "-" + v("company_phone_num")).replace("mobile-", "").lstrip("-")}</td><th>職稱</th><td>{v("company_role")}</td></tr>
+<tr><th>公司電話</th><td>{fmt_company_phone(v("company_phone_area"), v("company_phone_num"), v("company_phone_ext"))}</td><th>職稱</th><td>{v("company_role")}</td></tr>
 <tr><th>年資</th><td>{v("company_years")}年{v("company_months")}月</td><th>月薪</th><td>{fmt_salary(v("company_salary"))}</td></tr>
 <tr><th>公司地址</th><td colspan="3">{company_addr}</td></tr>
 </table>
@@ -22803,7 +22930,7 @@ def _build_customer_pdf_body(r: dict) -> str:
 <tr><th>居住狀況</th><td style="{'font-weight:700;color:#b91c1c;background:#fef2f2' if r.get('eval_house_private')=='有' else ''}">{v("live_status")}{(' ⚠️ 房屋有私設' if r.get('eval_house_private')=='有' else '')}</td><th>居住時間</th><td>{v("live_years")}年{v("live_months")}月</td></tr>
 <tr class="sec"><td colspan="4">職業資料</td></tr>
 <tr><th>公司名稱</th><td colspan="3">{v("company_name_detail")}</td></tr>
-<tr><th>公司電話</th><td>{(v("company_phone_area") + "-" + v("company_phone_num")).replace("mobile-", "").lstrip("-")}</td><th>職稱</th><td>{v("company_role")}</td></tr>
+<tr><th>公司電話</th><td>{fmt_company_phone(v("company_phone_area"), v("company_phone_num"), v("company_phone_ext"))}</td><th>職稱</th><td>{v("company_role")}</td></tr>
 <tr><th>年資</th><td>{v("company_years")}年{v("company_months")}月</td><th>月薪</th><td>{fmt_salary(v("company_salary"))}</td></tr>
 <tr><th>公司地址</th><td colspan="3">{company_addr}</td></tr>
 </table>
@@ -24830,6 +24957,9 @@ def _do_download_excel(request: Request, case_id: str):
             ("本人手機電話", v("phone")),
             ("行動電話【電信業者】", f'{v("phone")} {v("carrier")}'.strip()),
             ("行動電話", v("phone")),
+            # 「手機門號電信」＝「門號電信業者」（2026-09-08 分貝改裝填寫表用這個寫法，
+            #  兩者互不包含、比對不到 → 要各自列一條，不能只留一個）
+            ("手機門號電信", v("carrier")),
             ("門號電信業者", v("carrier")),
             ("電信業者", v("carrier")),
             ("LINE ID", v("line_id")),
@@ -24942,6 +25072,16 @@ def _do_download_excel(request: Request, case_id: str):
         import re as _re
         with open(template_path, "r", encoding="utf-8") as f:
             content = f.read()
+
+        # ⛔ 公司電話分機（2026-09-08 出包）：後台的公司電話拆成「區碼／號碼／分機」三格，
+        #    但填寫表只有「公司電話：」一行 → 分機整個不見，照會打過去接不到人。
+        #    ⚠️ 不可以無條件併：21汽車範本有獨立的「公司分機：」行（對應 LABEL_MAP 的「公司分機」），
+        #       那種併進去會變成分機顯示兩次 → 所以看範本有沒有那一行再決定。
+        #    prepend 才會蓋掉原本那條（find_value 由前往後取第一個 match）。
+        #    同一個病根在 PDF 那邊是 fmt_company_phone()。安全網：test_flows.py 第 51 組。
+        _co_ext_val = v("company_phone_ext")
+        if _co_ext_val and "公司分機" not in content:
+            LABEL_MAP = [("公司電話", fmt_company_phone(co_area, co_num, _co_ext_val))] + LABEL_MAP
 
         def process_line(line):
             # 拆分成 [text, sep, text, sep, ...] 保留分隔符

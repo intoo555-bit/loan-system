@@ -903,6 +903,184 @@ _rep = "\n".join(m.generate_report_lines("TEST_B"))
 check("日報有「東豐」區塊標題", any(l.strip() == "東豐" for l in _rep.splitlines()),
       "日報沒長出東豐那一格")
 
+# ========== 50. 貴重案件不可被靜默改名（2026-09-02 吳珮嬋事故）==========
+# 業務要建劉永芳，身分證複製貼上貼到吳珮嬋的（當天早上剛撥款的案子）。
+# 系統照身分證找到吳珮嬋那筆、直接改名成劉永芳，只回「🔄 已更新客戶」，
+# 業務完全不知道蓋掉了一筆已撥款案件；後續再滾 4 步才被發現。
+# ⭐ 而且因為那筆被改名成「劉永芳」，之後再打就撞到「同名不同身分證」分支，
+#    業務按「不同人(建新)」→ 又多長出一筆重複的劉永芳。源頭都是這個沒防護的改名。
+print("\n=== 50. 貴重案件改名防護 ===")
+
+# 這組要拿到按鈕的 callback token，臨時換掉 mock 記下 items
+_qr_items = []
+_orig_qr = m.reply_quick_reply
+def _qr_capture(token, text, items):
+    quick_replies.append(text); _qr_items.append(items); return True
+m.reply_quick_reply = _qr_capture
+
+def _btn_token(prefix):
+    for it in (_qr_items[-1] if _qr_items else []):
+        d = it.get("action", {}).get("data", "")
+        if d.startswith(prefix):
+            return d
+    return None
+
+_WU = "S299887766"   # 「吳珮嬋」的身分證
+def _setup_precious():
+    """建一筆已核准待撥款的貴重案件"""
+    conn_p = sqlite3.connect(TEST_DB)
+    conn_p.execute("DELETE FROM customers WHERE id_no=?", (_WU,))
+    conn_p.commit(); conn_p.close()
+    bc(f"114/08/20-吳珮嬋 {_WU}", gid="TEST_B")
+    bc("8/20-吳珮嬋-亞太/21商品/鄉民", gid="TEST_B")
+    a("吳珮嬋 亞太 核准25萬")
+
+# ① 貴重案件被改名 → 要跳確認、且資料一個字都不能動
+_setup_precious()
+_qr_items.clear()
+_r = bc(f"115/9/3-劉永芳 {_WU} 高齡/無保人", gid="TEST_B")
+_c = get_cust(_WU)
+check("貴重案件改名 → 跳確認不靜默改", _r == "QUICK_REPLY_SENT", f"回傳={_r}")
+check("⭐ 吳珮嬋名字沒被蓋掉", _c and _c["customer_name"] == "吳珮嬋", _c and _c.get("customer_name"))
+check("⭐ 核准金額沒被弄丟", _c and (_c.get("approved_amount") or "") != "", _c and _c.get("approved_amount"))
+
+# ② 按「取消」→ 完全不變
+_tok = _btn_token("CANCEL_RENAME|")
+check("有產生取消按鈕", _tok is not None)
+if _tok:
+    m.handle_command_text(_tok, "mock_token")
+    _c = get_cust(_WU)
+    check("取消後案件完好如初", _c["customer_name"] == "吳珮嬋" and (_c.get("approved_amount") or "") != "",
+          f"{_c.get('customer_name')}/{_c.get('approved_amount')}")
+
+# ③ 按「確定改名」→ 要真的改，且核准/待撥款要保留（不可為了防護把正常操作擋死）
+_setup_precious()
+_qr_items.clear()
+bc(f"115/9/3-劉永芳 {_WU}", gid="TEST_B")
+_tok = _btn_token("CONFIRM_RENAME|")
+check("有產生確定按鈕", _tok is not None)
+if _tok:
+    m.handle_command_text(_tok, "mock_token")
+    _c = get_cust(_WU)
+    check("確定後名字真的改掉", _c["customer_name"] == "劉永芳", _c.get("customer_name"))
+    check("確定改名後核准金額仍保留", (_c.get("approved_amount") or "") != "", _c.get("approved_amount"))
+    check("確定改名後待撥款區塊仍保留", _c.get("report_section") == "待撥款", _c.get("report_section"))
+    # 改完仍要能還原退回（事故當天就是靠這個救回來的）
+    _ok2, _k2, _m2 = m.restore_prev_state(_c["case_id"], steps=1, from_group_id="TEST_B",
+                                          actor="劉永芳", cust_name_hint="劉永芳")
+    check("改名後還原退得回原客戶", get_cust(_WU)["customer_name"] == "吳珮嬋",
+          get_cust(_WU)["customer_name"])
+
+# ④ ⚠️ 反向：一般案件（沒核准）改名不可以擋 —— 全部都擋業務會每天在按按鈕、然後亂按
+bc("8/20-張三測 T911222333", gid="TEST_B")
+_r2 = bc("115/9/3-李四測 T911222333", gid="TEST_B")
+_c2 = get_cust("T911222333")
+check("一般案件改名不跳按鈕（不干擾日常）", _r2 != "QUICK_REPLY_SENT", f"回傳={_r2}")
+check("一般案件改名照舊成功", _c2 and _c2["customer_name"] == "李四測", _c2 and _c2.get("customer_name"))
+
+# ⑤ 同一個人再打一次（沒有要改名）→ 不該擋
+_setup_precious()
+_r3 = bc(f"114/08/20-吳珮嬋 {_WU}", gid="TEST_B")
+check("沒改名時不跳按鈕", _r3 != "QUICK_REPLY_SENT", f"回傳={_r3}")
+
+# ⑥ 已撥款的案子也要擋
+bc("8/20-王五測 T955666777", gid="TEST_B")
+bc("8/20-王五測-亞太/21商品", gid="TEST_B")
+a("王五測 亞太 核准20萬")
+conn_d = sqlite3.connect(TEST_DB)
+conn_d.execute("UPDATE customers SET disbursement_date='09/02' WHERE id_no='T955666777'")
+conn_d.commit(); conn_d.close()
+_r4 = bc("115/9/3-趙六測 T955666777", gid="TEST_B")
+_c4 = get_cust("T955666777")
+check("已撥款案件改名被擋", _r4 == "QUICK_REPLY_SENT", f"回傳={_r4}")
+check("已撥款案件名字沒變", _c4 and _c4["customer_name"] == "王五測", _c4 and _c4.get("customer_name"))
+
+m.reply_quick_reply = _orig_qr   # 還原 mock，不影響後面的測試
+
+# ========== 51. 公司電話「分機」不可以在輸出時消失（2026-09-08）==========
+# 後台公司電話拆成「區碼／號碼／分機」三格，但顯示的地方有 5 份各寫各的，
+# 其中 3 份漏掉分機 → 行政填了分機 277，PDF 和填寫表只印 03-4626789，
+# 照會打過去接不到人（純顯示問題，HTTP 200、測試也不會紅，只有人工核對才看得出來）。
+# ⚠️ 不可以無條件把分機併進電話：21汽車範本有獨立的「公司分機：」行，併了會顯示兩次。
+print("\n=== 51. 公司電話分機不可消失 ===")
+
+for _args, _want in [
+    (("03", "4626789", "277"), "03-4626789 分機277"),
+    (("03", "4626789", ""),    "03-4626789"),
+    (("mobile", "0912345678", ""), "0912345678"),
+    (("mobile", "0912345678", "12"), "0912345678 分機12"),
+    (("", "27189090", ""),     "27189090"),
+    ((None, None, None),       ""),
+]:
+    check(f"fmt_company_phone{_args}", m.fmt_company_phone(*_args) == _want,
+          f"得到 {m.fmt_company_phone(*_args)!r}、期望 {_want!r}")
+
+m.check_auth = lambda req: "admin"
+m.get_auth_group_id = lambda req: ""
+
+_PHONE_FIELDS = {
+    "company_name_detail": "台灣積層工業股份有限公司",
+    "company_phone_area": "03", "company_phone_num": "4626789", "company_phone_ext": "277",
+    "company_role": "機台操作員", "company_years": "27", "company_months": "6",
+    "company_salary": "4.5", "phone": "0912345678",
+    "contact1_name": "王親屬", "contact1_phone": "0955111222", "contact1_relation": "母",
+    "contact2_name": "李朋友", "contact2_phone": "0966333444", "contact2_relation": "朋友",
+}
+
+def _mk_phone_case(plan, idno, ext="277"):
+    """建一筆有公司分機的客戶，回傳 (case_id, 填寫表文字)"""
+    _cid = m.create_customer_record("電話測試客", idno, plan, "TEST_B", "建案")
+    _cn = sqlite3.connect(TEST_DB)
+    _cols = {r[1] for r in _cn.execute("PRAGMA table_info(customers)").fetchall()}
+    _f = dict(_PHONE_FIELDS)
+    _f["company_phone_ext"] = ext
+    _f["adminb_selected_plans"] = plan
+    _use = {k: v for k, v in _f.items() if k in _cols}
+    _cn.execute(f"UPDATE customers SET {','.join(f'{k}=?' for k in _use)} WHERE case_id=?",
+                list(_use.values()) + [_cid])
+    _cn.commit(); _cn.close()
+    _r = client.get(f"/adminb/download-excel?case_id={_cid}")
+    return _cid, _r.content.decode("utf-8", errors="replace")
+
+# ① PDF 要印出分機
+_cid_pdf, _ = _mk_phone_case("分貝機車", "P111222333")
+_pdf = client.get(f"/customer-pdf?case_id={_cid_pdf}").text
+check("PDF 公司電話含分機277", "分機277" in _pdf, "PDF 沒印出分機")
+
+# ② 分貝填寫表（範本無「公司分機」行）→ 分機要併進公司電話
+_, _txt_fb = _mk_phone_case("分貝機車", "P444555666")
+_tel_fb = [l for l in _txt_fb.splitlines() if l.startswith("公司電話")]
+check("分貝填寫表：公司電話含分機", any("分機277" in l for l in _tel_fb), str(_tel_fb))
+
+# ③ 21汽車（範本有「公司分機」行）→ 不可重複顯示
+_, _txt_21 = _mk_phone_case("21汽車", "P777888999")
+_tel_21 = [l for l in _txt_21.splitlines() if l.startswith("公司電話")]
+_ext_21 = [l for l in _txt_21.splitlines() if l.startswith("公司分機")]
+check("21汽車：公司電話不含分機（不重複）", all("分機" not in l for l in _tel_21), str(_tel_21))
+check("21汽車：公司分機行有值", any("277" in l for l in _ext_21), str(_ext_21))
+check("21汽車：分機全表只出現一次",
+      sum(1 for l in _txt_21.splitlines() if "277" in l) == 1,
+      str([l for l in _txt_21.splitlines() if "277" in l]))
+
+# ④ 沒填分機 → 不可以多出空的「分機」字
+_, _txt_no = _mk_phone_case("分貝機車", "P123123123", ext="")
+_tel_no = [l for l in _txt_no.splitlines() if l.startswith("公司電話")]
+check("沒填分機時不出現「分機」字", all("分機" not in l for l in _tel_no), str(_tel_no))
+check("沒填分機時電話仍正確", any("03-4626789" in l for l in _tel_no), str(_tel_no))
+
+# ⑤ 分貝改裝填寫表的新格式（2026-09-08 換版）欄位要能自動帶入
+_cid_f, _txt_f = _mk_phone_case("分貝機車", "P321321321")
+_cn = sqlite3.connect(TEST_DB)
+_cn.execute("UPDATE customers SET birth_date=?, id_issue_date=?, email=?, carrier=? WHERE case_id=?",
+            ("080/05/12", "110/03/20", "test@example.com", "中華電信", _cid_f))
+_cn.commit(); _cn.close()
+_txt_f = client.get(f"/adminb/download-excel?case_id={_cid_f}").content.decode("utf-8", "replace")
+for _lb, _want in [("申請人姓名", "電話測試客"), ("出生年月日", "080/05/12"),
+                   ("發證日期", "110/03/20"), ("電子信箱", "test@example.com"),
+                   ("手機門號電信", "中華電信")]:
+    _ln = next((l for l in _txt_f.splitlines() if l.startswith(_lb)), None)
+    check(f"分貝新版填寫表：{_lb} 有帶入", bool(_ln and _want in _ln), f"實際 {_ln!r}")
+
 # ========== 總結 ==========
 print(f"\n{'='*50}")
 print(f"結果：{PASS} 通過、{FAIL} 失敗")
