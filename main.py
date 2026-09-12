@@ -3921,11 +3921,29 @@ def looks_like_new_case_block(block: str) -> bool:
     return bool(f.get("date") and f.get("name") and f.get("id_no"))
 
 
-def is_format_trigger(block: str) -> bool:
+def is_format_trigger(block: str, for_split: bool = False) -> bool:
+    """這一行是不是「格式化的案件行」。
+    for_split=True 時用在「切段」（判斷這行是不是新一筆的開頭），條件比較嚴。
+
+    ⛔ 2026-09-11 黃彥萍案：A 群大幫手把箭頭當「所以」在用 ——
+       「近9個月均薪 366041 / 月付款 39263 (...) 107% -> 負債高 維持婉拒」
+       舊規則「只要有 -> 就是新一筆」把它從箭頭切成兩筆：
+       第2筆姓名被拽成「個月均薪」回「找不到對應客戶」，
+       而且「負債高 維持婉拒」這個婉拒原因也跟著被切走、沒記到客戶身上。
+       → 切段時，箭頭那行只要出現數字/%，就是在講數據、不是在報新客戶。
+       ⚠ ｜ 不受這條限制：業務群建新案在用，
+         「信用正常｜勞保3年｜可送」這種帶數字也要照切。
+       ⚠ 另一個呼叫點（handle_bc_case_block）是拿來判「這段要不要處理」、
+         不是切段，所以不套這條（for_split 預設 False）。
+    """
     first = extract_first_line(block)
     if "｜" in first and len([p for p in first.split("｜") if p.strip()]) >= 2:
         return True
-    return "->" in first
+    if "->" in first:
+        if for_split and re.search(r"[0-9%％]", first):
+            return False
+        return True
+    return False
 
 
 _CASE_START_BLOCKLIST = (
@@ -3947,7 +3965,7 @@ def looks_like_case_start(line: str) -> bool:
     compact = re.sub(r"\s+", "", line)
     if DATE_NAME_ID_INLINE_RE.search(compact) or DATE_NAME_ONLY_RE.search(line):
         return True
-    if SHORT_DATE_NAME_RE.search(line) or is_route_order_line(line) or is_format_trigger(line):
+    if SHORT_DATE_NAME_RE.search(line) or is_route_order_line(line) or is_format_trigger(line, for_split=True):
         return True
     return False
 
