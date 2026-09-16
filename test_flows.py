@@ -1119,6 +1119,110 @@ check("空行隔開的真多筆仍切得開",
       len(m.split_multi_cases(_TWO)) == 2,
       f"切成 {len(m.split_multi_cases(_TWO))} 筆")
 
+# ========== 53. 分貝商品（課程分期）進件表單（2026-09-16）==========
+# 使用者貼的表單原文就是這組的「真實單據」—— 期望值從原文拄，
+# 不可以用程式反推（反推＝自己驗自己，等於沒驗）。
+# ⭐ 兩個最容易壞的點：
+#   ① 「課程名稱：真人線上英文教材」「金額：14.8萬」是固定值，
+#     靠「label 找不到對應就保留範本原值」活著—— 哪天有人把「金額」加進
+#     LABEL_MAP，這兩行會被洗成空白，而且沒人會發現。
+#   ② ("手機", phone) 排序：排到「手機門號電信」前面的話，
+#     分貝改裝表那格會變成填手機號碼（2026-09-08 才修好的那格）。
+print("\n=== 53. 分貝商品（課程分期）進件表單 ===")
+
+m.check_auth = lambda req: "admin"
+m.get_auth_group_id = lambda req: ""
+
+_BSP_FIELDS = {
+    "phone": "0912345678",
+    "carrier": "中華電信",
+    "company_name_detail": "台灣積層工業股份有限公司",
+    "company_role": "機台操作員",
+    "company_salary": "4.5",
+    "company_years": "27", "company_months": "6",
+    "eval_labor_ins": "公司保",
+    "eval_salary_transfer": "有薪轉",
+    "eval_sent_3m": "是", "eval_sent_3m_detail": "喬美、裕融",
+    "eval_law": "共1條",
+    "eval_late": "有", "eval_late_days": "15",
+    "debt_list": json.dumps([
+        {"co": "裕融", "lo": "150000", "pe": "36/6", "mo": "5265", "dy": "動保"},
+        {"co": "和潤", "lo": "80000", "pe": "24/12", "mo": "3800", "dy": "無"},
+    ], ensure_ascii=False),
+}
+
+def _mk_bsp(plan, idno, extra=None):
+    """建一筆資料齊全的客戶，回傳填寫表文字"""
+    _cid = m.create_customer_record("王小明", idno, plan, "TEST_B", "建案")
+    _cn = sqlite3.connect(TEST_DB)
+    _cols = {r[1] for r in _cn.execute("PRAGMA table_info(customers)").fetchall()}
+    _f = dict(_BSP_FIELDS)
+    _f.update(extra or {})
+    _f["adminb_selected_plans"] = plan
+    _use = {k: v for k, v in _f.items() if k in _cols}
+    _cn.execute(f"UPDATE customers SET {','.join(f'{k}=?' for k in _use)} WHERE case_id=?",
+                list(_use.values()) + [_cid])
+    _cn.commit(); _cn.close()
+    _r = client.get(f"/adminb/download-excel?case_id={_cid}")
+    return _r.content.decode("utf-8", errors="replace")
+
+_txt = _mk_bsp("分貝商品", "F111222333")
+check("分貝商品有範本、抽得出表",
+      "進件表單" in _txt, f"抽不出來：{_txt[:80]!r}")
+
+# 期望值逐行對（label 寫法照使用者原文，含 ✅ 跟半形/全形冒號的差異）
+for _lb, _want in [
+    ("✅姓名：", "王小明"),
+    ("✅身分證：", "F111222333"),
+    ("✅手機：", "0912345678"),
+    ("✅任職公司：", "台灣積層工業股份有限公司"),
+    ("✅職稱：", "機台操作員"),
+    ("✅月收入：", "4.5萬"),
+    ("✅工作年資：", "27年6月"),
+    ("✅有無勞保/薪轉：", "公司保 / 有薪轉"),
+    ("✅名下貸款/繳息：", "有2筆 / 遲繳15天"),
+    ("✅三個月內是否融資有進件:", "是（喬美、裕融）"),
+    ("✅有無法學/動單:", "法學共1條 / 有動單"),
+    ("✅哪家/金額/期數/已繳期數/月付金:",
+     "裕融/150000/36/6/5265、和潤/80000/24/12/3800"),
+]:
+    _ln = next((l for l in _txt.splitlines() if l.startswith(_lb)), None)
+    check(f"分貝商品：{_lb.rstrip(chr(65306)+':')} 帶入正確",
+          bool(_ln) and _ln[len(_lb):].strip() == _want,
+          f"實際 {_ln!r}、期望 {_want!r}")
+
+# ⭐ 固定值兩行：不可以被洗成空白（使用者特別交代這兩行是固定的）
+check("固定值：課程名稱保留",
+      "✅課程名稱：真人線上英文教材" in _txt,
+      "課程名稱被清掉了")
+check("固定值：金額 14.8萬 保留",
+      "✅金額：14.8萬" in _txt, "金額被清掉了")
+
+# 沒填負債明細 → 留空白，⛔ 不可以自己寫「無」
+_txt_nodebt = _mk_bsp("分貝商品", "F444555666", {"debt_list": "[]"})
+_ln_nd = next((l for l in _txt_nodebt.splitlines()
+               if l.startswith("✅名下貸款/繳息：")), "")
+check("沒負債資料時留空白（不假報「無」）",
+      _ln_nd.strip() == "✅名下貸款/繳息：", f"實際 {_ln_nd!r}")
+
+# 別名：課程分期 / 英文教材 都要認得是分貝商品
+for _alias in ["課程分期", "英文教材"]:
+    check(f"「{_alias}」解成分貝商品",
+          m._resolve_alias_loose(_alias) == "分貝商品",
+          f"解成 {m._resolve_alias_loose(_alias)!r}")
+    check(f"「{_alias}」日報歸到分貝商品",
+          m.normalize_section(_alias) == "分貝商品",
+          f"歸到 {m.normalize_section(_alias)!r}")
+    check(f"「{_alias}」是合法公司名（送件順序不會被擋）",
+          _alias in m._get_valid_company_names())
+
+# ⭐ 反向：新增的 ("手機") 不可以打到分貝改裝表的「手機門號電信」
+_txt_mc = _mk_bsp("分貝機車", "F777888999")
+_ln_mc = next((l for l in _txt_mc.splitlines() if l.startswith("手機門號電信")), "")
+check("分貝機車：手機門號電信仍是電信商、不是手機號碼",
+      "中華電信" in _ln_mc and "0912345678" not in _ln_mc,
+      f"實際 {_ln_mc!r}")
+
 # ========== 總結 ==========
 print(f"\n{'='*50}")
 print(f"結果：{PASS} 通過、{FAIL} 失敗")

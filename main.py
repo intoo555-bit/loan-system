@@ -916,6 +916,10 @@ COMPANY_ALIAS = {
     "分唄機車": "分貝機車",
     "分唄汽車": "分貝汽車",
     "分唄商品": "分貝商品", "分貝商": "分貝商品",
+    # 分貝商品 = 課程分期 = 英文教材（使用者教，2026-09-16）
+    # —— 商品就是「真人線上英文教材」課程，14.8萬/24期。
+    "課程分期": "分貝商品",
+    "英文教材": "分貝商品",
     # 亞太相關
     "熊速貸": "亞太商品",
     "工會機車動擔": "亞太工會",
@@ -1016,6 +1020,8 @@ PLAN_INFO = {
     "分貝機車": ("分貝機車", ""), "分貝機": ("分貝機車", ""),
     "分貝汽車": ("分貝汽車", ""), "分貝汽": ("分貝汽車", ""),
     "分貝商品": ("分貝商品", "14.8萬/24期"), "分貝商": ("分貝商品", "14.8萬/24期"),
+    "課程分期": ("分貝商品", "14.8萬/24期"),
+    "英文教材": ("分貝商品", "14.8萬/24期"),
     "21汽車": ("21汽車", ""), "21汽": ("21汽車", ""),
     "鄉民": ("鄉民貸", ""), "鄉": ("鄉民貸", ""),
     "銀行": ("銀行", ""), "銀": ("銀行", ""),
@@ -5614,6 +5620,8 @@ COMPANY_SECTION_MAP = {
     "分貝汽": "分貝汽車",
     "分貝機": "分貝機車",
     "分貝商": "分貝商品",
+    "課程分期": "分貝商品",
+    "英文教材": "分貝商品",
     # 創鉅方案 → 全部歸到「創鉅」欄位
     "創鉅手機": "創鉅", "創鉅手": "創鉅",
     "創鉅機車": "創鉅", "創鉅機": "創鉅",
@@ -24083,6 +24091,7 @@ def _do_download_excel(request: Request, case_id: str):
         "手機分期": os.path.join(_base, "申請書", "手機分期.txt"),
         "分貝機車": os.path.join(_base, "申請書", "分貝機車.txt"),
         "分貝汽車": os.path.join(_base, "申請書", "分貝汽車.txt"),
+        "分貝商品": os.path.join(_base, "申請書", "分貝商品.txt"),
         "21汽車":   os.path.join(_base, "申請書", "21汽車申請書.txt"),
     }
 
@@ -24941,6 +24950,52 @@ def _do_download_excel(request: Request, case_id: str):
         bei_lines = [_re_bei.sub(r'^\d+[.\s]*', '', ln).strip() for ln in bei_lines]
         bei_lines += [""] * (5 - len(bei_lines))
 
+        # ===== 分貝商品（課程分期）進件表單專用組合值 =====
+        # 這張表是行政直接貼出去的，所以值要「人看得懂」、不可出現欄位名。
+        _labor_ins = v("eval_labor_ins")
+        _sal_tr = v("eval_salary_transfer")
+        labor_salary = " / ".join([x for x in (_labor_ins, _sal_tr) if x])
+        # 三個月內是否融資有進件 ← 「近三月送件 / 送過什麼」那一格
+        _s3, _s3d = v("eval_sent_3m"), v("eval_sent_3m_detail")
+        sent_3m = f"{_s3}（{_s3d}）" if (_s3 and _s3d) else (_s3 or _s3d)
+        # 負債明細 debt_list：co=商家 lo=金額 pe="期數/已繳" mo=月付 dy=動保/公路
+        try:
+            _debts = json.loads(r.get("debt_list") or "[]") or []
+        except Exception:
+            _debts = []
+        def _dv(x, k):
+            return str(x.get(k, "") or "").strip()
+        _debts = [x for x in _debts if isinstance(x, dict) and _dv(x, "co")]
+        # 哪家/金額/期數/已繳期數/月付金：一筆一段、多筆用「、」接
+        # （填寫表是一行一個 label：value，換行會把版面拆掉，所以不換行）
+        def _debt_one(x):
+            _pe = _dv(x, "pe")
+            _pe_total = _pe.split("/")[0].strip() if _pe else ""
+            _pe_paid = _pe.split("/")[1].strip() if "/" in _pe else ""
+            return "/".join([_dv(x, "co"), _dv(x, "lo"), _pe_total, _pe_paid, _dv(x, "mo")])
+        debt_detail = "、".join(_debt_one(x) for x in _debts)
+        # 名下貸款/繳息：幾筆 + 繳款狀況
+        # ⛔ 沒有負債明細時留空白、不寫「無」—— 「沒填」跟「真的沒貸款」
+        #    在資料庫裡長得一模一樣（都是空 list），猜「無」等於幫客戶
+        #    投了一個沒人確認過的答案，送件條件就是用這格在判的。
+        if _debts:
+            _late = v("eval_late")
+            if _late == "有":
+                _pay = f"遲繳{v('eval_late_days')}天" if v("eval_late_days") else "有遲繳"
+            elif _late:
+                _pay = "正常繳款"
+            else:
+                _pay = ""
+            debt_summary = f"有{len(_debts)}筆" + (f" / {_pay}" if _pay else "")
+        else:
+            debt_summary = ""
+        # 有無法學/動單：法學條數 + debt_list 裡有沒有動保設定
+        _law = v("eval_law")
+        law_dyn = " / ".join([x for x in (
+            (f"法學{_law}" if _law else ""),
+            ("有動單" if any("動保" in _dv(x, "dy") for x in _debts) else ""),
+        ) if x])
+
         # ===== label 關鍵字 → 值 對應 =====
         # 比對時用 startswith / in 容錯，越長 / 越精確的 key 排前面
         LABEL_MAP = [
@@ -24980,6 +25035,20 @@ def _do_download_excel(request: Request, case_id: str):
             ("手機門號電信", v("carrier")),
             ("門號電信業者", v("carrier")),
             ("電信業者", v("carrier")),
+            # ===== 分貝商品（課程分期）進件表單 =====
+            # ⛔ ("手機", phone) 一定要排在上面三個「…電信…」後面：
+            #    find_value 由前往後取第一個命中的 key，「手機門號電信」裡面有「手機」，
+            #    排前面會讓分貝改裝表那格变成填手機號碼（2026-09-08 才修好的那格）。
+            ("勞保/薪轉", labor_salary),
+            ("三個月內", sent_3m),
+            ("法學/動單", law_dyn),
+            ("哪家", debt_detail),
+            ("名下貸款/繳息", debt_summary),
+            ("任職公司", v("company_name_detail") or v("company")),
+            ("月收入", fmt_salary(v("company_salary"))),
+            ("手機", v("phone")),
+            # ⚠ 「課程名稱」「金額」刻意不列在這裡：那兩行是固定值
+            #   （真人線上英文教材 / 14.8萬），find_value 找不到就會保留範本原值。
             ("LINE ID", v("line_id")),
             ("LINEID", v("line_id")),
             # 地址 / 電話
