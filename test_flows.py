@@ -1223,6 +1223,52 @@ check("分貝機車：手機門號電信仍是電信商、不是手機號碼",
       "中華電信" in _ln_mc and "0912345678" not in _ln_mc,
       f"實際 {_ln_mc!r}")
 
+# ========== 54. 願望（2026-10-05 新增公司）走完整流程 ==========
+# 同第 49 組：REPORT_SECTION_1／COMPANY_LIST／case-edit 下拉 三處要一起改。
+# 日報欄位叫「願望」；業務打「願望」「願望貸」「願望小車」都要認（使用者 2026-10-05）。
+print("\n=== 54. 願望新公司 ===")
+check("願望在 COMPANY_LIST", "願望" in m.COMPANY_LIST)
+check("願望貸在 COMPANY_LIST 且排在願望前面（長字先比）",
+      "願望貸" in m.COMPANY_LIST and m.COMPANY_LIST.index("願望貸") < m.COMPANY_LIST.index("願望"))
+check("願望在 REPORT_SECTION_1（日報區塊）", "願望" in m.REPORT_SECTION_1)
+check("normalize_section(願望)=願望", m.normalize_section("願望") == "願望", m.normalize_section("願望"))
+check("normalize_section(願望貸)=願望", m.normalize_section("願望貸") == "願望", m.normalize_section("願望貸"))
+check("normalize_section(願望小車)=願望", m.normalize_section("願望小車") == "願望", m.normalize_section("願望小車"))
+check("願望小車在 COMPANY_LIST 且排在願望前面",
+      "願望小車" in m.COMPANY_LIST and m.COMPANY_LIST.index("願望小車") < m.COMPANY_LIST.index("願望"))
+
+for _tag, _co, _ids in [("短", "願望", ("B444444444", "B555555555", "B666666666")),
+                        ("全", "願望貸", ("B444444445", "B555555556", "B666666667")),
+                        ("車", "願望小車", ("B444444446", "B555555557", "B666666668"))]:
+    _i1, _i2, _i3 = _ids
+    bc(f"10/05-願{_tag}甲 {_i1}", gid="TEST_B")
+    bc(f"10/05-願{_tag}甲-{_co}/21商品/亞太", gid="TEST_B")
+    _d = get_cust(_i1)
+    check(f"[{_co}] 送件順序第一家歸願望", _d and m.normalize_section(_d["current_company"]) == "願望",
+          _d and _d.get("current_company"))
+    bc(f"@AI 願{_tag}甲 送{_co}", gid="TEST_B")
+    _d = get_cust(_i1)
+    check(f"[{_co}] 送出後離開送件區", (_d.get("report_section") or "") == "",
+          f"report_section={_d.get('report_section')!r}")
+    a(f"願{_tag}甲 {_co} 核准10萬")
+    _d = get_cust(_i1)
+    check(f"[{_co}] 核准金額有存", (_d.get("approved_amount") or "") != "", _d.get("approved_amount"))
+    check(f"[{_co}] 核准後進待撥款", _d.get("report_section") == "待撥款", _d.get("report_section"))
+
+    bc(f"10/05-願{_tag}乙 {_i2}", gid="TEST_B")
+    bc(f"10/05-願{_tag}乙-{_co}/21商品", gid="TEST_B")
+    a(f"願{_tag}乙 {_co} 婉拒 信用評分不足")
+    _d2 = get_cust(_i2)
+    check(f"[{_co}] 婉拒後推進下一家", _d2.get("current_company") == "21商品", _d2.get("current_company"))
+
+    bc(f"10/05-願{_tag}丙 {_i3}", gid="TEST_B")
+    bc(f"10/05-願{_tag}丙-{_co}/21商品", gid="TEST_B")
+    bc(f"@AI 願{_tag}丙 送{_co}", gid="TEST_B")
+    _rep = "\n".join(m.generate_report_lines("TEST_B"))
+    _lines = [l.strip() for l in _rep.splitlines()]
+    check(f"[{_co}] 日報有「願望」區塊標題", "願望" in _lines, "日報沒長出願望那一格")
+    check(f"[{_co}] 日報沒有多長一格「願望貸／願望小車」", "願望貸" not in _lines and "願望小車" not in _lines)
+
 # ========== 總結 ==========
 print(f"\n{'='*50}")
 print(f"結果：{PASS} 通過、{FAIL} 失敗")
