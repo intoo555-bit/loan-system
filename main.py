@@ -4844,6 +4844,12 @@ def _copy_personal_from_previous_case(cur, new_case_id: str, id_no: str, name: s
         return 0
 
 
+# 去重只看「還在進行中」的案子。預覽頁（_find_dup_sets）和實際合併（_dedupe_same_id_in_group）
+# 共用這一份 —— 2026-10-07 預覽頁自己寫一套沒看狀態，把「舊客隔幾個月再送」的已結案舊案
+# 列成「會被合併掉」31 筆，畫面跟實際按下去的結果對不上。
+_DEDUPE_STATUSES = ("ACTIVE", "PENDING")
+
+
 def _dedupe_same_id_in_group(id_no, group_id, prefer_case_id=""):
     """改身分證後去重：同一群組內若有多筆相同身分證 → 合併成一筆。
 
@@ -4868,8 +4874,8 @@ def _dedupe_same_id_in_group(id_no, group_id, prefer_case_id=""):
         #    結果去重看「誰的送件歷程比較完整」→ 保留 5 月那筆已結案的、
         #    把 8 月正在跑的新案標成 DELETED，業務的案子當場消失。
         #    → 舊案已經走完流程時，同一個客戶再送一次本來就該是新的一筆。
-        cur.execute("SELECT * FROM customers WHERE source_group_id=? AND status IN ('ACTIVE','PENDING')",
-                    (group_id,))
+        cur.execute(f"SELECT * FROM customers WHERE source_group_id=? AND status IN ({','.join('?' * len(_DEDUPE_STATUSES))})",
+                    (group_id, *_DEDUPE_STATUSES))
         rows = [dict(r) for r in cur.fetchall() if normalize_id_no(r["id_no"] or "") == nid]
         if len(rows) < 2:
             return 0
@@ -17078,12 +17084,14 @@ async def admin_devices_action(request: Request):
 
 
 def _find_dup_sets():
-    """掃描所有『同群組 + 同身分證』有 ≥2 筆（未刪除）的重複組。回 list of (gid, nid, rows)。"""
+    """掃描所有『同群組 + 同身分證』有 ≥2 筆「進行中」的重複組。回 list of (gid, nid, rows)。
+    ⛔ 已結案的舊案不算重複（舊客再送件＝新的一次申請），條件跟 _dedupe_same_id_in_group 共用 _DEDUPE_STATUSES。"""
     from collections import defaultdict
     conn = get_conn(); cur = conn.cursor()
     cur.execute("""SELECT case_id,customer_name,id_no,source_group_id,status,route_plan,
                    current_company,approved_amount,company_status,updated_at,created_at
-                   FROM customers WHERE status!='DELETED'""")
+                   FROM customers WHERE status IN ({})""".format(",".join("?" * len(_DEDUPE_STATUSES))),
+                _DEDUPE_STATUSES)
     rows = [dict(r) for r in cur.fetchall()]; conn.close()
     buckets = defaultdict(list)
     for r in rows:
@@ -17171,7 +17179,7 @@ table th,table td{{padding:6px 8px;border-bottom:1px solid #f0f4f7}}
 <div class="wrap">
   <h2>🧹 合併重複案件</h2>
   <div class="hint">掃描出「<b>同一群組、同一身分證</b>」卻有多筆的客戶（通常是身分證打錯又改回來殘留的空案）。<br>
-  合併規則：<b>保留資料最完整/有送件那筆</b>，其餘筆的非空欄位先併進保留筆（不覆蓋、不弄丟資料），多餘筆標記為已刪除（軟刪、可救回）。<b>只在同群組合併，跨群組同身分證不動。</b></div>
+  合併規則：<b>保留資料最完整/有送件那筆</b>，其餘筆的非空欄位先併進保留筆（不覆蓋、不弄丟資料），多餘筆標記為已刪除（軟刪、可救回）。<b>只在同群組合併，跨群組同身分證不動；已結案的舊案不算重複（舊客再送件是新的一次申請）。</b></div>
   {btn}
   <div style="margin-top:16px">{body}</div>
 </div>

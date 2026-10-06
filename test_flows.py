@@ -1287,6 +1287,30 @@ a("曾測傑 分貝商核准\n55000/ 18/3884@AI")
 _d = get_cust("B777777777")
 check("A 群原文貼上後存的核准金額=5.5萬", "5.5" in (_d.get("approved_amount") or ""), _d.get("approved_amount"))
 
+# ========== 56. 合併重複頁：舊客再送件的已結案舊案不可列成「會被合併掉」（2026-10-07）==========
+# 邱芷妤／李宜芳等：同群組同身分證兩筆都已結案（5 月一次、8～9 月又一次），
+# 預覽頁 _find_dup_sets 沒看狀態 → 列成「31 筆會被合併掉」，跟實際合併（只動進行中）對不上。
+print("\n=== 56. 合併重複預覽不列已結案舊案 ===")
+_now = datetime.now().isoformat()
+_c = sqlite3.connect(TEST_DB)
+for _cid, _nid, _st in [("rep_old1", "R100200300", "CLOSED"), ("rep_old2", "R100200300", "CLOSED"),
+                        ("rep_new1", "R100200301", "CLOSED"), ("rep_new2", "R100200301", "ACTIVE"),
+                        ("dup_a1",  "R100200302", "ACTIVE"), ("dup_a2",  "R100200302", "PENDING")]:
+    _c.execute("""INSERT INTO customers (case_id, customer_name, id_no, source_group_id, status, created_at, updated_at)
+                  VALUES (?,?,?,?,?,?,?)""", (_cid, "合併測", _nid, "TEST_B", _st, _now, _now))
+_c.commit(); _c.close()
+_sets = {nid: rs for gid, nid, rs in m._find_dup_sets() if gid == "TEST_B"}
+check("兩次都已結案（舊客再送件）→ 不列為重複", "R100200300" not in _sets)
+check("舊案結案＋新案進行中 → 不列為重複", "R100200301" not in _sets)
+check("兩筆都在進行中 → 仍列為重複", "R100200302" in _sets, list(_sets))
+check("預覽清單裡沒有任何已結案的案子",
+      all(r["status"] in m._DEDUPE_STATUSES for rs in _sets.values() for r in rs),
+      [r["status"] for rs in _sets.values() for r in rs])
+# 預覽說幾筆會被併掉，實際按下去就要併掉幾筆
+_preview = sum(len(rs) - 1 for rs in _sets.values())
+_actual = sum(m._dedupe_same_id_in_group(nid, "TEST_B") for nid in list(_sets))
+check("預覽頁筆數 = 實際合併筆數", _preview == _actual, f"預覽 {_preview}、實際 {_actual}")
+
 # ========== 總結 ==========
 print(f"\n{'='*50}")
 print(f"結果：{PASS} 通過、{FAIL} 失敗")
