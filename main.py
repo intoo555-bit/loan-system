@@ -5190,8 +5190,9 @@ def extract_approved_amount(text: str) -> str:
         try:
             num = int(num_str)
             if num >= 10000:
-                wan = num // 10000
-                return f"{wan}萬"
+                # ⛔ 不可用 // 整除：55000 // 10000 = 5，五千被砍掉（2026-10-06 曾俊傑 分貝商 55000 被存成 5萬）
+                wan = num / 10000
+                return f"{int(wan)}萬" if wan == int(wan) else f"{wan:g}萬"
         except Exception:
             pass
 
