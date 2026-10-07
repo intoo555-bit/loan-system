@@ -1311,6 +1311,93 @@ _preview = sum(len(rs) - 1 for rs in _sets.values())
 _actual = sum(m._dedupe_same_id_in_group(nid, "TEST_B") for nid in list(_sets))
 check("預覽頁筆數 = 實際合併筆數", _preview == _actual, f"預覽 {_preview}、實際 {_actual}")
 
+# ========== 57. business_ai 寫入窗口 /api/customer-upsert + 查詢多回案件歷程（2026-10-07）==========
+# 使用者裁示：有進行中案子 → 只補空格、不一樣的不改並推提醒給該業務群；沒有 → 建「待確認」。
+print("\n=== 57. business_ai 寫入窗口 ===")
+from fastapi.testclient import TestClient
+_tc = TestClient(m.app)
+m.set_setting("vba_secret", m.hash_pw("t57secret"))
+def _up(body):
+    return _tc.post("/api/customer-upsert", json=body).json()
+
+check("密碼錯 → 擋下", _tc.post("/api/customer-upsert",
+      json={"secret": "wrong", "id_no": "U100000001"}).status_code == 403)
+
+# ── ② 全新客戶 → 待確認 ──
+_r = _up({"secret": "t57secret", "id_no": "u100000001", "customer_name": "線上甲",
+          "fields": {"birth_date": "民國 70 年 3 月 15 日", "phone": "0912-345-678",
+                     "company_name_detail": "大明工程行", "contact1_name": "線上媽",
+                     "approved_amount": "99萬", "route_plan": "{}", "status": "CLOSED"}})
+_d = get_cust("U100000001")
+check("新客戶建成待確認", _r.get("action") == "created" and _d and _d["status"] == "PENDING", (_r, _d and _d.get("status")))
+check("生日轉成行政格式 070/03/15", _d.get("birth_date") == "070/03/15", _d.get("birth_date"))
+check("手機去掉橫線", _d.get("phone") == "0912345678", _d.get("phone"))
+check("公司名稱有寫入", _d.get("company_name_detail") == "大明工程行")
+check("⛔ 案件欄位（核准金額/送件順序/狀態）不可從外部寫入",
+      not (_d.get("approved_amount") or "") and not (_d.get("route_plan") or "")
+      and set(_r.get("ignored", [])) >= {"approved_amount", "route_plan", "status"}, _r.get("ignored"))
+
+# 業務之後在 LINE 建檔 → 接上那筆待確認、資料都在
+bc("10/7-線上甲U100000001", gid="TEST_B")
+_d = get_cust("U100000001")
+check("LINE 建檔接上待確認那筆（變進行中、公司還在）",
+      _d["status"] == "ACTIVE" and _d.get("company_name_detail") == "大明工程行"
+      and _d["source_group_id"] == "TEST_B", (_d["status"], _d.get("company_name_detail")))
+
+# ── ① 已有進行中案子：只補空格，不一樣的不改、推提醒 ──
+pushes.clear()
+_r = _up({"secret": "t57secret", "id_no": "U100000001", "customer_name": "線上甲",
+          "fields": {"phone": "0912345678",              # 一樣（只是格式不同）→ 不算不一樣
+                     "company_name_detail": "新光保全",   # 換工作 → 不改、要提醒
+                     "company_role": "警衛",              # 原本空白 → 補上
+                     "contact1_name": "線上媽"}})          # 一樣
+_d = get_cust("U100000001")
+check("回 updated", _r.get("action") == "updated", _r)
+check("空白欄位補上（職稱）", _d.get("company_role") == "警衛", _d.get("company_role"))
+check("不一樣的不改（公司還是大明工程行）", _d.get("company_name_detail") == "大明工程行", _d.get("company_name_detail"))
+check("不一樣的只有公司一項（格式不同的手機不算）",
+      [c["field"] for c in _r.get("conflicts", [])] == ["company_name_detail"], _r.get("conflicts"))
+_p = [t for g, t in pushes if g == "TEST_B"]
+check("推一則提醒到該業務群組", len(_p) == 1, pushes)
+check("提醒內容是中文、有新舊值、沒有欄位英文名",
+      bool(_p) and "大明工程行" in _p[0] and "新光保全" in _p[0] and "公司" in _p[0]
+      and "company_name_detail" not in _p[0], _p[:1])
+_c = sqlite3.connect(TEST_DB); _c.row_factory = sqlite3.Row
+_lg = _c.execute("SELECT message_text, from_group_id FROM case_logs WHERE id_no='U100000001' ORDER BY id DESC LIMIT 1").fetchone()
+_c.close()
+check("案件歷程有記（補了什麼、哪裡不一樣）",
+      _lg and _lg["from_group_id"] == "BUSINESS_AI" and "警衛" in _lg["message_text"] and "新光保全" in _lg["message_text"],
+      _lg and dict(_lg))
+
+# 全部一樣 → 不推提醒
+pushes.clear()
+_r = _up({"secret": "t57secret", "id_no": "U100000001", "fields": {"company_role": "警衛"}})
+check("資料都一樣 → 不推提醒", not pushes and not _r.get("conflicts"), (pushes, _r))
+
+# ── 舊客：以前結案過，這次沒填的從舊案帶 ──
+bc("5/1-線上乙U100000002", gid="TEST_B")
+_old = get_cust("U100000002")["case_id"]
+_c = sqlite3.connect(TEST_DB)
+_c.execute("UPDATE customers SET contact2_name='舊聯絡人', company_name_detail='舊公司', status='CLOSED' WHERE case_id=?", (_old,))
+_c.commit(); _c.close()
+_r = _up({"secret": "t57secret", "id_no": "U100000002", "customer_name": "線上乙",
+          "fields": {"company_name_detail": "新公司"}})
+_c = sqlite3.connect(TEST_DB); _c.row_factory = sqlite3.Row
+_d = dict(_c.execute("SELECT * FROM customers WHERE case_id=?", (_r.get("case_id", ""),)).fetchone() or {})
+_c.close()
+check("舊客再申請 → 新建待確認（不動結案舊案）", _r.get("action") == "created" and _d["case_id"] != _old, _r)
+check("客戶這次填的優先（新公司）", _d.get("company_name_detail") == "新公司", _d.get("company_name_detail"))
+check("沒填的從舊案帶（聯絡人2）", _d.get("contact2_name") == "舊聯絡人", _d.get("contact2_name"))
+
+# ── 查詢窗口多回案件歷程 ──
+_st = _tc.get("/api/customer-status", params={"id_no": "U100000001", "secret": "t57secret"}).json()
+_logs = _st.get("case_logs") or []
+check("customer-status 有回案件歷程", len(_logs) >= 2, _st.keys())
+check("案件歷程來源是中文、沒有群組 ID",
+      all(x["source"] in ("線上申請書", "A群（行政）", "網頁", "系統", "B群", "業務群") for x in _logs)
+      and not any("TEST_" in json.dumps(x, ensure_ascii=False) for x in _logs), _logs[:3])
+check("案件歷程新的在前", _logs and _logs[0]["source"] == "線上申請書", _logs[:1])
+
 # ========== 總結 ==========
 print(f"\n{'='*50}")
 print(f"結果：{PASS} 通過、{FAIL} 失敗")

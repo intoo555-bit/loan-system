@@ -22132,16 +22132,45 @@ async def customer_lookup(
     })
 
 
+def _vba_secret_ok(secret: str) -> bool:
+    stored = get_setting("vba_secret")
+    if stored:
+        return verify_pw(secret or "", stored)
+    return (secret or "") == os.getenv("VBA_SECRET", "vba_secret_2026")
+
+
+def _case_logs_for_api(case_id: str, limit: int = 30) -> list:
+    """給 business_ai 的案件歷程（新→舊）。來源轉成中文，不外流群組 ID。"""
+    if not case_id:
+        return []
+    conn = get_conn(); cur = conn.cursor()
+    cur.execute("""SELECT created_at, company, message_text, from_group_id FROM case_logs
+                   WHERE case_id=? ORDER BY id DESC LIMIT ?""", (case_id, limit))
+    rows = cur.fetchall(); conn.close()
+    out = []
+    for r in rows:
+        g = r["from_group_id"] or ""
+        if g == A_GROUP_ID:
+            src = "A群（行政）"
+        elif g.startswith("WEB"):
+            src = "網頁"
+        elif g == "BUSINESS_AI":
+            src = "線上申請書"
+        elif g.startswith("SYSTEM"):
+            src = "系統"
+        else:
+            src = get_group_name(g) or "業務群"
+        out.append({"time": (r["created_at"] or "")[:16].replace("T", " "),
+                    "company": r["company"] or "", "source": src,
+                    "text": (r["message_text"] or "")[:300]})
+    return out
+
+
 @app.get("/api/customer-status")
 async def customer_status(id_no: str = "", secret: str = ""):
     """供 business_ai 業務AI串接：只用身分證查客戶是否存在、辦到哪一關、名下資產/負債/送件。
     唯讀，不修改任何資料。驗證沿用 vba_secret。"""
-    stored_secret = get_setting("vba_secret")
-    if stored_secret:
-        ok = verify_pw(secret, stored_secret)
-    else:
-        ok = (secret == os.getenv("VBA_SECRET", "vba_secret_2026"))
-    if not ok:
+    if not _vba_secret_ok(secret):
         return JSONResponse({"ok": False, "error": "無權限"}, status_code=403)
     idv = (id_no or "").strip().upper()
     if not idv:
@@ -22195,7 +22224,182 @@ async def customer_status(id_no: str = "", secret: str = ""):
         "company_salary": g("company_salary"),
         "selected_plans": g("selected_plans") or g("adminb_selected_plans"),
         "note": g("eval_note"),
+        "case_logs": _case_logs_for_api(ref.get("case_id", "")),
     })
+
+
+# =========================
+# business_ai 寫入：客戶在線上申請書填完 → 用身分證建立／更新客戶
+# =========================
+# 使用者 2026-10-07 裁示：
+#   ① 有「進行中」案子（ACTIVE／PENDING）→ 只補空格，不蓋掉行政填好的；
+#      客戶填的跟系統不一樣（例如換工作）→ 不改，跳提醒給該案的業務群組，讓人看過再決定。
+#   ② 沒有進行中的案子（沒來過、或只有已結案舊案）→ 建成「待確認」（PENDING），
+#      跟網頁「新增客戶」同一條路：業務之後在 LINE 打建檔格式，create_customer_record 用身分證接上。
+# ⛔ 只收「人」的資料。案件狀態（送哪家、核准金額、撥款…）絕不能從外部寫進來。
+_APPLY_EXTRA_LABELS = {
+    "eval_fund_need": "資金需求", "eval_labor_ins": "勞保狀態", "eval_salary_transfer": "有無薪轉",
+    "eval_alert_warning": "警示戶", "eval_alert_warning_method": "警示戶撥款方式",
+    "eval_alert": "當鋪私設", "eval_house_private": "房屋私設",
+    "eval_sent_3m": "近三月送件", "eval_sent_3m_detail": "近三月送過什麼",
+    "eval_credit_card": "名下信用卡", "eval_property": "有無動產/不動產",
+    "eval_late": "貸款遲繳", "eval_late_days": "遲繳天數",
+}
+_APPLY_PERSONAL_KEYS = [
+    "birth_date", "phone", "email", "line_id", "fb", "carrier", "marriage", "education",
+    "id_issue_date", "id_issue_place", "id_issue_type",
+    "reg_city", "reg_district", "reg_address", "reg_phone",
+    "live_city", "live_district", "live_address", "live_phone", "live_status", "live_years", "live_months",
+    "company_name_detail", "company_role", "company_phone_area", "company_phone_num", "company_phone_ext",
+    "company_years", "company_months", "company_salary",
+    "company_city", "company_district", "company_address",
+    "contact1_name", "contact1_relation", "contact1_phone", "contact1_known",
+    "contact2_name", "contact2_relation", "contact2_phone", "contact2_known",
+]
+APPLY_FIELD_LABELS = {k: FIELD_LABELS.get(k, k) for k in _APPLY_PERSONAL_KEYS}
+APPLY_FIELD_LABELS.update(_APPLY_EXTRA_LABELS)
+_APPLY_MOBILE_KEYS = {"phone", "contact1_phone", "contact2_phone"}
+
+
+def _normalize_roc_date(s: str) -> str:
+    """民國 70 年 3 月 15 日 / 70/3/15 / 1981-03-15 → 070/03/15（行政系統的寫法）。認不出來就原樣回傳。"""
+    s = (s or "").strip()
+    m = re.match(r"^(?:民國)?\s*(\d{2,4})\s*[年/\-.]\s*(\d{1,2})\s*[月/\-.]\s*(\d{1,2})\s*日?$", s)
+    if not m:
+        return s
+    y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
+    if y > 1911:
+        y -= 1911
+    if not (1 <= mo <= 12 and 1 <= d <= 31 and 0 < y < 200):
+        return s
+    return f"{y:03d}/{mo:02d}/{d:02d}"
+
+
+def _apply_clean_value(key: str, val) -> str:
+    v = str(val if val is not None else "").strip()[:300]
+    if key in ("birth_date", "id_issue_date"):
+        v = _normalize_roc_date(v)
+    elif key in _APPLY_MOBILE_KEYS:
+        v = re.sub(r"[\s\-()]", "", v)
+    return v
+
+
+def _apply_same(a, b) -> bool:
+    """比對時忽略空白、橫線、大小寫（02-1234 和 021234 算一樣）。"""
+    f = lambda x: re.sub(r"[\s\-()／/]", "", str(x or "")).lower()
+    return f(a) == f(b)
+
+
+@app.post("/api/customer-upsert")
+async def customer_upsert(request: Request):
+    """供 business_ai：客戶線上申請書送出 → 用身分證建立或補資料。驗證沿用 vba_secret。
+    body（JSON）：{"secret", "id_no", "customer_name", "fields": {欄位: 值}}
+    欄位名用行政系統的（見 APPLY_FIELD_LABELS），不認得的會列在 ignored 回去、不寫入。"""
+    try:
+        data = await request.json()
+    except Exception:
+        return JSONResponse({"ok": False, "error": "資料格式錯誤（要 JSON）"}, status_code=400)
+    if not isinstance(data, dict) or not _vba_secret_ok(str(data.get("secret") or "")):
+        return JSONResponse({"ok": False, "error": "無權限"}, status_code=403)
+    idv = normalize_id_no(str(data.get("id_no") or ""))
+    if not idv or not re.match(r"^[A-Z][A-Z0-9][0-9]{8}$", idv):
+        return JSONResponse({"ok": False, "error": "身分證格式錯誤"})
+    name = str(data.get("customer_name") or "").strip()[:20]
+    raw = data.get("fields") or {}
+    if not isinstance(raw, dict):
+        return JSONResponse({"ok": False, "error": "fields 要是物件"})
+    fields, ignored = {}, []
+    for k, v in raw.items():
+        if k not in APPLY_FIELD_LABELS:
+            ignored.append(k)
+            continue
+        cv = _apply_clean_value(k, v)
+        if cv:
+            fields[k] = cv
+
+    now = now_iso()
+    push_to = None
+    fill = {}
+    with db_conn(commit=True) as conn:
+        cur = conn.cursor()
+        cur.execute("""SELECT * FROM customers WHERE id_no=? AND status IN ('ACTIVE','PENDING')
+                       ORDER BY CASE status WHEN 'ACTIVE' THEN 0 ELSE 1 END, updated_at DESC LIMIT 1""", (idv,))
+        row = cur.fetchone()
+
+        if row is None:
+            # ② 沒有進行中的案子 → 建「待確認」
+            if not name:
+                return JSONResponse({"ok": False, "error": "新客戶要有姓名"})
+            case_id = short_id()
+            cur.execute("""INSERT INTO customers
+                (case_id,customer_name,id_no,source_group_id,company,last_update,status,created_at,updated_at)
+                VALUES (?,?,?,?,?,?,'PENDING',?,?)""",
+                (case_id, name, idv, "", "", "線上申請書：" + name, now, now))
+            if fields:
+                cur.execute(f"UPDATE customers SET {','.join(f'{k}=?' for k in fields)} WHERE case_id=?",
+                            (*fields.values(), case_id))
+            # 舊客（以前結案過）：客戶這次沒填的，從舊案補（只補空的，客戶填的優先）
+            copied = _copy_personal_from_previous_case(cur, case_id, idv, name, only_empty=True)
+            cur.execute("INSERT INTO case_logs (case_id,customer_name,id_no,company,message_text,from_group_id,created_at,snapshot_json) "
+                        "VALUES (?,?,?,?,?,?,?,?)",
+                        (case_id, name, idv, "", f"線上申請書建檔（待確認）：客戶填 {len(fields)} 項"
+                         + (f"、從舊案帶入 {copied} 項" if copied else ""), "BUSINESS_AI", now, ""))
+            return JSONResponse({"ok": True, "action": "created", "case_id": case_id,
+                                 "filled": [APPLY_FIELD_LABELS[k] for k in fields],
+                                 "copied_from_old_case": copied, "conflicts": [], "ignored": ignored})
+
+        # ① 有進行中的案子 → 只補空格；不一樣的不改、跳提醒
+        r = dict(row)
+        case_id = r["case_id"]
+        conflicts = []
+        for k, v in fields.items():
+            cur_v = r.get(k)
+            if cur_v is None or str(cur_v).strip() in ("", "{}", "[]"):
+                fill[k] = v
+            elif not _apply_same(cur_v, v):
+                conflicts.append({"field": k, "label": APPLY_FIELD_LABELS[k],
+                                  "system": str(cur_v), "submitted": v})
+        if name and r.get("customer_name") and not _apply_same(name, r["customer_name"]):
+            conflicts.append({"field": "customer_name", "label": "姓名",
+                              "system": r["customer_name"], "submitted": name})
+        if fill:
+            cur.execute(f"UPDATE customers SET {','.join(f'{k}=?' for k in fill)},updated_at=? WHERE case_id=?",
+                        (*fill.values(), now, case_id))
+        # 案件歷程逐項寫清楚補了什麼、哪裡不一樣（個資沒有快照可一鍵還原，至少查得到原值）
+        lines = ["線上申請書送出"]
+        if fill:
+            lines.append("已補空白欄位：" + "、".join(f"{APPLY_FIELD_LABELS[k]}={v}" for k, v in fill.items()))
+        for c in conflicts:
+            lines.append(f"⚠️ 不一樣（未改）{c['label']}：系統「{c['system']}」／客戶填「{c['submitted']}」")
+        if len(lines) == 1:
+            lines.append("資料跟系統一致，沒有變動")
+        cur.execute("INSERT INTO case_logs (case_id,customer_name,id_no,company,message_text,from_group_id,created_at,snapshot_json) "
+                    "VALUES (?,?,?,?,?,?,?,?)",
+                    (case_id, r.get("customer_name", ""), idv, r.get("company", ""), "\n".join(lines),
+                     "BUSINESS_AI", now, ""))
+        if conflicts and r.get("source_group_id"):
+            push_to = (r["source_group_id"], r.get("customer_name", ""), conflicts, len(fill))
+
+    # 推播放在交易外（LINE API 慢，別卡住資料庫）。一次送出只推一則，不逐欄洗版。
+    pushed = False
+    if push_to:
+        gid, cname, cfs, nfill = push_to
+        msg = [f"📝 {cname} 客戶在線上申請書填的資料跟系統不一樣（系統沒有改），請確認："]
+        for c in cfs[:15]:
+            msg.append(f"・{c['label']}：系統「{c['system']}」→ 客戶填「{c['submitted']}」")
+        if len(cfs) > 15:
+            msg.append(f"…還有 {len(cfs) - 15} 項，請到網頁看案件歷程")
+        if nfill:
+            msg.append(f"（另外已自動補上 {nfill} 個原本空白的欄位）")
+        msg.append("要改請到網頁「編輯案件」修改。")
+        try:
+            ok, _err = push_text(gid, "\n".join(msg)[:4900])
+            pushed = bool(ok)
+        except Exception as e:
+            print(f"[customer-upsert] 推播提醒失敗 {gid}: {e}")
+    return JSONResponse({"ok": True, "action": "updated", "case_id": case_id,
+                         "filled": [APPLY_FIELD_LABELS[k] for k in fill],
+                         "conflicts": conflicts, "reminder_pushed": pushed, "ignored": ignored})
     # =========================
 # =========================
 # 新增客戶網頁（行政A）
