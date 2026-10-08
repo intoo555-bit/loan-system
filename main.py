@@ -22150,6 +22150,32 @@ def _vba_secret_ok(secret: str) -> bool:
     return (secret or "") == os.getenv("VBA_SECRET", "vba_secret_2026")
 
 
+# /api/customer-status 多回的客戶資料表欄位（business_ai 照這些名字接；改名字那邊會斷）
+# 使用者 2026-10-08 裁示（關掉自動模式、親自核准）：業務 AI 是第一線、客戶資料本來就從那邊收，
+# 舊客的資料回傳給它才不用叫客戶重填。密鑰已換新（舊預設密碼實測 403）。
+_STATUS_API_PERSONAL_KEYS = [
+    "birth_date", "phone", "email", "line_id", "carrier", "marriage", "education",
+    "id_issue_date", "id_issue_place", "id_issue_type",
+    "reg_city", "reg_district", "reg_address", "reg_phone",
+    "live_same_as_reg", "live_city", "live_district", "live_address", "live_phone",
+    "live_status", "live_years", "live_months",
+    "company_name_detail", "company_phone_area", "company_phone_num", "company_phone_ext",
+    "company_role", "company_years", "company_months",
+    "company_city", "company_district", "company_address",
+    "contact1_name", "contact1_relation", "contact1_phone", "contact1_known",
+    "contact2_name", "contact2_relation", "contact2_phone", "contact2_known",
+    "eval_fine", "eval_fuel_tax",
+]
+
+
+def _fee_total(r: dict) -> str:
+    """欠費總額 = 罰單 + 燃料稅；兩個都空就回空字串（不要回 0，AI 會以為問過了、沒欠費）。"""
+    vals = [re.sub(r"[^\d]", "", str(r.get(k) or "")) for k in ("eval_fine", "eval_fuel_tax")]
+    if not any(vals):
+        return ""
+    return str(sum(int(v) for v in vals if v))
+
+
 def _case_logs_for_api(case_id: str, limit: int = 30) -> list:
     """給 business_ai 的案件歷程（新→舊）。來源轉成中文，不外流群組 ID。"""
     if not case_id:
@@ -22236,6 +22262,8 @@ async def customer_status(id_no: str = "", secret: str = ""):
         "selected_plans": g("selected_plans") or g("adminb_selected_plans"),
         "note": g("eval_note"),
         "case_logs": _case_logs_for_api(ref.get("case_id", "")),
+        **{k: g(k) for k in _STATUS_API_PERSONAL_KEYS},
+        "eval_total_fee": _fee_total(ref),  # 欠費總額（資料庫沒存，跟網頁一樣當場算）
     })
 
 

@@ -1413,6 +1413,30 @@ check("不再問「確認無誤」、不再叫人改身分證/改名", "確認�
 _rep = "\n".join(m.generate_report_lines("TEST_B"))
 check("日報顯示今天的日期", f"{m.now_tw().strftime('%m/%d')}-李測偉" in _rep, [l for l in _rep.splitlines() if "李測偉" in l])
 
+# ========== 59. 查詢窗口多回客戶資料表欄位（2026-10-08 business_ai 要求：AI 不重問客戶）==========
+print("\n=== 59. customer-status 回客戶資料表欄位 ===")
+m.set_setting("vba_secret", m.hash_pw("t59secret"))
+bc("10/8-查詢甲V100000001", gid="TEST_B")
+_c = sqlite3.connect(TEST_DB)
+_c.execute("""UPDATE customers SET company_name_detail='大明工程行', company_role='技工', company_years='3',
+              phone='0912345678', contact1_name='查詢媽', contact1_phone='0922333444',
+              reg_city='台中市', eval_fine='1200', eval_fuel_tax='800' WHERE id_no='V100000001'""")
+_c.commit(); _c.close()
+_st = TestClient(m.app).get("/api/customer-status", params={"id_no": "V100000001", "secret": "t59secret"}).json()
+check("每個約定的欄位名都有回（business_ai 照名字接）",
+      all(k in _st for k in m._STATUS_API_PERSONAL_KEYS + ["eval_total_fee"]),
+      [k for k in m._STATUS_API_PERSONAL_KEYS + ["eval_total_fee"] if k not in _st])
+check("工作資料有回（AI 一直重問工作的原因）",
+      _st.get("company_name_detail") == "大明工程行" and _st.get("company_role") == "技工", _st.get("company_name_detail"))
+check("聯絡人有回", _st.get("contact1_name") == "查詢媽" and _st.get("contact1_phone") == "0922333444")
+check("欠費總額 = 罰單 + 燃料稅 = 2000", _st.get("eval_total_fee") == "2000", _st.get("eval_total_fee"))
+check("沒填的回空字串（不是 None）", _st.get("contact2_name") == "", repr(_st.get("contact2_name")))
+check("原本的欄位沒被蓋掉", _st.get("exists") is True and "case_logs" in _st and "company_salary" in _st)
+check("密碼錯 → 擋下",
+      TestClient(m.app).get("/api/customer-status", params={"id_no": "V100000001", "secret": "x"}).status_code == 403)
+# 都沒填欠費 → 空字串，不能回 0（AI 會以為問過了、沒欠費）
+check("欠費都沒填 → 空字串", m._fee_total({}) == "" and m._fee_total({"eval_fine": "$1,500"}) == "1500")
+
 # ========== 總結 ==========
 print(f"\n{'='*50}")
 print(f"結果：{PASS} 通過、{FAIL} 失敗")
