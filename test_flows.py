@@ -1437,6 +1437,30 @@ check("密碼錯 → 擋下",
 # 都沒填欠費 → 空字串，不能回 0（AI 會以為問過了、沒欠費）
 check("欠費都沒填 → 空字串", m._fee_total({}) == "" and m._fee_total({"eval_fine": "$1,500"}) == "1500")
 
+# ========== 60. 待確認資料在 LINE 建檔 → 建立日期改成建檔那天（2026-10-08 李冠偉案）==========
+# 行政 10/02 在網頁先填（PENDING），業務 10/08 才在 LINE 建檔，日報卻顯示 10/02。
+# 使用者裁示：一律依建檔那天。
+print("\n=== 60. 待確認轉正式：日期用建檔那天 ===")
+_today = m.now_tw().strftime("%Y-%m-%d")
+_c = sqlite3.connect(TEST_DB)
+_c.execute("""INSERT INTO customers (case_id,customer_name,id_no,source_group_id,company,status,company_name_detail,created_at,updated_at)
+              VALUES ('pend60','預填甲','W100000001','','','PENDING','預填公司','2026-10-02T15:00:00','2026-10-02T15:00:00')""")
+_c.commit(); _c.close()
+_ret = bc("15/10/8-預填甲 W100000001", gid="TEST_B")
+_d = get_cust("W100000001")
+check("接上待確認那筆（同一筆、資料還在）",
+      _d["case_id"] == "pend60" and _d["status"] == "ACTIVE" and _d.get("company_name_detail") == "預填公司",
+      (_d["case_id"], _d["status"]))
+check("建立日期改成今天（不是 10/02）", (_d["created_at"] or "")[:10] == _today, _d["created_at"])
+_rep = "\n".join(m.generate_report_lines("TEST_B"))
+check("日報顯示今天", f"{m.now_tw().strftime('%m/%d')}-預填甲" in _rep and "10/02-預填甲" not in _rep,
+      [l for l in _rep.splitlines() if "預填甲" in l])
+check("機器人提醒寫的日期跟日報一致", f"日報的建檔日期是 {m.now_tw().strftime('%m/%d')}" in str(_ret), _ret)
+_c = sqlite3.connect(TEST_DB); _c.row_factory = sqlite3.Row
+_lg = [r["message_text"] for r in _c.execute("SELECT message_text FROM case_logs WHERE case_id='pend60'")]
+_c.close()
+check("案件歷程記下原本 10/02 填寫", any("2026-10-02 填寫" in t for t in _lg), _lg)
+
 # ========== 總結 ==========
 print(f"\n{'='*50}")
 print(f"結果：{PASS} 通過、{FAIL} 失敗")

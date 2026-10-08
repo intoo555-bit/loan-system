@@ -4735,13 +4735,22 @@ def create_customer_record(name, id_no, company, source_group_id, text,
                 pending = _same_name_pending[0]
         if pending:
             case_id = pending["case_id"]
+            # ⛔ 建立日期要改成「業務在 LINE 建檔這天」，不可沿用待確認那筆的填寫日。
+            #    2026-10-08 李冠偉：行政 10/02 在網頁先填資料，業務 10/08 才建檔，
+            #    日報卻顯示 10/02（使用者裁示：一律依建檔那天）。原填寫日記進案件歷程。
+            _prefill_day = (pending["created_at"] or "")[:10]
             cur.execute("""UPDATE customers SET
                 status='ACTIVE', customer_name=?, company=?,
                 source_group_id=?, route_plan=?, current_company=?,
-                report_section=?, last_update=?, updated_at=?
+                report_section=?, last_update=?, updated_at=?, created_at=?
                 WHERE case_id=?""",
                 (name, company, source_group_id, route_plan, current_company,
-                 report_section, text, now, case_id))
+                 report_section, text, now, now, case_id))
+            cur.execute("INSERT INTO case_logs (case_id,customer_name,id_no,company,message_text,from_group_id,created_at) "
+                        "VALUES (?,?,?,?,?,?,?)",
+                        (case_id, name, pending["id_no"] or id_no, company,
+                         f"待確認資料（{_prefill_day} 填寫）在 LINE 建檔，建立日期改為今天",
+                         source_group_id or "SYSTEM", now))
             return case_id
         else:
             # 業務員透過 LINE 建立的新案件直接 ACTIVE（PENDING 是 web /new-customer 表單專用狀態）
@@ -10757,7 +10766,7 @@ def handle_new_case_block(block_text, source_group_id, reply_token) -> Optional[
     if existing:
         send_confirm_new_case_buttons(reply_token, block_text, existing, source_group_id)
         return "QUICK_REPLY_SENT"
-    create_customer_record(name, id_no, company, source_group_id, block_text)
+    _new_cid = create_customer_record(name, id_no, company, source_group_id, block_text)
     msg = f"🆕 已建立客戶：{name}" + _copied_hint()
     if warnings:
         # ⛔ 業務打的日期「沒有存」—— 建檔日期一律用實際建檔當天（created_at）。
@@ -10767,7 +10776,12 @@ def handle_new_case_block(block_text, source_group_id, reply_token) -> Optional[
         _other_w = [w for w in warnings if not w.startswith("日期")]
         msg += "\n⚠️ 資料檢查：\n" + "\n".join(f"  • {w}" for w in _date_w + _other_w)
         if _date_w:
-            msg += f"\n（日期打錯沒關係，系統建檔日期用今天 {now_tw().strftime('%m/%d')}，不用改）"
+            # 日期讀資料庫實際存的，不寫死「今天」—— 寫死的話，哪天建檔日期邏輯又變，這句就會說謊
+            _c = get_conn()
+            _r = _c.execute("SELECT created_at FROM customers WHERE case_id=?", (_new_cid,)).fetchone()
+            _c.close()
+            _day = ((_r["created_at"] if _r else "") or now_iso())[5:10].replace("-", "/")
+            msg += f"\n（日期打錯沒關係，日報的建檔日期是 {_day}，不用改）"
         if _other_w:
             msg += "\n（客戶仍已建立，如需修正可用 @AI 姓名 改身分證/改名）"
     return msg
