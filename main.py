@@ -4584,6 +4584,23 @@ def init_db():
             + "\n影響：統計的「本月結案」會退回用最後異動時間，舊案被修改過就會算進當月、"
               "數字偏高。系統其他功能正常。")
 
+    # 一次性資料修正（2026-10-08 使用者裁示）：李冠偉 10/02 行政先填、10/08 業務建檔，
+    # 舊程式接上時沿用 10/02 → 日報顯示錯日期。程式已修（create_customer_record），這筆舊資料手動改回建檔那天。
+    # 條件含「建立日期還是 10/02」→ 改過一次就不會再撈到，重複啟動不會重跑。
+    try:
+        cur.execute("""SELECT case_id, customer_name, id_no, company, source_group_id, created_at FROM customers
+                       WHERE id_no='L126040353' AND status='ACTIVE' AND created_at LIKE '2026-10-02%'""")
+        for _r in cur.fetchall():
+            cur.execute("UPDATE customers SET created_at='2026-10-08T11:26:00' WHERE case_id=?", (_r["case_id"],))
+            cur.execute("INSERT INTO case_logs (case_id,customer_name,id_no,company,message_text,from_group_id,created_at) "
+                        "VALUES (?,?,?,?,?,?,?)",
+                        (_r["case_id"], _r["customer_name"], _r["id_no"], _r["company"] or "",
+                         f"系統修正：建立日期 {_r['created_at'][:10]} → 2026-10-08（依業務 LINE 建檔那天，使用者 2026-10-08 裁示）",
+                         "SYSTEM_FIX", now_iso()))
+            print(f"[migrate] 李冠偉建立日期 {_r['created_at'][:10]} → 2026-10-08")
+    except Exception as e:
+        print(f"[migrate] 李冠偉日期修正失敗：{e}")
+
     # groups 表新增業務群對應欄位
     ensure_column(cur, "groups", "linked_sales_group_id", "TEXT")
     ensure_column(cur, "groups", "linked_a_group_id", "TEXT")
