@@ -1461,6 +1461,48 @@ _lg = [r["message_text"] for r in _c.execute("SELECT message_text FROM case_logs
 _c.close()
 check("案件歷程記下原本 10/02 填寫", any("2026-10-02 填寫" in t for t in _lg), _lg)
 
+# ========== 61. 南亞（2026-10-08 新增公司）走完整流程 ==========
+# 日報欄位叫「南亞」；業務打「南亞」「南亞機車」「南亞汽車」都要認、都歸同一格（使用者 2026-10-08）。
+print("\n=== 61. 南亞新公司 ===")
+check("南亞在 REPORT_SECTION_1（日報區塊）", "南亞" in m.REPORT_SECTION_1)
+for _v in ("南亞機車", "南亞汽車"):
+    check(f"{_v} 在 COMPANY_LIST 且排在南亞前面（長字先比）",
+          _v in m.COMPANY_LIST and m.COMPANY_LIST.index(_v) < m.COMPANY_LIST.index("南亞"))
+    check(f"normalize_section({_v})=南亞", m.normalize_section(_v) == "南亞", m.normalize_section(_v))
+check("normalize_section(南亞)=南亞", m.normalize_section("南亞") == "南亞", m.normalize_section("南亞"))
+
+for _tag, _co, _ids in [("短", "南亞",     ("D200000001", "D200000002", "D200000003")),
+                        ("機", "南亞機車", ("D200000011", "D200000012", "D200000013")),
+                        ("汽", "南亞汽車", ("D200000021", "D200000022", "D200000023"))]:
+    _i1, _i2, _i3 = _ids
+    bc(f"10/08-南{_tag}甲 {_i1}", gid="TEST_B")
+    bc(f"10/08-南{_tag}甲-{_co}/21商品/亞太", gid="TEST_B")
+    _d = get_cust(_i1)
+    check(f"[{_co}] 送件順序第一家歸南亞", _d and m.normalize_section(_d["current_company"]) == "南亞",
+          _d and _d.get("current_company"))
+    bc(f"@AI 南{_tag}甲 送{_co}", gid="TEST_B")
+    _d = get_cust(_i1)
+    check(f"[{_co}] 送出後離開送件區", (_d.get("report_section") or "") == "",
+          f"report_section={_d.get('report_section')!r}")
+    a(f"南{_tag}甲 {_co} 核准10萬")
+    _d = get_cust(_i1)
+    check(f"[{_co}] 核准金額有存", (_d.get("approved_amount") or "") != "", _d.get("approved_amount"))
+    check(f"[{_co}] 核准後進待撥款", _d.get("report_section") == "待撥款", _d.get("report_section"))
+
+    bc(f"10/08-南{_tag}乙 {_i2}", gid="TEST_B")
+    bc(f"10/08-南{_tag}乙-{_co}/21商品", gid="TEST_B")
+    a(f"南{_tag}乙 {_co} 婉拒 信用評分不足")
+    _d2 = get_cust(_i2)
+    check(f"[{_co}] 婉拒後推進下一家", _d2.get("current_company") == "21商品", _d2.get("current_company"))
+
+    bc(f"10/08-南{_tag}丙 {_i3}", gid="TEST_B")
+    bc(f"10/08-南{_tag}丙-{_co}/21商品", gid="TEST_B")
+    bc(f"@AI 南{_tag}丙 送{_co}", gid="TEST_B")
+    _lines = [l.strip() for l in "\n".join(m.generate_report_lines("TEST_B")).splitlines()]
+    check(f"[{_co}] 日報有「南亞」區塊標題", "南亞" in _lines, "日報沒長出南亞那一格")
+    check(f"[{_co}] 日報沒有多長一格「南亞機車／南亞汽車」",
+          "南亞機車" not in _lines and "南亞汽車" not in _lines)
+
 # ========== 總結 ==========
 print(f"\n{'='*50}")
 print(f"結果：{PASS} 通過、{FAIL} 失敗")
