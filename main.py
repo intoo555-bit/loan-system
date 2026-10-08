@@ -7652,8 +7652,11 @@ def _validate_new_case_fields(date: str, name: str, id_no: str):
             # 合理：民國 100-130（2011-2041）、西元 2020-2100；3 位數 or 2 位數民國年常見
             if 1 <= y <= 3:
                 warnings.append(f"日期「{date}」民國年太小，可能打錯")
-            elif 4 <= y < 80:  # 民國 4~79 (1915~1990)，年紀太大的客戶？
-                warnings.append(f"日期「{date}」對應民國{y}年({1911+y}年)，確認無誤？")
+            elif 4 <= y < 80:  # 民國 4~79 (1915~1990)：通常是少打了開頭的「1」（115 打成 15）
+                if 10 <= y <= 30:
+                    warnings.append(f"日期「{date}」應該是「1{date}」？")
+                else:
+                    warnings.append(f"日期「{date}」年份不對，可能打錯")
             elif 131 <= y < 1000:
                 warnings.append(f"日期「{date}」民國年太大，可能打錯")
     if id_no:
@@ -10757,8 +10760,16 @@ def handle_new_case_block(block_text, source_group_id, reply_token) -> Optional[
     create_customer_record(name, id_no, company, source_group_id, block_text)
     msg = f"🆕 已建立客戶：{name}" + _copied_hint()
     if warnings:
-        msg += "\n⚠️ 資料檢查：\n" + "\n".join(f"  • {w}" for w in warnings) + \
-               "\n（客戶仍已建立，如需修正可用 @AI 姓名 改身分證/改名）"
+        # ⛔ 業務打的日期「沒有存」—— 建檔日期一律用實際建檔當天（created_at）。
+        #    2026-10-08 李冠偉：業務把 115/10/8 打成 15/10/8，提醒叫他「確認無誤？」
+        #    又只給「改身分證/改名」，業務以為要改卻找不到改日期的方法。→ 日期打錯直接講不用改。
+        _date_w = [w for w in warnings if w.startswith("日期")]
+        _other_w = [w for w in warnings if not w.startswith("日期")]
+        msg += "\n⚠️ 資料檢查：\n" + "\n".join(f"  • {w}" for w in _date_w + _other_w)
+        if _date_w:
+            msg += f"\n（日期打錯沒關係，系統建檔日期用今天 {now_tw().strftime('%m/%d')}，不用改）"
+        if _other_w:
+            msg += "\n（客戶仍已建立，如需修正可用 @AI 姓名 改身分證/改名）"
     return msg
 
 

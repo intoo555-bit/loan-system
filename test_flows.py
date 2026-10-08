@@ -1398,6 +1398,21 @@ check("案件歷程來源是中文、沒有群組 ID",
       and not any("TEST_" in json.dumps(x, ensure_ascii=False) for x in _logs), _logs[:3])
 check("案件歷程新的在前", _logs and _logs[0]["source"] == "線上申請書", _logs[:1])
 
+# ========== 58. 建檔日期打錯（115 打成 15）：提醒要講清楚「不用改」（2026-10-08 李冠偉案）==========
+# 業務打的日期不會存（建檔日期一律用實際建檔當天），舊提醒卻問「確認無誤？」又只教改身分證/改名，
+# 業務以為要改卻找不到方法。
+print("\n=== 58. 建檔日期打錯的提醒 ===")
+_ret = bc("15/10/8-李測偉 L126040353\n機車無貸款 NSG-8722\n汽車不提供", gid="TEST_B")
+_out = "\n".join([str(_ret or "")] + [str(x) for x in replies])
+_d = get_cust("L126040353")
+check("客戶照樣建立", _d is not None and _d["status"] == "ACTIVE")
+check("建檔日期用今天（不是 15 年）", _d and (_d["created_at"] or "")[:10] == m.now_tw().strftime("%Y-%m-%d"), _d and _d["created_at"])
+check("提醒猜出正確日期 115/10/8", "115/10/8" in _out, _out)
+check("提醒講明不用改", "不用改" in _out, _out)
+check("不再問「確認無誤」、不再叫人改身分證/改名", "確認無誤" not in _out and "改身分證" not in _out, _out)
+_rep = "\n".join(m.generate_report_lines("TEST_B"))
+check("日報顯示今天的日期", f"{m.now_tw().strftime('%m/%d')}-李測偉" in _rep, [l for l in _rep.splitlines() if "李測偉" in l])
+
 # ========== 總結 ==========
 print(f"\n{'='*50}")
 print(f"結果：{PASS} 通過、{FAIL} 失敗")
