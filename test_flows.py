@@ -1503,6 +1503,44 @@ for _tag, _co, _ids in [("短", "南亞",     ("D200000001", "D200000002", "D200
     check(f"[{_co}] 日報沒有多長一格「南亞機車／南亞汽車」",
           "南亞機車" not in _lines and "南亞汽車" not in _lines)
 
+# ========== 62. 線上申請書提醒不可以充滿「假的不一樣」（2026-10-09 卓泰禎測試）==========
+# 真實提醒 15 項裡大部分是寫法不同：台/臺、弟/弟弟、父母名下/父母、500000 vs 30～50 萬、
+# 描述型欄位各說各話。業務看到這種會麻痺 → 真的換工作時也不看了。
+# 下面的值照抄那則真實提醒（系統值 / 客戶填的值），身分證用假的。
+print("\n=== 62. 線上申請書提醒只留真的不一樣 ===")
+m.set_setting("vba_secret", m.hash_pw("t57secret"))   # 第 59 組換過密碼，這裡設回來
+bc("10/9-卓測禎X100000001", gid="TEST_B")
+_c = sqlite3.connect(TEST_DB)
+_c.execute("""UPDATE customers SET birth_date='069/06/21', fb='卓小宇', live_city='台中市', reg_city='台中市',
+              company_city='台中市', live_status='父母名下', company_years='18', company_salary='4',
+              eval_fund_need='500000', contact1_relation='弟', contact2_relation='父',
+              eval_sent_3m_detail='和潤車貸過件', eval_credit_card='有卡', eval_property='1汽 1機 /有房',
+              eval_late='無' WHERE id_no='X100000001'""")
+_c.commit(); _c.close()
+pushes.clear()
+_r = _up({"secret": "t57secret", "id_no": "X100000001", "customer_name": "卓測禎",
+          "fields": {"birth_date": "083/12/04", "fb": "黃小小", "live_city": "臺中市", "reg_city": "臺中市",
+                     "company_city": "臺中市", "live_status": "父母", "company_years": "10",
+                     "company_salary": "45000", "eval_fund_need": "30～50 萬",
+                     "contact1_relation": "弟弟", "contact2_relation": "爸爸",
+                     "eval_sent_3m_detail": "融資也正常/無", "eval_credit_card": "無",
+                     "eval_property": "無（問到時客戶只回有汽車）", "eval_late": "正常，無呆帳/協商"}})
+_cf = sorted(c["field"] for c in _r.get("conflicts", []))
+check("只剩真的不一樣：生日、FB、年資、月薪",
+      _cf == sorted(["birth_date", "fb", "company_years", "company_salary"]), _cf)
+_p = [t for g, t in pushes if g == "TEST_B"]
+check("月薪用萬顯示（4萬 → 4.5萬），不是 4 → 45000",
+      bool(_p) and "4萬" in _p[0] and "4.5萬" in _p[0] and "45000" not in _p[0], _p[:1])
+check("台/臺 不算不一樣", "臺中市" not in (_p[0] if _p else ""), _p[:1])
+_d = get_cust("X100000001")
+check("描述型欄位不提醒、也不蓋掉（行政寫的還在）",
+      _d.get("eval_sent_3m_detail") == "和潤車貸過件" and _d.get("eval_credit_card") == "有卡", _d.get("eval_credit_card"))
+# 範圍判斷
+check("50 萬 落在 30～50 萬 → 一樣", m._apply_same("500000", "30～50 萬", "eval_fund_need"))
+check("80 萬 不在 30～50 萬 → 不一樣", not m._apply_same("800000", "30～50 萬", "eval_fund_need"))
+check("關係：媽媽＝母、老公≠父", m._apply_same("母", "媽媽", "contact1_relation")
+      and not m._apply_same("父", "老公", "contact1_relation"))
+
 # ========== 總結 ==========
 print(f"\n{'='*50}")
 print(f"結果：{PASS} 通過、{FAIL} 失敗")

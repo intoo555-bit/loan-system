@@ -22357,10 +22357,66 @@ def _apply_clean_value(key: str, val) -> str:
     return v
 
 
-def _apply_same(a, b) -> bool:
-    """比對時忽略空白、橫線、大小寫（02-1234 和 021234 算一樣）。"""
-    f = lambda x: re.sub(r"[\s\-()／/]", "", str(x or "")).lower()
-    return f(a) == f(b)
+# 「描述型」欄位：兩邊各用自己的話寫（行政「和潤車貸過件」vs AI「融資也正常/無」），
+# 比字一定不一樣 → 只補空白、不跳提醒。2026-10-09 卓泰禎測試：15 項提醒裡 6 項是這種，業務會看到麻痺。
+_APPLY_NO_REMIND = {
+    "eval_sent_3m", "eval_sent_3m_detail", "eval_credit_card", "eval_property",
+    "eval_late", "eval_late_days", "eval_alert", "eval_house_private",
+}
+# 聯絡人關係：同一個人不同叫法
+_RELATION_SYNONYMS = {
+    "父": ["父親", "爸爸", "爸", "父"], "母": ["母親", "媽媽", "媽", "母"],
+    "兄": ["哥哥", "哥", "兄"], "弟": ["弟弟", "弟"], "姊": ["姊姊", "姐姐", "姐", "姊"],
+    "妹": ["妹妹", "妹"], "夫": ["老公", "先生", "丈夫", "夫"], "妻": ["老婆", "太太", "妻子", "妻"],
+    "子": ["兒子", "子"], "女": ["女兒", "女"], "友": ["朋友", "友"],
+}
+_RELATION_CANON = {w: k for k, ws in _RELATION_SYNONYMS.items() for w in ws}
+
+
+def _money_range_yuan(s: str):
+    """金額 → (下限, 上限)，單位元。500000 → (500000,500000)；30～50 萬 → (300000,500000)；
+    10 萬以下 → (0,100000)；100 萬以上 → (1000000, 無限)。認不出來回 None。"""
+    t = re.sub(r"[\s,$元]", "", str(s or ""))
+    wan = 10000 if "萬" in t else 1
+    nums = [float(x) for x in re.findall(r"\d+(?:\.\d+)?", t)]
+    if not nums:
+        return None
+    if wan == 10000:
+        vals = [n * 10000 for n in nums]
+    elif len(nums) == 1 and nums[0] < 1000:   # 純數字小於 1000 → 當萬（行政月薪寫 3.5）
+        vals = [nums[0] * 10000]
+    else:
+        vals = nums
+    if "以下" in t:
+        return (0, vals[0])
+    if "以上" in t:
+        return (vals[0], float("inf"))
+    return (min(vals), max(vals))
+
+
+def _salary_as_wan(v) -> str:
+    """月薪統一用萬顯示給業務看：行政存「4」、客戶填「45000」→ 4萬 / 4.5萬（不然看起來差一萬倍）。"""
+    r = _money_range_yuan(v)
+    if r and r[0] == r[1]:
+        return f"{r[0] / 10000:g}萬"
+    return str(v)
+
+
+def _apply_same(a, b, field: str = "") -> bool:
+    """比對「是不是同一件事」：忽略空白、橫線、大小寫、台／臺；關係、居住、金額依欄位特別處理。"""
+    f = lambda x: re.sub(r"[\s\-()／/]", "", str(x or "")).lower().replace("臺", "台")
+    if f(a) == f(b):
+        return True
+    if field.endswith("_relation"):
+        ca, cb = _RELATION_CANON.get(f(a)), _RELATION_CANON.get(f(b))
+        return bool(ca) and ca == cb
+    if field == "live_status":
+        return f(a).replace("名下", "") == f(b).replace("名下", "")
+    if field in ("eval_fund_need", "company_salary"):
+        ra, rb = _money_range_yuan(a), _money_range_yuan(b)
+        if ra and rb:
+            return ra[0] <= rb[1] and rb[0] <= ra[1]   # 兩個範圍有重疊（500000 落在 30～50 萬裡）
+    return False
 
 
 @app.post("/api/customer-upsert")
@@ -22429,9 +22485,10 @@ async def customer_upsert(request: Request):
             cur_v = r.get(k)
             if cur_v is None or str(cur_v).strip() in ("", "{}", "[]"):
                 fill[k] = v
-            elif not _apply_same(cur_v, v):
+            elif k not in _APPLY_NO_REMIND and not _apply_same(cur_v, v, k):
+                _show = (lambda x: _salary_as_wan(x)) if k == "company_salary" else str
                 conflicts.append({"field": k, "label": APPLY_FIELD_LABELS[k],
-                                  "system": str(cur_v), "submitted": v})
+                                  "system": _show(cur_v), "submitted": _show(v)})
         if name and r.get("customer_name") and not _apply_same(name, r["customer_name"]):
             conflicts.append({"field": "customer_name", "label": "姓名",
                               "system": r["customer_name"], "submitted": name})
