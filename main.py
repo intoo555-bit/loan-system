@@ -1853,7 +1853,7 @@ PLAN_ELIGIBILITY_RULES = [
         "max_amount": 100,
         "priority": 70,
         "rules": [
-            {"type": "simple", "label": "年齡 18~65（超過 55 歲須補保人）", "field": "age", "op": "between", "value": [18, 65], "manual_check": "55 歲以上要補保人", "manual_ok_range": [18, 54]},
+            {"type": "simple", "label": "年齡 18~65（55 歲以上要補 55 歲以下的保人；保人也要 18~65）", "field": "age", "op": "between", "value": [18, 65], "manual_check": "55 歲以上要補保人（保人要 55 歲以下）", "manual_ok_range": [18, 54]},
             {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
             {"type": "simple", "label": "現居須在台灣本島（澎湖/金門/連江/馬祖皆不做、戶籍在外島可、看現居）",
              "field": "live_city", "op": "not_contains", "value": ["澎湖", "金門", "連江", "馬祖"]},
@@ -1877,7 +1877,7 @@ PLAN_ELIGIBILITY_RULES = [
         "max_amount": 100,
         "priority": 69,
         "rules": [
-            {"type": "simple", "label": "年齡 18~65（超過 55 歲須補保人）", "field": "age", "op": "between", "value": [18, 65], "manual_check": "55 歲以上要補保人", "manual_ok_range": [18, 54]},
+            {"type": "simple", "label": "年齡 18~65（55 歲以上要補 55 歲以下的保人；保人也要 18~65）", "field": "age", "op": "between", "value": [18, 65], "manual_check": "55 歲以上要補保人（保人要 55 歲以下）", "manual_ok_range": [18, 54]},
             {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
             {"type": "simple", "label": "現居須在台灣本島（澎湖/金門/連江/馬祖皆不做、戶籍在外島可、看現居）",
              "field": "live_city", "op": "not_contains", "value": ["澎湖", "金門", "連江", "馬祖"]},
@@ -1901,27 +1901,27 @@ PLAN_ELIGIBILITY_RULES = [
         "max_amount": 40,
         "priority": 64,
         "rules": [
-            {"type": "simple", "label": "年齡 18~65（超過 55 歲須補保人）", "field": "age", "op": "between", "value": [18, 65], "manual_check": "55 歲以上要補保人", "manual_ok_range": [18, 54]},
+            {"type": "simple", "label": "年齡 18~65（55 歲以上要補 55 歲以下的保人；保人也要 18~65）", "field": "age", "op": "between", "value": [18, 65], "manual_check": "55 歲以上要補保人（保人要 55 歲以下）", "manual_ok_range": [18, 54]},
             {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
             {"type": "simple", "label": "現居須在台灣本島（澎湖/金門/連江/馬祖皆不做、戶籍在外島可、看現居）",
              "field": "live_city", "op": "not_contains", "value": ["澎湖", "金門", "連江", "馬祖"]},
             {"type": "simple", "label": "至少 2 位聯絡人、其中 1 位為二等親", "op": "any_contact_2nd_kin"},
             {"type": "manual", "label": "⚠️ 會設定機車（私設）"},
-            {"type": "manual", "label": "正職滿 2 年（負責人不認定）"},
+            {"type": "manual", "label": "正職滿 2 年（負責人不認定）", "hint": "要附勞保明細"},
             {"type": "info", "label": "💡 額度：符 1 項→10萬/18期、2 項→20萬/24期、3 項→30萬/36期、4 項→40萬/36期"},
             {"type": "manual", "label": "符項條件（3 選 N）",
              "hint": "1.近 7 天內個人 JCIC  2.近 7 天內所得清單+財產清冊  "
                      "3.同業/銀行既有客戶繳滿 1 年+貸款期內無 10 天以上逾期（附完整繳息明細）"},
             {"type": "simple", "label": "🚫 警示戶不做（自動偵測）", "op": "no_warning_account"},
         ],
-        "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面", "機車行照"],
+        "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面", "機車行照", "勞保明細（正職滿 2 年要附）"],
     },
     {
         "company": "融易機車專案",
         "max_amount": 15,
         "priority": 58,
         "rules": [
-            {"type": "simple", "label": "年齡 18~65（超過 55 歲須補保人）", "field": "age", "op": "between", "value": [18, 65], "manual_check": "55 歲以上要補保人", "manual_ok_range": [18, 54]},
+            {"type": "simple", "label": "年齡 18~65（55 歲以上要補 55 歲以下的保人；保人也要 18~65）", "field": "age", "op": "between", "value": [18, 65], "manual_check": "55 歲以上要補保人（保人要 55 歲以下）", "manual_ok_range": [18, 54]},
             {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
             {"type": "simple", "label": "現居須在台灣本島（澎湖/金門/連江/馬祖皆不做、戶籍在外島可、看現居）",
              "field": "live_city", "op": "not_contains", "value": ["澎湖", "金門", "連江", "馬祖"]},
@@ -27629,7 +27629,10 @@ def _docs_can_post(group_id: str) -> bool:
 # AI 判讀只能從這裡選；行政手動改也只能選這些（排序才不會亂）
 _DOC_CATS = ["身分證正面", "身分證反面", "健保卡", "駕照", "存摺封面", "行照", "勞保明細", "人車合照", "強制險",
              "汽車繳息", "手機型號", "IMEI", "人與手機合照", "信用卡正面", "信用卡反面", "信用卡帳單",
-             "存摺內頁明細", "薪資證明", "401報表或營登", "權狀或謄本", "身分證查詢截圖", "委任合約", "電子簽名", "其他"]
+             "存摺內頁明細", "薪資證明", "401報表或營登", "權狀或謄本",
+             # 2026-10-14 新增（使用者：各家要的文件對不到分類的，客人要給的就加分類）
+             "信用報告", "貸款證明", "店面／工作照", "所得／財產清單", "車輛照片", "證照", "攤商合約書",
+             "身分證查詢截圖", "委任合約", "電子簽名", "其他"]
 # 業務 AI 給的原始標籤（上傳欄位名）只拿來當「還沒判讀前」的暫時排序 ⛔ 不可信：
 #   2026-10-13 測試：「第二證件」「存摺封面照」那兩格其實是網頁截圖；LINE 聊天的一律標「AI自己判斷」
 _DOC_ORDER = [("身分證正",), ("身分證反", "身分證背"), ("身分證",), ("健保",), ("駕照", "第二證件"), ("存摺", "存簿"),
@@ -28120,6 +28123,9 @@ _DOC_AI_PROMPT = """這是貸款客戶傳來的一份文件（照片或 PDF）�
 - 人車合照：人跟機車或汽車同一張。人與手機合照：人拿著手機或對鏡子拿手機自拍。
 - 手機型號：手機「關於手機／關於本機」設定畫面。IMEI：顯示 IMEI 號碼的畫面（常有條碼）。
 - 汽車繳息：車貸的繳款紀錄。身分證查詢截圖：內政部「國民身分證領補換資料查詢」結果畫面。
+- 信用報告：聯徵中心的個人信用報告（JCIC）。貸款證明：核准函、撥款紀錄、其他貸款的繳息紀錄或繳款收據。
+- 所得／財產清單：國稅局的所得清單或財產清冊。攤商合約書：攤位、市場的租用合約。證照：技術士證、專業執照、職業駕照。
+- 店面／工作照：店面招牌門牌外觀、工作現場照片。車輛照片：只有車子本身（四面照、車況），沒有人入鏡。
 - 委任合約：委任／服務合約文件。電子簽名：只有一個手寫簽名。
 - 看不出來、模糊、或不是上面任何一種（例如風景、空白圖、網頁廣告）→ 其他。不要用猜的。
 
@@ -28677,6 +28683,8 @@ _DOC_GROUP = {"身分證正面": "identity", "身分證反面": "identity", "健
               "存摺封面": "finance", "勞保明細": "finance", "存摺內頁明細": "finance", "薪資證明": "finance",
               "401報表或營登": "finance", "權狀或謄本": "finance", "信用卡正面": "finance", "信用卡反面": "finance",
               "信用卡帳單": "finance", "汽車繳息": "finance",
+              "信用報告": "finance", "貸款證明": "finance", "所得／財產清單": "finance", "攤商合約書": "finance",
+              "店面／工作照": "other", "證照": "identity", "車輛照片": "vehicle",
               "行照": "vehicle", "人車合照": "vehicle", "強制險": "vehicle", "手機型號": "vehicle", "IMEI": "vehicle",
               "人與手機合照": "vehicle", "委任合約": "other", "電子簽名": "other", "其他": "other"}   # 合約分頁拿掉（使用者 2026-10-14）
 

@@ -2216,6 +2216,17 @@ _r = TestClient(m.app, cookies={"auth_token": _tok2}).post("/my-groups/add", dat
 check("別的業務帳號登入不影響（各自的群組清單）", m._role_group_ids(m.check_auth(type("R", (), {"cookies": {"auth_token": _tok}})())) == ["Cmg75aaa"])
 m.check_auth = _old_auth75
 
+# ========== 76. 融易對帳官方一覽表（114.12.01）＋新證件分類（2026-10-14 使用者）==========
+print("\n=== 76. 融易規則＋證件分類 ===")
+_ry = {p["company"]: p for p in m.PLAN_ELIGIBILITY_RULES if p["company"].startswith("融易")}
+check("融易 4 個方案都寫清楚保人要 55 歲以下、保人也 18~65",
+      all(any("55 歲以下的保人" in (r.get("label") or "") for r in p["rules"]) for p in _ry.values()), list(_ry))
+check("融易資優專案要附勞保明細（官方附件二）", any("勞保明細" in d for d in _ry["融易機車資優專案"]["required_docs"]))
+for _cat in ("信用報告", "貸款證明", "店面／工作照", "所得／財產清單", "車輛照片", "證照", "攤商合約書"):
+    check(f"證件分類有「{_cat}」", _cat in m._DOC_CATS)
+check("每個證件分類都有對應的分頁（新增分類忘了設會測出來）", all(c in m._DOC_GROUP for c in m._DOC_CATS),
+      [c for c in m._DOC_CATS if c not in m._DOC_GROUP])
+
 # ========== 總結 ==========
 print(f"\n{'='*50}")
 print(f"結果：{PASS} 通過、{FAIL} 失敗")
