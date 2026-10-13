@@ -27658,7 +27658,7 @@ def _docs_ensure_table(cur):
     cur.execute("""CREATE TABLE IF NOT EXISTS customer_docs_pull (
         id_no TEXT PRIMARY KEY, last_pull_at TEXT, last_error TEXT)""")
     _cols = {r[1] for r in cur.execute("PRAGMA table_info(customer_docs)")}
-    for _c in ("ai_label", "ai_note", "ai_at", "manual_label"):
+    for _c in ("ai_label", "ai_note", "ai_at", "manual_label", "judge_json", "judge_at"):
         if _c not in _cols:
             cur.execute(f"ALTER TABLE customer_docs ADD COLUMN {_c} TEXT")
 
@@ -27729,6 +27729,23 @@ def _doc_real_type(path: str, fallback: str = "") -> str:
             return _doc_sniff(fp.read(16)) or fallback or ""
     except Exception:
         return fallback or ""
+
+
+def _bizai_judge(kind: str, doc_id, id_no: str) -> dict:
+    """業務 AI 窗口 3／4：kind＝labor（勞保判讀）或 stamp（時間相機浮水印）。回業務 AI 的原始結構。
+    ⛔ 判讀只在業務 AI 做一份（labor_insurance.判讀 已用 18 份真明細驗過 54/54），這裡只拿、不重做。
+    業務 AI 有快取，同一張只判一次；這裡也存一份，不會每次打開頁面都去問。"""
+    url, sec = _bizai_conf()
+    if not url or not sec:
+        return {"ok": False, "error": "未設定業務 AI 連線"}
+    try:
+        r = req_lib.get(f"{url}/api/loan/docs/{doc_id}/{kind}", params={"id_no": id_no},
+                        headers={"X-Loan-Secret": sec}, timeout=90)
+        if r.status_code == 429:
+            return {"ok": False, "error": "業務 AI 限流中"}
+        return r.json() if r.status_code == 200 else {"ok": False, "error": f"HTTP {r.status_code}"}
+    except Exception as e:
+        return {"ok": False, "error": f"{type(e).__name__}"}
 
 
 def _doc_ext(content_type: str) -> str:
@@ -27802,6 +27819,205 @@ def _auto_classify_bg(idv: str):
 def _doc_label(r) -> str:
     """顯示用名稱：行政手動改的 > AI 判讀的 > 業務 AI 原標籤"""
     return (r.get("manual_label") or r.get("ai_label") or r.get("label") or "未分類")
+
+
+_JUDGE_KIND = {"勞保明細": "labor", "人車合照": "stamp", "人與手機合照": "stamp"}
+
+
+def judge_customer_docs(id_no: str, force: bool = False) -> int:
+    """勞保明細 → 拿勞保判讀；人車合照 → 拿時間相機浮水印。已經拿過的不再拿（分類改了才重拿）。回拿了幾張"""
+    idv = normalize_id_no(id_no)
+    n = 0
+    for r in _docs_rows(idv):
+        kind = _JUDGE_KIND.get(r["show_label"])
+        if not kind:
+            continue
+        old = {}
+        try:
+            old = json.loads(r.get("judge_json") or "{}")
+        except Exception:
+            pass
+        if old.get("_kind") == kind and not force and not old.get("_transient"):
+            continue
+        res = _bizai_judge(kind, r["remote_doc_id"], idv)
+        res["_kind"] = kind
+        if not res.get("ok"):          # 連線／限流問題：下次再試（業務 AI 判讀失敗會回 ok:true＋error，那個要存）
+            res["_transient"] = True
+        with db_conn(commit=True) as conn:
+            conn.execute("UPDATE customer_docs SET judge_json=?, judge_at=? WHERE id=?",
+                         (json.dumps(res, ensure_ascii=False), now_iso(), r["id"]))
+        n += 1
+    return n
+
+
+def _doc_judge(r) -> dict:
+    """這張的判讀結果（分類跟判讀種類對得上才算）"""
+    try:
+        j = json.loads(r.get("judge_json") or "{}")
+    except Exception:
+        return {}
+    return j if j.get("_kind") == _JUDGE_KIND.get(r.get("show_label") or _doc_label(r)) else {}
+
+
+def _doc_judge_text(r) -> str:
+    """證件卡片上的一行判讀摘要"""
+    j = _doc_judge(r)
+    if not j:
+        return ""
+    if j.get("error") or not j.get("ok", True):
+        return "🤖 判讀不出來" if j.get("ok") else ""
+    if j["_kind"] == "labor":
+        if not j.get("is_labor", True):
+            return "🤖 這張看起來不是勞保明細"
+        cur = j.get("目前投保") or []
+        parts = [f'{c.get("類型", "")} {c.get("單位", "")} {c.get("加保日期", "")} 加保（滿 {c.get("加保滿幾個月", "?")} 個月）' for c in cur]
+        days = j.get("明細幾天前印的")
+        fresh = (f"⚠️ 明細 {days} 天前印的，超過一週要重拉" if isinstance(days, int) and days > 7
+                 else (f"明細 {days} 天前印的" if isinstance(days, int) else ""))
+        return "🤖 " + "；".join(p for p in parts + [fresh] if p)
+    if j["_kind"] == "stamp":
+        if j.get("has_stamp") is True:
+            return f'🤖 有時間浮水印 {j.get("datetime", "")} {j.get("address", "")}'.strip()
+        if j.get("has_stamp") is False:
+            return "🤖 沒有時間相機浮水印"
+    return ""
+
+
+# 規則表 required_docs 的寫法 → 怎麼檢查。由上往下比，先對到的算（長的、特殊的寫前面）。
+#   ("any", [分類…]) 有其中一種就算有；("all", […]) 每一種都要；None＝不檢查（行政自己做的、有才要的、二選一的）
+_REQ_DOC_RULES = [
+    (("有就給", "沒有也可以", "有就可以", "沒有就算了", "有貸款才要", "一開始先不放", "有勞保不用", "改用機車送", "兩張信用卡"), None),
+    (("記事本", "填寫表", "汽車截圖", "天書", "加分項目", "法學截圖", "罰單截圖", "動保截圖", "8891", "鑑價", "估價",
+      "牌照登記書", "手機帳單", "合約書拍照"), None),
+    (("四面照片",), ("any", ["車輛照片"])),                      # 「（不是合照）」要排在「合照」前面
+    (("收據 或 聯徵",), ("any", ["信用報告", "貸款證明"])),       # 二選一
+    (("信用報告", "聯徵"), ("any", ["信用報告"])),
+    (("身分證查詢",), ("any", ["身分證查詢截圖"])),
+    (("身分證正反",), ("all", ["身分證正面", "身分證反面"])),
+    (("第二證件",), ("any", ["健保卡", "駕照"])),
+    (("存封", "存摺封面"), ("any", ["存摺封面"])),
+    (("401", "權狀"), ("any", ["勞保明細", "401報表或營登", "權狀或謄本"])),
+    (("薪轉/勞保",), ("any", ["勞保明細", "存摺內頁明細", "薪資證明"])),
+    (("勞保",), ("any", ["勞保明細"])),
+    (("行照",), ("any", ["行照"])),
+    (("強制險",), ("any", ["強制險"])),
+    (("手機合照", "人與手機合照"), ("any", ["人與手機合照"])),
+    (("合照",), ("any", ["人車合照"])),
+    (("手機資料",), ("any", ["手機型號", "IMEI"])),
+    (("手機型號",), ("any", ["手機型號"])),
+    (("IMEI", "imei"), ("any", ["IMEI"])),
+    (("繳息", "繳款收據", "核准函", "撥款存摺紀錄"), ("any", ["貸款證明", "汽車繳息"])),
+    (("存摺明細", "薪轉", "存摺內頁"), ("any", ["存摺內頁明細", "薪資證明"])),
+    (("店面照", "工作照", "現勘照"), ("any", ["店面／工作照"])),
+    (("財產清單",), ("any", ["所得／財產清單"])),
+    (("營登", "統編"), ("any", ["401報表或營登"])),
+]
+
+
+def _req_doc_rule(text: str):
+    for keys, rule in _REQ_DOC_RULES:
+        if any(k in text for k in keys):
+            return rule
+    return None
+
+
+def docs_missing_for_plan(rows, required_docs) -> list:
+    """一家要的文件逐項對照已收的證件 → [(要的文件, 狀態, 說明)]；狀態：ok／missing／check（AI 判讀・待確認）／skip（不檢查）。
+    ⛔ 勞保要一週內（使用者：各家勞保都要一周內）、要時間相機的合照要有浮水印 —— 用業務 AI 的判讀數字，不比對文字"""
+    have = {}
+    for r in rows:
+        if not _doc_is_contract(r):
+            have.setdefault(r["show_label"], []).append(r)
+    out = []
+    for req in required_docs or []:
+        rule = _req_doc_rule(req)
+        if not rule:
+            out.append((req, "skip", ""))
+            continue
+        mode, cats = rule
+        got = [c for c in cats if have.get(c)]
+        if (mode == "all" and len(got) < len(cats)) or (mode == "any" and not got):
+            lack = [c for c in cats if not have.get(c)] if mode == "all" else []
+            out.append((req, "missing", "缺：" + "、".join(lack) if lack else ""))
+            continue
+        status, note = "ok", ""
+        if "勞保明細" in got and cats[0] == "勞保明細" or (got == ["勞保明細"]):
+            days = [(_doc_judge(r) or {}).get("明細幾天前印的") for r in have["勞保明細"]]
+            days = [d for d in days if isinstance(d, int)]
+            if days and min(days) > 7:
+                status, note = "missing", f"勞保 {min(days)} 天前印的，超過一週要重拉"
+            elif not days:
+                status, note = "check", "勞保日期還沒判讀"
+            else:
+                note = f"勞保 {min(days)} 天前印的（AI 判讀・待確認）"
+        if "時間相機" in req and status != "missing":
+            stamps = [(_doc_judge(r) or {}).get("has_stamp") for c in got for r in have.get(c, [])]
+            if any(x is True for x in stamps):
+                note = "有時間浮水印（AI 判讀・待確認）"
+            elif stamps and all(x is False for x in stamps):
+                status, note = "missing", "合照沒有時間相機浮水印，要重拍"
+            else:
+                status, note = "check", "時間浮水印還沒判讀"
+        out.append((req, status, note))
+    return out
+
+
+def _docs_plan_order(cust) -> list:
+    """要列缺件的公司：有送件順序照送件順序；沒有就用規則表的建議順序"""
+    order = []
+    try:
+        for x in (json.loads(cust.get("route_plan") or "{}") or {}).get("order", []) or []:
+            co = x.get("company") if isinstance(x, dict) else x
+            if co:
+                order.append(str(co))
+    except Exception:
+        pass
+    if order:
+        return order
+    try:
+        return [o["company"] for o in evaluate_case(cust).get("suggested_order", [])]
+    except Exception:
+        return []
+
+
+def _plan_for_company(co: str):
+    """送件順序裡的公司名 → 規則表的方案（簡寫也認：亞太25 → 亞太機車25萬）"""
+    plans = {p["company"]: p for p in PLAN_ELIGIBILITY_RULES}
+    if co in plans:
+        return plans[co]
+    full = (PLAN_INFO.get(co) or (None,))[0]
+    if full in plans:
+        return plans[full]
+    cands = [n for n in plans if n.startswith(co) or co.startswith(n)]
+    return plans[cands[0]] if len(cands) == 1 else None
+
+
+def _docs_missing_html(cust, rows) -> str:
+    """證件頁「每一家缺什麼」（使用者 2026-10-14：送件前就知道第一家缺什麼）"""
+    if not cust:
+        return ""
+    order = _docs_plan_order(cust)
+    if not order:
+        return ""
+    src = "送件順序" if (cust.get("route_plan") or "").strip() not in ("", "{}") else "建議送件順序（還沒設送件順序）"
+    icon = {"ok": "✅", "missing": "❌", "check": "⏳", "skip": "・"}
+    blocks = []
+    for i, co in enumerate(order, 1):
+        plan = _plan_for_company(co)
+        if not plan:
+            blocks.append(f'<div class="ms-co"><b>{i}. {h(co)}</b> <span class="ms-na">規則表沒有這家，沒辦法檢查</span></div>')
+            continue
+        res = docs_missing_for_plan(rows, plan.get("required_docs"))
+        miss = [r for r in res if r[1] == "missing"]
+        head = "✅ 齊全" if not miss and not any(r[1] == "check" for r in res) else (
+            f"❌ 缺 {len(miss)} 項" if miss else "⏳ 待確認")
+        items = "".join(f'<li class="ms-{st}">{icon[st]} {h(req)}{(" — " + h(note)) if note else ""}</li>'
+                        for req, st, note in res)
+        blocks.append(f'<details class="ms-co"{" open" if i == 1 or miss else ""}><summary><b>{i}. {h(plan["company"])}</b> '
+                      f'<span class="ms-head">{head}</span></summary><ul>{items}</ul></details>')
+    return (f'<details class="cust-panel" open><summary><span class="cp-title">📦 每一家缺什麼</span>'
+            f'<span class="cp-sub">照{h(src)}｜✅ 有 ❌ 缺 ⏳ 待確認 ・不檢查（行政自己做的、有才要的）</span></summary>'
+            f'<div class="ms-body">{"".join(blocks)}</div></details>')
 
 
 def _doc_rank(label: str) -> int:
@@ -28201,6 +28417,10 @@ def classify_customer_docs(id_no: str, only_new: bool = False) -> dict:
                 job["done"] += 1
     finally:
         job["running"] = False
+    try:
+        judge_customer_docs(idv)      # 分類完 → 勞保明細拿勞保判讀、人車合照拿浮水印（業務 AI）
+    except Exception as e:
+        print(f"[證件] 拿判讀失敗：{e}")
     return {"ok": True, "done": job["done"] - len(job["errors"]), "errors": list(job["errors"])}
 
 
@@ -28243,6 +28463,9 @@ async def docs_set_label(request: Request, doc_pk: int):
     with db_conn(commit=True) as conn:
         _docs_ensure_table(conn.cursor())
         conn.execute("UPDATE customer_docs SET manual_label=? WHERE id=?", (lb, doc_pk))
+        x = conn.execute("SELECT id_no FROM customer_docs WHERE id=?", (doc_pk,)).fetchone()
+    if x and lb in _JUDGE_KIND:     # 改成勞保明細／人車合照 → 背景去拿判讀
+        _threading.Thread(target=judge_customer_docs, args=(x["id_no"],), daemon=True).start()
     return JSONResponse({"ok": True})
 
 
@@ -28665,7 +28888,7 @@ async def docs_customer_page(request: Request, id_no: str, refresh: str = ""):
              .replace("__GROUPS__", json.dumps(_DOC_GROUP, ensure_ascii=False))
              .replace("__TOPNAV__", _page_topnav(role, "docs"))
              .replace("__SHEET_BTN__", btn).replace("__WARN__", warn)
-             .replace("__CUSTOMER__", _customer_panel_html(cust))
+             .replace("__CUSTOMER__", _customer_panel_html(cust) + _docs_missing_html(cust, _docs_rows(idv)))
              .replace("__TITLE__", h(f"{name} 證件" if name else f"{idv} 證件"))
              .replace("__ADAPTER__", adapter))
     return HTMLResponse(html_)
@@ -28707,6 +28930,7 @@ def _doc_payload(r, order: int) -> dict:
             "previewUrl": preview, "fileUrl": f"/archive/file/{r['id']}",
             "isManual": bool(r.get("manual_label")), "order": order,
             "error": (r.get("ai_note") or "") if failed else "",
+            "judge": _doc_judge_text(r),
             "unclassified": not (r.get("manual_label") or r.get("ai_label")) and not failed}
 
 

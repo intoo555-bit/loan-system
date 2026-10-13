@@ -186,6 +186,13 @@ details.error-detail{color:#a17745;margin:12px 0;font-size:10px;border:1px solid
 .preview-stage img{max-width:98%!important;max-height:96%!important}
 .preview-stage.pdf-pages{overflow:auto;align-items:flex-start}
 .preview-stage.pdf-pages img{max-width:none!important;max-height:none!important;width:min(1000px,96%);transform-origin:top center}
+.judge{font-size:12px;color:#1a5f92;background:#eef6fb;border-radius:6px;padding:4px 7px;margin-top:6px;line-height:1.5}
+.judge.bad{color:#b45309;background:#fff6e8}
+.ms-body{padding:10px 16px 14px}.ms-co{border:1px solid #edf1f4;border-radius:10px;padding:8px 12px;margin-bottom:8px;background:#fff}
+.ms-co>summary{cursor:pointer;list-style:none}.ms-co>summary::-webkit-details-marker{display:none}
+.ms-head{margin-left:8px;font-size:13px}.ms-na{color:#8a96a3;font-size:12px;margin-left:6px}
+.ms-co ul{margin:8px 0 2px;padding-left:4px;list-style:none;font-size:13px;line-height:1.9}
+.ms-missing{color:#b91c1c;font-weight:600}.ms-check{color:#b45309}.ms-skip{color:#9aa5b1}.ms-ok{color:#1f2a33}
 </style>
 </head>
 <body>
@@ -256,7 +263,7 @@ __TOPNAV__
  <div class="dialog-top"><h2><span id="viewerTitle"></span><span class="index" id="viewerIndex"></span></h2><div class="dialog-tools"><button type="button" class="icon-btn" id="closeViewer" title="關閉（Esc）" aria-label="關閉預覽"><svg class="icon"><use href="#i-x"/></svg></button></div></div>
  <div class="viewer-body">
   <div class="preview-stage" id="previewStage"><span class="stage-caption" id="stageCaption">截圖縮圖</span><img id="previewImage" alt="" hidden><div id="stageEmpty" class="stage-empty" hidden></div><button class="nav-arrow prev" id="previousDoc" type="button" aria-label="上一份"><svg class="icon"><use href="#i-left"/></svg></button><button class="nav-arrow next" id="nextDoc" type="button" aria-label="下一份"><svg class="icon"><use href="#i-right"/></svg></button><div class="zoom-controls" id="zoomControls"><button type="button" id="zoomOut" aria-label="縮小"><svg class="icon"><use href="#i-minus"/></svg></button><span id="zoomLevel">100%</span><button type="button" id="zoomIn" aria-label="放大"><svg class="icon"><use href="#i-plus"/></svg></button></div></div>
-  <aside class="preview-aside"><div class="detail-field"><label class="label" for="viewerCategory">證件類型</label><select class="detail-select" id="viewerCategory"></select><span id="viewerStatus" class="status"></span></div><div class="detail-field"><span class="label">來源</span><span class="value" id="viewerSource"></span></div><div class="detail-field date-field"><span class="label">上傳日期</span><span class="value" id="viewerDate"></span></div><details class="error-detail" id="errorDetails" hidden><summary>判讀失敗詳情</summary><div id="errorText"></div></details><div class="aside-bottom"><a class="action" id="downloadOne" style="text-decoration:none;margin-bottom:8px" download><span>⬇ 下載這張</span></a><button type="button" class="action" id="openOriginal"><svg class="icon"><use href="#i-external"/></svg><span>開啟原始附件</span></button><button type="button" class="action ai" id="retryOne" style="margin-top:8px"><svg class="icon"><use href="#i-refresh"/></svg><span>重新判讀</span></button><p class="aside-note" id="viewerNote">原始附件未提供；目前只展示截圖中的縮圖。</p></div></aside>
+  <aside class="preview-aside"><div class="detail-field"><label class="label" for="viewerCategory">證件類型</label><select class="detail-select" id="viewerCategory"></select><span id="viewerStatus" class="status"></span></div><div class="detail-field"><span class="label">來源</span><span class="value" id="viewerSource"></span></div><div class="detail-field date-field"><span class="label">上傳日期</span><span class="value" id="viewerDate"></span></div><div class="detail-field" id="judgeField" hidden><span class="label">AI 判讀（待確認）</span><span class="value" id="viewerJudge" style="white-space:normal;line-height:1.6"></span></div><details class="error-detail" id="errorDetails" hidden><summary>判讀失敗詳情</summary><div id="errorText"></div></details><div class="aside-bottom"><a class="action" id="downloadOne" style="text-decoration:none;margin-bottom:8px" download><span>⬇ 下載這張</span></a><button type="button" class="action" id="openOriginal"><svg class="icon"><use href="#i-external"/></svg><span>開啟原始附件</span></button><button type="button" class="action ai" id="retryOne" style="margin-top:8px"><svg class="icon"><use href="#i-refresh"/></svg><span>重新判讀</span></button><p class="aside-note" id="viewerNote">原始附件未提供；目前只展示截圖中的縮圖。</p></div></aside>
  </div>
 </dialog>
 <dialog class="connection" id="connection" aria-labelledby="connectionTitle"><div class="connection-body"><div class="connect-icon"><svg class="icon"><use href="#i-plug"/></svg></div><h2 id="connectionTitle">尚未連接原系統</h2><p id="connectionText"></p><code id="connectionHint"></code></div><div class="connection-footer"><button type="button" class="action primary" id="closeConnection">知道了</button></div></dialog>
@@ -340,7 +347,7 @@ const initialDocuments=[];
     <label class="card-check"><input type="checkbox" data-select="${escape(d.id)}" aria-label="選取${escape(d.category)}" ${state.selected.has(d.id)?'checked':''}></label>
     <button class="media ${d.kind==='error'?'error-media':d.kind==='file'?'file-media':''}" data-open="${escape(d.id)}" type="button" aria-label="預覽${escape(d.category)}">${mediaContent(d)}</button>
     <span class="card-number">${String(d.order).padStart(2,'0')}</span>
-    <div class="body"><h2 class="card-title">${escape(d.category)}</h2><div class="meta" title="${escape(sourceLabel(d.source))} · ${escape(d.date)}">${svg(d.source==='chat'?'chat':'doc')}<span>${escape(sourceLabel(d.source))}</span><span class="dot">·</span><time datetime="${escape(d.date)}">${escape(d.date.slice(5).replace('-','/'))}</time></div><div class="card-bottom">${isIssue(d)?`<button type="button" class="status ${d.isManual?'manual':'failed'}" data-open="${escape(d.id)}">${statusMarkup(d)}</button>`:`<span class="status ${d.isManual?'manual':''}">${statusMarkup(d)}</span>`}<label class="change">改分類 ${svg('chevron')}<select data-category="${escape(d.id)}" aria-label="${escape(d.category)}變更分類" ${state.classificationWrites.has(d.id)?'disabled':''}>${options(d.category,true)}</select></label></div></div>
+    <div class="body"><h2 class="card-title">${escape(d.category)}</h2><div class="meta" title="${escape(sourceLabel(d.source))} · ${escape(d.date)}">${svg(d.source==='chat'?'chat':'doc')}<span>${escape(sourceLabel(d.source))}</span><span class="dot">·</span><time datetime="${escape(d.date)}">${escape(d.date.slice(5).replace('-','/'))}</time></div>${d.judge?`<div class="judge ${/⚠️|沒有時間/.test(d.judge)?'bad':''}">${escape(d.judge)}</div>`:''}<div class="card-bottom">${isIssue(d)?`<button type="button" class="status ${d.isManual?'manual':'failed'}" data-open="${escape(d.id)}">${statusMarkup(d)}</button>`:`<span class="status ${d.isManual?'manual':''}">${statusMarkup(d)}</span>`}<label class="change">改分類 ${svg('chevron')}<select data-category="${escape(d.id)}" aria-label="${escape(d.category)}變更分類" ${state.classificationWrites.has(d.id)?'disabled':''}>${options(d.category,true)}</select></label></div></div>
    </article>`).join('');
   $('emptyState').hidden=!!docs.length;$('gallery').hidden=!docs.length;
   $('pendingText').textContent=`待處理 ${state.documents.filter(d=>isIssue(d)||d.unclassified).length}`;
@@ -366,7 +373,7 @@ const initialDocuments=[];
  // Validate adapter data; do not execute arbitrary markup or URLs.
  function normalize(d,i){
   if(!d||typeof d.id!=='string'||!d.id)throw new TypeError('documents 每筆需要非空 id');
-  return {unclassified:!!d.unclassified,pages:Number(d.pages)||0,viewUrl:safeUrl(d.viewUrl||''),id:d.id,category:categories.includes(d.category)?d.category:'其他',source:String(d.source||'chat'),date:String(d.date||''),kind:['image','file','error'].includes(d.kind)?d.kind:'file',previewUrl:safeUrl(d.previewUrl||''),fileUrl:safeUrl(d.fileUrl||''),isManual:!!d.isManual,order:Number.isFinite(d.order)?d.order:i+1,error:String(d.error||'')};
+  return {judge:String(d.judge||''),unclassified:!!d.unclassified,pages:Number(d.pages)||0,viewUrl:safeUrl(d.viewUrl||''),id:d.id,category:categories.includes(d.category)?d.category:'其他',source:String(d.source||'chat'),date:String(d.date||''),kind:['image','file','error'].includes(d.kind)?d.kind:'file',previewUrl:safeUrl(d.previewUrl||''),fileUrl:safeUrl(d.fileUrl||''),isManual:!!d.isManual,order:Number.isFinite(d.order)?d.order:i+1,error:String(d.error||'')};
  }
  // Preserve manual classification on refresh or AI updates. Server must enforce
  // the same rule. The frontend safeguard does not replace authorization.
@@ -423,7 +430,7 @@ const initialDocuments=[];
   $('viewerSource').textContent=sourceLabel(d.source);$('viewerDate').textContent=d.date||'未提供';$('viewerCategory').innerHTML=options(d.category);
   $('viewerCategory').disabled=state.classificationWrites.has(d.id);
   $('viewerStatus').innerHTML=statusMarkup(d);$('viewerStatus').className='status '+(d.isManual?'manual':d.kind==='error'?'failed':'');
-  $('errorDetails').hidden=!isIssue(d);$('errorText').textContent=d.error||'目前無法讀取此附件。';
+  $('errorDetails').hidden=!isIssue(d);$('judgeField').hidden=!d.judge;$('viewerJudge').textContent=d.judge||'';$('errorText').textContent=d.error||'目前無法讀取此附件。';
   $('errorDetails').open=false;
   $('stageCaption').textContent=state.demo?'截圖縮圖':'附件預覽';$('viewerNote').hidden=!state.demo;
   $('retryOne').disabled=d.isManual||state.classificationWrites.has(d.id);$('retryOne').title=d.isManual?'此附件為手動分類，不自動覆蓋':'';

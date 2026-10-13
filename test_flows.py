@@ -2227,6 +2227,75 @@ for _cat in ("信用報告", "貸款證明", "店面／工作照", "所得／財
 check("每個證件分類都有對應的分頁（新增分類忘了設會測出來）", all(c in m._DOC_GROUP for c in m._DOC_CATS),
       [c for c in m._DOC_CATS if c not in m._DOC_GROUP])
 
+# ========== 77. 每一家缺什麼（業務 AI 的勞保判讀／時間浮水印）2026-10-14 ==========
+print("\n=== 77. 每一家缺什麼 ===")
+import io as _io77
+from PIL import Image as _Img77
+def _png77(c):
+    b = _io77.BytesIO(); _Img77.new("RGB", (40, 30), c).save(b, "PNG"); return b.getvalue()
+_LB = {"41": "身分證正面", "42": "身分證反面", "43": "健保卡", "44": "存摺封面", "45": "勞保明細", "46": "行照", "47": "人車合照"}
+_o_list, _o_fetch, _o_judge = m._bizai_list, m._bizai_fetch, m._bizai_judge
+m._bizai_list = lambda idv: ([{"doc_id": int(k), "created_at": "2026-10-14T09:00:00", "content_type": "image/png",
+                               "source": "LINE聊天", "label": v} for k, v in _LB.items()], "") if idv == "G300000001" else ([], "")
+m._bizai_fetch = lambda d, idv: (_png77((int(d) * 5, 9, 9)), "image/png", "")
+_JUDGE = {"labor": {"ok": True, "is_labor": True, "查詢日": "115/10/11", "明細幾天前印的": 3,
+                    "目前投保": [{"單位": "大明工程行", "類型": "公司保", "加保日期": "114/09/01", "加保滿幾個月": 13}]},
+          "stamp": {"ok": True, "has_stamp": True, "datetime": "2026-10-13 15:20", "address": "台中市西屯區台灣大道三段1號"}}
+_judge_calls = []
+def _fake_judge(kind, doc_id, idv):
+    _judge_calls.append((kind, str(doc_id), idv)); return dict(_JUDGE[kind])
+m._bizai_judge = _fake_judge
+os.environ["BUSINESS_AI_URL"] = "https://fake-bizai.test"; os.environ["BUSINESS_AI_SECRET"] = "x"
+bc("10/14-缺件甲 G300000001", gid="TEST_B")
+_c = sqlite3.connect(TEST_DB)
+_c.execute("""UPDATE customers SET route_plan='{"order": ["21機車25萬", "亞太機車25萬"], "current_index": 0}' WHERE id_no='G300000001'""")
+_c.execute("UPDATE customer_docs SET ai_label=label WHERE id_no='G300000001'")
+_c.commit(); _c.close()
+m.pull_customer_docs("G300000001")
+_c = sqlite3.connect(TEST_DB); _c.execute("UPDATE customer_docs SET ai_label=label WHERE id_no='G300000001'"); _c.commit(); _c.close()
+m.judge_customer_docs("G300000001")
+check("勞保明細拿勞保判讀、人車合照拿浮水印（各一次、帶身分證）",
+      sorted(k for k, d, i in _judge_calls) == ["labor", "stamp"] and all(i == "G300000001" for k, d, i in _judge_calls), _judge_calls)
+_judge_calls.clear(); m.judge_customer_docs("G300000001")
+check("已經拿過的不再拿（業務 AI 判一次就好）", not _judge_calls, _judge_calls)
+_rows = m._docs_rows("G300000001")
+_p21 = m._plan_for_company("21機車25萬")
+_res = {r: (st, n) for r, st, n in m.docs_missing_for_plan(_rows, _p21["required_docs"])}
+check("21機車25萬：證件齊、勞保 3 天前、合照有浮水印 → 全部 ✅",
+      all(st in ("ok", "skip") for st, n in _res.values()), _res)
+_rp = m._plan_for_company("亞太機車25萬")
+_res2 = {r: (st, n) for r, st, n in m.docs_missing_for_plan(_rows, _rp["required_docs"])}
+check("亞太機車25萬：缺強制險", any(st == "missing" and "強制險" in r for r, (st, n) in _res2.items()), _res2)
+# 勞保超過一週
+_c = sqlite3.connect(TEST_DB)
+_c.execute("""UPDATE customer_docs SET judge_json=? WHERE id_no='G300000001' AND remote_doc_id='45'""",
+           (json.dumps({"_kind": "labor", "ok": True, "is_labor": True, "明細幾天前印的": 10, "目前投保": []}),))
+_c.execute("""UPDATE customer_docs SET judge_json=? WHERE id_no='G300000001' AND remote_doc_id='47'""",
+           (json.dumps({"_kind": "stamp", "ok": True, "has_stamp": False}),))
+_c.commit(); _c.close()
+_rows = m._docs_rows("G300000001")
+_res = {r: (st, n) for r, st, n in m.docs_missing_for_plan(_rows, _p21["required_docs"])}
+check("勞保 10 天前印的 → ❌ 要重拉", any(st == "missing" and "重拉" in n for st, n in _res.values()), _res)
+check("要時間相機但合照沒浮水印 → ❌ 要重拍", any(st == "missing" and "時間相機" in n for st, n in _res.values()), _res)
+_c = sqlite3.connect(TEST_DB)
+_c.execute("""UPDATE customer_docs SET judge_json=? WHERE id_no='G300000001' AND remote_doc_id='47'""",
+           (json.dumps({"_kind": "stamp", "ok": True, "error": "判讀失敗"}),))
+_c.commit(); _c.close()
+_res = {r: (st, n) for r, st, n in m.docs_missing_for_plan(m._docs_rows("G300000001"), _p21["required_docs"])}
+check("浮水印判讀失敗 → ⏳ 待確認，⛔ 不當成缺（業務 AI：不然業務白跑一趟）",
+      any(st == "check" and "浮水印" in n for st, n in _res.values()) and not any("要重拍" in n for st, n in _res.values()), _res)
+check("不檢查的不會算缺（例：勞保有就給）",
+      all(st == "skip" for r, st, n in m.docs_missing_for_plan(_rows, ["勞保（有就給）", "記事本申請表", "汽車繳息（汽車有貸款才要）"])))
+m.check_auth = lambda req: "admin"
+_html = TestClient(m.app).get("/archive/G300000001").text
+check("證件頁有「每一家缺什麼」、照送件順序列", "每一家缺什麼" in _html and _html.index("21機車25萬") < _html.index("亞太機車25萬"))
+_dd = {d["id"]: d for d in TestClient(m.app).get("/archive/G300000001/data").json()["documents"]}
+_lab = [d for d in _dd.values() if d["category"] == "勞保明細"][0]
+check("勞保卡片上有判讀摘要（超過一週要重拉）", "重拉" in _lab["judge"], _lab["judge"])
+m._bizai_list, m._bizai_fetch, m._bizai_judge = _o_list, _o_fetch, _o_judge
+m.check_auth = _old_auth75
+os.environ.pop("BUSINESS_AI_URL", None); os.environ.pop("BUSINESS_AI_SECRET", None)
+
 # ========== 總結 ==========
 print(f"\n{'='*50}")
 print(f"結果：{PASS} 通過、{FAIL} 失敗")
