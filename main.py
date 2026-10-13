@@ -22414,6 +22414,8 @@ def report2_page(request: Request):
         navs.append(nl("📋", "行政B作業", "/adminb"))
     if role in ("admin", "adminB", "ops_admin", "sales_admin") or role.startswith("group_"):
         navs.append(nl("💬", "指令台", "/console"))
+    if role.startswith("group_"):   # 顧多群的業務：加群組（日報側欄也要有，2026-10-14 使用者截圖）
+        navs.append(nl("👥", f"我的群組（{len(_role_group_ids(role))}）", "/my-groups"))
     if role in ("admin", "sales_admin"):
         navs.append(nl("💻", "裝置管理", "/admin/devices"))
     if role == "admin":

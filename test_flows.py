@@ -2204,6 +2204,7 @@ check("可以改兩個群組的客人", m.can_edit_customer_data("group_Cmg75aaa
 _cg = {g["group_id"] for g in m._console_allowed_groups("group_Cmg75aaa,Cmg75bbb")}
 check("指令台：兩個群組都能操作", {"Cmg75aaa", "Cmg75bbb"} <= _cg, _cg)
 check("導覽列有「我的群組（2）」", "我的群組（2）" in _tc75.get("/my-groups").text)
+check("日報側欄也有「我的群組（2）」", "我的群組（2）" in _tc75.get("/report2").text)
 _tc75.post("/my-groups/remove", data={"group_id": "Cmg75aaa"})
 check("主要群組不能移除", m._role_group_ids(m.check_auth(type("R", (), {"cookies": {"auth_token": _tok}})()))[0] == "Cmg75aaa")
 _tc75.post("/my-groups/remove", data={"group_id": "Cmg75bbb"})
