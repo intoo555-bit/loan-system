@@ -27717,6 +27717,21 @@ def _docs_link(id_no: str) -> str:
     return f"{base}/album/{normalize_id_no(id_no)}"   # 卡片連結＝相簿頁（使用者 2026-10-14：跟 LINE 相簿一樣）
 
 
+def _docs_ensure_classified(idv: str, wait_s: int = 90):
+    """發卡片前把還沒判讀的照片判完，卡片才列得出清單。
+    先等背景那個判讀跑完；還有沒判的（例如自動判讀上線前就拉進來的）再補判一次。⛔ 人工改過的不動"""
+    if not _DOCS_AUTO_CLASSIFY or not os.getenv("ANTHROPIC_API_KEY", ""):
+        return
+    import time as _t
+    for _ in range(wait_s):
+        if not _DOC_CLASSIFY_JOBS.get(idv, {}).get("running"):
+            break
+        _t.sleep(1)
+    if any(not (r.get("ai_label") or r.get("manual_label")) for r in _docs_rows(idv)):
+        _DOC_CLASSIFY_JOBS[idv] = {"running": True, "done": 0, "total": 0, "errors": []}
+        classify_customer_docs(idv, only_new=True)
+
+
 def _schedule_docs_pull(id_no: str, name: str, group_id: str):
     """業務在群組建檔成功後呼叫：去業務 AI 拉證件，有照片就在同一群組貼一則「📎 收件」。
     ⛔ 只貼一則（則數 × 群組人數計費）；沒照片不貼（客人還沒傳，不吵）。"""
@@ -27733,6 +27748,7 @@ def _schedule_docs_pull(id_no: str, name: str, group_id: str):
                 if res["error"]:
                     push_text(group_id, f"⚠️ {name} 證件拉取失敗：{res['error']}\n（打開證件頁會再試，或請管理員看一下）")
                 return
+            _docs_ensure_classified(normalize_id_no(id_no))   # 判完再發，卡片才列得出清單
             alt, card = _docs_flex(id_no, name)
             push_flex(group_id, alt, card)
             if res["error"]:
@@ -27888,11 +27904,7 @@ def _schedule_docs_supplement(id_no: str, name: str, group_id: str):
             res = pull_customer_docs(idv)        # 有新照片會自動開始判讀
             if not res["new"]:
                 return
-            import time as _t
-            for _ in range(60):                  # 等判讀（最多約 60 秒），卡片才寫得出補了什麼
-                if not _DOC_CLASSIFY_JOBS.get(idv, {}).get("running"):
-                    break
-                _t.sleep(1)
+            _docs_ensure_classified(idv, 60)     # 判完再發，卡片才寫得出補了什麼
             new_rows = [r for r in _docs_rows(idv) if r["id"] not in before and not _doc_is_contract(r)]
             if not new_rows or not _docs_can_post(group_id):
                 return
@@ -28438,6 +28450,8 @@ async def docs_card_send(request: Request, id_no: str):
     gid = cust["source_group_id"]
     if not _docs_can_post(gid):
         return JSONResponse({"ok": False, "error": f"試用期只能傳到名稱有「測試」的群組（這位在 {get_group_name(gid)}）"})
+    import asyncio as _aio
+    await _aio.to_thread(_docs_ensure_classified, idv)
     alt, card = _docs_flex(idv, cust.get("customer_name") or "")
     ok, err = push_flex(gid, alt, card)
     return JSONResponse({"ok": ok, "error": err, "group": get_group_name(gid)})

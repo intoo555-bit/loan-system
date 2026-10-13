@@ -2024,6 +2024,20 @@ _rs = TestClient(m.app).post("/archive/E300000020/card-send").json()
 check("「傳卡片到客人的群組」補發到測試B群", _rs.get("ok") and _cards and _cards[0][0] == "TEST_TB", (_rs, _cards[:1]))
 _rs = TestClient(m.app).post("/archive/E300000001/card-send").json()
 check("試用期：一般業務群的客人不能補發（擋下並說明）", _rs.get("ok") is False and "測試" in _rs.get("error", ""), _rs)
+# 之前就拉進來、還沒判讀的照片：建檔發卡片前要先判完，卡片才列得出清單（A100000001 那種）
+_c = sqlite3.connect(TEST_DB)
+_c.execute("UPDATE customer_docs SET ai_label=NULL, manual_label=NULL, ai_note=NULL WHERE id_no='E300000020'")
+_c.commit(); _c.close()
+os.environ["ANTHROPIC_API_KEY"] = "fake-key-for-test"
+_orig_ai2 = m._ai_doc_request
+m._ai_doc_request = lambda block, prompt: '{"type": "身分證正面", "note": "x"}'
+_cards.clear()
+m.check_auth = lambda req: "admin"
+TestClient(m.app).post("/archive/E300000020/card-send")
+_cj20 = json.dumps(_cards[0][2], ensure_ascii=False) if _cards else ""
+check("舊照片沒判讀過 → 發卡片前先判完，清單列得出來", _cards and "身分證正面" in _cj20 and "判讀中" not in _cj20, _cj20[:200])
+m._ai_doc_request = _orig_ai2
+os.environ.pop("ANTHROPIC_API_KEY", None)
 m.push_flex = _orig_flex
 m.check_auth = _old_auth
 m._bizai_list, m._bizai_fetch = _orig_list, _orig_fetch
