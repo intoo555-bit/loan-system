@@ -2351,6 +2351,30 @@ m._bizai_list, m._bizai_fetch, m._bizai_judge = _o_list, _o_fetch, _o_judge
 m.check_auth = _old_auth75
 os.environ.pop("BUSINESS_AI_URL", None); os.environ.pop("BUSINESS_AI_SECRET", None)
 
+# ========== 78. 下載照片時不可以鎖住資料庫（2026-10-14 自查）==========
+# 原本整段下載包在寫入交易裡 → LINE 的建檔／已補／核准在那段時間全部排隊，超過 30 秒就失敗
+print("\n=== 78. 下載照片不鎖資料庫 ===")
+_lock_err = []
+def _fetch_and_write(doc_id, idv):
+    try:
+        _cc = sqlite3.connect(TEST_DB, timeout=0.5)
+        _cc.execute("UPDATE groups SET group_name=group_name WHERE group_id='TEST_B'"); _cc.commit(); _cc.close()
+    except Exception as e:
+        _lock_err.append(str(e))
+    return _png77((9, 9, 9)), "image/png", ""
+_o2l, _o2f = m._bizai_list, m._bizai_fetch
+m._bizai_list = lambda idv: ([{"doc_id": 91, "created_at": "2026-10-14T10:00:00", "content_type": "image/png", "source": "LINE聊天", "label": "行照"},
+                              {"doc_id": 92, "created_at": "2026-10-14T10:01:00", "content_type": "image/png", "source": "LINE聊天", "label": "行照"}], "")
+m._bizai_fetch = _fetch_and_write
+os.environ["BUSINESS_AI_URL"] = "https://fake-bizai.test"; os.environ["BUSINESS_AI_SECRET"] = "x"
+_rr = m.pull_customer_docs("H300000001")
+check("下載照片的同時，其他人（LINE 指令）還寫得進資料庫", _rr["new"] == 2 and not _lock_err, (_rr, _lock_err))
+m._bizai_list, m._bizai_fetch = _o2l, _o2f
+os.environ.pop("BUSINESS_AI_URL", None); os.environ.pop("BUSINESS_AI_SECRET", None)
+import inspect as _insp78
+check("會下載／轉 PDF 的網頁不是 async（不卡住整個網站）",
+      not any(_insp78.iscoroutinefunction(getattr(m, n)) for n in ("docs_customer_page", "docs_album_page", "docs_pdf", "docs_zip", "docs_file_preview", "docs_data")))
+
 # ========== 總結 ==========
 print(f"\n{'='*50}")
 print(f"結果：{PASS} 通過、{FAIL} 失敗")

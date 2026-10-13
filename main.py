@@ -27762,43 +27762,49 @@ def _doc_ext(content_type: str) -> str:
 
 def pull_customer_docs(id_no: str) -> dict:
     """去業務 AI 拉這位客人的證件，新的才下載。回 {"ok", "new", "total", "error"}。
-    ⛔ 失敗不可以安靜：錯誤記在 customer_docs_pull.last_error，證件頁會顯示出來。"""
+    ⛔ 失敗不可以安靜：錯誤記在 customer_docs_pull.last_error，證件頁會顯示出來。
+    ⛔⛔ 下載時不可以鎖著資料庫（2026-10-14 自查抓到）：原本整段包在 BEGIN IMMEDIATE 裡，
+       一位客人十幾張、每張最多等 40 秒 → 這段時間 LINE 的建檔／已補／核准都在排隊，超過 30 秒就失敗而且沒人知道。
+       → 先讀已有的（短）、下載不鎖、每張下載完才開一個很短的寫入。"""
     idv = normalize_id_no(id_no or "")
     if not idv:
         return {"ok": False, "new": 0, "total": 0, "error": "沒有身分證"}
     items, err = _bizai_list(idv)
     new = 0
-    with db_conn(commit=True) as conn:
-        cur = conn.cursor()
-        _docs_ensure_table(cur)
-        if items is not None:
-            have = {r[0] for r in cur.execute("SELECT remote_doc_id FROM customer_docs WHERE id_no=?", (idv,))}
-            folder = os.path.join(_docs_dir(), idv)
-            for it in items:
-                rid = str(it.get("doc_id") or "")
-                if not rid or rid in have:
-                    continue
-                # ⛔ 委任合約／簽名不拉：使用者 2026-10-14「合約存在業務 AI 那邊，比較好找」
-                if any(k in (it.get("label") or "") for k in ("合約", "簽名")):
-                    continue
-                data, ctype, ferr = _bizai_fetch(rid, idv)
-                if data is None:
-                    err = ferr
-                    break   # 限流或斷線：先停，下次再補（已下載的保留）
-                ctype = _doc_sniff(data) or ctype or it.get("content_type") or ""
-                os.makedirs(folder, exist_ok=True)
-                path = os.path.join(folder, f"{rid}{_doc_ext(ctype)}")
-                with open(path, "wb") as fp:
-                    fp.write(data)
-                cur.execute("""INSERT OR IGNORE INTO customer_docs
+    with db_conn() as conn:
+        _docs_ensure_table(conn.cursor())
+        have = {r[0] for r in conn.execute("SELECT remote_doc_id FROM customer_docs WHERE id_no=?", (idv,))}
+    if items is not None:
+        folder = os.path.join(_docs_dir(), idv)
+        for it in items:
+            rid = str(it.get("doc_id") or "")
+            if not rid or rid in have:
+                continue
+            # ⛔ 委任合約／簽名不拉：使用者 2026-10-14「合約存在業務 AI 那邊，比較好找」
+            if any(k in (it.get("label") or "") for k in ("合約", "簽名")):
+                continue
+            data, ctype, ferr = _bizai_fetch(rid, idv)      # ← 網路，不鎖資料庫
+            if data is None:
+                err = ferr
+                break   # 限流或斷線：先停，下次再補（已下載的保留）
+            ctype = _doc_sniff(data) or ctype or it.get("content_type") or ""
+            os.makedirs(folder, exist_ok=True)
+            path = os.path.join(folder, f"{rid}{_doc_ext(ctype)}")
+            with open(path, "wb") as fp:
+                fp.write(data)
+            with db_conn(commit=True) as conn:              # ← 很短的寫入
+                conn.execute("""INSERT OR IGNORE INTO customer_docs
                     (id_no, remote_doc_id, source, label, content_type, size, file_path, remote_created_at, pulled_at)
                     VALUES (?,?,?,?,?,?,?,?,?)""",
                     (idv, rid, it.get("source") or "", it.get("label") or "", ctype, len(data),
                      path, it.get("created_at") or "", now_iso()))
-                new += 1
-        cur.execute("INSERT OR REPLACE INTO customer_docs_pull (id_no, last_pull_at, last_error) VALUES (?,?,?)",
-                    (idv, now_iso(), err or ""))
-        total = cur.execute("SELECT COUNT(*) FROM customer_docs WHERE id_no=?", (idv,)).fetchone()[0]
+            new += 1
+    with db_conn(commit=True) as conn:
+        conn.execute("INSERT OR REPLACE INTO customer_docs_pull (id_no, last_pull_at, last_error) VALUES (?,?,?)",
+                     (idv, now_iso(), err or ""))
+        # 刪掉的不算（2026-10-14 自查：原本把已刪除的也算進「共幾張」）
+        total = conn.execute("SELECT COUNT(*) FROM customer_docs WHERE id_no=? AND (deleted_at IS NULL OR deleted_at='')",
+                             (idv,)).fetchone()[0]
     if err:
         print(f"[證件] {idv} 拉取：{err}")
     if new:
@@ -28613,7 +28619,7 @@ async def docs_set_label(request: Request, doc_pk: int):
 
 
 @app.get("/archive", response_class=HTMLResponse)
-async def docs_list_page(request: Request, q: str = ""):
+def docs_list_page(request: Request, q: str = ""):
     role = _docs_auth(request)
     if not role:
         return RedirectResponse("/login")
@@ -28645,7 +28651,7 @@ async def docs_list_page(request: Request, q: str = ""):
 
 
 @app.get("/archive/file/{doc_pk}")
-async def docs_file(request: Request, doc_pk: int, dl: str = ""):
+def docs_file(request: Request, doc_pk: int, dl: str = ""):
     """看／下載單張。dl=1 → 下載，檔名「姓名_證件種類」（使用者 2026-10-14：點進去要能單張下載）"""
     if not _docs_auth(request):
         return JSONResponse({"error": "無權限"}, status_code=403)
@@ -28674,7 +28680,7 @@ def _pdf_pages(path: str) -> int:
 
 
 @app.get("/archive/file/{doc_pk}/preview")
-async def docs_file_preview(request: Request, doc_pk: int, page: int = 0):
+def docs_file_preview(request: Request, doc_pk: int, page: int = 0):
     """PDF 轉成圖片給人看（使用者 2026-10-14：PDF 沒辦法打開來看 —— LINE 內建瀏覽器常常不顯示 PDF）。
     page=1 → 只有第一頁（縮圖）；page=0 → 全部頁面由上往下接成一張長圖（最多 12 頁）"""
     if not _docs_auth(request):
@@ -28725,7 +28731,7 @@ def _docs_folder_name(id_no: str, rows):
 
 
 @app.get("/archive/{id_no}/pdf")
-async def docs_pdf(request: Request, id_no: str, ids: str = ""):
+def docs_pdf(request: Request, id_no: str, ids: str = ""):
     """整理好的 PDF（存檔用）：第一頁客戶資料表 → 證件照存檔順序（圖片一張一頁；客人傳的 PDF 整份接進去）。
     ⛔ 不含委任合約／簽名（合約存在業務 AI，不跟送件資料混在一起）"""
     if not _docs_auth(request):
@@ -28751,7 +28757,7 @@ async def docs_pdf(request: Request, id_no: str, ids: str = ""):
 
 
 @app.get("/archive/{id_no}/zip")
-async def docs_zip(request: Request, id_no: str, ids: str = ""):
+def docs_zip(request: Request, id_no: str, ids: str = ""):
     """一位客人一個資料夾（名稱跟相簿一樣：收件日期-姓名-身分證），照片照順序編號。⛔ 不含委任合約"""
     if not _docs_auth(request):
         return JSONResponse({"error": "無權限"}, status_code=403)
@@ -28791,7 +28797,7 @@ def _album_title(cust, idv: str) -> str:
 
 
 @app.get("/archive/{id_no}/sheet.jpg")
-async def docs_sheet_image(request: Request, id_no: str, page: int = 1):
+def docs_sheet_image(request: Request, id_no: str, page: int = 1):
     """客戶資料表轉成圖片（相簿頁第一張，跟行政以前拍進相簿的那張一樣）"""
     if not _docs_auth(request):
         return JSONResponse({"error": "無權限"}, status_code=403)
@@ -28828,7 +28834,7 @@ body{font-family:'Noto Sans TC','Microsoft JhengHei',sans-serif;background:#fff;
 
 
 @app.get("/album/{id_no}", response_class=HTMLResponse)
-async def docs_album_page(request: Request, id_no: str):
+def docs_album_page(request: Request, id_no: str):
     """卡片連結打開的「相簿」：標題＝收件日期姓名送件順序、N 張照片、兩欄大圖（第一張是客戶資料表），點開看大張、左右換、單張下載。
     使用者 2026-10-14 給 LINE 相簿截圖：「這個連結要跟客戶的資料一起可以看、跟相簿一樣」"""
     role = _docs_auth(request)
@@ -28890,7 +28896,7 @@ B.addEventListener('touchend',function(e){{if(sx===null)return;var dx=e.changedT
 
 
 @app.get("/archive/{id_no}/data")
-async def docs_data(request: Request, id_no: str, refresh: str = ""):
+def docs_data(request: Request, id_no: str, refresh: str = ""):
     if not _docs_auth(request):
         return JSONResponse({"ok": False, "error": "無權限"}, status_code=403)
     idv = normalize_id_no(id_no)
@@ -28929,7 +28935,7 @@ async def docs_classify_one(request: Request, doc_pk: int):
 
 
 @app.post("/archive/{id_no}/card-preview")
-async def docs_card_preview(request: Request, id_no: str):
+def docs_card_preview(request: Request, id_no: str):
     """把收件卡片傳到「系統通知群」給總管理看（業務群組不會收到）"""
     if not _docs_auth(request):
         return JSONResponse({"ok": False, "error": "無權限"}, status_code=403)
@@ -28963,7 +28969,7 @@ async def docs_card_send(request: Request, id_no: str):
 
 
 @app.post("/archive/{id_no}/supp-preview")
-async def docs_supp_preview(request: Request, id_no: str):
+def docs_supp_preview(request: Request, id_no: str):
     """補件小卡片預覽 → 系統通知群。拿「最後一次拉進來的那批」當作補件內容（沒有就拿最後 2 張示意）"""
     if not _docs_auth(request):
         return JSONResponse({"ok": False, "error": "無權限"}, status_code=403)
@@ -28984,8 +28990,10 @@ async def docs_supp_preview(request: Request, id_no: str):
     return JSONResponse({"ok": ok, "error": err})
 
 
+# ⛔ 這幾個窗口會下載照片、轉 PDF、產生圖片 → 用一般 def（FastAPI 丟到背景執行緒），
+#    ⛔ 不可以寫成 async def：會卡住整個網站和 LINE 機器人（2026-10-14 自查抓到）
 @app.get("/archive/{id_no}", response_class=HTMLResponse)
-async def docs_customer_page(request: Request, id_no: str, refresh: str = ""):
+def docs_customer_page(request: Request, id_no: str, refresh: str = ""):
     role = _docs_auth(request)
     if not role:
         return RedirectResponse("/login")
