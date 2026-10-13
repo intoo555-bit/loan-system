@@ -2288,7 +2288,10 @@ check("不檢查的不會算缺（例：勞保有就給）",
       all(st == "skip" for r, st, n in m.docs_missing_for_plan(_rows, ["勞保（有就給）", "記事本申請表", "汽車繳息（汽車有貸款才要）"])))
 m.check_auth = lambda req: "admin"
 _html = TestClient(m.app).get("/archive/G300000001").text
-check("證件頁有「每一家缺什麼」、照送件順序列", "每一家缺什麼" in _html and _html.index("21機車25萬") < _html.index("亞太機車25萬"))
+# 使用者 2026-10-14：只要說明目前送的那家缺什麼（後面可能不會送到），不要拉太長
+check("證件頁只寫目前送的那家缺什麼（21機車25萬），不列後面幾家",
+      "目前送 <b>21機車25萬</b>" in _html and "亞太機車25萬" not in _html.split("目前送")[1][:300] and "每一家缺什麼" not in _html)
+check("缺件一行寫完（勞保要重拉、時間相機）", "要重拉" in _html.split("目前送")[1][:400], _html.split("目前送")[1][:400])
 _dd = {d["id"]: d for d in TestClient(m.app).get("/archive/G300000001/data").json()["documents"]}
 _lab = [d for d in _dd.values() if d["category"] == "勞保明細"][0]
 check("勞保卡片上有判讀摘要（超過一週要重拉）", "重拉" in _lab["judge"], _lab["judge"])

@@ -27992,32 +27992,44 @@ def _plan_for_company(co: str):
     return plans[cands[0]] if len(cands) == 1 else None
 
 
+def _docs_current_company(cust) -> str:
+    """目前正在送的那一家：現在送哪家 → 送件順序目前那格 → 建議順序第一家"""
+    co = (cust.get("current_company") or "").strip()
+    if not co:
+        x = get_current_company(cust.get("route_plan") or "")
+        co = (x.get("company") if isinstance(x, dict) else x) or ""
+    if not co:
+        try:
+            sug = evaluate_case(cust).get("suggested_order", [])
+            co = sug[0]["company"] if sug else ""
+        except Exception:
+            co = ""
+    return co
+
+
 def _docs_missing_html(cust, rows) -> str:
-    """證件頁「每一家缺什麼」（使用者 2026-10-14：送件前就知道第一家缺什麼）"""
+    """證件頁一行：目前送的那家還缺什麼。
+    使用者 2026-10-14：「不用打那麼清楚，會拉太長；只要說明客戶目前缺什麼 —— 一家一家往下送，
+    核准了後面可能不會送、客戶中途不要結案也不會到後面」→ ⛔ 只看目前這一家，不列後面幾家"""
     if not cust:
         return ""
-    order = _docs_plan_order(cust)
-    if not order:
+    co = _docs_current_company(cust)
+    if not co:
         return ""
-    src = "送件順序" if (cust.get("route_plan") or "").strip() not in ("", "{}") else "建議送件順序（還沒設送件順序）"
-    icon = {"ok": "✅", "missing": "❌", "check": "⏳", "skip": "・"}
-    blocks = []
-    for i, co in enumerate(order, 1):
-        plan = _plan_for_company(co)
-        if not plan:
-            blocks.append(f'<div class="ms-co"><b>{i}. {h(co)}</b> <span class="ms-na">規則表沒有這家，沒辦法檢查</span></div>')
-            continue
-        res = docs_missing_for_plan(rows, plan.get("required_docs"))
-        miss = [r for r in res if r[1] == "missing"]
-        head = "✅ 齊全" if not miss and not any(r[1] == "check" for r in res) else (
-            f"❌ 缺 {len(miss)} 項" if miss else "⏳ 待確認")
-        items = "".join(f'<li class="ms-{st}">{icon[st]} {h(req)}{(" — " + h(note)) if note else ""}</li>'
-                        for req, st, note in res)
-        blocks.append(f'<details class="ms-co"{" open" if i == 1 or miss else ""}><summary><b>{i}. {h(plan["company"])}</b> '
-                      f'<span class="ms-head">{head}</span></summary><ul>{items}</ul></details>')
-    return (f'<details class="cust-panel" open><summary><span class="cp-title">📦 每一家缺什麼</span>'
-            f'<span class="cp-sub">照{h(src)}｜✅ 有 ❌ 缺 ⏳ 待確認 ・不檢查（行政自己做的、有才要的）</span></summary>'
-            f'<div class="ms-body">{"".join(blocks)}</div></details>')
+    plan = _plan_for_company(co)
+    if not plan:
+        return (f'<div class="ms-line">📦 目前送 <b>{h(co)}</b>：<span class="ms-na">規則表沒有這家，沒辦法檢查缺件</span></div>')
+    res = docs_missing_for_plan(rows, plan.get("required_docs"))
+    miss = [(req.split("（")[0].split("｜")[0] + (f"（{note}）" if note else "")) for req, st, note in res if st == "missing"]
+    wait = [(req.split("（")[0].split("｜")[0] + (f"（{note}）" if note else "")) for req, st, note in res if st == "check"]
+    parts = []
+    if miss:
+        parts.append(f'<span class="ms-missing">❌ 缺：{h("、".join(miss))}</span>')
+    if wait:
+        parts.append(f'<span class="ms-check">⏳ 待確認：{h("、".join(wait))}</span>')
+    if not parts:
+        parts.append('<span class="ms-ok">✅ 證件齊全</span>')
+    return f'<div class="ms-line">📦 目前送 <b>{h(plan["company"])}</b>：{"　".join(parts)}</div>'
 
 
 def _doc_rank(label: str) -> int:
