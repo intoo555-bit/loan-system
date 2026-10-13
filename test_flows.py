@@ -1970,7 +1970,8 @@ check("相簿頁：每張都可以單張下載", _ra.text.count("?dl=1") == 4, _
 m.check_auth = lambda req: "group_TEST_B"
 check("相簿頁：沒權限的帳號打不開", TestClient(m.app).get("/album/E300000001", follow_redirects=False).status_code in (302, 303, 307))
 _cj = json.dumps(_card, ensure_ascii=False)
-check("判讀過的證件在卡片上打勾列出", "✓" in _cj and "身分證正面" in _cj, _cj[:300])
+check("判讀過的證件在卡片上打勾列出、身分證正反面合成一行", "✓" in _cj and "身分證正反面" in _cj
+      and "身分證正面" not in _cj and "身分證反面" not in _cj and "勞保明細" in _cj, _cj[:300])
 m.check_auth = lambda req: "admin"
 _cards.clear()
 m.get_notify_group_ids = (lambda _o: (lambda: ["TEST_NOTIFY"]))(m.get_notify_group_ids)

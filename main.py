@@ -27745,6 +27745,12 @@ def _docs_flex(id_no: str, name: str):
     pending = len(rows) - len(done)
     cnt = _C(r["show_label"] for r in done)
     names = sorted(cnt, key=lambda k: (_doc_rank(k), k))
+    # 正反面合成一行（使用者 2026-10-14：「身分證打正反面就好，不用兩排」）
+    for front, back, both in (("身分證正面", "身分證反面", "身分證正反面"), ("信用卡正面", "信用卡反面", "信用卡正反面")):
+        if front in names and back in names:
+            names[names.index(front)] = both
+            names.remove(back)
+            cnt[both] = 1
     n = now_tw()
     day = f"{n.year - 1911}/{n.month}/{n.day}"
 
