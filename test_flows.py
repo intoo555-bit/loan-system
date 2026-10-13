@@ -1606,6 +1606,24 @@ def _hy_ck(rp):
 check("和裕：亞太沒婉拒 → 這條直接 ✅", _hy_ck(json.dumps({"order": ["亞太", "和裕"], "current_index": 0, "history": []})) == "pass")
 check("和裕：亞太機車25萬婉拒過 → ❌ 跳過", _hy_ck(json.dumps({"order": ["亞太機車25萬", "和裕"], "current_index": 1,
       "history": [{"company": "亞太機車25萬", "status": "婉拒", "date": "2026-10-13"}]}, ensure_ascii=False)) == "fail")
+# 規則表 A/B 類（2026-10-13）：系統判斷得出來的改自動、純說明不打 ⚠️
+def _st(cust, plan, kw):
+    r = [x for x in m.evaluate_case(dict(_b, **cust))["results"] if x["company"] == plan][0]
+    return [c for c in r["checks"] if kw in c["label"]][0]["status"]
+_car = lambda pa: json.dumps([{"co": "和潤汽車", "dy": "動保", "sp": "有", "pa": pa}])
+check("第一汽車：車貸已繳 20 期 → 滿 1 年 ✅", _st({"debt_list": _car("20")}, "第一汽車", "繳滿 1 年") == "pass")
+check("第一汽車：車貸已繳 8 期 → ❌", _st({"debt_list": _car("8")}, "第一汽車", "繳滿 1 年") == "fail")
+check("第一汽車：遲繳 20 天 → ❌", _st({"eval_late": "有", "eval_late_days": "20"}, "第一汽車", "遲繳") == "fail")
+check("第一汽車：沒遲繳 → ✅", _st({"eval_late": "無"}, "第一汽車", "遲繳") == "pass")
+check("負債表沒填 → ⚠️ 不可當成 ❌", _st({}, "第一汽車", "繳滿 1 年") == "unknown")
+check("興達勞保貸：有一筆只繳 3 期 → ❌", _st({"debt_list": json.dumps([{"co": "裕融機車", "pa": "10"}, {"co": "21商品", "pa": "3"}])},
+      "興達勞保貸", "每一筆") == "fail")
+check("和裕：40 歲 → 45~55 那條直接 ✅", _st({"birth_date": f"{_ny-40:03d}/01/01"}, "和裕機車", "45~55") == "pass")
+check("和裕：50 歲 → 45~55 那條 ⚠️", _st({"birth_date": f"{_ny-50:03d}/01/01"}, "和裕機車", "45~55") == "manual")
+check("融易：35 歲年齡自動 ✅", _st({"birth_date": f"{_ny-35:03d}/01/01"}, "融易機車專案", "年齡") == "pass")
+check("代書「不看條件」是說明、不是 ⚠️", _st({}, "代書", "不看條件") == "info")
+# 使用者：夠不夠貸業務已經標在空間欄，1.4 倍只是說明
+check("中租 1.4 倍是說明、不打 ⚠️", _st({}, "中租汽車", "1.4 倍") == "info")
 check("日報歸東豐／願望",m.normalize_section("東豐小額信貸") == "東豐" and m.normalize_section("願望小車25萬") == "願望")
 
 # ========== 總結 ==========

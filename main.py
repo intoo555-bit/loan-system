@@ -1369,7 +1369,7 @@ PLAN_ELIGIBILITY_RULES = [
             {"type": "simple", "label": "年齡 18 歲以上（學生也可送）", "field": "age", "op": ">=", "value": 18},
             {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
             {"type": "simple", "label": "🚨 必須是警示戶（警示戶專案）", "field": "eval_alert_warning", "op": "=", "value": "是"},
-            {"type": "manual", "label": "以買手機的名義貸款"},
+            {"type": "info", "label": "以買手機的名義貸款"},
         ],
         "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "勞保（有就給，沒有就算了）", "手機帳單"],
     },
@@ -1384,8 +1384,8 @@ PLAN_ELIGIBILITY_RULES = [
             {"type": "simple", "label": "勞保滿 3 個月",
              "field": "eval_labor_ins", "op": "in", "value": ["公司保", "軍保", "公保"],
              "manual_check": "需確認滿 3 個月"},
-            {"type": "manual", "label": "💡 條件達標就排序送貸"},
-            {"type": "manual", "label": "💡 排序：條件符合就排（多家銀行、各家規則略不同）"},
+            {"type": "info", "label": "💡 條件達標就排序送貸"},
+            {"type": "info", "label": "💡 排序：條件符合就排（多家銀行、各家規則略不同）"},
             {"type": "simple", "label": "🚫 警示戶不做（自動偵測）", "op": "no_warning_account"},
         ],
         "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面"],
@@ -1413,8 +1413,8 @@ PLAN_ELIGIBILITY_RULES = [
                 {"type": "manual", "label": "自營商有設立營登",
                  "hint": "需提供營利事業登記表"},
             ]},
-            {"type": "manual", "label": "💡 通常排在後面、業務確認 440 分後再送"},
-            {"type": "manual", "label": "💡 排序：固定都排（融資商品、信用報告只看銀行不看動保私設）"},
+            {"type": "info", "label": "💡 通常排在後面、業務確認 440 分後再送"},
+            {"type": "info", "label": "💡 排序：固定都排（融資商品、信用報告只看銀行不看動保私設）"},
             {"type": "simple", "label": "🚫 警示戶不做（自動偵測）", "op": "no_warning_account"},
         ],
         "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面",
@@ -1429,10 +1429,10 @@ PLAN_ELIGIBILITY_RULES = [
         "always_eligible": True,  # 一律排進去
         "rules": [
             {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
-            {"type": "manual", "label": "💡 包含：慢點付/分期趣/遠信月付大人/大哥付/幫你付/銀角零卡/先享後付/PI錢包/分期趣"},
-            {"type": "manual", "label": "💡 不看條件、每個客戶都會排進去申請看看"},
-            {"type": "manual", "label": "💡 警示戶可送、現金撥二等親或朋友都可"},
-            {"type": "manual", "label": "💡 排序：固定都排（每個客戶都會送）"},
+            {"type": "info", "label": "💡 包含：慢點付/分期趣/遠信月付大人/大哥付/幫你付/銀角零卡/先享後付/PI錢包/分期趣"},
+            {"type": "info", "label": "💡 不看條件、每個客戶都會排進去申請看看"},
+            {"type": "info", "label": "💡 警示戶可送、現金撥二等親或朋友都可"},
+            {"type": "info", "label": "💡 排序：固定都排（每個客戶都會送）"},
         ],
         "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面"],
     },
@@ -1443,9 +1443,9 @@ PLAN_ELIGIBILITY_RULES = [
         "always_eligible": True,  # 一律排進去
         "rules": [
             {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
-            {"type": "manual", "label": "💡 民間貸款、不看條件、無條件排給客戶申請"},
-            {"type": "manual", "label": "💡 警示戶可送、通常對保當下直接拿現金"},
-            {"type": "manual", "label": "💡 排序：固定都排（每個客戶都會送）"},
+            {"type": "info", "label": "💡 民間貸款、不看條件、無條件排給客戶申請"},
+            {"type": "info", "label": "💡 警示戶可送、通常對保當下直接拿現金"},
+            {"type": "info", "label": "💡 排序：固定都排（每個客戶都會送）"},
         ],
         "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面"],
     },
@@ -1456,9 +1456,9 @@ PLAN_ELIGIBILITY_RULES = [
         "always_eligible": True,  # 一律排進去（勞保滿 3 月時優先）
         "rules": [
             {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
-            {"type": "manual", "label": "💡 民間貸款、不看條件、無條件排給客戶申請"},
-            {"type": "manual", "label": "💡 警示戶可送、通常對保當下直接拿現金"},
-            {"type": "manual", "label": "💡 排序：勞保滿 3 個月排代書、不滿 3 月（或無勞保）改排當鋪"},
+            {"type": "info", "label": "💡 民間貸款、不看條件、無條件排給客戶申請"},
+            {"type": "info", "label": "💡 警示戶可送、通常對保當下直接拿現金"},
+            {"type": "info", "label": "💡 排序：勞保滿 3 個月排代書、不滿 3 月（或無勞保）改排當鋪"},
         ],
         "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面"],
     },
@@ -1469,9 +1469,9 @@ PLAN_ELIGIBILITY_RULES = [
         "always_eligible": True,  # 一律排進去（勞保不滿 3 月時取代代書）
         "rules": [
             {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
-            {"type": "manual", "label": "💡 民間貸款、不看條件、無條件排給客戶申請"},
-            {"type": "manual", "label": "💡 警示戶可送、通常對保當下直接拿現金"},
-            {"type": "manual", "label": "💡 排序：勞保不滿 3 月或無勞保 → 排當鋪（取代代書）"},
+            {"type": "info", "label": "💡 民間貸款、不看條件、無條件排給客戶申請"},
+            {"type": "info", "label": "💡 警示戶可送、通常對保當下直接拿現金"},
+            {"type": "info", "label": "💡 排序：勞保不滿 3 月或無勞保 → 排當鋪（取代代書）"},
         ],
         "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面"],
     },
@@ -1507,11 +1507,10 @@ PLAN_ELIGIBILITY_RULES = [
         "rules": [
             {"type": "simple", "label": "年齡 18~70", "field": "age", "op": "between", "value": [18, 70]},
             {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
-            {"type": "manual", "label": "未滿 20 歲須法代知情（已婚視同成年）",
-             "hint": "18~20 歲須父或母其一知情；已婚視同成年、不需法代"},
+            {"type": "simple", "label": "未滿 20 歲須法代知情（已婚視同成年）", "field": "age", "op": "between", "value": [0, 200], "manual_check": "18~20 歲須父或母其一知情；已婚視同成年", "manual_ok_range": [20, 200]},
             {"type": "simple", "label": "原融（機車無貸款）", "op": "not_has_dynbao",
              "manual_check": "確認要貸的機車本身沒貸款"},
-            {"type": "manual", "label": "💡 適用情境：21 剛貸款第一期還沒繳 → 麻吉",
+            {"type": "info", "label": "💡 適用情境：21 剛貸款第一期還沒繳 → 麻吉",
              "hint": "客戶若才在 21 撥款、第一期還沒到、不能再送 21、改送麻吉"},
             {"type": "simple", "label": "警示戶需補保人（自動偵測）", "op": "alert_warning_need_guarantor"},
             {"type": "simple", "label": "名下有可用機車（不能機車滿貸）", "op": "motorcycle_has_space"},
@@ -1524,8 +1523,7 @@ PLAN_ELIGIBILITY_RULES = [
         "priority": 48,
         "rules": [
             {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
-            {"type": "manual", "label": "年齡 20~65（55 以上補保人、超過 60 也可試送）",
-             "hint": "硬性：20 歲以上、軟性：60 以上實務上仍會送、有過件機會"},
+            {"type": "simple", "label": "年齡 20~65（超過 60 歲要補保人）", "field": "age", "op": "between", "value": [20, 65], "manual_check": "超過 60 歲要補保人", "manual_ok_range": [20, 60]},
             {"type": "oneof", "label": "財務能力（擇一、5 選 1）", "options": [
                 {"type": "simple", "label": "勞保/軍保/公保滿 3 個月 或 薪轉滿 3 個月",
                  "field": "eval_labor_ins", "op": "in", "value": ["公司保", "軍保", "公保"],
@@ -1548,8 +1546,7 @@ PLAN_ELIGIBILITY_RULES = [
         "priority": 45,
         "rules": [
             {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
-            {"type": "manual", "label": "年齡 18~55（55 以上補保人、超過 60 也可試送）",
-             "hint": "硬性：18 歲以上、軟性：60 以上實務上仍會送、有過件機會"},
+            {"type": "simple", "label": "年齡 18 以上（超過 60 歲要補保人）", "field": "age", "op": "between", "value": [18, 120], "manual_check": "超過 60 歲要補保人", "manual_ok_range": [18, 60]},
             {"type": "oneof", "label": "財務能力（擇一、5 選 1）", "options": [
                 {"type": "simple", "label": "勞保/軍保/公保滿 3 個月 或 薪轉滿 3 個月",
                  "field": "eval_labor_ins", "op": "in", "value": ["公司保", "軍保", "公保"],
@@ -1576,8 +1573,7 @@ PLAN_ELIGIBILITY_RULES = [
             {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
             {"type": "simple", "label": "至少 2 位聯絡人、其中 1 位為二等親屬", "op": "any_contact_2nd_kin"},
             {"type": "simple", "label": "車齡 ≤ 20 年", "field": "vehicle_year", "op": "year_age_le", "value": 20},
-            {"type": "manual", "label": "若 45~55 歲 → 必須勞保滿 1 年以上",
-             "hint": "45 歲以下不看勞保、財力 3 選 1 即可"},
+            {"type": "simple", "label": "若 45~55 歲 → 必須勞保滿 1 年以上", "field": "age", "op": "between", "value": [0, 200], "manual_check": "45~55 歲要確認勞保滿 1 年以上", "manual_ok_range": [0, 44]},
             {"type": "oneof", "label": "財務能力（擇一）", "options": [
                 {"type": "simple", "label": "持有信用卡 + 近 2 期完整繳款明細", "op": "creditcard_good",
                  "manual_check": "需提供近 2 期帳單或收據"},
@@ -1660,7 +1656,7 @@ PLAN_ELIGIBILITY_RULES = [
             {"type": "manual", "label": "車輛須在天書/權威鑑價（外匯車可認權威）",
              "hint": "書本查無 → 不予承作。車價 ≤ 10 萬亦不做"},
             {"type": "manual", "label": "車輛持有滿半年 或 新車一手車主、親屬過戶件可送"},
-            {"type": "manual", "label": "✅ 接受三種情境：原車（原融）、他行代償、借新還舊",
+            {"type": "info", "label": "✅ 接受三種情境：原車（原融）、他行代償、借新還舊",
              "hint": "前貸不限公司、原車無貸款也可、同公司再貸也可"},
             {"type": "manual", "label": "需符合下列 14 項中『至少 2 項』（A 專案）",
              "hint": "1.現職滿 9 月  2.不動產（RE 不可持分）  3.公司設立 9 月+  4.申貸成數 ≤ 70%  "
@@ -1685,7 +1681,7 @@ PLAN_ELIGIBILITY_RULES = [
             {"type": "manual", "label": "車輛須在天書/權威鑑價（外匯車可認權威）",
              "hint": "書本查無 → 不予承作。車價 ≤ 10 萬亦不做"},
             {"type": "manual", "label": "車輛持有滿半年 或 新車一手車主、親屬過戶件可送"},
-            {"type": "manual", "label": "✅ 接受三種情境：原車（原融）、他行代償、借新還舊",
+            {"type": "info", "label": "✅ 接受三種情境：原車（原融）、他行代償、借新還舊",
              "hint": "前貸不限公司、原車無貸款也可、同公司再貸也可"},
             {"type": "manual", "label": "需符合下列 11 項中『至少 1 項』（B 專案、不含車輛條件 12/13/14）",
              "hint": "1.現職滿 9 月  2.不動產  3.公司設立 9 月+  4.申貸成數 ≤ 70%  "
@@ -1708,9 +1704,9 @@ PLAN_ELIGIBILITY_RULES = [
             {"type": "manual", "label": "車輛須在天書/權威鑑價（外匯車可認權威）",
              "hint": "書本查無 → 不予承作。車價 ≤ 10 萬亦不做"},
             {"type": "manual", "label": "車輛持有滿半年 或 新車一手車主、親屬過戶件可送"},
-            {"type": "manual", "label": "✅ 接受三種情境：原車（原融）、他行代償、借新還舊",
+            {"type": "info", "label": "✅ 接受三種情境：原車（原融）、他行代償、借新還舊",
              "hint": "前貸不限公司、原車無貸款也可、同公司再貸也可"},
-            {"type": "manual", "label": "💡 C 專案：14 項都不符合也可送（基本款、最高 50 萬）"},
+            {"type": "info", "label": "💡 C 專案：14 項都不符合也可送（基本款、最高 50 萬）"},
         ],
         "required_docs": ["記事本申請表", "身分證正反", "第二證件（健保卡/駕照）", "存摺封面", "勞保（一週內）", "汽車行照", "汽車截圖", "天書截圖", "加分項目（信用卡、證照、公司上市櫃截圖）"],
     },
@@ -1727,8 +1723,8 @@ PLAN_ELIGIBILITY_RULES = [
             {"type": "simple", "label": "勞保/軍保/公保滿半年（須一週內）",
              "field": "eval_labor_ins", "op": "in", "value": ["公司保", "軍保", "公保"],
              "manual_check": "需確認滿半年 + 勞保須一週內"},
-            {"type": "manual", "label": "汽車貸款繳款滿 1 年、遲繳不可超過 15 天",
-             "hint": "看負債明細的設定日期 1 年以上、查繳款狀況"},
+            {"type": "simple", "label": "汽車貸款繳滿 1 年（12 期）", "op": "car_loan_paid_ge", "value": 12},
+            {"type": "simple", "label": "遲繳不超過 15 天", "op": "late_days_le", "value": 15},
             {"type": "simple", "label": "🚫 警示戶不做（自動偵測）", "op": "no_warning_account"},
         ],
         "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面", "勞保（一週內）", "身分證查詢截圖", "汽車行照", "汽車繳息"],
@@ -1758,8 +1754,7 @@ PLAN_ELIGIBILITY_RULES = [
             {"type": "simple", "label": "年齡 20~55", "field": "age", "op": "between", "value": [20, 55]},
             {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
             {"type": "simple", "label": "至少 2 位聯絡人、其中 1 位為二等親屬", "op": "any_contact_2nd_kin"},
-            {"type": "manual", "label": "若 45~55 歲 → 必須勞保滿 1 年以上",
-             "hint": "45 歲以下不看勞保、財力 3 選 1 即可"},
+            {"type": "simple", "label": "若 45~55 歲 → 必須勞保滿 1 年以上", "field": "age", "op": "between", "value": [0, 200], "manual_check": "45~55 歲要確認勞保滿 1 年以上", "manual_ok_range": [0, 44]},
             {"type": "oneof", "label": "財務能力（擇一）", "options": [
                 {"type": "simple", "label": "持有信用卡 + 近 2 期完整繳款明細", "op": "creditcard_good",
                  "manual_check": "需提供近 2 期帳單或收據"},
@@ -1791,10 +1786,10 @@ PLAN_ELIGIBILITY_RULES = [
              "field": "live_city", "op": "not_contains", "value": ["連江", "馬祖"]},
             {"type": "simple", "label": "至少 2 位聯絡人、其中 1 位為親屬", "op": "any_contact_2nd_kin"},
             {"type": "simple", "label": "至少 1 位聯絡人知情", "op": "any_contact_known"},
-            {"type": "manual", "label": "前案須繳滿 6 期(含)以上、不能遲繳超過 7 天",
-             "hint": "看負債明細的前案繳款狀況"},
-            {"type": "manual", "label": "需提供近半年完整繳息紀錄"},
-            {"type": "manual", "label": "💡 最高金額 10 萬、最長期數 18 期"},
+            {"type": "simple", "label": "前案繳滿 6 期以上", "op": "debt_paid_ge", "value": 6},
+            {"type": "simple", "label": "遲繳不超過 7 天", "op": "late_days_le", "value": 7},
+            {"type": "info", "label": "需提供近半年完整繳息紀錄"},
+            {"type": "info", "label": "💡 最高金額 10 萬、最長期數 18 期"},
             {"type": "simple", "label": "🚫 警示戶不做（自動偵測）", "op": "no_warning_account"},
         ],
         "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面", "汽/機車行照", "近半年完整繳息紀錄"],
@@ -1813,10 +1808,10 @@ PLAN_ELIGIBILITY_RULES = [
             {"type": "simple", "label": "近半年薪轉 或 半年勞/軍/公保",
              "field": "eval_labor_ins", "op": "in", "value": ["公司保", "軍保", "公保"],
              "manual_check": "需確認勞/軍/公保滿半年、或薪轉滿半年"},
-            {"type": "manual", "label": "名下所有融資/小額分期需附完整繳息+收據",
+            {"type": "info", "label": "名下所有融資/小額分期需附完整繳息+收據",
              "hint": "有動保的全部要附；沒動保但有融資（手機/商品貸款等）只要提供一項完整繳息即可"},
-            {"type": "manual", "label": "名下貸款需繳滿 6 期以上、提供近半年完整繳息紀錄"},
-            {"type": "manual", "label": "💡 最高金額 10 萬、最長期數 18 期"},
+            {"type": "simple", "label": "名下每一筆貸款都繳滿 6 期以上", "op": "debt_paid_min_ge", "value": 6},
+            {"type": "info", "label": "💡 最高金額 10 萬、最長期數 18 期"},
             {"type": "simple", "label": "🚫 警示戶不做（自動偵測）", "op": "no_warning_account"},
         ],
         "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面",
@@ -1833,8 +1828,7 @@ PLAN_ELIGIBILITY_RULES = [
         "max_amount": 100,
         "priority": 70,
         "rules": [
-            {"type": "manual", "label": "年齡 18~65（超過 55 歲須補保人）",
-             "hint": "硬性 18~65、55 以上要補保人"},
+            {"type": "simple", "label": "年齡 18~65（超過 55 歲須補保人）", "field": "age", "op": "between", "value": [18, 65], "manual_check": "55 歲以上要補保人", "manual_ok_range": [18, 54]},
             {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
             {"type": "simple", "label": "現居須在台灣本島（澎湖/金門/連江/馬祖皆不做、戶籍在外島可、看現居）",
              "field": "live_city", "op": "not_contains", "value": ["澎湖", "金門", "連江", "馬祖"]},
@@ -1842,7 +1836,7 @@ PLAN_ELIGIBILITY_RULES = [
             {"type": "manual", "label": "需有實體店面（流動攤販不承作）"},
             {"type": "manual", "label": "對保須在工作地"},
             {"type": "manual", "label": "進件需附店面照（招牌/門牌/外觀）+ 工作照 + 財產清單"},
-            {"type": "manual", "label": "💡 額度（符 2 項條件）：機車→20萬/36期、汽車→50萬/36期、房屋→100萬/60期"},
+            {"type": "info", "label": "💡 額度（符 2 項條件）：機車→20萬/36期、汽車→50萬/36期、房屋→100萬/60期"},
             {"type": "manual", "label": "符兩項條件（7 選 2）",
              "hint": "1.攤商合約 2 年+（附合約書）  2.持有專業證照與工作相符  "
                      "3.近半年完整往存基數萬元以上  4.自有 RE 滿 1 年（無私設）  "
@@ -1858,8 +1852,7 @@ PLAN_ELIGIBILITY_RULES = [
         "max_amount": 100,
         "priority": 69,
         "rules": [
-            {"type": "manual", "label": "年齡 18~65（超過 55 歲須補保人）",
-             "hint": "硬性 18~65、55 以上要補保人"},
+            {"type": "simple", "label": "年齡 18~65（超過 55 歲須補保人）", "field": "age", "op": "between", "value": [18, 65], "manual_check": "55 歲以上要補保人", "manual_ok_range": [18, 54]},
             {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
             {"type": "simple", "label": "現居須在台灣本島（澎湖/金門/連江/馬祖皆不做、戶籍在外島可、看現居）",
              "field": "live_city", "op": "not_contains", "value": ["澎湖", "金門", "連江", "馬祖"]},
@@ -1867,7 +1860,7 @@ PLAN_ELIGIBILITY_RULES = [
             {"type": "manual", "label": "需有營登"},
             {"type": "manual", "label": "對保須在工作地"},
             {"type": "manual", "label": "進件需附工作現勘照 + 統編（工作照申請人須入鏡 3-5 張）+ 財產清單"},
-            {"type": "manual", "label": "💡 額度（符 2 項條件）：機車→20萬/36期、汽車→50萬/36期、房屋→100萬/60期"},
+            {"type": "info", "label": "💡 額度（符 2 項條件）：機車→20萬/36期、汽車→50萬/36期、房屋→100萬/60期"},
             {"type": "manual", "label": "符兩項條件（7 選 2）",
              "hint": "1.公司營登 2 年+（附營登或商業抄本）  2.持有信用卡 1 年+（附近一期完整帳單首頁）  "
                      "3.近半年完整往存基數萬元以上  4.自有 RE 滿 1 年（無私設）  "
@@ -1883,14 +1876,14 @@ PLAN_ELIGIBILITY_RULES = [
         "max_amount": 40,
         "priority": 64,
         "rules": [
-            {"type": "manual", "label": "年齡 18~65（超過 55 歲須補保人）"},
+            {"type": "simple", "label": "年齡 18~65（超過 55 歲須補保人）", "field": "age", "op": "between", "value": [18, 65], "manual_check": "55 歲以上要補保人", "manual_ok_range": [18, 54]},
             {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
             {"type": "simple", "label": "現居須在台灣本島（澎湖/金門/連江/馬祖皆不做、戶籍在外島可、看現居）",
              "field": "live_city", "op": "not_contains", "value": ["澎湖", "金門", "連江", "馬祖"]},
             {"type": "simple", "label": "至少 2 位聯絡人、其中 1 位為二等親", "op": "any_contact_2nd_kin"},
             {"type": "manual", "label": "⚠️ 會設定機車（私設）"},
             {"type": "manual", "label": "正職滿 2 年（負責人不認定）"},
-            {"type": "manual", "label": "💡 額度：符 1 項→10萬/18期、2 項→20萬/24期、3 項→30萬/36期、4 項→40萬/36期"},
+            {"type": "info", "label": "💡 額度：符 1 項→10萬/18期、2 項→20萬/24期、3 項→30萬/36期、4 項→40萬/36期"},
             {"type": "manual", "label": "符項條件（3 選 N）",
              "hint": "1.近 7 天內個人 JCIC  2.近 7 天內所得清單+財產清冊  "
                      "3.同業/銀行既有客戶繳滿 1 年+貸款期內無 10 天以上逾期（附完整繳息明細）"},
@@ -1903,14 +1896,14 @@ PLAN_ELIGIBILITY_RULES = [
         "max_amount": 15,
         "priority": 58,
         "rules": [
-            {"type": "manual", "label": "年齡 18~65（超過 55 歲須補保人）"},
+            {"type": "simple", "label": "年齡 18~65（超過 55 歲須補保人）", "field": "age", "op": "between", "value": [18, 65], "manual_check": "55 歲以上要補保人", "manual_ok_range": [18, 54]},
             {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
             {"type": "simple", "label": "現居須在台灣本島（澎湖/金門/連江/馬祖皆不做、戶籍在外島可、看現居）",
              "field": "live_city", "op": "not_contains", "value": ["澎湖", "金門", "連江", "馬祖"]},
             {"type": "simple", "label": "至少 2 位聯絡人、其中 1 位為二等親", "op": "any_contact_2nd_kin"},
             {"type": "manual", "label": "⚠️ 會設定機車（私設）"},
             {"type": "manual", "label": "申請人若無薪轉/勞保/軍保/公保 → 須附工作現勘照 + 往存或薪資條/袋"},
-            {"type": "manual", "label": "💡 額度：符 1 項→5萬/18期、2 項→10萬/24期、3 項→15萬/36期"},
+            {"type": "info", "label": "💡 額度：符 1 項→5萬/18期、2 項→10萬/24期、3 項→15萬/36期"},
             {"type": "manual", "label": "符項條件（12 選 N）",
              "hint": "1.正職滿 1 年+勞保/薪轉  2.車主/保人軍公教  3.二等親屬保(≤65)或正職保人  "
                      "4.甲乙丙技術士/單一級/大貨大客聯結車職駕/吊掛/3 噸+起重機/護士證且與現職相符  "
@@ -1938,9 +1931,9 @@ PLAN_ELIGIBILITY_RULES = [
             {"type": "simple", "label": "客戶必須有汽車", "op": "has_car"},
             {"type": "simple", "label": "車齡 ≤ 15 年", "field": "vehicle_year", "op": "year_age_le", "value": 15},
             {"type": "manual", "label": "需符合 3 項條件以上"},
-            {"type": "manual", "label": "✅ 接受三種情境：他行代償、借新還舊、原車融資"},
-            {"type": "manual", "label": "💡 可貸金額 = 天書/權威/鑑價 × 1.3（例 50萬×1.3=65萬）"},
-            {"type": "manual", "label": "💡 最長分 72 期"},
+            {"type": "info", "label": "✅ 接受三種情境：他行代償、借新還舊、原車融資"},
+            {"type": "info", "label": "💡 可貸金額 = 天書/權威/鑑價 × 1.3（例 50萬×1.3=65萬）"},
+            {"type": "info", "label": "💡 最長分 72 期"},
             {"type": "simple", "label": "汽車有空間（自動偵測 sp 欄位）", "op": "car_has_space"},
             {"type": "simple", "label": "🚫 警示戶不做（警示戶送和潤）", "op": "no_warning_account"},
         ],
@@ -1955,9 +1948,9 @@ PLAN_ELIGIBILITY_RULES = [
             {"type": "simple", "label": "客戶必須有汽車", "op": "has_car"},
             {"type": "simple", "label": "車齡 ≤ 18 年", "field": "vehicle_year", "op": "year_age_le", "value": 18},
             {"type": "manual", "label": "需符合 2 項條件以上"},
-            {"type": "manual", "label": "✅ 接受三種情境：他行代償、借新還舊、原車融資"},
-            {"type": "manual", "label": "💡 可貸金額 = 天書/權威/鑑價 × 1.3"},
-            {"type": "manual", "label": "💡 最長分 84 期"},
+            {"type": "info", "label": "✅ 接受三種情境：他行代償、借新還舊、原車融資"},
+            {"type": "info", "label": "💡 可貸金額 = 天書/權威/鑑價 × 1.3"},
+            {"type": "info", "label": "💡 最長分 84 期"},
             {"type": "simple", "label": "汽車有空間（自動偵測 sp 欄位）", "op": "car_has_space"},
             {"type": "simple", "label": "🚫 警示戶不做（警示戶送和潤）", "op": "no_warning_account"},
         ],
@@ -1972,9 +1965,9 @@ PLAN_ELIGIBILITY_RULES = [
             {"type": "simple", "label": "客戶必須有汽車", "op": "has_car"},
             {"type": "simple", "label": "車齡 ≤ 18 年", "field": "vehicle_year", "op": "year_age_le", "value": 18},
             {"type": "manual", "label": "需符合 1 項條件以上"},
-            {"type": "manual", "label": "✅ 接受三種情境：他行代償、借新還舊、原車融資"},
-            {"type": "manual", "label": "💡 可貸金額 = 天書/權威/鑑價 × 1.3"},
-            {"type": "manual", "label": "💡 最長分 60 期"},
+            {"type": "info", "label": "✅ 接受三種情境：他行代償、借新還舊、原車融資"},
+            {"type": "info", "label": "💡 可貸金額 = 天書/權威/鑑價 × 1.3"},
+            {"type": "info", "label": "💡 最長分 60 期"},
             {"type": "simple", "label": "汽車有空間（自動偵測 sp 欄位）", "op": "car_has_space"},
             {"type": "simple", "label": "🚫 警示戶不做（警示戶送和潤）", "op": "no_warning_account"},
         ],
@@ -1987,10 +1980,10 @@ PLAN_ELIGIBILITY_RULES = [
         "rules": [
             {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
             {"type": "simple", "label": "客戶必須有汽車", "op": "has_car"},
-            {"type": "manual", "label": "不限車齡"},
+            {"type": "info", "label": "不限車齡"},
             {"type": "manual", "label": "需符合 1 項條件以上"},
-            {"type": "manual", "label": "✅ 接受三種情境：他行代償、借新還舊、原車融資"},
-            {"type": "manual", "label": "💡 可貸金額 = 天書/權威/鑑價 × 1.3；無天書/權威/鑑價 → 老車專案最高 10 萬"},
+            {"type": "info", "label": "✅ 接受三種情境：他行代償、借新還舊、原車融資"},
+            {"type": "info", "label": "💡 可貸金額 = 天書/權威/鑑價 × 1.3；無天書/權威/鑑價 → 老車專案最高 10 萬"},
             {"type": "simple", "label": "汽車有空間（自動偵測 sp 欄位）", "op": "car_has_space"},
             {"type": "simple", "label": "🚫 警示戶不做（警示戶送和潤）", "op": "no_warning_account"},
         ],
@@ -2007,7 +2000,7 @@ PLAN_ELIGIBILITY_RULES = [
             {"type": "simple", "label": "客戶必須有汽車", "op": "has_car"},
             # 夠不夠貸由業務判斷後標在負債表「空間」欄（使用者 2026-10-13）
             {"type": "simple", "label": "汽車夠貸（看業務在負債表標的空間）", "op": "car_has_space"},
-            {"type": "manual", "label": "💡 業務判斷夠不夠：天書車價要有想貸金額的 1.4 倍以上",
+            {"type": "info", "label": "💡 天書車價要有想貸金額的 1.4 倍以上（業務已在負債表標夠不夠貸）",
              "hint": "例：想貸 50 萬 → 天書要 70 萬以上；可貸多少要看天書跟汽車前貸"},
             {"type": "manual", "label": "🚫 老車專案不做"},
         ],
@@ -2022,10 +2015,10 @@ PLAN_ELIGIBILITY_RULES = [
         "rules": [
             {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
             {"type": "simple", "label": "客戶必須有汽車", "op": "has_car"},
-            {"type": "manual", "label": "需有汽車（無貸款或可加貸都可送）"},
-            {"type": "manual", "label": "✅ 接受三種情境：他行代償、借新還舊、原車融資"},
-            {"type": "manual", "label": "💡 可貸金額 = 天書/權威/鑑價 × 1.3（同裕融邏輯）"},
-            {"type": "manual", "label": "✅ 警示戶可送（警示戶優先送和潤、不送裕融）"},
+            {"type": "info", "label": "需有汽車（無貸款或可加貸都可送）"},
+            {"type": "info", "label": "✅ 接受三種情境：他行代償、借新還舊、原車融資"},
+            {"type": "info", "label": "💡 可貸金額 = 天書/權威/鑑價 × 1.3（同裕融邏輯）"},
+            {"type": "info", "label": "✅ 警示戶可送（警示戶優先送和潤、不送裕融）"},
             {"type": "manual", "label": "⚠️ 警示戶撥款須撥到二等親帳戶"},
             {"type": "simple", "label": "汽車有空間（自動偵測 sp 欄位）", "op": "car_has_space"},
         ],
@@ -2039,9 +2032,9 @@ PLAN_ELIGIBILITY_RULES = [
         "rules": [
             {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
             {"type": "simple", "label": "客戶必須有重機（看 eval_property 含「重機」）", "op": "has_heavy_bike"},
-            {"type": "manual", "label": "需有重機（無貸款或可加貸都可送）"},
+            {"type": "info", "label": "需有重機（無貸款或可加貸都可送）"},
             {"type": "manual", "label": "⚠️ 須先估價/鑑價、確認金額是否足夠才能送"},
-            {"type": "manual", "label": "✅ 警示戶可送"},
+            {"type": "info", "label": "✅ 警示戶可送"},
             {"type": "manual", "label": "⚠️ 警示戶撥款須撥到二等親帳戶"},
         ],
         "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面",
@@ -2091,7 +2084,7 @@ PLAN_ELIGIBILITY_RULES = [
                 {"type": "manual", "label": "自營商滿 3 個月（附 401 報表）"},
             ]},
             {"type": "simple", "label": "名下有可用機車", "op": "motorcycle_has_space"},
-            {"type": "manual", "label": "機車持有時間不限；非本人行照可先進件，核准後過戶"},
+            {"type": "info", "label": "機車持有時間不限；非本人行照可先進件，核准後過戶"},
         ],
         "required_docs": ["身分證正反", "信用報告", "人+車合照", "行照"],
     },
@@ -2107,7 +2100,7 @@ PLAN_ELIGIBILITY_RULES = [
             {"type": "simple", "label": "工會保滿 3 個月", "field": "eval_labor_ins", "op": "=", "value": "工會保",
              "manual_check": "需確認滿 3 個月；如果是自營商（附 401）可以送 25 萬"},
             {"type": "simple", "label": "名下有可用機車", "op": "motorcycle_has_space"},
-            {"type": "manual", "label": "機車持有時間不限；非本人行照可先進件，核准後過戶"},
+            {"type": "info", "label": "機車持有時間不限；非本人行照可先進件，核准後過戶"},
         ],
         "required_docs": ["身分證正反", "信用報告", "人+車合照", "行照"],
     },
@@ -2739,6 +2732,9 @@ def _check_rule(rule, customer):
     sub: oneof 才有值（list of {status, label, actual} dict）、其他空 list"""
     rt = rule.get("type", "simple")
     label = rule.get("label", "")
+    # info＝純說明（灰色小字），不是要確認的事、不算 ⚠️（2026-10-13 使用者：說明不要打驚嘆號）
+    if rt == "info":
+        return ("info", label + (f" — {rule['hint']}" if rule.get("hint") else ""), "")
     if rt == "manual":
         return ("manual", label + (f" — {rule['hint']}" if rule.get("hint") else ""), "需人工確認")
     if rt == "oneof":
@@ -2837,20 +2833,42 @@ def _check_rule(rule, customer):
             if any(h.get("status") == "婉拒" and normalize_section(h.get("company", "")) == value for h in hist):
                 return ("fail", label, f"{value}已婉拒過")
             return ("pass", label, f"{value}沒婉拒過")
-        # 負債表裡任一筆已繳期數 ≥ value（東豐：同業繳息半年以上）
-        if op == "debt_paid_ge":
-            best = 0
+        # 負債表已繳期數（pa）相關：負債表沒填 → unknown（沒填 ≠ 沒有貸款）
+        if op in ("debt_paid_ge", "debt_paid_min_ge", "car_loan_paid_ge"):
             try:
-                for d in json.loads(customer.get("debt_list") or "[]"):
-                    try:
-                        best = max(best, int(re.sub(r"[^\d]", "", d.get("pa", "") or "") or 0))
-                    except ValueError:
-                        continue
+                debts = json.loads(customer.get("debt_list") or "[]") or []
             except Exception:
-                pass
-            if best >= int(value):
-                return ("pass", label, f"最多已繳 {best} 期")
-            return ("fail", label, f"最多已繳 {best} 期（未滿 {value} 期）")
+                debts = []
+            if op == "car_loan_paid_ge":
+                debts = [d for d in debts if "汽車" in (d.get("co", "") or "")]
+            paid = []
+            for d in debts:
+                mm = re.match(r"\s*(\d+)", str(d.get("pa", "") or ""))
+                if mm:
+                    paid.append((int(mm.group(1)), d.get("co", "") or "?"))
+            if not paid:
+                return ("unknown", label, "負債表沒填已繳期數")
+            if op == "debt_paid_min_ge":   # 每一筆都要滿
+                low = min(paid)
+                if low[0] >= int(value):
+                    return ("pass", label, f"每筆都繳 {value} 期以上（最少 {low[0]} 期）")
+                return ("fail", label, f"{low[1]} 只繳 {low[0]} 期")
+            best = max(paid)
+            if best[0] >= int(value):
+                return ("pass", label, f"{best[1]} 已繳 {best[0]} 期")
+            return ("fail", label, f"最多已繳 {best[0]} 期（未滿 {value} 期）")
+        # 遲繳天數 ≤ value（看評估表的貸款遲繳／遲繳天數）
+        if op == "late_days_le":
+            late = (customer.get("eval_late", "") or "").strip()
+            if not late:
+                return ("unknown", label, "遲繳沒填")
+            if late == "無":
+                return ("pass", label, "沒有遲繳")
+            mm = re.search(r"\d+", customer.get("eval_late_days", "") or "")
+            if not mm:
+                return ("manual", label, "有遲繳、天數沒填")
+            days = int(mm.group(0))
+            return ("pass" if days <= int(value) else "fail", label, f"遲繳 {days} 天")
         # 銀行呆帳（願望：有呆帳就不用送）
         if op == "no_bad_debt":
             text = " ".join((customer.get(k, "") or "") for k in ["eval_credit_card", "eval_note", "eval_law"])
@@ -18636,6 +18654,7 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
       if (r.checks && r.checks.length) {{
         detail += '<ul style="margin:4px 0 0;padding-left:22px;font-size:12px;color:#374151">';
         r.checks.forEach(function(c) {{
+          if (c.status === 'info') {{ detail += '<li style="list-style:none;margin-left:-14px;color:#9ca3af;font-size:11px">' + c.label + '</li>'; return; }}
           var mark = c.status === 'pass' ? '✅' : (c.status === 'fail' ? '❌' : (c.status === 'manual' ? '⚠️' : '❓'));
           var act = c.actual ? ('（' + c.actual + '）') : '';
           detail += '<li>' + mark + ' ' + c.label + act;
@@ -20193,6 +20212,7 @@ function checkEligibility() {{
         if (r.checks && r.checks.length) {{
           html += '<ul style="margin:6px 0 0;padding-left:22px;font-size:12px;color:#374151">';
           r.checks.forEach(c => {{
+            if (c.status === 'info') {{ html += '<li style="list-style:none;margin-left:-14px;color:#9ca3af;font-size:11px">' + c.label + '</li>'; return; }}
             let mark = c.status === 'pass' ? '✅' : (c.status === 'fail' ? '❌' : (c.status === 'manual' ? '⚠️' : '❓'));
             let act = c.actual ? ('（' + c.actual + '）') : '';
             html += '<li>' + mark + ' ' + c.label + act;
