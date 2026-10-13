@@ -2292,6 +2292,17 @@ check("證件頁有「每一家缺什麼」、照送件順序列", "每一家缺
 _dd = {d["id"]: d for d in TestClient(m.app).get("/archive/G300000001/data").json()["documents"]}
 _lab = [d for d in _dd.values() if d["category"] == "勞保明細"][0]
 check("勞保卡片上有判讀摘要（超過一週要重拉）", "重拉" in _lab["judge"], _lab["judge"])
+# 刪除（2026-10-14：陳曉琳的真勞保掛在測試客底下）
+_del = [r for r in m._docs_rows("G300000001") if r["remote_doc_id"] == "45"][0]
+m.check_auth = lambda req: "adminB"
+check("非總管理不能刪", TestClient(m.app).post(f"/archive/doc/{_del['id']}/delete").status_code == 403)
+m.check_auth = lambda req: "admin"
+_rd = TestClient(m.app).post(f"/archive/doc/{_del['id']}/delete").json()
+check("總管理刪除：檔案從硬碟刪掉、頁面上不見", _rd.get("ok") and not os.path.exists(_del["file_path"])
+      and all(r["id"] != _del["id"] for r in m._docs_rows("G300000001")), _rd)
+m.pull_customer_docs("G300000001")
+check("刪掉的不會被重拉回來（業務 AI 那邊還在）", all(r["remote_doc_id"] != "45" for r in m._docs_rows("G300000001")))
+check("刪掉的照片網址也打不開", TestClient(m.app).get(f"/archive/file/{_del['id']}").status_code == 404)
 m._bizai_list, m._bizai_fetch, m._bizai_judge = _o_list, _o_fetch, _o_judge
 m.check_auth = _old_auth75
 os.environ.pop("BUSINESS_AI_URL", None); os.environ.pop("BUSINESS_AI_SECRET", None)

@@ -27658,7 +27658,7 @@ def _docs_ensure_table(cur):
     cur.execute("""CREATE TABLE IF NOT EXISTS customer_docs_pull (
         id_no TEXT PRIMARY KEY, last_pull_at TEXT, last_error TEXT)""")
     _cols = {r[1] for r in cur.execute("PRAGMA table_info(customer_docs)")}
-    for _c in ("ai_label", "ai_note", "ai_at", "manual_label", "judge_json", "judge_at"):
+    for _c in ("ai_label", "ai_note", "ai_at", "manual_label", "judge_json", "judge_at", "deleted_at", "deleted_by"):
         if _c not in _cols:
             cur.execute(f"ALTER TABLE customer_docs ADD COLUMN {_c} TEXT")
 
@@ -28035,7 +28035,8 @@ def _docs_rows(id_no: str):
     with db_conn() as conn:
         cur = conn.cursor()
         _docs_ensure_table(cur)
-        rows = [dict(r) for r in cur.execute("SELECT * FROM customer_docs WHERE id_no=?", (normalize_id_no(id_no),))]
+        rows = [dict(r) for r in cur.execute("SELECT * FROM customer_docs WHERE id_no=? AND (deleted_at IS NULL OR deleted_at='')",
+                                             (normalize_id_no(id_no),))]
     for r in rows:
         r["show_label"] = _doc_label(r)
         r["real_type"] = _doc_real_type(r["file_path"] or "", r["content_type"] or "")
@@ -28449,6 +28450,28 @@ async def docs_classify_status(request: Request, id_no: str):
     return JSONResponse({"ok": True, **job})
 
 
+@app.post("/archive/doc/{doc_pk}/delete")
+async def docs_delete(request: Request, doc_pk: int):
+    """刪除一張（只有總管理）：放錯客人的證件、測試時誤掛的真客人資料（2026-10-14 陳曉琳的勞保掛在測試客底下）。
+    ⛔ 檔案從硬碟刪掉，但紀錄留著標「已刪除」—— 業務 AI 那邊還沒刪的話，下次重拉才不會又被拉回來。"""
+    if check_auth(request) != "admin":
+        return JSONResponse({"ok": False, "error": "只有總管理可以刪"}, status_code=403)
+    with db_conn(commit=True) as conn:
+        _docs_ensure_table(conn.cursor())
+        r = conn.execute("SELECT * FROM customer_docs WHERE id=?", (doc_pk,)).fetchone()
+        if not r:
+            return JSONResponse({"ok": False, "error": "找不到這張"})
+        try:
+            if r["file_path"] and os.path.isfile(r["file_path"]):
+                os.remove(r["file_path"])
+        except Exception as e:
+            return JSONResponse({"ok": False, "error": f"刪檔失敗：{e}"})
+        conn.execute("UPDATE customer_docs SET deleted_at=?, deleted_by=?, file_path='', judge_json='' WHERE id=?",
+                     (now_iso(), "admin", doc_pk))
+    print(f"[證件] 刪除 doc={doc_pk} id_no={r['id_no']} label={r['manual_label'] or r['ai_label'] or r['label']}")
+    return JSONResponse({"ok": True})
+
+
 @app.post("/archive/doc/{doc_pk}/label")
 async def docs_set_label(request: Request, doc_pk: int):
     """行政手動改文件種類（以人工為準，AI 重判不蓋掉）"""
@@ -28510,7 +28533,7 @@ async def docs_file(request: Request, doc_pk: int, dl: str = ""):
         cur = conn.cursor()
         _docs_ensure_table(cur)
         r = cur.execute("SELECT * FROM customer_docs WHERE id=?", (doc_pk,)).fetchone()
-    if not r or not r["file_path"] or not os.path.isfile(r["file_path"]):
+    if not r or not r["file_path"] or not os.path.isfile(r["file_path"]) or r["deleted_at"]:
         return JSONResponse({"error": "找不到檔案"}, status_code=404)
     rt = _doc_real_type(r["file_path"], r["content_type"]) or "application/octet-stream"
     if dl:
@@ -28968,6 +28991,9 @@ _ARCHIVE_ADAPTER = """<script>
   classifyOne:async p=>{const r=await (await fetch('/archive/doc/'+p.ids[0]+'/classify',{method:'POST'})).json();
     if(!r.ok){alert(r.error||'失敗');return null;} return {documents:[r.document]};},
   openFile:async p=>{window.open('/archive/file/'+p.ids[0],'_blank');},
+  deleteOne:async id=>{if(!confirm('確定刪除這張？刪了就找不回來（業務 AI 那邊不會跟著刪）'))return false;
+    const r=await (await fetch('/archive/doc/'+id+'/delete',{method:'POST'})).json(); if(!r.ok){alert(r.error||'失敗');return false;}
+    const d=await load(false); G.setData({customerId:__SHOW__,total:d.documents.length,documents:d.documents,demo:false}); return true;},
   saveCategory:async x=>{const r=await (await fetch('/archive/doc/'+x.id+'/label',{method:'POST',
     headers:{'Content-Type':'application/json'},body:JSON.stringify({label:x.category})})).json(); if(!r.ok)throw new Error(r.error||'失敗');},
  });
