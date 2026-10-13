@@ -27890,6 +27890,17 @@ def _judge_bg(idv: str):
         _threading.Thread(target=_run, daemon=True).start()
 
 
+def _doc_judge_detail(r) -> str:
+    """看大圖右邊：業務 AI 的完整提醒（部分工時可以去改、接續、重複投保、看不清楚…）"""
+    j = _doc_judge(r)
+    if not j or j.get("error") or j.get("_transient"):
+        return ""
+    lines = [str(x).replace("**", "") for x in (j.get("提示") or [])]
+    if j.get("看不清楚"):
+        lines.append("看不清楚：" + "、".join(str(x) for x in j["看不清楚"]))
+    return "\n".join(lines)
+
+
 def _doc_judge(r) -> dict:
     """這張的判讀結果（分類跟判讀種類對得上才算）"""
     try:
@@ -27913,6 +27924,13 @@ def _doc_judge_text(r) -> str:
             return "🤖 這張看起來不是勞保明細"
         cur = j.get("目前投保") or []
         parts = [f'{c.get("類型", "")} {c.get("單位", "")} {c.get("加保日期", "")} 加保（滿 {c.get("加保滿幾個月", "?")} 個月）' for c in cur]
+        # ⚠️ 部分工時／重複投保要顯示（2026-10-14 使用者：陳曉琳有部分工時沒判讀到 —— 業務 AI 有判，是這裡漏顯示）
+        if len(cur) > 1:
+            parts.append("⚠️ 目前重複投保")
+        for c in cur:
+            if c.get("備註部分工時"):
+                parts.append(f'⚠️ 部分工時（投保薪資 {c.get("投保薪資", "?"):,}）' if isinstance(c.get("投保薪資"), int)
+                             else "⚠️ 部分工時")
         days = j.get("明細幾天前印的")
         fresh = (f"⚠️ 明細 {days} 天前印的，超過一週要重拉" if isinstance(days, int) and days > 7
                  else (f"明細 {days} 天前印的" if isinstance(days, int) else ""))
@@ -29072,7 +29090,7 @@ def _doc_payload(r, order: int) -> dict:
             "previewUrl": preview, "fileUrl": f"/archive/file/{r['id']}",
             "isManual": bool(r.get("manual_label")), "order": order,
             "error": (r.get("ai_note") or "") if failed else "",
-            "judge": _doc_judge_text(r),
+            "judge": _doc_judge_text(r), "judgeDetail": _doc_judge_detail(r),
             "unclassified": not (r.get("manual_label") or r.get("ai_label")) and not failed}
 
 

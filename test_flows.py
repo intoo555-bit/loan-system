@@ -2326,6 +2326,13 @@ m.pull_customer_docs("G300000001")
 check("重拉業務 AI 不會動到行政上傳的", len([r for r in m._docs_rows("G300000001") if r["source"] == "行政上傳"]) == 2)
 check("新分類：申請書／填寫表、天書／車價截圖、法學／罰單／動保截圖",
       all(c in m._DOC_CATS for c in ("申請書／填寫表", "天書／車價截圖", "法學／罰單／動保截圖")))
+# 部分工時／重複投保要顯示（2026-10-14 使用者：陳曉琳有部分工時沒判讀到）
+_jt = m._doc_judge_text({"show_label": "勞保明細", "judge_json": json.dumps({"_kind": "labor", "ok": True, "is_labor": True,
+      "明細幾天前印的": 1, "提示": ["⚠️ 目前勞保投保薪資 11,100，低於基本工資（部分工時），**勞保可以去改**"],
+      "目前投保": [{"單位": "悅盛人力", "類型": "公司保", "加保日期": "115/09/29", "加保滿幾個月": 0, "投保薪資": 11100, "備註部分工時": True}]})})
+check("勞保卡片寫部分工時（投保薪資）", "部分工時" in _jt and "11,100" in _jt, _jt)
+_jd = m._doc_judge_detail({"show_label": "勞保明細", "judge_json": json.dumps({"_kind": "labor", "ok": True, "提示": ["⚠️ 部分工時，**勞保可以去改**"]})})
+check("看大圖右邊列業務 AI 的完整提醒（去掉 ** 符號）", "勞保可以去改" in _jd and "**" not in _jd, _jd)
 # 更新前就分類好的勞保（沒拿過判讀）→ 打開證件頁要補拿（使用者 2026-10-14：一直寫「勞保日期還沒判讀」）
 _c = sqlite3.connect(TEST_DB); _c.execute("UPDATE customer_docs SET judge_json=NULL WHERE id_no='G300000001'"); _c.commit(); _c.close()
 m._DOCS_SYNC = True
