@@ -27598,6 +27598,9 @@ def pull_customer_docs(id_no: str) -> dict:
                 rid = str(it.get("doc_id") or "")
                 if not rid or rid in have:
                     continue
+                # ⛔ 委任合約／簽名不拉：使用者 2026-10-14「合約存在業務 AI 那邊，比較好找」
+                if any(k in (it.get("label") or "") for k in ("合約", "簽名")):
+                    continue
                 data, ctype, ferr = _bizai_fetch(rid, idv)
                 if data is None:
                     err = ferr
@@ -27943,45 +27946,38 @@ def _docs_folder_name(id_no: str, rows):
 
 @app.get("/archive/{id_no}/pdf")
 async def docs_pdf(request: Request, id_no: str):
-    """照存檔順序合成一份 PDF（圖片一張一頁；客人傳的 PDF 整份接進去）"""
+    """整理好的 PDF（存檔用）：第一頁客戶資料表 → 證件照存檔順序（圖片一張一頁；客人傳的 PDF 整份接進去）。
+    ⛔ 不含委任合約／簽名（合約存在業務 AI，不跟送件資料混在一起）"""
     if not _docs_auth(request):
         return JSONResponse({"error": "無權限"}, status_code=403)
-    from PIL import Image as _Img
     from pypdf import PdfReader as _R, PdfWriter as _W
     idv = normalize_id_no(id_no)
     rows = _docs_rows(idv)
     w = _W()
+    _fn, name = _docs_folder_name(idv, rows)
+    sheet = _customer_sheet_pdf(_docs_latest_customer(idv))
+    if sheet:
+        for pg in _R(io.BytesIO(sheet)).pages:
+            w.add_page(pg)
     for r in rows:
-        p = r["file_path"]
-        if not p or not os.path.isfile(p):
-            continue
-        try:
-            if r["real_type"] == "application/pdf":
-                for pg in _R(p).pages:
-                    w.add_page(pg)
-            elif r["real_type"].startswith("image/"):
-                buf = io.BytesIO()
-                _Img.open(p).convert("RGB").save(buf, "PDF", resolution=150)
-                for pg in _R(io.BytesIO(buf.getvalue())).pages:
-                    w.add_page(pg)
-        except Exception as e:
-            print(f"[證件] PDF 略過 {p}：{e}")
+        if not _doc_is_contract(r):
+            _add_doc_to_pdf(w, r)
     out = io.BytesIO()
     w.write(out)
-    _fn, name = _docs_folder_name(idv, rows)
     from urllib.parse import quote as _q
+    fname = (name or idv) + ".pdf"
     return StreamingResponse(io.BytesIO(out.getvalue()), media_type="application/pdf",
-                             headers={"Content-Disposition": f"attachment; filename*=UTF-8''{_q((name or idv) + '.pdf')}"})
+                             headers={"Content-Disposition": f"attachment; filename*=UTF-8''{_q(fname)}"})
 
 
 @app.get("/archive/{id_no}/zip")
 async def docs_zip(request: Request, id_no: str):
-    """一位客人一個資料夾（名稱跟相簿一樣：收件日期-姓名-身分證），照片照順序編號"""
+    """一位客人一個資料夾（名稱跟相簿一樣：收件日期-姓名-身分證），照片照順序編號。⛔ 不含委任合約"""
     if not _docs_auth(request):
         return JSONResponse({"error": "無權限"}, status_code=403)
     import zipfile as _zf
     idv = normalize_id_no(id_no)
-    rows = _docs_rows(idv)
+    rows = [r for r in _docs_rows(idv) if not _doc_is_contract(r)]
     folder, _name = _docs_folder_name(idv, rows)
     buf = io.BytesIO()
     with _zf.ZipFile(buf, "w", _zf.ZIP_STORED) as z:
@@ -27992,6 +27988,34 @@ async def docs_zip(request: Request, id_no: str):
     from urllib.parse import quote as _q
     return StreamingResponse(io.BytesIO(buf.getvalue()), media_type="application/zip",
                              headers={"Content-Disposition": f"attachment; filename*=UTF-8''{_q(folder + '.zip')}"})
+
+
+_DOCS_VIEWER_JS = """
+<div id="vw" onclick="if(event.target.id==='vw')vwClose()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.88);z-index:999;overflow:auto;text-align:center">
+ <div style="position:sticky;top:0;display:flex;justify-content:space-between;align-items:center;padding:8px 12px;color:#fff;background:rgba(0,0,0,.6);z-index:2">
+  <button onclick="vwGo(-1)" style="font-size:22px;background:none;border:0;color:#fff;cursor:pointer">‹ 上一張</button>
+  <span id="vwT" style="font-weight:700"></span>
+  <span><button onclick="vwZoom(-1)" style="font-size:20px;background:none;border:0;color:#fff;cursor:pointer">－</button>
+  <button onclick="vwZoom(1)" style="font-size:20px;background:none;border:0;color:#fff;cursor:pointer">＋</button>
+  <button onclick="vwGo(1)" style="font-size:22px;background:none;border:0;color:#fff;cursor:pointer">下一張 ›</button>
+  <button onclick="vwClose()" style="font-size:22px;background:none;border:0;color:#fff;cursor:pointer;margin-left:8px">✕</button></span>
+ </div>
+ <img id="vwI" style="max-width:none;margin:12px auto;display:block;cursor:zoom-in" onclick="vwZoom(1)">
+</div>
+<script>
+var VW=[],vwi=0,vwz=1;
+document.querySelectorAll('img[data-vw]').forEach(function(im,i){VW.push({src:im.getAttribute('data-vw'),t:im.getAttribute('data-t')});
+  im.style.cursor='zoom-in'; im.parentNode.onclick=function(e){e.preventDefault();vwOpen(i);};});
+function vwFit(){var I=document.getElementById('vwI');var W=window.innerWidth-24,H=window.innerHeight-70;
+  var r=Math.min(W/(I.naturalWidth||W),H/(I.naturalHeight||H),1);I.style.width=Math.round((I.naturalWidth||W)*r*vwz)+'px';}
+function vwOpen(i){vwi=i;vwz=1;var I=document.getElementById('vwI');I.onload=vwFit;I.src=VW[i].src;
+  document.getElementById('vwT').textContent=(i+1)+'/'+VW.length+'　'+VW[i].t;document.getElementById('vw').style.display='block';}
+function vwGo(d){if(!VW.length)return;vwOpen((vwi+d+VW.length)%VW.length);}
+function vwZoom(d){vwz=Math.max(1,Math.min(5,vwz+(d>0?0.75:-0.75)));vwFit();}
+function vwClose(){document.getElementById('vw').style.display='none';}
+document.addEventListener('keydown',function(e){if(document.getElementById('vw').style.display!=='block')return;
+  if(e.key==='ArrowRight')vwGo(1);if(e.key==='ArrowLeft')vwGo(-1);if(e.key==='Escape')vwClose();});
+</script>"""
 
 
 @app.get("/archive/{id_no}", response_class=HTMLResponse)
@@ -28012,13 +28036,17 @@ async def docs_customer_page(request: Request, id_no: str, refresh: str = ""):
         except Exception:
             stale = True
     res = pull_customer_docs(idv) if stale else {"error": (lp["last_error"] if lp else ""), "new": 0}
-    rows = _docs_rows(idv)
+    all_rows = _docs_rows(idv)
+    rows = [r for r in all_rows if not _doc_is_contract(r)]
+    contracts = [r for r in all_rows if _doc_is_contract(r)]
     folder, name = _docs_folder_name(idv, rows)
-    cards = []
+    cust = _docs_latest_customer(idv)
     _opts = "".join(f'<option>{h(c)}</option>' for c in _DOC_CATS)
-    for r in rows:
+
+    def _card(r):
         if r["real_type"].startswith("image/") and r["real_type"] != "image/heic":
-            thumb = f'<a href="/archive/file/{r["id"]}" target="_blank"><img src="/archive/file/{r["id"]}" loading="lazy"></a>'
+            thumb = (f'<a href="/archive/file/{r["id"]}" target="_blank"><img src="/archive/file/{r["id"]}" loading="lazy" '
+                     f'data-vw="/archive/file/{r["id"]}" data-t="{h(r["show_label"])}"></a>')
         else:
             thumb = f'<a href="/archive/file/{r["id"]}" target="_blank" style="display:block;padding:50px 0">📄 開檔案</a>'
         if r.get("manual_label"):
@@ -28031,19 +28059,28 @@ async def docs_customer_page(request: Request, id_no: str, refresh: str = ""):
             tag = '<span style="color:#b45309">原標籤（未判讀）</span>'
         sel = (f'<select onchange="setLbl({r["id"]},this.value)" style="margin-top:4px;font-size:12px;max-width:100%">'
                f'<option value="">改成…</option>{_opts}</select>')
-        cards.append(f'<div class="doc">{thumb}<div style="margin-top:4px;font-weight:700">{h(r["show_label"])}</div>'
-                     f'<div class="muted">{tag}｜{h(r["source"] or "")} {h((r["remote_created_at"] or "")[:10])}</div>{sel}</div>')
+        return (f'<div class="doc">{thumb}<div style="margin-top:4px;font-weight:700">{h(r["show_label"])}</div>'
+                f'<div class="muted">{tag}｜{h(r["source"] or "")} {h((r["remote_created_at"] or "")[:10])}</div>{sel}</div>')
+
     err = res.get("error") or ""
     warn = f'<div class="card" style="color:#b45309">⚠️ {h(err)}</div>' if err else ""
     newtxt = f'（剛補拉 {res.get("new")} 張）' if res.get("new") else ""
+    sheet_btn = (f'<a class="btn s" href="/customer-pdf?case_id={h(cust["case_id"])}" target="_blank">📋 客戶資料表</a>'
+                 if cust else '<span class="muted">（行政系統還沒有這位客人的資料，PDF 不會有客戶資料表）</span>')
+    contract_html = (f'<details style="margin-top:16px"><summary class="muted" style="cursor:pointer">'
+                     f'已排除 {len(contracts)} 份判讀成委任合約／簽名的（合約請到業務 AI 看；判錯的點開用「改成…」改回）</summary>'
+                     f'<div class="grid" style="margin-top:8px">{"".join(_card(r) for r in contracts)}</div></details>') if contracts else ""
     body = f"""<h2>📎 {h(name)} {h(idv)} 的證件</h2>
-<div class="card"><div>共 {len(rows)} 張{newtxt}：{h(_docs_label_summary(rows))}</div>
-<div style="margin-top:8px"><a class="btn g" href="/archive/{h(idv)}/pdf">⬇ 下載整理好的 PDF</a>
+<div class="card"><div>證件共 {len(rows)} 張{newtxt}：{h(_docs_label_summary(rows))}</div>
+<div style="margin-top:8px">{sheet_btn}
+<a class="btn g" href="/archive/{h(idv)}/pdf">⬇ 下載整理好的 PDF（含客戶資料表）</a>
 <a class="btn" href="/archive/{h(idv)}/zip">⬇ 下載全部照片（{h(folder)}）</a>
 <a class="btn s" href="/archive/{h(idv)}?refresh=1">🔄 從業務 AI 重新拉</a>
 <button class="btn" style="background:#6d28d9" onclick="aiAll(this)">🤖 AI 判讀全部</button></div>
-<div class="muted" style="margin-top:6px">名稱判錯：用每張下面的「改成…」選對的，改過的以人工為準，AI 重判也不會蓋掉。</div></div>
-{warn}<div class="grid">{''.join(cards) or '<div class="muted">業務 AI 那邊還沒有這位客人的證件</div>'}</div>
+<div class="muted" style="margin-top:6px">點照片放大（可以＋－、上一張／下一張）。名稱判錯：用每張下面的「改成…」選對的，改過的以人工為準，AI 重判也不會蓋掉。</div></div>
+{warn}<div class="grid">{''.join(_card(r) for r in rows) or '<div class="muted">業務 AI 那邊還沒有這位客人的證件</div>'}</div>
+{contract_html}
+{_DOCS_VIEWER_JS}
 <script>
 function setLbl(pk, v){{ if(!v) return;
   fetch('/archive/doc/'+pk+'/label',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{label:v}})}})
@@ -28061,6 +28098,149 @@ function poll(btn){{
     location.reload(); }}).catch(e=>setTimeout(()=>poll(btn),3000)); }}
 </script>"""
     return _docs_page(role, f"{name} 證件", body)
+
+
+def _doc_is_contract(r) -> bool:
+    """委任合約／簽名 —— 存在業務 AI，不放進送件資料（使用者 2026-10-13／14）。
+    拉的時候已經跳過業務 AI 標成合約的；這裡擋「沒標、後來 AI 判讀成合約」的。
+    看人工 / AI 名稱，也看業務 AI 原標籤（還沒判讀時就要分開）"""
+    for k in ("manual_label", "ai_label", "label"):
+        v = r.get(k) or ""
+        if v:
+            return ("合約" in v) or ("簽名" in v)
+    return False
+
+
+def _add_doc_to_pdf(w, r):
+    from PIL import Image as _Img
+    from pypdf import PdfReader as _R
+    p = r["file_path"]
+    if not p or not os.path.isfile(p):
+        return
+    try:
+        if r["real_type"] == "application/pdf":
+            for pg in _R(p).pages:
+                w.add_page(pg)
+        elif r["real_type"].startswith("image/"):
+            buf = io.BytesIO()
+            _Img.open(p).convert("RGB").save(buf, "PDF", resolution=150)
+            for pg in _R(io.BytesIO(buf.getvalue())).pages:
+                w.add_page(pg)
+    except Exception as e:
+        print(f"[證件] PDF 略過 {p}：{e}")
+
+
+def _docs_latest_customer(id_no: str):
+    with db_conn() as conn:
+        x = conn.execute("SELECT * FROM customers WHERE id_no=? AND status!='DELETED' ORDER BY created_at DESC LIMIT 1",
+                         (normalize_id_no(id_no),)).fetchone()
+    return dict(x) if x else None
+
+
+def _customer_sheet_pdf(r) -> bytes:
+    """客戶資料表（存檔 PDF 第一頁）—— 欄位跟 /customer-pdf 那頁一樣，用 reportlab 在伺服器產生。
+    （/customer-pdf 是瀏覽器端轉 PDF，伺服器拿不到；李嬋娟那份存檔的第 1～2 頁就是這張）"""
+    if not r:
+        return b""
+    try:
+        from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+        from reportlab.lib.styles import ParagraphStyle
+        from reportlab.lib import colors
+        from reportlab.lib.pagesizes import A4
+        from reportlab.pdfbase import pdfmetrics
+        from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+        try:
+            pdfmetrics.registerFont(UnicodeCIDFont("STSong-Light"))
+            fn = "STSong-Light"
+        except Exception:
+            fn = "Helvetica"
+        st = ParagraphStyle("c", fontName=fn, fontSize=9, leading=12)
+
+        def v(k):
+            return str(r.get(k) or "").strip()
+
+        def P(t):
+            return Paragraph(h(t), st)
+
+        def ym(y, mo):   # 年資／居住時間：沒填的部分不印
+            return (f"{y}年" if y else "") + (f"{mo}月" if mo else "")
+
+        def who(n):      # 聯絡人：沒填就空白，不印「（ ）」
+            nm, rel, ph = v(f"contact{n}_name"), v(f"contact{n}_relation"), v(f"contact{n}_phone")
+            return (nm + (f"（{rel}）" if rel else "") + (" " + ph if ph else "")).strip()
+        live = (v("reg_city") + v("reg_district") + v("reg_address")) if v("live_same_as_reg") == "1" \
+            else (v("live_city") + v("live_district") + v("live_address"))
+        sections = [
+            ("基本資料", [("姓名", v("customer_name"), "身分證", v("id_no")), ("出生日期", v("birth_date"), "行動電話", v("phone")),
+                      ("電信業者", v("carrier"), "Email", v("email")), ("LINE ID", v("line_id"), "客戶FB", v("fb")),
+                      ("婚姻", v("marriage"), "學歷", v("education"))]),
+            ("身分證發證", [("發證日期", v("id_issue_date"), "發證地", v("id_issue_place")), ("換補發", v("id_issue_type"), "", "")]),
+            ("地址資料", [("戶籍地址", v("reg_city") + v("reg_district") + v("reg_address"), "戶籍電話", v("reg_phone")),
+                      ("住家地址", live, "現住電話", v("live_phone")),
+                      ("居住狀況", v("live_status"), "居住時間", ym(v("live_years"), v("live_months")))]),
+            ("職業資料", [("公司名稱", v("company_name_detail"), "公司電話",
+                       fmt_company_phone(v("company_phone_area"), v("company_phone_num"), v("company_phone_ext"))),
+                      ("公司地址", v("company_city") + v("company_district") + v("company_address"), "職稱", v("company_role")),
+                      ("年資", ym(v("company_years"), v("company_months")), "月薪", fmt_salary(v("company_salary")))]),
+            ("聯絡人", [("聯絡人1", who(1), "知情", v("contact1_known")), ("聯絡人2", who(2), "知情", v("contact2_known"))]),
+            ("貸款諮詢", [("警示戶", v("eval_alert_warning"), "資金需求", v("eval_fund_need")),
+                      ("近三月送件", (v("eval_sent_3m") + " " + v("eval_sent_3m_detail")).strip(), "當鋪私設", v("eval_alert")),
+                      ("勞保", v("eval_labor_ins"), "薪轉", v("eval_salary_transfer")),
+                      ("遲繳", (v("eval_late") + " " + v("eval_late_days")).strip(), "罰單／燃料稅", "／".join(x for x in (v("eval_fine"), v("eval_fuel_tax")) if x)),
+                      ("信用卡", v("eval_credit_card"), "動產/不動產", v("eval_property")),
+                      ("法學", v("eval_law"), "備註", v("eval_note"))]),
+        ]
+        data, styles = [], [("FONTNAME", (0, 0), (-1, -1), fn), ("FONTSIZE", (0, 0), (-1, -1), 9),
+                            ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#bbbbbb")), ("VALIGN", (0, 0), (-1, -1), "MIDDLE")]
+        for sec, rows_ in sections:
+            styles += [("SPAN", (0, len(data)), (-1, len(data))), ("BACKGROUND", (0, len(data)), (-1, len(data)), colors.HexColor("#3a3530")),
+                       ("TEXTCOLOR", (0, len(data)), (-1, len(data)), colors.white)]
+            data.append([sec, "", "", ""])
+            for a, b, c, d in rows_:
+                styles += [("BACKGROUND", (0, len(data)), (0, len(data)), colors.HexColor("#f0ebe4")),
+                           ("BACKGROUND", (2, len(data)), (2, len(data)), colors.HexColor("#f0ebe4"))]
+                data.append([a, P(b), c, P(d)])
+        try:
+            debts = json.loads(r.get("debt_list") or "[]") or []
+        except Exception:
+            debts = []
+        try:
+            unloan = json.loads(r.get("unloan_vehicles") or "[]") or []
+        except Exception:
+            unloan = []
+        extra = []
+        if debts:
+            extra.append(Spacer(1, 8))
+            dd = [["負債商家", "金額", "期數/已繳", "月繳", "剩餘", "設定日", "動保/公路", "空間", "車牌", "出廠"]]
+            for d in debts:
+                dd.append([P(str(d.get("co", ""))), str(d.get("lo", "")), f'{d.get("pe", "")}/{d.get("pa", "")}', str(d.get("mo", "")),
+                           str(d.get("re", "")), str(d.get("da", "")), str(d.get("dy", "")), str(d.get("sp", "")),
+                           str(d.get("pl", "")), str(d.get("yr", ""))])
+            t2 = Table(dd, repeatRows=1)
+            t2.setStyle(TableStyle([("FONTNAME", (0, 0), (-1, -1), fn), ("FONTSIZE", (0, 0), (-1, -1), 8),
+                                    ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#bbbbbb")),
+                                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#f0ebe4"))]))
+            extra.append(t2)
+        if unloan:
+            extra.append(Spacer(1, 8))
+            uu = [["無貸款車輛", "車牌", "出廠"]] + [[str(u.get("type", "")), str(u.get("plate", "")), str(u.get("year", ""))] for u in unloan]
+            t3 = Table(uu)
+            t3.setStyle(TableStyle([("FONTNAME", (0, 0), (-1, -1), fn), ("FONTSIZE", (0, 0), (-1, -1), 8),
+                                    ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#bbbbbb")),
+                                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#f0ebe4"))]))
+            extra.append(t3)
+        buf = io.BytesIO()
+        doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=30, rightMargin=30, topMargin=30, bottomMargin=30)
+        title = ParagraphStyle("t", fontName=fn, fontSize=14, leading=20)
+        t = Table(data, colWidths=[70, 195, 70, 200])
+        t.setStyle(TableStyle(styles))
+        gname = get_group_name(r.get("source_group_id") or "") if r.get("source_group_id") else ""
+        doc.build([Paragraph(h(f'{v("customer_name")}　客戶資料表'), title),
+                   Paragraph(h(f'群組：{gname}　建立日期：{v("created_at")[:10]}'), st), Spacer(1, 6), t] + extra)
+        return buf.getvalue()
+    except Exception as e:
+        print(f"[證件] 客戶資料表 PDF 失敗：{e}")
+        return b""
 
 
 # =========================

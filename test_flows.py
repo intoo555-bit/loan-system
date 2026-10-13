@@ -1907,8 +1907,10 @@ _r = _tc73.get(f"/archive/file/{_pk}")
 check("單張照片打得開", _r.status_code == 200 and _r.headers.get("content-type", "").startswith("image/"))
 _r = _tc73.get("/archive/E300000001/pdf")
 import pypdf as _pp73
-check("下載整理好的 PDF（4 頁）", _r.status_code == 200 and len(_pp73.PdfReader(_io73.BytesIO(_r.content)).pages) == 4,
-      _r.status_code)
+_sheet_n = len(_pp73.PdfReader(_io73.BytesIO(m._customer_sheet_pdf(m._docs_latest_customer("E300000001")))).pages)
+check("客戶資料表產生得出來（存檔 PDF 第一頁）", _sheet_n >= 1, _sheet_n)
+check("下載整理好的 PDF：客戶資料表＋4 張證件", _r.status_code == 200 and
+      len(_pp73.PdfReader(_io73.BytesIO(_r.content)).pages) == _sheet_n + 4, _r.status_code)
 _r = _tc73.get("/archive/E300000001/zip")
 import zipfile as _zf73
 _names = _zf73.ZipFile(_io73.BytesIO(_r.content)).namelist() if _r.status_code == 200 else []
@@ -1941,7 +1943,9 @@ def _pdf74(pages):
         c.drawString(100, 700, f"page {i+1}"); c.showPage()
     c.save(); return b.getvalue()
 _FAKE["E300000005"] = [
-    {"doc_id": 21, "created_at": "2026-10-13T11:00:00", "content_type": "image/png", "source": "LINE聊天", "label": "委任合約"},
+    {"doc_id": 21, "created_at": "2026-10-13T11:00:00", "content_type": "image/png", "source": "LINE聊天", "label": "AI自己判斷"},
+    {"doc_id": 24, "created_at": "2026-10-13T11:03:00", "content_type": "application/pdf", "source": "線上申請書", "label": "委任合約"},
+    {"doc_id": 25, "created_at": "2026-10-13T11:04:00", "content_type": "image/png", "source": "LINE聊天", "label": "電子簽名"},
     {"doc_id": 22, "created_at": "2026-10-13T11:01:00", "content_type": "image/png", "source": "LINE聊天", "label": "AI自己判斷"},
     {"doc_id": 23, "created_at": "2026-10-13T11:02:00", "content_type": "image/png", "source": "線上申請書", "label": "第二證件"}]
 os.environ["BUSINESS_AI_URL"] = "https://fake-bizai.test"; os.environ["BUSINESS_AI_SECRET"] = "fakesecret"
@@ -1951,7 +1955,9 @@ m._bizai_fetch = lambda doc_id, idv: ((_pdf74(5), "image/png", "") if str(doc_id
 m._DOCS_SYNC = True
 m.pull_customer_docs("E300000005")
 _rows = {r["remote_doc_id"]: r for r in m._docs_rows("E300000005")}
-check("業務 AI 標成圖片的委任合約，看檔案內容認出是 PDF", _rows["21"]["real_type"] == "application/pdf", _rows["21"]["real_type"])
+check("業務 AI 標成「委任合約」「電子簽名」的不拉（合約存在業務 AI，使用者 2026-10-14）",
+      "24" not in _rows and "25" not in _rows, list(_rows))
+check("業務 AI 標成圖片的 PDF，看檔案內容認出是 PDF", _rows["21"]["real_type"] == "application/pdf", _rows["21"]["real_type"])
 check("存檔時就照真正類型存（.pdf）", _rows["21"]["file_path"].endswith(".pdf"), _rows["21"]["file_path"])
 m.check_auth = lambda req: "admin"
 _tc74 = TestClient(m.app)
@@ -1987,6 +1993,10 @@ _pk22 = [r for r in m._docs_rows("E300000005") if r["remote_doc_id"] == "22"][0]
 check("人工改成清單外的名稱 → 擋下", _tc74.post(f"/archive/doc/{_pk22}/label", json={"label": "亂寫"}).json().get("ok") is False)
 check("人工改成「強制險」", _tc74.post(f"/archive/doc/{_pk22}/label", json={"label": "強制險"}).json().get("ok") is True)
 _tc74.post("/archive/E300000005/classify")
+_pdf2 = _tc74.get("/archive/E300000005/pdf")
+check("AI 判讀成委任合約的 → 不放進整理好的 PDF（剩 2 張照片）",
+      len(_pp73.PdfReader(_io73.BytesIO(_pdf2.content)).pages) == 2, len(_pp73.PdfReader(_io73.BytesIO(_pdf2.content)).pages))
+check("證件頁把合約收在「已排除」區", "已排除 1 份" in _tc74.get("/archive/E300000005").text)
 _r22 = [r for r in m._docs_rows("E300000005") if r["remote_doc_id"] == "22"][0]
 check("AI 重判不會蓋掉人工改的（那張還是強制險）", _r22["show_label"] == "強制險" and _r22["manual_label"] == "強制險",
       (_r22["show_label"], _r22["ai_label"], _r22["manual_label"]))
