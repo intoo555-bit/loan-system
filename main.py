@@ -2135,6 +2135,7 @@ def _calc_age_from_birth(birth_str):
     if not birth_str:
         return None
     try:
+        birth_str = _normalize_roc_date(birth_str)   # 0750312 這種也要認得
         # 民國年 086/12/15
         m = re.match(r"^(\d{2,3})/(\d{1,2})/(\d{1,2})$", birth_str.strip())
         if m:
@@ -4866,6 +4867,36 @@ def init_db():
         ("closed_at", "TEXT"),
     ]:
         ensure_column(cur, "customers", col, defn)
+
+    # 出生日期／發證日期「數字連在一起」的舊資料統一成 075/03/12（2026-10-13 張韶娟）
+    # 有寫案件歷程（看得到原本打什麼）；改完就不再符合，重複啟動不會重跑
+    try:
+        _fixed = 0
+        for _row in cur.execute("SELECT case_id, customer_name, id_no, birth_date, id_issue_date FROM customers "
+                                "WHERE TRIM(birth_date) GLOB '[0-9][0-9][0-9][0-9][0-9][0-9]*' "
+                                "   OR TRIM(id_issue_date) GLOB '[0-9][0-9][0-9][0-9][0-9][0-9]*'").fetchall():
+            _chg = {}
+            for _k in ("birth_date", "id_issue_date"):
+                _old = (_row[_k] or "").strip()
+                if re.fullmatch(r"\d{6,8}", _old):
+                    _new = _normalize_roc_date(_old)
+                    if _new != _old:
+                        _chg[_k] = (_old, _new)
+            if not _chg:
+                continue
+            cur.execute(f"UPDATE customers SET {','.join(k + '=?' for k in _chg)} WHERE case_id=?",
+                        (*[v[1] for v in _chg.values()], _row["case_id"]))
+            cur.execute("INSERT INTO case_logs (case_id,customer_name,id_no,company,message_text,from_group_id,created_at) "
+                        "VALUES (?,?,?,?,?,?,?)",
+                        (_row["case_id"], _row["customer_name"], _row["id_no"], "",
+                         "日期格式統一：" + "、".join(f"{'出生日期' if k == 'birth_date' else '發證日期'} {o} → {n}"
+                                                for k, (o, n) in _chg.items()),
+                         "SYSTEM", now_iso()))
+            _fixed += 1
+        if _fixed:
+            print(f"[migrate] 日期格式統一 {_fixed} 筆")
+    except Exception as e:
+        print(f"[migrate] 日期格式統一失敗（不影響其他功能，讀的地方也會自己轉）：{e}")
 
     # closed_at 一次性回填（2026/08/08 新增欄位）：舊資料沒有結案時刻，
     # 從 case_logs 找最後一筆含「結案」的紀錄當結案日。
@@ -13351,7 +13382,7 @@ async def import_loan_confirm(request: Request):
                 update_customer(case_id, text=None, from_group_id=SALES_GROUP_ID, **update_kwargs)
             # 直接寫個資（繞過 update_customer，避免重複 UPDATE）
             extra_fields = {
-                "birth_date": d.get("birth", ""),
+                "birth_date": _normalize_roc_date(d.get("birth", "")),
                 "phone": d.get("phone", ""),
                 "email": d.get("email", ""),
                 "company_name_detail": d.get("company_name", ""),
@@ -13594,7 +13625,7 @@ async def import_youshuan_confirm(request: Request):
                 except Exception:
                     pass
             extra_fields = {
-                "birth_date": d.get("birth", ""),
+                "birth_date": _normalize_roc_date(d.get("birth", "")),
                 "phone": d.get("phone", ""),
                 "email": d.get("email", ""),
                 "company_name_detail": d.get("company_name", ""),
@@ -13834,7 +13865,7 @@ async def import_lebao_confirm(request: Request):
             if update_kwargs:
                 update_customer(case_id, text=None, from_group_id=SALES_GROUP_ID, **update_kwargs)
             extra_fields = {
-                "birth_date": d.get("birth", ""),
+                "birth_date": _normalize_roc_date(d.get("birth", "")),
                 "phone": d.get("phone", ""),
                 "email": d.get("email", ""),
                 "company_name_detail": d.get("company_name", ""),
@@ -14070,7 +14101,7 @@ async def import_juofeng_confirm(request: Request):
             if update_kwargs:
                 update_customer(case_id, text=None, from_group_id=SALES_GROUP_ID, **update_kwargs)
             extra_fields = {
-                "birth_date": d.get("birth", ""),
+                "birth_date": _normalize_roc_date(d.get("birth", "")),
                 "phone": d.get("phone", ""),
                 "email": d.get("email", ""),
                 "company_name_detail": d.get("company_name", ""),
@@ -14292,7 +14323,7 @@ async def import_xinfu_confirm(request: Request):
             if update_kwargs:
                 update_customer(case_id, text=None, from_group_id=SALES_GROUP_ID, **update_kwargs)
             extra_fields = {
-                "birth_date": d.get("birth", ""),
+                "birth_date": _normalize_roc_date(d.get("birth", "")),
                 "phone": d.get("phone", ""),
                 "email": d.get("email", ""),
                 "company_name_detail": d.get("company_name", ""),
@@ -19493,10 +19524,10 @@ async def edit_pending_post(request: Request):
         contact1_name=?,contact1_relation=?,contact1_phone=?,contact1_known=?,
         contact2_name=?,contact2_relation=?,contact2_phone=?,contact2_known=?,
         updated_at=? WHERE case_id=?""",
-        (f.get("cname",""),f.get("idno","").upper(),f.get("birth",""),f.get("phone",""),f.get("email",""),f.get("line",""),
+        (f.get("cname",""),f.get("idno","").upper(),_normalize_roc_date(f.get("birth","")),f.get("phone",""),f.get("email",""),f.get("line",""),
          f.get("carrier",""),f.get("fb",""),
          f.get("grp",""),f.get("marry",""),f.get("edu",""),
-         f.get("iddate",""),f.get("idplace",""),f.get("idtype",""),
+         _normalize_roc_date(f.get("iddate","")),f.get("idplace",""),f.get("idtype",""),
          f.get("rcity",""),f.get("rdist",""),f.get("raddr",""),f.get("rphone",""),live_same,
          f.get("lcity","") if live_same=="0" else f.get("rcity",""),
          f.get("ldist","") if live_same=="0" else f.get("rdist",""),
@@ -22670,16 +22701,27 @@ _APPLY_MOBILE_KEYS = {"phone", "contact1_phone", "contact2_phone"}
 
 
 def _normalize_roc_date(s: str) -> str:
-    """民國 70 年 3 月 15 日 / 70/3/15 / 1981-03-15 → 070/03/15（行政系統的寫法）。認不出來就原樣回傳。"""
-    s = (s or "").strip()
+    """民國 70 年 3 月 15 日 / 70/3/15 / 1981-03-15 / 0700315 / 700315 / 19810315 → 070/03/15（行政系統的寫法）。
+    認不出來就原樣回傳。
+    ⛔ 讀日期的地方（算年齡、喬美 PDF、Excel 申請書）一律先過這支 —— 2026-10-13 張韶娟生日存成 0750312，
+       喬美申請書生日整格空白、規則表年齡變「不知道」。"""
+    s = orig = (s or "").strip()
+    _digits = re.fullmatch(r"\d{6,8}", s)
+    if _digits:   # 數字連在一起：7 碼民國 0750312、6 碼民國 750312、8 碼西元 19860312
+        if len(s) == 8:
+            s = f"{s[:4]}/{s[4:6]}/{s[6:]}"
+        elif len(s) == 7:
+            s = f"{s[:3]}/{s[3:5]}/{s[5:]}"
+        else:
+            s = f"{s[:2]}/{s[2:4]}/{s[4:]}"
     m = re.match(r"^(?:民國)?\s*(\d{2,4})\s*[年/\-.]\s*(\d{1,2})\s*[月/\-.]\s*(\d{1,2})\s*日?$", s)
     if not m:
-        return s
+        return orig
     y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
     if y > 1911:
         y -= 1911
     if not (1 <= mo <= 12 and 1 <= d <= 31 and 0 < y < 200):
-        return s
+        return orig
     return f"{y:03d}/{mo:02d}/{d:02d}"
 
 
@@ -23156,10 +23198,10 @@ async def new_customer_post(request: Request):
     if f.get("lstatus","").strip() == "自有" and not f.get("hprivate","").strip():
         errs.append("⚠️ 居住「自有」時、房屋私設必填（有 / 無）")
     # 居住年數 vs 年齡檢查
-    if lyear_str and f.get("birth","").strip():
+    if lyear_str and _normalize_roc_date(f.get("birth","")).strip():
         try:
             ly = int(float(lyear_str))
-            birth = f.get("birth","").strip()
+            birth = _normalize_roc_date(f.get("birth","")).strip()
             bm = _re.match(r"^(\d{2,4})/(\d{1,2})/(\d{1,2})$", birth)
             if bm:
                 by = int(bm.group(1))
@@ -23225,9 +23267,9 @@ async def new_customer_post(request: Request):
             VALUES (?,?,?,?,?,?,'PENDING',?,?)""",
             (case_id, name, id_no, source_group_id, "", "新增客戶："+name, now, now))
     extra = dict(
-        birth_date=f.get("birth",""), phone=f.get("phone",""), email=f.get("email",""),
+        birth_date=_normalize_roc_date(f.get("birth","")), phone=f.get("phone",""), email=f.get("email",""),
         line_id=f.get("line",""), marriage=f.get("marry",""), education=f.get("edu",""),
-        id_issue_date=f.get("iddate",""), id_issue_place=f.get("idplace",""), id_issue_type=f.get("idtype",""),
+        id_issue_date=_normalize_roc_date(f.get("iddate","")), id_issue_place=f.get("idplace",""), id_issue_type=f.get("idtype",""),
         reg_city=f.get("rcity",""), reg_district=f.get("rdist",""), reg_address=f.get("raddr",""), reg_phone=f.get("rphone",""),
         live_same_as_reg=live_same,
         live_city=f.get("lcity","") if live_same=="0" else f.get("rcity",""),
@@ -23948,6 +23990,7 @@ def _fill_qiaomei_pdf(r: dict) -> bytes:
         def parse_ymd(d):
             if not d:
                 return ("", "", "")
+            d = _normalize_roc_date(d)   # 0750312 這種也要認得（2026-10-13 張韶娟生日空白）
             parts = d.replace("-", "/").split("/")
             if len(parts) != 3:
                 return ("", "", "")
@@ -23987,19 +24030,20 @@ def _fill_qiaomei_pdf(r: dict) -> bytes:
         # 格式：(x, top, value)
         fields_p1 = [
             # 申請日期（今天民國年）：標籤 年=230 月=255.4 日=280.8 (top62.2)、值放各單位前
+            # 月、日放在兩個標籤字「中間」（量過範本，2026-10-13：原本月份壓到「年」字上）
             (211, 62, ap_y),
-            (238, 62, ap_m),
-            (263, 62, ap_d),
+            ((238.5, 255.4), 62, ap_m),
+            ((263.9, 280.8), 62, ap_d),
             # 申請人姓名
             (105, 80, v("customer_name")),
             # 出生日期 年/月/日 (新範本標籤 年=234.6 月=256.2 日=279.5)
             (216, 82, b_y),
-            (240, 82, b_m),
-            (263, 82, b_d),
+            ((243.1, 256.2), 82, b_m),
+            ((264.7, 279.5), 82, b_d),
             # 發證日期 年/月/日 (避開 年=115.4 月=137 日=160.3)
             (98, 129, i_y),
-            (122, 129, i_m),
-            (145, 129, i_d),
+            ((123.9, 137.0), 129, i_m),
+            ((145.5, 160.3), 129, i_d),
             # 發證地（短碼）
             (241, 128, v("id_issue_place")),
             # 親屬姓名 / 關係 / 電話
@@ -24024,7 +24068,7 @@ def _fill_qiaomei_pdf(r: dict) -> bytes:
             (112, 373, v("line_id")),
             # 公司名稱（長字串自動換較小字體，由下方迴圈處理）
             # (98, 410, company_name_detail) — 用 _LONG_FIELDS 處理
-            (188, 412, co_phone),
+            # 公司電話：格子只到「分機」標籤前（x≈234），由下方縮字處理
             (260, 413, v("company_phone_ext")),
             # 公司地址
             (105, 429, v("company_city") + v("company_district") + v("company_address")),
@@ -24090,19 +24134,42 @@ def _fill_qiaomei_pdf(r: dict) -> bytes:
         for x, top, val in fields_p1:
             if not val:
                 continue
+            if isinstance(x, tuple):   # (左界, 右界) → 置中
+                x = (x[0] + x[1]) / 2 - c1.stringWidth(str(val), font_name, DEFAULT_FONT_SIZE) / 2
             c1.drawString(x, yp1(top + ASCENT), str(val))
 
-        # === 公司名稱：超長自動縮字體（避免覆蓋電話欄位）===
+        # === 公司名稱 / 公司電話：格子很小，量過範本（2026-10-13）===
+        # 公司名稱格 x=98～146（約 46pt、5～6 個字）；公司電話格 x=188～234（「分機」標籤在 234.6）。
+        # 原本以為名稱格有 88pt → 長名字一路蓋到「公司電話」標籤上（使用者截圖：睿群環衛科技有限公司）。
+        # 使用者裁示：塞不下就移到職業資料的空白處 —— 月薪那列「元」(x≈163) 後面到格子右緣 (x≈292) 是空的。
+        def _fit_fs(text, max_w, start=DEFAULT_FONT_SIZE, floor=6):
+            fs = start
+            while fs > floor and c1.stringWidth(text, font_name, fs) > max_w:
+                fs -= 0.5
+            return fs if c1.stringWidth(text, font_name, fs) <= max_w else None
         co_name = v("company_name_detail")
         if co_name:
-            # 公司名稱欄寬約 90pt（x=98 到 188）
-            max_w = 88
-            fs = DEFAULT_FONT_SIZE
-            # CJK 字符約 1 字 = 字體大小寬度
-            while fs > 6 and c1.stringWidth(co_name, font_name, fs) > max_w:
-                fs -= 0.5
-            c1.setFont(font_name, fs)
-            c1.drawString(98, yp1(410 + ASCENT), co_name)
+            fs = _fit_fs(co_name, 46, floor=7.5)
+            if fs:
+                c1.setFont(font_name, fs)
+                c1.drawString(99, yp1(410 + ASCENT), co_name)
+            else:
+                # 塞不下 → 放月薪列的空白處，前面標「公司名稱：」才看得懂
+                label = "公司名稱：" + co_name
+                fs = _fit_fs(label, 124, floor=6)
+                if fs:
+                    c1.setFont(font_name, fs)
+                    c1.drawString(166, yp1(472 + ASCENT), label)
+                else:
+                    # 很長的名字（例：財團法人…所屬作業組織圓山大飯店）→ 分兩行
+                    c1.setFont(font_name, 6)
+                    _cut = len(label) // 2 + 1
+                    c1.drawString(166, yp1(467 + 5), label[:_cut])
+                    c1.drawString(166, yp1(475 + 5), label[_cut:])
+            c1.setFont(font_name, DEFAULT_FONT_SIZE)
+        if co_phone:
+            c1.setFont(font_name, _fit_fs(co_phone, 45, floor=6) or 6)
+            c1.drawString(188.5, yp1(412 + ASCENT), co_phone)
             c1.setFont(font_name, DEFAULT_FONT_SIZE)
 
         # === 身分證字號 10 格（每格中心填一字）===
@@ -24785,6 +24852,11 @@ def _do_download_excel(request: Request, case_id: str):
 
     files_to_zip = []
     name = r.get("customer_name", "")
+    # 日期先統一（0750312 → 075/03/12），所有範本（Excel／txt）讀到的都是同一種寫法（2026-10-13 張韶娟）
+    r = dict(r)
+    for _dk in ("birth_date", "id_issue_date"):
+        if r.get(_dk):
+            r[_dk] = _normalize_roc_date(str(r[_dk]))
 
     # Build cell data mapping for each plan type
     def _build_cell_map(plan_name, r):
@@ -25084,6 +25156,7 @@ def _do_download_excel(request: Request, case_id: str):
                 """民國日期轉西元：086/12/15 → 1989/12/15"""
                 if not date_str:
                     return ""
+                date_str = _normalize_roc_date(date_str)   # 0750312 這種也要認得
                 parts = date_str.replace("-", "/").split("/")
                 if len(parts) == 3:
                     try:

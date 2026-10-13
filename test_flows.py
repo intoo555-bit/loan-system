@@ -1779,6 +1779,45 @@ check("待確認資料接上建檔不會跳「已從舊案帶入」（吳鴻志�
 _ret = bc("10/13-舊客己 E200000006", gid="TEST_C_GRP")
 check("真的舊客（別群組結案過）還是會跳「已從舊案帶入」", "舊案帶入" in (_ret or ""), _ret)
 
+# ========== 71. 生日打成數字連在一起（2026-10-13 張韶娟：喬美申請書生日空白）＋喬美公司名稱塞不下 ==========
+print("\n=== 71. 日期格式＋喬美版面 ===")
+for _raw, _want in [("0750312", "075/03/12"), ("750312", "075/03/12"), ("19860312", "075/03/12"),
+                    ("075/03/12", "075/03/12"), ("75/3/12", "075/03/12"), ("民國 75 年 3 月 12 日", "075/03/12"),
+                    ("0751332", "0751332"), ("1234", "1234"), ("", "")]:
+    check(f"日期「{_raw}」→「{_want}」", m._normalize_roc_date(_raw) == _want, m._normalize_roc_date(_raw))
+check("生日 0750312 算得出年齡（規則表才不會變「不知道」）", m._calc_age_from_birth("0750312") == m.now_tw().year - 1986)
+import fitz as _fitz
+def _qm_words(**kw):
+    r = {"customer_name": "測試客", "id_no": "A123456789", "birth_date": "0750312",
+         "company_phone_area": "mobile", "company_phone_num": "0975702539"}
+    r.update(kw)
+    b = m._fill_qiaomei_pdf(r)
+    return [(w[0], w[1], w[4]) for w in _fitz.open(stream=b, filetype="pdf")[0].get_text("words")]
+_w = _qm_words(company_name_detail="大明工程行")
+_bd = [t for x, y, t in _w if 70 < y < 95 and 200 < x < 300]
+check("喬美：生日 0750312 → 印出 75／3／12", "75" in _bd and "3" in _bd and "12" in _bd, _bd)
+check("喬美：短的公司名稱放在原格子（公司電話標籤前）",
+      any(t == "大明工程行" and 95 < x < 146 for x, y, t in _w), [w for w in _w if "大明" in w[2]])
+_w = _qm_words(company_name_detail="睿群環衛科技有限公司")
+check("喬美：長的公司名稱移到月薪後面的空白處（不壓到公司電話）",
+      any("睿群環衛科技有限公司" in t and x > 160 and 460 < y < 490 for x, y, t in _w)
+      and not any("睿群" in t and y < 425 for x, y, t in _w), [w for w in _w if "睿群" in w[2]])
+_ph = [(x, t) for x, y, t in _w if "0975702539" in t]
+check("喬美：公司電話不壓到「分機」標籤", _ph and _ph[0][0] > 186, _ph)
+# 舊資料一次性統一（init_db 會跑）
+bc("10/13-日期丁 E200000010", gid="TEST_B")
+_c = sqlite3.connect(TEST_DB)
+_c.execute("UPDATE customers SET birth_date='0750312', id_issue_date='1061115' WHERE id_no='E200000010'")
+_c.commit(); _c.close()
+m.init_db()
+_d = get_cust("E200000010")
+check("啟動時把舊資料 0750312 統一成 075/03/12", _d["birth_date"] == "075/03/12" and _d["id_issue_date"] == "106/11/15",
+      (_d["birth_date"], _d["id_issue_date"]))
+_c = sqlite3.connect(TEST_DB)
+_lg = [r[0] for r in _c.execute("SELECT message_text FROM case_logs WHERE id_no='E200000010'")]
+_c.close()
+check("統一日期有寫案件歷程（看得到原本打什麼）", any("0750312" in t and "075/03/12" in t for t in _lg), _lg)
+
 # ========== 總結 ==========
 print(f"\n{'='*50}")
 print(f"結果：{PASS} 通過、{FAIL} 失敗")
