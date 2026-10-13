@@ -1932,6 +1932,80 @@ m._bizai_list, m._bizai_fetch = _orig_list, _orig_fetch
 m._DOCS_SYNC = False
 os.environ.pop("BUSINESS_AI_URL", None); os.environ.pop("BUSINESS_AI_SECRET", None)
 
+# ========== 74. 證件 AI 判讀＋人工改名稱＋看檔案內容判斷 PDF（2026-10-13 測試：業務 AI 的標籤不可信）==========
+print("\n=== 74. 證件 AI 判讀 ===")
+from reportlab.pdfgen import canvas as _cv74
+def _pdf74(pages):
+    b = _io73.BytesIO(); c = _cv74.Canvas(b)
+    for i in range(pages):
+        c.drawString(100, 700, f"page {i+1}"); c.showPage()
+    c.save(); return b.getvalue()
+_FAKE["E300000005"] = [
+    {"doc_id": 21, "created_at": "2026-10-13T11:00:00", "content_type": "image/png", "source": "LINE聊天", "label": "委任合約"},
+    {"doc_id": 22, "created_at": "2026-10-13T11:01:00", "content_type": "image/png", "source": "LINE聊天", "label": "AI自己判斷"},
+    {"doc_id": 23, "created_at": "2026-10-13T11:02:00", "content_type": "image/png", "source": "線上申請書", "label": "第二證件"}]
+os.environ["BUSINESS_AI_URL"] = "https://fake-bizai.test"; os.environ["BUSINESS_AI_SECRET"] = "fakesecret"
+m._bizai_list = lambda idv: (_FAKE.get(idv, []), "")
+m._bizai_fetch = lambda doc_id, idv: ((_pdf74(5), "image/png", "") if str(doc_id) == "21"
+                                      else (_png((int(doc_id) * 9 % 255, 10, 10)), "image/png", ""))
+m.pull_customer_docs("E300000005")
+_rows = {r["remote_doc_id"]: r for r in m._docs_rows("E300000005")}
+check("業務 AI 標成圖片的委任合約，看檔案內容認出是 PDF", _rows["21"]["real_type"] == "application/pdf", _rows["21"]["real_type"])
+check("存檔時就照真正類型存（.pdf）", _rows["21"]["file_path"].endswith(".pdf"), _rows["21"]["file_path"])
+m.check_auth = lambda req: "admin"
+_tc74 = TestClient(m.app)
+_html = _tc74.get("/archive/E300000005").text
+check("證件頁：PDF 顯示「開檔案」、不會破圖", f'<img src="/archive/file/{_rows["21"]["id"]}"' not in _html and "開檔案" in _html)
+_pdf = _tc74.get("/archive/E300000005/pdf")
+check("整理好的 PDF：合約 5 頁完整併進去（5＋2 張照片＝7 頁）",
+      len(_pp73.PdfReader(_io73.BytesIO(_pdf.content)).pages) == 7, _pdf.status_code)
+
+# AI 判讀（換成假的 AI 回答）
+_answers = {"22": '{"type": "行照", "note": "機車行照"}', "23": '```json\n{"type": "身分證正面", "note": "有大頭照"}\n```',
+            "21": '{"type": "委任合約", "note": "合約文件"}'}
+_seen_blocks = []
+def _fake_ai(block, prompt):
+    _seen_blocks.append(block["type"])
+    data = block["source"]["data"]
+    for rid, r in _rows.items():
+        pass
+    # 用區塊種類＋順序對應：PDF→21；圖片照判讀順序
+    if block["type"] == "document":
+        return _answers["21"]
+    _fake_ai.n = getattr(_fake_ai, "n", 0) + 1
+    return _answers["22"] if _fake_ai.n == 1 else _answers["23"]
+_orig_ai = m._ai_doc_request
+m._ai_doc_request = _fake_ai
+os.environ["ANTHROPIC_API_KEY"] = "fake-key-for-test"
+_r = _tc74.post("/archive/E300000005/classify").json()
+check("AI 判讀全部：3 張都判了", _r.get("ok") and _r.get("done") == 3, _r)
+check("PDF 用文件方式給 AI 看、照片用圖片方式", "document" in _seen_blocks and "image" in _seen_blocks, _seen_blocks)
+_lbl = [r["show_label"] for r in m._docs_rows("E300000005")]
+check("判讀後照存檔順序排：身分證正面 → 行照 → 委任合約", _lbl == ["身分證正面", "行照", "委任合約"], _lbl)
+check("證件頁標「🤖 AI 判讀」", "AI 判讀" in _tc74.get("/archive/E300000005").text)
+# 人工改
+_pk22 = [r for r in m._docs_rows("E300000005") if r["remote_doc_id"] == "22"][0]["id"]
+check("人工改成清單外的名稱 → 擋下", _tc74.post(f"/archive/doc/{_pk22}/label", json={"label": "亂寫"}).json().get("ok") is False)
+check("人工改成「強制險」", _tc74.post(f"/archive/doc/{_pk22}/label", json={"label": "強制險"}).json().get("ok") is True)
+_fake_ai.n = 0
+_tc74.post("/archive/E300000005/classify")
+_r22 = [r for r in m._docs_rows("E300000005") if r["remote_doc_id"] == "22"][0]
+check("AI 重判不會蓋掉人工改的（那張還是強制險）", _r22["show_label"] == "強制險" and _r22["manual_label"] == "強制險",
+      (_r22["show_label"], _r22["ai_label"], _r22["manual_label"]))
+# AI 亂回
+m._ai_doc_request = lambda block, prompt: "我覺得這是一張身分證吧"
+_typ, _note = m._ai_classify_doc([r for r in m._docs_rows("E300000005") if r["remote_doc_id"] == "23"][0]["file_path"], "image/png")
+check("AI 回的不是清單裡的 → 當「其他」，不亂猜", _typ == "其他", _typ)
+m._ai_doc_request = lambda block, prompt: '{"type": "護照", "note": "x"}'
+_typ, _note = m._ai_classify_doc([r for r in m._docs_rows("E300000005") if r["remote_doc_id"] == "23"][0]["file_path"], "image/png")
+check("AI 回清單外的種類 → 其他", _typ == "其他", _typ)
+os.environ.pop("ANTHROPIC_API_KEY", None)
+check("正式站沒設 AI 金鑰 → 按判讀會講清楚原因", "ANTHROPIC_API_KEY" in _tc74.post("/archive/E300000005/classify").json().get("error", ""))
+m._ai_doc_request = _orig_ai
+m.check_auth = _old_auth
+m._bizai_list, m._bizai_fetch = _orig_list, _orig_fetch
+os.environ.pop("BUSINESS_AI_URL", None); os.environ.pop("BUSINESS_AI_SECRET", None)
+
 # ========== 總結 ==========
 print(f"\n{'='*50}")
 print(f"結果：{PASS} 通過、{FAIL} 失敗")

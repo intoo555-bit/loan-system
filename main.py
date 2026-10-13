@@ -27470,10 +27470,18 @@ _DOCS_SYNC = False   # 測試用：True＝建檔後同步拉（不開背景執�
 _DOCS_ROLES = ("admin",)
 # 試用期不在群組貼「📎 收件」（業務點連結會被擋、看不懂）；照樣在建檔時拉照片存檔
 _DOCS_POST_TO_GROUP = False
-# 頁面順序：照行政實際整理的存檔（2026-10-13 對過李嬋娟 14 頁、吳宏彬 9 頁兩份真實 PDF）
+# 文件種類＝排序（照行政實際整理的存檔，2026-10-13 對過李嬋娟 14 頁、吳宏彬 9 頁兩份真實 PDF）
+# AI 判讀只能從這裡選；行政手動改也只能選這些（排序才不會亂）
+_DOC_CATS = ["身分證正面", "身分證反面", "健保卡", "駕照", "存摺封面", "行照", "勞保明細", "人車合照", "強制險",
+             "汽車繳息", "手機型號", "IMEI", "人與手機合照", "信用卡正面", "信用卡反面", "信用卡帳單",
+             "存摺內頁明細", "薪資證明", "401報表或營登", "權狀或謄本", "身分證查詢截圖", "委任合約", "電子簽名", "其他"]
+# 業務 AI 給的原始標籤（上傳欄位名）只拿來當「還沒判讀前」的暫時排序 ⛔ 不可信：
+#   2026-10-13 測試：「第二證件」「存摺封面照」那兩格其實是網頁截圖；LINE 聊天的一律標「AI自己判斷」
 _DOC_ORDER = [("身分證正",), ("身分證反", "身分證背"), ("身分證",), ("健保",), ("駕照", "第二證件"), ("存摺", "存簿"),
               ("行照",), ("勞保",), ("合照",), ("強制險",), ("手機", "型號"), ("IMEI",),
               ("信用卡",), ("帳單",), ("薪轉", "明細")]
+_DOCS_AUTO_CLASSIFY = False   # 試用期：拉進來不自動判讀，總管理按「AI 判讀」驗過準確度再打開
+_DOC_AI_MODEL = "claude-sonnet-5-5"
 
 
 def _docs_dir() -> str:
@@ -27489,6 +27497,10 @@ def _docs_ensure_table(cur):
         UNIQUE(id_no, remote_doc_id))""")
     cur.execute("""CREATE TABLE IF NOT EXISTS customer_docs_pull (
         id_no TEXT PRIMARY KEY, last_pull_at TEXT, last_error TEXT)""")
+    _cols = {r[1] for r in cur.execute("PRAGMA table_info(customer_docs)")}
+    for _c in ("ai_label", "ai_note", "ai_at", "manual_label"):
+        if _c not in _cols:
+            cur.execute(f"ALTER TABLE customer_docs ADD COLUMN {_c} TEXT")
 
 
 def _bizai_conf():
@@ -27533,6 +27545,32 @@ def _bizai_fetch(doc_id, id_no: str):
     return r.content, r.headers.get("Content-Type", ""), ""
 
 
+def _doc_sniff(data: bytes) -> str:
+    """看檔案開頭判斷真正的類型，不信對方給的 content_type（2026-10-13 委任合約是 PDF 卻被標成圖片）"""
+    b = (data or b"")[:16]
+    if b.startswith(b"%PDF"):
+        return "application/pdf"
+    if b.startswith(b"\x89PNG"):
+        return "image/png"
+    if b.startswith(b"\xff\xd8"):
+        return "image/jpeg"
+    if b[:4] == b"RIFF" and b[8:12] == b"WEBP":
+        return "image/webp"
+    if b[:4] in (b"GIF8",):
+        return "image/gif"
+    if b[4:12] in (b"ftypheic", b"ftypheix", b"ftypmif1"):
+        return "image/heic"
+    return ""
+
+
+def _doc_real_type(path: str, fallback: str = "") -> str:
+    try:
+        with open(path, "rb") as fp:
+            return _doc_sniff(fp.read(16)) or fallback or ""
+    except Exception:
+        return fallback or ""
+
+
 def _doc_ext(content_type: str) -> str:
     ct = (content_type or "").lower()
     for k, e in (("jpeg", ".jpg"), ("jpg", ".jpg"), ("png", ".png"), ("webp", ".webp"), ("heic", ".heic"),
@@ -27564,7 +27602,7 @@ def pull_customer_docs(id_no: str) -> dict:
                 if data is None:
                     err = ferr
                     break   # 限流或斷線：先停，下次再補（已下載的保留）
-                ctype = ctype or it.get("content_type") or ""
+                ctype = _doc_sniff(data) or ctype or it.get("content_type") or ""
                 os.makedirs(folder, exist_ok=True)
                 path = os.path.join(folder, f"{rid}{_doc_ext(ctype)}")
                 with open(path, "wb") as fp:
@@ -27583,12 +27621,20 @@ def pull_customer_docs(id_no: str) -> dict:
     return {"ok": not err, "new": new, "total": total, "error": err or ""}
 
 
+def _doc_label(r) -> str:
+    """顯示用名稱：行政手動改的 > AI 判讀的 > 業務 AI 原標籤"""
+    return (r.get("manual_label") or r.get("ai_label") or r.get("label") or "未分類")
+
+
 def _doc_rank(label: str) -> int:
     lb = label or ""
+    if lb in _DOC_CATS:
+        return _DOC_CATS.index(lb) * 10
     for i, keys in enumerate(_DOC_ORDER):
         if any(k in lb for k in keys):
-            return i
-    return len(_DOC_ORDER)
+            # 原標籤（還沒判讀）：對到 _DOC_CATS 的位置附近
+            return min(range(len(_DOC_CATS)), key=lambda j: 0 if any(k in _DOC_CATS[j] for k in keys) else 1) * 10 + 5
+    return len(_DOC_CATS) * 10
 
 
 def _docs_rows(id_no: str):
@@ -27596,13 +27642,16 @@ def _docs_rows(id_no: str):
         cur = conn.cursor()
         _docs_ensure_table(cur)
         rows = [dict(r) for r in cur.execute("SELECT * FROM customer_docs WHERE id_no=?", (normalize_id_no(id_no),))]
-    rows.sort(key=lambda r: (_doc_rank(r["label"]), r["remote_created_at"] or "", r["id"]))
+    for r in rows:
+        r["show_label"] = _doc_label(r)
+        r["real_type"] = _doc_real_type(r["file_path"] or "", r["content_type"] or "")
+    rows.sort(key=lambda r: (_doc_rank(r["show_label"]), r["remote_created_at"] or "", r["id"]))
     return rows
 
 
 def _docs_label_summary(rows) -> str:
     from collections import Counter as _C
-    c = _C((r["label"] or "未分類") for r in rows)
+    c = _C(r.get("show_label") or _doc_label(r) for r in rows)
     order = sorted(c, key=lambda k: (_doc_rank(k if k != "未分類" else ""), k))
     return "、".join(k + (f"×{c[k]}" if c[k] > 1 else "") for k in order)
 
@@ -27622,6 +27671,8 @@ def _schedule_docs_pull(id_no: str, name: str, group_id: str):
     def _run():
         try:
             res = pull_customer_docs(id_no)
+            if _DOCS_AUTO_CLASSIFY and res["new"] and os.getenv("ANTHROPIC_API_KEY", ""):
+                classify_customer_docs(id_no, only_new=True)
             if not _DOCS_POST_TO_GROUP:
                 return
             if res["total"] <= 0:
@@ -27683,6 +27734,118 @@ def _docs_page(role, title, body):
 <body>{_page_topnav(role, "docs")}<div class="wrap">{body}</div></body></html>""")
 
 
+def _ai_doc_request(block: dict, prompt: str) -> str:
+    """呼叫 Claude 看一張證件；回 AI 原文（測試會把這支換掉）"""
+    api_key = os.getenv("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        raise RuntimeError("沒有設定 ANTHROPIC_API_KEY")
+    resp = req_lib.post(
+        "https://api.anthropic.com/v1/messages",
+        headers={"x-api-key": api_key, "anthropic-version": "2023-06-01", "content-type": "application/json"},
+        json={"model": _DOC_AI_MODEL, "max_tokens": 300,
+              "messages": [{"role": "user", "content": [block, {"type": "text", "text": prompt}]}]},
+        timeout=60)
+    if resp.status_code != 200:
+        raise RuntimeError(f"AI 回 HTTP {resp.status_code}：{resp.text[:120]}")
+    return resp.json()["content"][0]["text"]
+
+
+_DOC_AI_PROMPT = """這是貸款客戶傳來的一份文件（照片或 PDF）。請判斷它是哪一種，只能從下面清單選一個：
+{cats}
+
+判斷重點：
+- 身分證正面：有大頭照、姓名、出生日期、統一編號。身分證反面：有父母／配偶、住址、條碼。
+- 健保卡：有晶片和「全民健康保險」。駕照：駕駛執照。
+- 存摺封面：存摺第一頁，有戶名、帳號、銀行名稱。存摺內頁明細：一筆一筆的交易紀錄。
+- 行照：行車執照（車牌、引擎號碼、發照日期）。強制險：強制汽機車責任保險的保單或查詢畫面。
+- 勞保明細：勞保局的投保資料表（紙本拍照或網頁、PDF 都算）。
+- 人車合照：人跟機車或汽車同一張。人與手機合照：人拿著手機或對鏡子拿手機自拍。
+- 手機型號：手機「關於手機／關於本機」設定畫面。IMEI：顯示 IMEI 號碼的畫面（常有條碼）。
+- 汽車繳息：車貸的繳款紀錄。身分證查詢截圖：內政部「國民身分證領補換資料查詢」結果畫面。
+- 委任合約：委任／服務合約文件。電子簽名：只有一個手寫簽名。
+- 看不出來、模糊、或不是上面任何一種（例如風景、空白圖、網頁廣告）→ 其他。不要用猜的。
+
+只回 JSON，不要其他文字：{{"type": "清單裡的一個", "note": "一句話說你看到什麼"}}
+⛔ note 裡不要寫出姓名、身分證號、帳號、電話等個資。"""
+
+
+def _ai_classify_doc(path: str, real_type: str):
+    """回 (分類, 說明)。分類一定在 _DOC_CATS 裡（AI 亂回 → 其他）"""
+    with open(path, "rb") as fp:
+        data = fp.read()
+    if real_type == "application/pdf":
+        block = {"type": "document", "source": {"type": "base64", "media_type": "application/pdf",
+                                                  "data": base64.b64encode(data).decode()}}
+    else:
+        from PIL import Image as _Img
+        im = _Img.open(io.BytesIO(data)).convert("RGB")
+        im.thumbnail((1568, 1568))
+        buf = io.BytesIO()
+        im.save(buf, "JPEG", quality=85)
+        block = {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg",
+                                               "data": base64.b64encode(buf.getvalue()).decode()}}
+    raw = _ai_doc_request(block, _DOC_AI_PROMPT.format(cats="、".join(_DOC_CATS)))
+    txt = (raw or "").strip().replace("```json", "").replace("```", "").strip()
+    m = re.search(r"\{.*\}", txt, re.S)
+    try:
+        d = json.loads(m.group(0)) if m else {}
+    except Exception:
+        d = {}
+    typ = str(d.get("type") or "").strip()
+    if typ not in _DOC_CATS:
+        typ = "其他"
+    return typ, str(d.get("note") or "")[:120]
+
+
+def classify_customer_docs(id_no: str, only_new: bool = False) -> dict:
+    """AI 判讀這位客人的證件。⛔ 不動行政手動改過的名稱（manual_label 永遠優先）"""
+    rows = _docs_rows(id_no)
+    done, errors = 0, []
+    for r in rows:
+        if only_new and r.get("ai_label"):
+            continue
+        p = r["file_path"] or ""
+        if not os.path.isfile(p) or not (r["real_type"] == "application/pdf" or r["real_type"].startswith("image/")):
+            continue
+        try:
+            typ, note = _ai_classify_doc(p, r["real_type"])
+        except Exception as e:
+            errors.append(f"第{r['id']}張（{type(e).__name__}: {str(e)[:60]}）")
+            continue
+        with db_conn(commit=True) as conn:
+            conn.execute("UPDATE customer_docs SET ai_label=?, ai_note=?, ai_at=? WHERE id=?",
+                         (typ, note, now_iso(), r["id"]))
+        done += 1
+    return {"ok": True, "done": done, "errors": errors}
+
+
+@app.post("/archive/{id_no}/classify")
+async def docs_classify(request: Request, id_no: str):
+    if not _docs_auth(request):
+        return JSONResponse({"ok": False, "error": "無權限"}, status_code=403)
+    if not os.getenv("ANTHROPIC_API_KEY", ""):
+        return JSONResponse({"ok": False, "error": "正式站沒有設定 ANTHROPIC_API_KEY"})
+    import asyncio as _aio
+    return JSONResponse(await _aio.to_thread(classify_customer_docs, id_no))
+
+
+@app.post("/archive/doc/{doc_pk}/label")
+async def docs_set_label(request: Request, doc_pk: int):
+    """行政手動改文件種類（以人工為準，AI 重判不蓋掉）"""
+    if not _docs_auth(request):
+        return JSONResponse({"ok": False, "error": "無權限"}, status_code=403)
+    try:
+        lb = str((await request.json()).get("label") or "").strip()
+    except Exception:
+        lb = ""
+    if lb not in _DOC_CATS:
+        return JSONResponse({"ok": False, "error": "只能選清單裡的種類"})
+    with db_conn(commit=True) as conn:
+        _docs_ensure_table(conn.cursor())
+        conn.execute("UPDATE customer_docs SET manual_label=? WHERE id=?", (lb, doc_pk))
+    return JSONResponse({"ok": True})
+
+
 @app.get("/archive", response_class=HTMLResponse)
 async def docs_list_page(request: Request, q: str = ""):
     role = _docs_auth(request)
@@ -27725,7 +27888,7 @@ async def docs_file(request: Request, doc_pk: int):
         r = cur.execute("SELECT * FROM customer_docs WHERE id=?", (doc_pk,)).fetchone()
     if not r or not r["file_path"] or not os.path.isfile(r["file_path"]):
         return JSONResponse({"error": "找不到檔案"}, status_code=404)
-    return FileResponse(r["file_path"], media_type=r["content_type"] or "application/octet-stream")
+    return FileResponse(r["file_path"], media_type=_doc_real_type(r["file_path"], r["content_type"]) or "application/octet-stream")
 
 
 def _docs_folder_name(id_no: str, rows):
@@ -27757,10 +27920,10 @@ async def docs_pdf(request: Request, id_no: str):
         if not p or not os.path.isfile(p):
             continue
         try:
-            if p.lower().endswith(".pdf"):
+            if r["real_type"] == "application/pdf":
                 for pg in _R(p).pages:
                     w.add_page(pg)
-            elif (r["content_type"] or "").startswith("image/"):
+            elif r["real_type"].startswith("image/"):
                 buf = io.BytesIO()
                 _Img.open(p).convert("RGB").save(buf, "PDF", resolution=150)
                 for pg in _R(io.BytesIO(buf.getvalue())).pages:
@@ -27789,7 +27952,7 @@ async def docs_zip(request: Request, id_no: str):
         for i, r in enumerate(rows, 1):
             p = r["file_path"]
             if p and os.path.isfile(p):
-                z.write(p, f"{folder}/{i:02d} {(r['label'] or '未分類')}{os.path.splitext(p)[1]}")
+                z.write(p, f"{folder}/{i:02d} {r['show_label']}{_doc_ext(r['real_type']) if r['real_type'] else os.path.splitext(p)[1]}")
     from urllib.parse import quote as _q
     return StreamingResponse(io.BytesIO(buf.getvalue()), media_type="application/zip",
                              headers={"Content-Disposition": f"attachment; filename*=UTF-8''{_q(folder + '.zip')}"})
@@ -27816,13 +27979,22 @@ async def docs_customer_page(request: Request, id_no: str, refresh: str = ""):
     rows = _docs_rows(idv)
     folder, name = _docs_folder_name(idv, rows)
     cards = []
+    _opts = "".join(f'<option>{h(c)}</option>' for c in _DOC_CATS)
     for r in rows:
-        if (r["content_type"] or "").startswith("image/"):
+        if r["real_type"].startswith("image/") and r["real_type"] != "image/heic":
             thumb = f'<a href="/archive/file/{r["id"]}" target="_blank"><img src="/archive/file/{r["id"]}" loading="lazy"></a>'
         else:
             thumb = f'<a href="/archive/file/{r["id"]}" target="_blank" style="display:block;padding:50px 0">📄 開檔案</a>'
-        cards.append(f'<div class="doc">{thumb}<div style="margin-top:4px;font-weight:700">{h(r["label"] or "未分類")}</div>'
-                     f'<div class="muted">{h(r["source"] or "")} {h((r["remote_created_at"] or "")[:10])}</div></div>')
+        if r.get("manual_label"):
+            tag = '<span style="color:#15803d">✔ 人工確認</span>'
+        elif r.get("ai_label"):
+            tag = f'<span style="color:#1a5f92" title="{h(r.get("ai_note") or "")}">🤖 AI 判讀</span>'
+        else:
+            tag = '<span style="color:#b45309">原標籤（未判讀）</span>'
+        sel = (f'<select onchange="setLbl({r["id"]},this.value)" style="margin-top:4px;font-size:12px;max-width:100%">'
+               f'<option value="">改成…</option>{_opts}</select>')
+        cards.append(f'<div class="doc">{thumb}<div style="margin-top:4px;font-weight:700">{h(r["show_label"])}</div>'
+                     f'<div class="muted">{tag}｜{h(r["source"] or "")} {h((r["remote_created_at"] or "")[:10])}</div>{sel}</div>')
     err = res.get("error") or ""
     warn = f'<div class="card" style="color:#b45309">⚠️ {h(err)}</div>' if err else ""
     newtxt = f'（剛補拉 {res.get("new")} 張）' if res.get("new") else ""
@@ -27830,8 +28002,20 @@ async def docs_customer_page(request: Request, id_no: str, refresh: str = ""):
 <div class="card"><div>共 {len(rows)} 張{newtxt}：{h(_docs_label_summary(rows))}</div>
 <div style="margin-top:8px"><a class="btn g" href="/archive/{h(idv)}/pdf">⬇ 下載整理好的 PDF</a>
 <a class="btn" href="/archive/{h(idv)}/zip">⬇ 下載全部照片（{h(folder)}）</a>
-<a class="btn s" href="/archive/{h(idv)}?refresh=1">🔄 從業務 AI 重新拉</a></div></div>
-{warn}<div class="grid">{''.join(cards) or '<div class="muted">業務 AI 那邊還沒有這位客人的證件</div>'}</div>"""
+<a class="btn s" href="/archive/{h(idv)}?refresh=1">🔄 從業務 AI 重新拉</a>
+<button class="btn" style="background:#6d28d9" onclick="aiAll(this)">🤖 AI 判讀全部</button></div>
+<div class="muted" style="margin-top:6px">名稱判錯：用每張下面的「改成…」選對的，改過的以人工為準，AI 重判也不會蓋掉。</div></div>
+{warn}<div class="grid">{''.join(cards) or '<div class="muted">業務 AI 那邊還沒有這位客人的證件</div>'}</div>
+<script>
+function setLbl(pk, v){{ if(!v) return;
+  fetch('/archive/doc/'+pk+'/label',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{label:v}})}})
+   .then(r=>r.json()).then(d=>{{ if(d.ok) location.reload(); else alert(d.error||'失敗'); }}); }}
+function aiAll(btn){{ btn.disabled=true; btn.textContent='🤖 判讀中…（一張約幾秒）';
+  fetch('/archive/{h(idv)}/classify',{{method:'POST'}}).then(r=>r.json()).then(d=>{{
+    if(!d.ok){{ alert(d.error||'失敗'); btn.disabled=false; btn.textContent='🤖 AI 判讀全部'; return; }}
+    alert('判讀完成：'+d.done+' 張'+(d.errors.length?('\\n失敗 '+d.errors.length+' 張：'+d.errors.join('、')):'')); location.reload();
+  }}).catch(e=>{{ alert('網路錯誤'); btn.disabled=false; }}); }}
+</script>"""
     return _docs_page(role, f"{name} 證件", body)
 
 
