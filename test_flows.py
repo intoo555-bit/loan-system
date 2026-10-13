@@ -15,6 +15,7 @@ os.environ["CHANNEL_ACCESS_TOKEN"] = ""
 os.environ["BACKUP_ENABLED"] = "false"
 
 import main as m
+_REAL_CHECK_AUTH = m.check_auth   # 後面很多測試會把登入檢查換成假的，要測真登入時用這個
 
 # 禁用 push_text/reply_text（避免呼叫外部 LINE API）
 replies = []
@@ -2172,6 +2173,47 @@ m._ai_doc_request = _orig_ai
 m.check_auth = _old_auth
 m._bizai_list, m._bizai_fetch = _orig_list, _orig_fetch
 os.environ.pop("BUSINESS_AI_URL", None); os.environ.pop("BUSINESS_AI_SECRET", None)
+
+# ========== 75. 業務顧兩個群組：登入後「加群組」，所有畫面都看得到（2026-10-14 使用者）==========
+print("\n=== 75. 業務顧多個群組 ===")
+# 群組 ID 用真的 LINE 格式（只有英數），加群組那支會擋其他字元
+_c = sqlite3.connect(TEST_DB)
+for _g, _n, _p in (("Cmg75aaa", "多群B群", "pwB75"), ("Cmg75bbb", "多群C群", "pwC75"), ("Cmg75ccc", "多群D群", "pwD75")):
+    _c.execute("INSERT OR REPLACE INTO groups (group_id, group_name, group_type, is_active, created_at, password_hash) VALUES (?,?,?,?,?,?)",
+               (_g, _n, "SALES_GROUP", 1, now, m.hash_pw(_p)))
+_c.commit(); _c.close()
+bc("10/14-多群甲 F300000001", gid="Cmg75aaa")
+bc("10/14-多群乙 F300000002", gid="Cmg75bbb")
+_old_auth75 = m.check_auth
+m.check_auth = _REAL_CHECK_AUTH   # 這組要測真的登入
+_tok = m._create_session("group", "Cmg75aaa", "dev75")
+_tc75 = TestClient(m.app, cookies={"auth_token": _tok})
+_r = _tc75.get("/report2")
+check("只登入 B 群：日報看不到 C 群的客人", "多群甲" in _r.text and "多群乙" not in _r.text)
+_r = _tc75.post("/my-groups/add", data={"group_id": "Cmg75bbb", "password": "錯的"}, follow_redirects=False)
+check("加群組：密碼錯 → 擋下", "msg=bad" in _r.headers.get("location", ""), _r.headers.get("location"))
+_r = _tc75.post("/my-groups/add", data={"group_id": "Cmg75bbb", "password": "pwC75"}, follow_redirects=False)
+check("加群組：密碼對 → 加入", "msg=added" in _r.headers.get("location", ""), _r.headers.get("location"))
+check("角色變成兩個群組", m._role_group_ids(m.check_auth(type("R", (), {"cookies": {"auth_token": _tok}})())) == ["Cmg75aaa", "Cmg75bbb"])
+_r = _tc75.get("/report2")
+check("加群組後：日報同時看到兩個群組的客人", "多群甲" in _r.text and "多群乙" in _r.text)
+_csv = _tc75.get("/report/export").content.decode("utf-8-sig")
+check("匯出日報：兩個群組都有", "多群甲" in _csv and "多群乙" in _csv)
+check("可以改兩個群組的客人", m.can_edit_customer_data("group_Cmg75aaa,Cmg75bbb", "", "Cmg75bbb")
+      and not m.can_edit_customer_data("group_Cmg75aaa,Cmg75bbb", "", "Cmg75ccc"))
+_cg = {g["group_id"] for g in m._console_allowed_groups("group_Cmg75aaa,Cmg75bbb")}
+check("指令台：兩個群組都能操作", {"Cmg75aaa", "Cmg75bbb"} <= _cg, _cg)
+check("導覽列有「我的群組（2）」", "我的群組（2）" in _tc75.get("/my-groups").text)
+_tc75.post("/my-groups/remove", data={"group_id": "Cmg75aaa"})
+check("主要群組不能移除", m._role_group_ids(m.check_auth(type("R", (), {"cookies": {"auth_token": _tok}})()))[0] == "Cmg75aaa")
+_tc75.post("/my-groups/remove", data={"group_id": "Cmg75bbb"})
+_r = _tc75.get("/report2")
+check("移除 C 群後：日報又只看 B 群", "多群甲" in _r.text and "多群乙" not in _r.text)
+_tok2 = m._create_session("group", "Cmg75ccc", "dev75b")
+_r = TestClient(m.app, cookies={"auth_token": _tok2}).post("/my-groups/add", data={"group_id": "Cmg75bbb", "password": "pwC75"},
+                                                          follow_redirects=False)
+check("別的業務帳號登入不影響（各自的群組清單）", m._role_group_ids(m.check_auth(type("R", (), {"cookies": {"auth_token": _tok}})())) == ["Cmg75aaa"])
+m.check_auth = _old_auth75
 
 # ========== 總結 ==========
 print(f"\n{'='*50}")

@@ -16256,6 +16256,12 @@ def _ensure_sessions_table():
         pass
 
 
+def _session_set_groups(token: str, group_ids: list):
+    """更新這個登入的群組清單（加群組／移除群組用）"""
+    with db_conn(commit=True) as conn:
+        conn.execute("UPDATE sessions SET group_id=? WHERE token=? AND role='group'", (",".join(group_ids), token))
+
+
 def _create_session(role: str, group_id: str = "", device_id: str = "") -> str:
     """產生隨機 session token 並存入 DB（device_id 供裝置強制登出用）"""
     from datetime import timedelta
@@ -16596,19 +16602,30 @@ def check_auth(request: Request) -> str:
         return f"group_{session['group_id']}"
     return ""
 
+def _role_group_ids(role: str) -> list:
+    """業務角色的群組清單。session 的 group_id 可以是「G1,G2」—— 顧兩個以上群組的業務登入後「加群組」
+    （使用者 2026-10-14：「有些業務會顧到兩個群組，不然他沒辦法同時看」）。第一個＝登入時的主要群組"""
+    if not (role or "").startswith("group_"):
+        return []
+    return [g for g in role[6:].split(",") if g]
+
+
+def get_auth_group_ids(request: Request) -> list:
+    """業務角色的所有群組（管理類回空清單＝不限）"""
+    return _role_group_ids(check_auth(request))
+
+
 def get_auth_group_id(request: Request) -> str:
-    """業務角色回傳其群組ID"""
-    role = check_auth(request)
-    if role.startswith("group_"):
-        return role.replace("group_","")
-    return ""
+    """業務角色的主要群組ID（⚠️ 顧多群的業務只回第一個；要判斷「是不是他的群」請用 get_auth_group_ids）"""
+    ids = get_auth_group_ids(request)
+    return ids[0] if ids else ""
 
 
 def can_edit_customer_data(role: str, auth_group: str, cust_group: str) -> bool:
     """能否編輯此客戶「個資」：管理類(含行政A/行政B)可改全部；業務只能改自己群組。"""
     if role in ("admin", "adminB", "ops_admin", "sales_admin", "normal"):
         return True
-    if role.startswith("group_") and auth_group and cust_group and cust_group == auth_group:
+    if role.startswith("group_") and cust_group and cust_group in _role_group_ids(role):   # 顧多群也算
         return True
     return False
 
@@ -17733,10 +17750,11 @@ def report_export(request: Request):
     from fastapi.responses import StreamingResponse
     role = check_auth(request)
     if not role: return RedirectResponse("/login")
-    auth_group = get_auth_group_id(request)
+    auth_groups = get_auth_group_ids(request)
     conn = get_conn(); cur = conn.cursor()
-    if auth_group:
-        cur.execute("SELECT * FROM customers WHERE source_group_id=? AND status='ACTIVE' ORDER BY created_at DESC", (auth_group,))
+    if auth_groups:
+        cur.execute(f"SELECT * FROM customers WHERE source_group_id IN ({','.join('?' * len(auth_groups))}) AND status='ACTIVE' "
+                    "ORDER BY source_group_id, created_at DESC", auth_groups)
     else:
         cur.execute("SELECT * FROM customers WHERE status='ACTIVE' ORDER BY source_group_id, created_at DESC")
     rows = cur.fetchall(); conn.close()
@@ -18031,6 +18049,9 @@ def _page_topnav(role, active):
         items.append(("📎 證件存檔", "/archive", "docs"))
     if role in ("admin", "adminB", "ops_admin", "sales_admin") or role.startswith("group_"):
         items.append(("💬 指令台", "/console", "console"))
+    if role.startswith("group_"):   # 顧多群的業務：加群組
+        _n = len(_role_group_ids(role))
+        items.append((f"👥 我的群組（{_n}）", "/my-groups", "mygroups"))
     if role == "sales_admin":  # 業務管理員：裝置管理(admin 版在「管理」下拉裡)
         items.append(("💻 裝置管理", "/admin/devices", "devices"))
     admin_items = []
@@ -18253,7 +18274,7 @@ def search_page(request: Request, q: str = "", grp: str = "", date_from: str = "
             st_label, st_color = _search_tag(row, disp)
             gname = get_group_name(row["source_group_id"])
             gcol = gcolor.get(row["source_group_id"], "#64748b")
-            editable = is_admin_type or (auth_group and row["source_group_id"] == auth_group)
+            editable = is_admin_type or (row["source_group_id"] in _role_group_ids(role))
             if editable:
                 perm = "可編輯"
                 perm_tag = "" if is_admin_type else '<span class="tag blue">自己群組</span>'
@@ -21169,14 +21190,17 @@ def history_page(request: Request, group: str = "", month: str = "", q: str = ""
     conn = get_conn(); cur = conn.cursor()
     cur.execute("SELECT group_id, group_name FROM groups WHERE group_type='SALES_GROUP' AND is_active=1 ORDER BY group_name")
     groups = cur.fetchall()
-    if auth_group and not group:
-        group = auth_group
+    _my_groups = _role_group_ids(role)
+    if len(_my_groups) == 1 and not group:
+        group = _my_groups[0]
 
     # 基礎條件（結案 + 群組/月份/搜尋）
     base_where = " WHERE status IN ('CLOSED','PENALTY','ABANDONED','REJECTED')"
     base_params = []
     if group:
         base_where += " AND source_group_id=?"; base_params.append(group)
+    elif len(_my_groups) > 1:   # 顧多群的業務：沒選就看他所有的群
+        base_where += f" AND source_group_id IN ({','.join('?' * len(_my_groups))})"; base_params.extend(_my_groups)
     if month:
         base_where += " AND updated_at LIKE ?"; base_params.append(month + "%")
     if q:
@@ -21652,7 +21676,9 @@ def _console_allowed_groups(role: str):
     elif role == "sales_admin":
         cur.execute(f"SELECT group_id, group_name, group_type FROM groups WHERE is_active=1 AND group_type='SALES_GROUP' AND {_CONSOLE_GROUP_EXCLUDE} ORDER BY group_name")
     elif role.startswith("group_"):
-        cur.execute(f"SELECT group_id, group_name, group_type FROM groups WHERE group_id=? AND {_CONSOLE_GROUP_EXCLUDE}", (role[6:],))
+        _ids = _role_group_ids(role)   # 顧多群的業務：每一群都能操作
+        cur.execute(f"SELECT group_id, group_name, group_type FROM groups WHERE group_id IN ({','.join('?' * len(_ids)) or 'NULL'}) "
+                    f"AND {_CONSOLE_GROUP_EXCLUDE} ORDER BY group_name", _ids)
     else:
         cur.execute("SELECT group_id, group_name, group_type FROM groups WHERE 1=0")
     rows = cur.fetchall(); conn.close()
@@ -21694,7 +21720,9 @@ async def console_run(request: Request):
     text = (data.get("text") or "").strip()
     # 業務群帳號：強制鎖自己那一群、不信任前端送來的 group_id（改網址/改前端都繞不過）
     if role.startswith("group_"):
-        group_id = role[6:]
+        _ids = _role_group_ids(role)
+        if group_id not in _ids:          # 不在他的群組裡 → 一律用主要群組（改網址也繞不過）
+            group_id = _ids[0] if _ids else ""
     if not group_id:
         return JSONResponse({"ok": False, "message": "請先選群組"})
     if not text:
@@ -21727,7 +21755,7 @@ def console_page(request: Request):
     grows = _console_allowed_groups(role)
     type_label = {"A_GROUP": "行政A群", "SALES_GROUP": "業務群", "ADMIN_GROUP": "行政群",
                   "NOTIFY_GROUP": "系統通知群"}
-    _single_group = role.startswith("group_")
+    _single_group = len(_role_group_ids(role)) == 1
     opts = [] if _single_group else ['<option value="">— 請先選群組 —</option>']
     for g in grows:
         gt = type_label.get(g["group_type"], g["group_type"] or "")
@@ -22276,10 +22304,11 @@ def report2_page(request: Request):
     role = check_auth(request)
     if not role:
         return RedirectResponse("/login")
-    auth_group = get_auth_group_id(request)
+    auth_groups = get_auth_group_ids(request)
     conn = get_conn(); cur = conn.cursor()
-    if auth_group:
-        cur.execute("SELECT group_id, group_name, group_type FROM groups WHERE group_id=? AND is_active=1", (auth_group,))
+    if auth_groups:
+        cur.execute(f"SELECT group_id, group_name, group_type FROM groups WHERE group_id IN ({','.join('?' * len(auth_groups))}) "
+                    "AND is_active=1 ORDER BY group_name", auth_groups)
     else:
         cur.execute("SELECT group_id, group_name, group_type FROM groups WHERE group_type='SALES_GROUP' AND is_active=1 ORDER BY (CASE WHEN group_name LIKE '%測試%' OR group_name LIKE '%練習%' THEN 1 ELSE 0 END), group_name")
     grows = cur.fetchall()
@@ -23507,6 +23536,82 @@ def _customer_sheet_html(r, scope: str = ""):
 {unloan_html}
 """
     return css, html_
+
+
+@app.get("/my-groups", response_class=HTMLResponse)
+def my_groups_page(request: Request, msg: str = ""):
+    """業務「我的群組」：登入後再加別的群組（要那個群組的密碼），之後日報、結案、編輯、指令台都看得到"""
+    role = check_auth(request)
+    if not role.startswith("group_"):
+        return RedirectResponse("/login")
+    mine = _role_group_ids(role)
+    conn = get_conn()
+    allg = conn.execute("SELECT group_id, group_name FROM groups WHERE group_type='SALES_GROUP' AND is_active=1 ORDER BY group_name").fetchall()
+    conn.close()
+    names = {g["group_id"]: g["group_name"] or g["group_id"] for g in allg}
+    rows = "".join(
+        f'<li><b>{h(names.get(g, g))}</b>' + (' <span class="tag">登入的主要群組</span>' if i == 0 else
+        f' <form method="post" action="/my-groups/remove" style="display:inline"><input type="hidden" name="group_id" value="{h(g)}">'
+        f'<button class="lnk">移除</button></form>') + '</li>' for i, g in enumerate(mine))
+    opts = "".join(f'<option value="{h(g["group_id"])}">{h(g["group_name"] or g["group_id"])}</option>'
+                   for g in allg if g["group_id"] not in mine)
+    note = {"added": "✅ 已加入，日報、結案、編輯、指令台都看得到這個群組了", "bad": "❌ 密碼不對", "locked": "❌ 錯太多次，請稍後再試",
+            "removed": "已移除"}.get(msg, "")
+    body = f"""<h2>👥 我的群組</h2>
+<div class="card"><div class="muted">顧兩個以上群組的話，在這裡把其他群組加進來，就不用登出再登入。每個群組都要輸入那個群組的密碼。</div>
+{f'<div class="note">{h(note)}</div>' if note else ''}
+<ul class="gl">{rows}</ul></div>
+<div class="card"><form method="post" action="/my-groups/add">
+<div><select name="group_id" required>{opts or '<option value="">（沒有其他群組可以加）</option>'}</select></div>
+<div><input type="password" name="password" placeholder="那個群組的密碼" required></div>
+<div><button class="btn">＋ 加入這個群組</button></div></form></div>"""
+    css = """*{box-sizing:border-box}body{margin:0;font-family:'Noto Sans TC','Microsoft JhengHei',sans-serif;background:#eef3f6;overflow-x:hidden}
+.wrap{max-width:560px;margin:0 auto;padding:18px 16px 60px}h2{color:#16324a}.card{background:#fff;border:1px solid #e3e9ee;border-radius:12px;padding:16px;margin-bottom:12px}
+.muted{color:#6b7f90;font-size:13px;line-height:1.7}.note{margin-top:10px;font-weight:700;color:#0e7f80}.gl{margin:12px 0 0;padding-left:20px;line-height:2.2}
+.tag{font-size:12px;color:#6b7f90;background:#eef3f6;border-radius:10px;padding:2px 8px}.lnk{background:none;border:0;color:#b91c1c;cursor:pointer;font-size:13px}
+select,input{width:100%;padding:10px;border:1px solid #cdd8e0;border-radius:8px;font-size:15px;margin-bottom:10px}
+.btn{background:#127a7d;color:#fff;border:0;border-radius:8px;padding:11px 18px;font-size:15px;font-weight:700;cursor:pointer;width:100%}"""
+    return HTMLResponse(f"""<!DOCTYPE html><html lang="zh-Hant"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="icon" type="image/x-icon" href="/favicon.ico?v=3"><title>我的群組</title><style>{css}</style></head>
+<body>{_page_topnav(role, "mygroups")}<div class="wrap">{body}</div></body></html>""")
+
+
+@app.post("/my-groups/add")
+async def my_groups_add(request: Request):
+    role = check_auth(request)
+    if not role.startswith("group_"):
+        return RedirectResponse("/login", status_code=303)
+    form = await request.form()
+    gid = str(form.get("group_id") or "")
+    pw = str(form.get("password") or "")
+    if not re.fullmatch(r"[A-Za-z0-9]{1,64}", gid):
+        return RedirectResponse("/my-groups?msg=bad", status_code=303)
+    identifier = f"group_{gid}"
+    if is_login_locked(identifier):   # 跟登入共用錯誤次數，猜密碼一樣會被鎖
+        return RedirectResponse("/my-groups?msg=locked", status_code=303)
+    stored = get_group_password(gid)
+    if not stored or not verify_pw(pw, stored):
+        record_login_fail(identifier)
+        return RedirectResponse("/my-groups?msg=bad", status_code=303)
+    clear_login_fail(identifier)
+    mine = _role_group_ids(role)
+    if gid not in mine:
+        mine.append(gid)
+        _session_set_groups(request.cookies.get("auth_token", ""), mine)
+    return RedirectResponse("/my-groups?msg=added", status_code=303)
+
+
+@app.post("/my-groups/remove")
+async def my_groups_remove(request: Request):
+    role = check_auth(request)
+    if not role.startswith("group_"):
+        return RedirectResponse("/login", status_code=303)
+    gid = str((await request.form()).get("group_id") or "")
+    mine = _role_group_ids(role)
+    if gid in mine[1:]:            # 主要群組不能移除
+        mine.remove(gid)
+        _session_set_groups(request.cookies.get("auth_token", ""), mine)
+    return RedirectResponse("/my-groups?msg=removed", status_code=303)
 
 
 @app.get("/customer-pdf", response_class=HTMLResponse)
