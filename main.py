@@ -27735,19 +27735,41 @@ def _schedule_docs_pull(id_no: str, name: str, group_id: str):
         _threading.Thread(target=_run, daemon=True).start()
 
 
+_CARD_ASSETS = {"header.png", "check.png", "plus.png", "layers.png", "eye.png", "doc.png"}
+
+
+@app.get("/static/card/{name}")
+async def card_asset(name: str):
+    """LINE 卡片用的裝飾圖（波浪底圖、打勾、眼睛…）—— ⛔ 不用登入，LINE 伺服器要抓得到。
+    只放從設計稿轉出來的裝飾圖（static/card/，make 自 AI助理_收件證件卡_完整版.html），不含任何客戶資料；
+    只收白名單檔名，不能拿來讀別的檔案。"""
+    if name not in _CARD_ASSETS:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    p = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", "card", name)
+    if not os.path.isfile(p):
+        return JSONResponse({"error": "not found"}, status_code=404)
+    return FileResponse(p, media_type="image/png", headers={"Cache-Control": "public, max-age=86400"})
+
+
+def _card_asset_url(name: str) -> str:
+    base = (os.getenv("PUBLIC_BASE_URL", "") or "https://loan-system-a7xd.onrender.com").rstrip("/")
+    return f"{base}/static/card/{name}?v=1"
+
+
 def _docs_flex(id_no: str, name: str):
-    """群組「收件」卡片（Flex）。字級：使用者 2026-10-14 說太大 → 標題 lg、其餘 md／sm。
-    版面照使用者 2026-10-14 給的設計圖：
-    淺綠「收件」標籤 → 大字「收件日期-姓名」＋身分證 → 「證件 N 張」→ 淺灰框兩欄打勾清單 → 大的「看證件」按鈕。
-    （深色底配淺色字使用者說「看字很痛苦」→ 全部白底深字）
-    照片不放進卡片：那要開不用登入的網址給 LINE 抓，證件會存到 LINE 伺服器。"""
+    """群組「收件」卡片（LINE Flex）。照使用者 2026-10-14 給的設計稿「AI助理_收件證件卡_完整版.html」：
+    波浪＋夾板插圖標頭（底圖）上疊「收件」標籤、日期-姓名、身分證白框 → 「證件 N 張」淺藍標籤 →
+    兩欄淺色圓角框＋綠色方塊打勾 →「其他 × N」一整行 → 綠色漸層「看證件」按鈕（眼睛圖示）。
+    ⛔ LINE 卡片不能放網頁，只能用 Flex 拼；圖示用公開的裝飾圖（/static/card/，不含客戶資料）。
+    ⛔ 照片不放進卡片：那要開不用登入的網址給 LINE 抓，證件會存到 LINE 伺服器。"""
     from collections import Counter as _C
-    TEAL, TEAL_BG, INK, GREY = "#139c9c", "#dff3f2", "#0f172a", "#64748b"
+    INK, MUTED, TEAL = "#142b42", "#526d7b", "#087d83"
     idv = normalize_id_no(id_no)
     rows = [r for r in _docs_rows(idv) if not _doc_is_contract(r)]
     done = [r for r in rows if r.get("manual_label") or r.get("ai_label")]
     pending = len(rows) - len(done)
     cnt = _C(r["show_label"] for r in done)
+    other_n = cnt.pop("其他", 0)
     names = sorted(cnt, key=lambda k: (_doc_rank(k), k))
     # 正反面合成一行（使用者 2026-10-14：「身分證打正反面就好，不用兩排」）
     for front, back, both in (("身分證正面", "身分證反面", "身分證正反面"), ("信用卡正面", "信用卡反面", "信用卡正反面")):
@@ -27758,52 +27780,67 @@ def _docs_flex(id_no: str, name: str):
     n = now_tw()
     day = f"{n.year - 1911}/{n.month}/{n.day}"
 
-    def _item(k):
-        return {"type": "box", "layout": "horizontal", "spacing": "md", "alignItems": "center", "contents": [
-            {"type": "box", "layout": "vertical", "width": "18px", "height": "18px", "cornerRadius": "9px",
-             "backgroundColor": TEAL, "justifyContent": "center", "alignItems": "center", "flex": 0,
-             "contents": [{"type": "text", "text": "✓", "color": "#ffffff", "size": "xs", "weight": "bold", "align": "center"}]},
-            {"type": "text", "text": k + (f" ×{cnt[k]}" if cnt[k] > 1 else ""), "size": "sm", "color": "#1e293b",
-             "flex": 1, "wrap": True}]}
+    def _fit(box):   # 讓標籤只有內容那麼寬（Flex 的 box 預設會撐滿）
+        return {"type": "box", "layout": "horizontal", "contents": [box, {"type": "filler"}]}
 
-    shown = names[:16]
-    half = (len(shown) + 1) // 2
-    cols = [{"type": "box", "layout": "vertical", "spacing": "md", "flex": 1, "contents": [_item(k) for k in part] or [{"type": "filler"}]}
-            for part in (shown[:half], shown[half:])]
-    checklist = []
-    if shown:
-        checklist.append({"type": "box", "layout": "horizontal", "spacing": "lg", "contents": cols})
-    if len(names) > 16:
-        checklist.append({"type": "text", "text": f"…另外 {len(names) - 16} 種", "size": "sm", "color": GREY, "margin": "md"})
+    def _item(icon, label, extra=""):
+        txt = [{"type": "span", "text": label, "color": INK, "weight": "bold"}]
+        if extra:
+            txt.append({"type": "span", "text": extra, "color": MUTED})
+        return {"type": "box", "layout": "horizontal", "spacing": "sm", "alignItems": "center",
+                "backgroundColor": "#f0f7fa", "borderColor": "#e5f0f4", "borderWidth": "1px", "cornerRadius": "8px",
+                "paddingAll": "7px", "contents": [
+                    {"type": "image", "url": _card_asset_url(icon), "size": "18px", "flex": 0},
+                    {"type": "text", "contents": txt, "text": label, "size": "sm", "wrap": True, "flex": 1}]}
+
+    items = [_item("check.png", k, f" × {cnt[k]}" if cnt[k] > 1 else "") for k in names[:16]]
+    half = (len(items) + 1) // 2
+    list_box = []
+    if items:
+        list_box.append({"type": "box", "layout": "horizontal", "spacing": "sm", "contents": [
+            {"type": "box", "layout": "vertical", "spacing": "sm", "flex": 1, "contents": items[:half]},
+            {"type": "box", "layout": "vertical", "spacing": "sm", "flex": 1, "contents": items[half:] or [{"type": "filler"}]}]})
+    if other_n:
+        list_box.append(_item("plus.png", "其他", f" × {other_n}"))
     if pending:
-        checklist.append({"type": "text", "text": f"🤖 還有 {pending} 張 AI 判讀中", "size": "sm",
-                          "color": "#b45309", "wrap": True, "margin": "md" if shown else "none"})
+        list_box.append({"type": "text", "text": f"🤖 還有 {pending} 張 AI 判讀中", "size": "xs", "color": "#b45309", "wrap": True})
     if not rows:
-        checklist.append({"type": "text", "text": "業務 AI 那邊還沒有這位客人的證件", "size": "sm", "color": GREY, "wrap": True})
+        list_box.append({"type": "text", "text": "業務 AI 那邊還沒有這位客人的證件", "size": "sm", "color": MUTED, "wrap": True})
 
-    bubble = {
-        "type": "bubble", "size": "mega",
-        "body": {"type": "box", "layout": "vertical", "paddingAll": "16px", "contents": [
-            # 「收件」標籤
-            {"type": "box", "layout": "horizontal", "backgroundColor": TEAL_BG, "cornerRadius": "10px", "paddingAll": "8px",
-             "contents": [{"type": "text", "text": "📄 收件", "size": "md", "weight": "bold", "color": "#0e7f80"}]},
-            # 收件日期-姓名（大字）＋身分證
-            {"type": "text", "text": f"{day}-{name or '（未建檔）'}", "size": "lg", "weight": "bold", "color": INK,
-             "wrap": True, "margin": "xl"},
-            {"type": "text", "text": idv, "size": "md", "color": GREY, "margin": "sm"},
-            {"type": "separator", "margin": "xl", "color": "#e2e8f0"},
-            # 證件 N 張
-            {"type": "box", "layout": "baseline", "spacing": "sm", "margin": "xl", "contents": [
-                {"type": "text", "text": "證件", "size": "md", "weight": "bold", "color": INK, "flex": 0},
-                {"type": "text", "text": f"{len(rows)} 張", "size": "md", "weight": "bold", "color": TEAL, "flex": 0}]},
-            # 打勾清單（淺灰框、兩欄）
-            {"type": "box", "layout": "vertical", "backgroundColor": "#f1f5f7", "cornerRadius": "12px", "paddingAll": "16px",
-             "margin": "lg", "contents": checklist},
-            # 看證件
-            {"type": "button", "style": "primary", "color": TEAL, "height": "sm", "margin": "lg",
-             "action": {"type": "uri", "label": "👁 看證件 →", "uri": _docs_link(idv)}},
-        ]},
-    }
+    header = {"type": "box", "layout": "vertical", "paddingAll": "0px", "contents": [
+        {"type": "image", "url": _card_asset_url("header.png"), "size": "full", "aspectMode": "cover", "aspectRatio": "480:166"},
+        {"type": "box", "layout": "vertical", "position": "absolute", "offsetTop": "14px", "offsetStart": "92px",
+         "offsetEnd": "10px", "spacing": "xs", "contents": [
+            _fit({"type": "box", "layout": "horizontal", "spacing": "xs", "alignItems": "center", "backgroundColor": "#07868b",
+                  "cornerRadius": "30px", "paddingTop": "3px", "paddingBottom": "3px", "paddingStart": "9px", "paddingEnd": "11px",
+                  "flex": 0, "contents": [
+                      {"type": "image", "url": _card_asset_url("doc.png"), "size": "12px", "flex": 0},
+                      {"type": "text", "text": "收件", "size": "xs", "weight": "bold", "color": "#ffffff", "flex": 0}]}),
+            {"type": "text", "text": f"{day}-{name or '（未建檔）'}", "size": "md", "weight": "bold", "color": INK,
+             "wrap": True, "margin": "sm"},
+            _fit({"type": "box", "layout": "vertical", "backgroundColor": "#ffffffc7", "borderColor": "#deeeee",
+                  "borderWidth": "1px", "cornerRadius": "7px", "paddingTop": "2px", "paddingBottom": "3px",
+                  "paddingStart": "7px", "paddingEnd": "7px", "flex": 0,
+                  "contents": [{"type": "text", "text": idv, "size": "sm", "weight": "bold", "color": "#244756"}]})]}]}
+
+    body = {"type": "box", "layout": "vertical", "paddingAll": "12px", "spacing": "md", "contents": [
+        _fit({"type": "box", "layout": "baseline", "spacing": "sm", "backgroundColor": "#eaf5f9", "cornerRadius": "9px",
+              "paddingTop": "5px", "paddingBottom": "5px", "paddingStart": "9px", "paddingEnd": "11px", "flex": 0, "contents": [
+                  {"type": "icon", "url": _card_asset_url("layers.png"), "size": "md"},
+                  {"type": "text", "text": "證件", "size": "sm", "weight": "bold", "color": "#244b68", "flex": 0},
+                  {"type": "text", "text": str(len(rows)), "size": "md", "weight": "bold", "color": TEAL, "flex": 0},
+                  {"type": "text", "text": "張", "size": "sm", "weight": "bold", "color": "#244b68", "flex": 0}]}),
+        *list_box,
+        {"type": "box", "layout": "horizontal", "spacing": "md", "justifyContent": "center", "alignItems": "center",
+         "cornerRadius": "12px", "paddingAll": "11px", "margin": "lg",
+         "background": {"type": "linearGradient", "angle": "110deg", "startColor": "#0a8b90", "endColor": "#087d83"},
+         "action": {"type": "uri", "label": "看證件", "uri": _docs_link(idv)}, "contents": [
+             {"type": "image", "url": _card_asset_url("eye.png"), "size": "22px", "flex": 0},
+             {"type": "text", "text": "看證件", "size": "md", "weight": "bold", "color": "#ffffff", "flex": 0}]}]}
+
+    bubble = {"type": "bubble", "size": "mega",
+              "styles": {"body": {"backgroundColor": "#ffffff"}},
+              "body": {"type": "box", "layout": "vertical", "paddingAll": "0px", "contents": [header, body]}}
     alt = f"📎 {day}-{name} {idv} 收件（{len(rows)} 張）"
     return alt, bubble
 

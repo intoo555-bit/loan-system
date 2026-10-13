@@ -1970,7 +1970,7 @@ check("相簿頁：每張都可以單張下載", _ra.text.count("?dl=1") == 4, _
 m.check_auth = lambda req: "group_TEST_B"
 check("相簿頁：沒權限的帳號打不開", TestClient(m.app).get("/album/E300000001", follow_redirects=False).status_code in (302, 303, 307))
 _cj = json.dumps(_card, ensure_ascii=False)
-check("判讀過的證件在卡片上打勾列出、身分證正反面合成一行", "✓" in _cj and "身分證正反面" in _cj
+check("判讀過的證件在卡片上打勾列出、身分證正反面合成一行", "check.png" in _cj and "身分證正反面" in _cj
       and "身分證正面" not in _cj and "身分證反面" not in _cj and "勞保明細" in _cj, _cj[:300])
 m.check_auth = lambda req: "admin"
 _cards.clear()
@@ -1997,6 +1997,16 @@ _rp = TestClient(m.app).post("/archive/E300000001/supp-preview").json()
 check("「補件卡片預覽」傳到系統通知群（小張、最後補的那批）", _rp.get("ok") and _cards and _cards[0][0] == "TEST_NOTIFY"
       and _cards[0][2]["size"] == "kilo" and "強制險" in json.dumps(_cards[0][2], ensure_ascii=False), (_rp, _cards[:1]))
 check("證件頁有「補件卡片預覽」按鈕", "補件卡片預覽" in TestClient(m.app).get("/archive/E300000001").text)
+# 卡片裝飾圖：LINE 伺服器要抓得到 → 不用登入；但只能拿白名單那幾張
+m.check_auth = lambda req: ""
+_ra = TestClient(m.app).get("/static/card/header.png")
+check("卡片裝飾圖不用登入就打得開（LINE 要抓）", _ra.status_code == 200 and _ra.headers["content-type"] == "image/png", _ra.status_code)
+check("裝飾圖網址不能拿來讀別的檔案", TestClient(m.app).get("/static/card/..%2Fmain.py").status_code == 404
+      and TestClient(m.app).get("/static/card/secret.png").status_code == 404)
+_cjc = json.dumps(m._docs_flex('E300000001', '證件甲')[1], ensure_ascii=False)
+check('收件卡片有用到設計稿的圖示（底圖、打勾、眼睛）', all(x in _cjc for x in ('header.png', 'check.png', 'eye.png')))
+for _u in _re73.findall(r'https?://[^"]+/static/card/([a-z]+\.png)', _cjc):
+    check(f"卡片用到的圖 {_u} 都在白名單", _u in m._CARD_ASSETS)
 m.push_flex = _orig_flex
 m.check_auth = _old_auth
 m._bizai_list, m._bizai_fetch = _orig_list, _orig_fetch
