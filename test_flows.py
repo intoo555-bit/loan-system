@@ -1590,6 +1590,22 @@ _fb = [r for r in m.evaluate_case(dict(_b, eval_alert_warning="是"))["results"]
 _fb_ck = [ch for ch in _fb["checks"] if "警示戶" in ch["label"]][0]
 check("分貝商品：警示戶 → 這條直接通過（不用再確認撥二等親）", _fb_ck["status"] == "pass")
 check("分貝商品：警示戶 → 可送", _fb["eligible"] is not False)
+# 年齡提醒只在需要時跳（2026-10-13 使用者：35 歲還打驚嘆號沒道理）
+def _age_ck(birth, plan):
+    r = [x for x in m.evaluate_case(dict(_b, birth_date=birth))["results"] if x["company"] == plan][0]
+    return [c for c in r["checks"] if "年齡" in c["label"]][0]["status"]
+_ny = _y - 1911
+check("21商品：35 歲 → 年齡直接 ✅", _age_ck(f"{_ny-35:03d}/01/01", "21商品") == "pass")
+check("21商品：56 歲 → 年齡 ⚠️（要補保人）", _age_ck(f"{_ny-56:03d}/01/01", "21商品") == "manual")
+check("願望：35 歲 → 年齡直接 ✅", _age_ck(f"{_ny-35:03d}/01/01", "願望小車25萬") == "pass")
+check("願望：19 歲 → 年齡 ⚠️（要補保人）", _age_ck(f"{_ny-19:03d}/01/01", "願望小車25萬") == "manual")
+# 和裕：一開始照排、亞太婉拒過才跳（2026-10-13 使用者）
+def _hy_ck(rp):
+    r = [x for x in m.evaluate_case(dict(_b, route_plan=rp))["results"] if x["company"] == "和裕機車"][0]
+    return [c for c in r["checks"] if "亞太" in c["label"]][0]["status"]
+check("和裕：亞太沒婉拒 → 這條直接 ✅", _hy_ck(json.dumps({"order": ["亞太", "和裕"], "current_index": 0, "history": []})) == "pass")
+check("和裕：亞太機車25萬婉拒過 → ❌ 跳過", _hy_ck(json.dumps({"order": ["亞太機車25萬", "和裕"], "current_index": 1,
+      "history": [{"company": "亞太機車25萬", "status": "婉拒", "date": "2026-10-13"}]}, ensure_ascii=False)) == "fail")
 check("日報歸東豐／願望",m.normalize_section("東豐小額信貸") == "東豐" and m.normalize_section("願望小車25萬") == "願望")
 
 # ========== 總結 ==========

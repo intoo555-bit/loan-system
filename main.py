@@ -1238,7 +1238,7 @@ PLAN_ELIGIBILITY_RULES = [
         "rules": [
             {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
             {"type": "simple", "label": "年齡 ≥ 18（自動算）", "field": "age", "op": ">=", "value": 18,
-             "manual_check": "55+ 補保人、60+ 軟性可試送"},
+             "manual_check": "55+ 補保人、60+ 軟性可試送", "manual_ok_range": [18, 54]},
             {"type": "simple", "label": "至少 2 位聯絡人、其中 1 位為二等親屬", "op": "any_contact_2nd_kin"},
             {"type": "simple", "label": "警示戶需補保人（自動偵測）", "op": "alert_warning_need_guarantor"},
         ],
@@ -1251,7 +1251,7 @@ PLAN_ELIGIBILITY_RULES = [
         "rules": [
             {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
             {"type": "simple", "label": "年齡 ≥ 18（自動算）", "field": "age", "op": ">=", "value": 18,
-             "manual_check": "55+ 補保人、60+ 軟性可試送"},
+             "manual_check": "55+ 補保人、60+ 軟性可試送", "manual_ok_range": [18, 54]},
             {"type": "simple", "label": "至少 2 位聯絡人、其中 1 位為二等親屬", "op": "any_contact_2nd_kin"},
             {"type": "simple", "label": "原融（機車無貸款）", "op": "not_has_dynbao",
              "manual_check": "確認要貸的機車本身沒貸款"},
@@ -1589,8 +1589,7 @@ PLAN_ELIGIBILITY_RULES = [
                  "exclude_field": "eval_alert", "exclude_value": "有",
                  "manual_check": "須提供權狀"},
             ]},
-            {"type": "manual", "label": "⚠️ 排序提醒：亞太婉拒過 → 不送和裕、跳過此方案",
-             "hint": "若客戶亞太已婉拒、行政應改送其他家、不再送和裕"},
+            {"type": "simple", "label": "亞太沒婉拒過（婉拒過就跳過和裕，自動看送件紀錄）", "op": "not_rejected_by", "value": "亞太"},
             {"type": "simple", "label": "名下有可用機車（不能機車滿貸）", "op": "motorcycle_has_space"},
             {"type": "simple", "label": "🚫 警示戶不做（自動偵測）", "op": "no_warning_account"},
         ],
@@ -1772,7 +1771,7 @@ PLAN_ELIGIBILITY_RULES = [
                  "exclude_field": "eval_alert", "exclude_value": "有",
                  "manual_check": "須提供權狀"},
             ]},
-            {"type": "manual", "label": "⚠️ 排序提醒：亞太婉拒過 → 不送和裕、跳過此方案"},
+            {"type": "simple", "label": "亞太沒婉拒過（婉拒過就跳過和裕，自動看送件紀錄）", "op": "not_rejected_by", "value": "亞太"},
             {"type": "simple", "label": "🚫 警示戶不做（自動偵測）", "op": "no_warning_account"},
         ],
         "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面", "勞保（一週內，要 PDF 或勞動局申請的紙本）", "手機型號", "IMEI（要有條碼）", "手機合照（不可擋到臉）"],
@@ -2082,7 +2081,7 @@ PLAN_ELIGIBILITY_RULES = [
         "priority": 74,
         "rules": [
             {"type": "simple", "label": "年齡 18~65（18~19、60 以上要補保人）", "field": "age", "op": "between", "value": [18, 65],
-             "manual_check": "未滿 20 或 60 以上要補保人，財力佳可另外討論"},
+             "manual_check": "未滿 20 或 60 以上要補保人，財力佳可另外討論", "manual_ok_range": [20, 59]},
             {"type": "manual", "label": "⚠️ 先問：客人願不願意給信用報告（沒給不能送）"},
             {"type": "simple", "label": "銀行沒有呆帳（自動掃信用卡／備註／法學）", "op": "no_bad_debt"},
             {"type": "oneof", "label": "財力（擇一）", "options": [
@@ -2102,7 +2101,7 @@ PLAN_ELIGIBILITY_RULES = [
         "priority": 71,
         "rules": [
             {"type": "simple", "label": "年齡 18~65（18~19、60 以上要補保人）", "field": "age", "op": "between", "value": [18, 65],
-             "manual_check": "未滿 20 或 60 以上要補保人，財力佳可另外討論"},
+             "manual_check": "未滿 20 或 60 以上要補保人，財力佳可另外討論", "manual_ok_range": [20, 59]},
             {"type": "manual", "label": "⚠️ 先問：客人願不願意給信用報告（沒給不能送）"},
             {"type": "simple", "label": "銀行沒有呆帳（自動掃信用卡／備註／法學）", "op": "no_bad_debt"},
             {"type": "simple", "label": "工會保滿 3 個月", "field": "eval_labor_ins", "op": "=", "value": "工會保",
@@ -2829,6 +2828,15 @@ def _check_rule(rule, customer):
             if _customer_has_motorcycle_with_space(customer):
                 return ("pass", label, "名下有可用機車")
             return ("fail", label, "名下機車滿貸/無空間、不能送機車類")
+        # 送件紀錄裡 value 這家婉拒過 → fail（和裕：亞太婉拒過就跳過，2026-10-13 使用者：一開始照排、婉拒了才跳）
+        if op == "not_rejected_by":
+            try:
+                hist = json.loads(customer.get("route_plan") or "{}").get("history", []) or []
+            except Exception:
+                hist = []
+            if any(h.get("status") == "婉拒" and normalize_section(h.get("company", "")) == value for h in hist):
+                return ("fail", label, f"{value}已婉拒過")
+            return ("pass", label, f"{value}沒婉拒過")
         # 負債表裡任一筆已繳期數 ≥ value（東豐：同業繳息半年以上）
         if op == "debt_paid_ge":
             best = 0
@@ -3034,6 +3042,15 @@ def _check_rule(rule, customer):
         except Exception as e:
             return ("unknown", label, f"比對失敗：{e}")
         # 加分提示：manual_check 表示自動比對通過、但仍需人工確認
+        # manual_ok_range=[lo, hi]：數值在這範圍內就直接 ✅、不用再確認
+        # （2026-10-13 使用者：35 歲還跳「55+ 補保人」的驚嘆號沒道理）
+        rng = rule.get("manual_ok_range")
+        if ok and rng:
+            try:
+                if rng[0] <= int(actual) <= rng[1]:
+                    return ("pass", label, actual_str)
+            except (TypeError, ValueError):
+                pass
         if ok and rule.get("manual_check"):
             return ("manual", label + f"（自動 ✓、{rule['manual_check']}）", actual_str)
         return ("pass" if ok else "fail", label, actual_str)
