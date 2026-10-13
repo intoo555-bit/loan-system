@@ -2284,8 +2284,8 @@ _c.commit(); _c.close()
 _res = {r: (st, n) for r, st, n in m.docs_missing_for_plan(m._docs_rows("G300000001"), _p21["required_docs"])}
 check("浮水印判讀失敗 → ⏳ 待確認，⛔ 不當成缺（業務 AI：不然業務白跑一趟）",
       any(st == "check" and "浮水印" in n for st, n in _res.values()) and not any("要重拍" in n for st, n in _res.values()), _res)
-check("不檢查的不會算缺（例：勞保有就給）",
-      all(st == "skip" for r, st, n in m.docs_missing_for_plan(_rows, ["勞保（有就給）", "記事本申請表", "汽車繳息（汽車有貸款才要）"])))
+check("不檢查的不會算缺（例：勞保有就給、身分證查詢截圖是行政自己查的）",
+      all(st == "skip" for r, st, n in m.docs_missing_for_plan(_rows, ["勞保（有就給）", "記事本申請表", "汽車繳息（汽車有貸款才要）", "身分證查詢截圖"])))
 m.check_auth = lambda req: "admin"
 _html = TestClient(m.app).get("/archive/G300000001").text
 # 使用者 2026-10-14：只要說明目前送的那家缺什麼（後面可能不會送到），不要拉太長
