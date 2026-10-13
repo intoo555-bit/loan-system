@@ -1853,6 +1853,7 @@ _sh73.rmtree(m._docs_dir(), ignore_errors=True)
 os.environ["BUSINESS_AI_URL"] = "https://fake-bizai.test"
 os.environ["BUSINESS_AI_SECRET"] = "fakesecret"
 m._DOCS_SYNC = True
+m._DOCS_POST_TO_GROUP = True   # 正式站試用期是關的；這裡測「打開之後」的行為
 def _png(color):
     b = _io73.BytesIO(); _Img73.new("RGB", (60, 40), color).save(b, "PNG"); return b.getvalue()
 _FAKE = {"E300000001": [
@@ -1893,7 +1894,7 @@ check("拉失敗 → 群組有提醒（不可以安靜失敗）", any("證件拉
 m._bizai_list = lambda idv: (_FAKE.get(idv, []), "")
 
 _old_auth = m.check_auth
-m.check_auth = lambda req: "adminB"
+m.check_auth = lambda req: "admin"
 _tc73 = TestClient(m.app)
 _r = _tc73.get("/archive")
 check("存檔清單頁：一位客人一列", _r.status_code == 200 and "證件甲" in _r.text and "E300000001" in _r.text, _r.status_code)
@@ -1913,8 +1914,19 @@ import zipfile as _zf73
 _names = _zf73.ZipFile(_io73.BytesIO(_r.content)).namelist() if _r.status_code == 200 else []
 check("下載全部照片：資料夾名跟相簿一樣（收件日期-姓名-身分證）、照順序編號",
       _names and _names[0].startswith("115-10-13-證件甲-E300000001/01 身分證正面"), _names)
+_cid73 = get_cust("E300000001")["case_id"]
+check("行政B 客戶頁有「📎 看證件」按鈕（總管理）", "/archive/E300000001" in _tc73.get("/adminb", params={"case_id": _cid73}).text)
 m.check_auth = lambda req: "group_TEST_B"
 check("業務群組帳號看不到證件頁", TestClient(m.app).get("/archive/file/%d" % _pk).status_code == 403)
+m.check_auth = lambda req: "adminB"
+check("試用期：行政B 帳號還看不到證件（只開總管理）", TestClient(m.app).get("/archive/file/%d" % _pk).status_code == 403)
+check("試用期：行政B 客戶頁沒有「看證件」按鈕", "/archive/E300000001" not in TestClient(m.app).get("/adminb", params={"case_id": _cid73}).text)
+m._DOCS_POST_TO_GROUP = False
+pushes.clear()
+bc("10/13-證件丁 E300000001", gid="TEST_C_GRP")
+check("試用期：建檔照樣拉照片，但不在群組貼收件訊息", not any("📎" in t for g, t in pushes), pushes)
+check("沒上鎖的 API 說明頁已關（/docs、/openapi.json）",
+      TestClient(m.app).get("/docs").status_code == 404 and TestClient(m.app).get("/openapi.json").status_code == 404)
 m.check_auth = _old_auth
 m._bizai_list, m._bizai_fetch = _orig_list, _orig_fetch
 m._DOCS_SYNC = False

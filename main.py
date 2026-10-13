@@ -31,7 +31,9 @@ def h(val) -> str:
         return ""
     return _html_escape(str(val), quote=True)
 
-app = FastAPI()
+# ⛔ 關掉 FastAPI 預設的 /docs、/redoc、/openapi.json：沒登入也看得到系統所有窗口的清單
+#    （使用者 2026-10-13 同意關；我們自己用不到）
+app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 
 CHANNEL_ACCESS_TOKEN = os.getenv("CHANNEL_ACCESS_TOKEN", "")
 LINE_CHANNEL_SECRET = os.getenv("LINE_CHANNEL_SECRET", "")
@@ -18000,7 +18002,7 @@ def _page_topnav(role, active):
              ("➕ 新增客戶", "/new-customer", "new"), ("📖 指令速查", "/guide", "guide")]
     if role in ("admin", "adminB", "ops_admin"):
         items.append(("📋 行政B", "/adminb", "adminb"))
-    if role in ("admin", "adminB", "ops_admin", "sales_admin", "normal"):
+    if role in _DOCS_ROLES:
         items.append(("📎 證件存檔", "/archive", "docs"))
     if role in ("admin", "adminB", "ops_admin", "sales_admin") or role.startswith("group_"):
         items.append(("💬 指令台", "/console", "console"))
@@ -18570,6 +18572,7 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
           <div style="font-size:13px;color:#6a5e4e;">{h(id_no)}　{h(gname)}　{h(created)}</div></div>
         <div style="display:flex;gap:8px;align-items:center">
           <a href="/edit-pending?case_id={h(case_id)}" style="font-size:12px;color:#0369a1;text-decoration:none;padding:4px 12px;border:1px solid #93c5fd;border-radius:20px">✏️ 編輯</a>
+          {(f'<a href="/archive/{h(id_no)}" target="_blank" style="font-size:12px;color:#4e7055;text-decoration:none;padding:4px 12px;border:1px solid #86efac;border-radius:20px">📎 看證件</a>') if (id_no and role in _DOCS_ROLES) else ""}
           <span style="background:#e0f2fe;color:#0369a1;font-size:12px;padding:4px 12px;border-radius:20px;font-weight:600;">ACTIVE</span>
         </div>
       </div>
@@ -27463,7 +27466,10 @@ def _start_backup_scheduler():
 # ⛔ 網址用 /archive 不用 /docs：/docs 是 FastAPI 預設的 API 說明頁。
 # 業務 AI 窗口說明：LINE顧問\行政系統寫入窗口_交接.md 第 6 段（header X-Loan-Secret、下載要同時帶 id_no、有限流）。
 _DOCS_SYNC = False   # 測試用：True＝建檔後同步拉（不開背景執行緒）
-_DOCS_ROLES = ("admin", "adminB", "ops_admin", "sales_admin", "normal")
+# 試用期只開總管理（使用者 2026-10-13：「先只有總管理看得到，我要看可不可以」）；確認 OK 再加行政
+_DOCS_ROLES = ("admin",)
+# 試用期不在群組貼「📎 收件」（業務點連結會被擋、看不懂）；照樣在建檔時拉照片存檔
+_DOCS_POST_TO_GROUP = False
 # 頁面順序：照行政實際整理的存檔（2026-10-13 對過李嬋娟 14 頁、吳宏彬 9 頁兩份真實 PDF）
 _DOC_ORDER = [("身分證正",), ("身分證反", "身分證背"), ("身分證",), ("健保",), ("駕照", "第二證件"), ("存摺", "存簿"),
               ("行照",), ("勞保",), ("合照",), ("強制險",), ("手機", "型號"), ("IMEI",),
@@ -27616,6 +27622,8 @@ def _schedule_docs_pull(id_no: str, name: str, group_id: str):
     def _run():
         try:
             res = pull_customer_docs(id_no)
+            if not _DOCS_POST_TO_GROUP:
+                return
             if res["total"] <= 0:
                 if res["error"]:
                     push_text(group_id, f"⚠️ {name} 證件拉取失敗：{res['error']}\n（打開證件頁會再試，或請管理員看一下）")
