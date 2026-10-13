@@ -1978,6 +1978,19 @@ m.get_notify_group_ids = (lambda _o: (lambda: ["TEST_NOTIFY"]))(m.get_notify_gro
 _rp = TestClient(m.app).post("/archive/E300000001/card-preview").json()
 check("「收件卡片預覽」傳到系統通知群（業務群收不到）", _rp.get("ok") and _cards and _cards[0][0] == "TEST_NOTIFY"
       and _cards[0][1].startswith("【預覽】"), (_rp, _cards[:1]))
+# 補件：業務打「已補」→ 拉新照片 → 群組貼一張小的補件卡片（使用者 2026-10-14）
+m._DOCS_POST_TO_GROUP = True
+_cards.clear()
+bc("@AI 證件甲 已補 勞保", gid="TEST_B")
+check("已補但業務 AI 沒有新照片 → 不貼卡片（不吵）", not _cards, _cards)
+_FAKE["E300000001"].append({"doc_id": 15, "created_at": "2026-10-20T09:00:00", "content_type": "image/png",
+                            "source": "LINE聊天", "label": "強制險"})
+bc("@AI 證件甲 已補 強制險", gid="TEST_B")
+_cj = json.dumps(_cards[0][2], ensure_ascii=False) if _cards else ""
+check("已補＋有新照片 → 群組貼補件卡片（+1 張、補了什麼、看證件）", len(_cards) == 1 and _cards[0][0] == "TEST_B"
+      and "補件" in _cards[0][1] and "+1 張" in _cj and "強制險" in _cj and "/album/E300000001" in _cj, _cards)
+check("補件卡片是小張的（kilo）", _cards and _cards[0][2]["size"] == "kilo")
+m._DOCS_POST_TO_GROUP = False
 m.push_flex = _orig_flex
 m.check_auth = _old_auth
 m._bizai_list, m._bizai_fetch = _orig_list, _orig_fetch

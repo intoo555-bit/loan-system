@@ -10848,6 +10848,8 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
             return
         if not _check_active_or_warn(target, reply_token, "已補", name):
             return
+        # 補件照片：去業務 AI 拉新的，有新照片就在群組貼一張小的「補件」卡片（使用者 2026-10-14）
+        _schedule_docs_supplement(target["id_no"], name, target["source_group_id"])
         # Phase detection
         report_sec = target["report_section"] or ""
         current_co = target["current_company"] or ""
@@ -10929,6 +10931,8 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
             return
         if not _check_active_or_warn(target, reply_token, "已補", name):
             return
+        # 補件照片：去業務 AI 拉新的，有新照片就在群組貼一張小的「補件」卡片（使用者 2026-10-14）
+        _schedule_docs_supplement(target["id_no"], name, target["source_group_id"])
         if cmd_company:
             # 指定公司 → 清掉 cs[公司]
             co_norm = normalize_section(cmd_company)
@@ -27802,6 +27806,57 @@ def _docs_flex(id_no: str, name: str):
     }
     alt = f"📎 {day}-{name} {idv} 收件（{len(rows)} 張）"
     return alt, bubble
+
+
+def _docs_supplement_flex(id_no: str, name: str, new_rows):
+    """補件小卡片（使用者 2026-10-14：「補件的話卡片不用太大，不然會很亂」）"""
+    from collections import Counter as _C
+    idv = normalize_id_no(id_no)
+    n = now_tw()
+    day = f"{n.year - 1911}/{n.month}/{n.day}"
+    cnt = _C(r["show_label"] for r in new_rows)
+    what = "、".join(k + (f"×{cnt[k]}" if cnt[k] > 1 else "") for k in sorted(cnt, key=lambda k: (_doc_rank(k), k)))
+    bubble = {"type": "bubble", "size": "kilo", "body": {"type": "box", "layout": "vertical", "paddingAll": "12px", "spacing": "xs", "contents": [
+        {"type": "box", "layout": "baseline", "spacing": "sm", "contents": [
+            {"type": "text", "text": "📎 補件", "size": "sm", "weight": "bold", "color": "#0e7f80", "flex": 0},
+            {"type": "text", "text": f"+{len(new_rows)} 張", "size": "sm", "weight": "bold", "color": "#139c9c", "flex": 0}]},
+        {"type": "text", "text": f"{day}-{name} {idv}", "size": "sm", "weight": "bold", "color": "#0f172a", "wrap": True},
+        {"type": "text", "text": what or "（判讀中）", "size": "xs", "color": "#475569", "wrap": True},
+        {"type": "button", "style": "link", "height": "sm", "color": "#139c9c", "margin": "sm",
+         "action": {"type": "uri", "label": "看證件", "uri": _docs_link(idv)}}]}}
+    return f"📎 補件 {day}-{name} {idv} +{len(new_rows)} 張", bubble
+
+
+def _schedule_docs_supplement(id_no: str, name: str, group_id: str):
+    """業務打「已補」→ 去業務 AI 拉補傳的照片；有新的 → 等自動判讀完 → 群組貼補件小卡片。沒新照片就安靜"""
+    url, sec = _bizai_conf()
+    if not id_no or not group_id or not url or not sec:
+        return
+
+    def _run():
+        try:
+            idv = normalize_id_no(id_no)
+            before = {r["id"] for r in _docs_rows(idv)}
+            res = pull_customer_docs(idv)        # 有新照片會自動開始判讀
+            if not res["new"]:
+                return
+            import time as _t
+            for _ in range(60):                  # 等判讀（最多約 60 秒），卡片才寫得出補了什麼
+                if not _DOC_CLASSIFY_JOBS.get(idv, {}).get("running"):
+                    break
+                _t.sleep(1)
+            new_rows = [r for r in _docs_rows(idv) if r["id"] not in before and not _doc_is_contract(r)]
+            if not new_rows or not _DOCS_POST_TO_GROUP:
+                return
+            alt, card = _docs_supplement_flex(idv, name, new_rows)
+            push_flex(group_id, alt, card)
+        except Exception as e:
+            print(f"[證件] 補件拉取失敗：{e}")
+
+    if _DOCS_SYNC:
+        _run()
+    else:
+        _threading.Thread(target=_run, daemon=True).start()
 
 
 def _docs_auth(request):
