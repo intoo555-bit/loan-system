@@ -27495,6 +27495,17 @@ _DOCS_SYNC = False   # 測試用：True＝建檔後同步拉（不開背景執�
 _DOCS_ROLES = ("admin",)
 # 試用期不在群組貼「📎 收件」（業務點連結會被擋、看不懂）；照樣在建檔時拉照片存檔
 _DOCS_POST_TO_GROUP = False
+
+
+def _docs_can_post(group_id: str) -> bool:
+    """能不能在這個群組貼收件／補件卡片：正式打開後全部可以；試用期只有「名稱含『測試』」的群組
+    （使用者 2026-10-14：「我可以直接拿測試 B 群一個客人試試看嗎」）"""
+    if _DOCS_POST_TO_GROUP:
+        return True
+    try:
+        return "測試" in (get_group_name(group_id) or "")
+    except Exception:
+        return False
 # 文件種類＝排序（照行政實際整理的存檔，2026-10-13 對過李嬋娟 14 頁、吳宏彬 9 頁兩份真實 PDF）
 # AI 判讀只能從這裡選；行政手動改也只能選這些（排序才不會亂）
 _DOC_CATS = ["身分證正面", "身分證反面", "健保卡", "駕照", "存摺封面", "行照", "勞保明細", "人車合照", "強制險",
@@ -27716,7 +27727,7 @@ def _schedule_docs_pull(id_no: str, name: str, group_id: str):
     def _run():
         try:
             res = pull_customer_docs(id_no)   # 有新照片會自動判讀（背景）
-            if not _DOCS_POST_TO_GROUP:
+            if not _docs_can_post(group_id):
                 return
             if res["total"] <= 0:
                 if res["error"]:
@@ -27883,7 +27894,7 @@ def _schedule_docs_supplement(id_no: str, name: str, group_id: str):
                     break
                 _t.sleep(1)
             new_rows = [r for r in _docs_rows(idv) if r["id"] not in before and not _doc_is_contract(r)]
-            if not new_rows or not _DOCS_POST_TO_GROUP:
+            if not new_rows or not _docs_can_post(group_id):
                 return
             alt, card = _docs_supplement_flex(idv, name, new_rows)
             push_flex(group_id, alt, card)
@@ -28415,6 +28426,23 @@ async def docs_card_preview(request: Request, id_no: str):
     return JSONResponse({"ok": ok, "error": err})
 
 
+@app.post("/archive/{id_no}/card-send")
+async def docs_card_send(request: Request, id_no: str):
+    """把收件卡片傳到這位客人建檔的群組（補發／測試用）。試用期只准傳到名稱含「測試」的群組"""
+    if not _docs_auth(request):
+        return JSONResponse({"ok": False, "error": "無權限"}, status_code=403)
+    idv = normalize_id_no(id_no)
+    cust = _docs_latest_customer(idv)
+    if not cust or not cust.get("source_group_id"):
+        return JSONResponse({"ok": False, "error": "這位客人還沒在群組建檔"})
+    gid = cust["source_group_id"]
+    if not _docs_can_post(gid):
+        return JSONResponse({"ok": False, "error": f"試用期只能傳到名稱有「測試」的群組（這位在 {get_group_name(gid)}）"})
+    alt, card = _docs_flex(idv, cust.get("customer_name") or "")
+    ok, err = push_flex(gid, alt, card)
+    return JSONResponse({"ok": ok, "error": err, "group": get_group_name(gid)})
+
+
 @app.post("/archive/{id_no}/supp-preview")
 async def docs_supp_preview(request: Request, id_no: str):
     """補件小卡片預覽 → 系統通知群。拿「最後一次拉進來的那批」當作補件內容（沒有就拿最後 2 張示意）"""
@@ -28464,8 +28492,9 @@ async def docs_customer_page(request: Request, id_no: str, refresh: str = ""):
            '" target="_blank"><span>📋 客戶資料表</span></a>') if cust else ""
     btn += ('<button type="button" class="action quiet" onclick="cardPreview(this,\'card-preview\')"><span>📨 收件卡片預覽</span></button>'
             '<button type="button" class="action quiet" onclick="cardPreview(this,\'supp-preview\')"><span>📨 補件卡片預覽</span></button>'
+            '<button type="button" class="action quiet" onclick="cardPreview(this,\'card-send\')"><span>📨 傳卡片到客人的群組</span></button>'
             '<script>function cardPreview(b,k){b.disabled=true;fetch(location.pathname+"/"+k,{method:"POST"})'
-            '.then(r=>r.json()).then(d=>{alert(d.ok?"已傳到系統通知群，請到 LINE 看":"失敗："+(d.error||""));b.disabled=false;})'
+            '.then(r=>r.json()).then(d=>{alert(d.ok?("已傳到"+(d.group||"系統通知群")+"，請到 LINE 看"):"失敗："+(d.error||""));b.disabled=false;})'
             '.catch(()=>{alert("網路錯誤");b.disabled=false;});}</script>')
     notes = []
     if res.get("error"):

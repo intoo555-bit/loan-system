@@ -2007,6 +2007,23 @@ _cjc = json.dumps(m._docs_flex('E300000001', '證件甲')[1], ensure_ascii=False
 check('收件卡片有用到設計稿的圖示（底圖、打勾、眼睛）', all(x in _cjc for x in ('header.png', 'check.png', 'eye.png')))
 for _u in _re73.findall(r'https?://[^"]+/static/card/([a-z]+\.png)', _cjc):
     check(f"卡片用到的圖 {_u} 都在白名單", _u in m._CARD_ASSETS)
+# 試用期：只有名稱含「測試」的群組會發卡片（使用者 2026-10-14 拿測試B群的客人試）
+_c = sqlite3.connect(TEST_DB)
+_c.execute("INSERT OR REPLACE INTO groups (group_id, group_name, group_type, is_active, created_at) VALUES (?,?,?,?,?)",
+           ("TEST_TB", "測試B群", "SALES_GROUP", 1, now))
+_c.commit(); _c.close()
+m._DOCS_POST_TO_GROUP = False
+check("試用期：測試B群可以發卡片、一般業務群不行", m._docs_can_post("TEST_TB") and not m._docs_can_post("TEST_B"))
+_FAKE["E300000020"] = [{"doc_id": 31, "created_at": "2026-10-14T09:00:00", "content_type": "image/png", "source": "LINE聊天", "label": "身分證正面"}]
+_cards.clear()
+bc("10/14-謝測試 E300000020", gid="TEST_TB")
+check("試用期：測試B群建檔 → 自動發收件卡片", len(_cards) == 1 and _cards[0][0] == "TEST_TB", _cards)
+m.check_auth = lambda req: "admin"
+_cards.clear()
+_rs = TestClient(m.app).post("/archive/E300000020/card-send").json()
+check("「傳卡片到客人的群組」補發到測試B群", _rs.get("ok") and _cards and _cards[0][0] == "TEST_TB", (_rs, _cards[:1]))
+_rs = TestClient(m.app).post("/archive/E300000001/card-send").json()
+check("試用期：一般業務群的客人不能補發（擋下並說明）", _rs.get("ok") is False and "測試" in _rs.get("error", ""), _rs)
 m.push_flex = _orig_flex
 m.check_auth = _old_auth
 m._bizai_list, m._bizai_fetch = _orig_list, _orig_fetch
