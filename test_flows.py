@@ -1798,10 +1798,14 @@ _bd = [t for x, y, t in _w if 70 < y < 95 and 200 < x < 300]
 check("喬美：生日 0750312 → 印出 75／3／12", "75" in _bd and "3" in _bd and "12" in _bd, _bd)
 check("喬美：短的公司名稱放在原格子（公司電話標籤前）",
       any(t == "大明工程行" and 95 < x < 146 for x, y, t in _w), [w for w in _w if "大明" in w[2]])
+# 使用者 2026-10-13 選的位置：塞不下 → 「職業資料」標題右邊（表格上方）、原格子寫「見上方」（不可留空白，會以為不見了）
+for _co in ("睿群環衛科技有限公司", "財團法人台灣敦睦聯誼會所屬作業組織圓山大飯店"):
+    _w = _qm_words(company_name_detail=_co)
+    _in = "".join(t for x, y, t in _w if 95 < x < 146 and 400 < y < 425)
+    _top = "".join(t for x, y, t in _w if 110 < x < 300 and 384 < y < 404)
+    check(f"喬美：「{_co[:6]}…」塞不下 → 標題右邊寫全名、原格子寫「見上方」",
+          "見上方" in _in and _co in _top.replace("公司名稱：", "") and "公司名稱" in _top, (_in, _top))
 _w = _qm_words(company_name_detail="睿群環衛科技有限公司")
-check("喬美：長的公司名稱移到月薪後面的空白處（不壓到公司電話）",
-      any("睿群環衛科技有限公司" in t and x > 160 and 460 < y < 490 for x, y, t in _w)
-      and not any("睿群" in t and y < 425 for x, y, t in _w), [w for w in _w if "睿群" in w[2]])
 _ph = [(x, t) for x, y, t in _w if "0975702539" in t]
 check("喬美：公司電話不壓到「分機」標籤", _ph and _ph[0][0] > 186, _ph)
 # 舊資料一次性統一（init_db 會跑）

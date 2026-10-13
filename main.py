@@ -24141,7 +24141,7 @@ def _fill_qiaomei_pdf(r: dict) -> bytes:
         # === 公司名稱 / 公司電話：格子很小，量過範本（2026-10-13）===
         # 公司名稱格 x=98～146（約 46pt、5～6 個字）；公司電話格 x=188～234（「分機」標籤在 234.6）。
         # 原本以為名稱格有 88pt → 長名字一路蓋到「公司電話」標籤上（使用者截圖：睿群環衛科技有限公司）。
-        # 使用者裁示：塞不下就移到職業資料的空白處 —— 月薪那列「元」(x≈163) 後面到格子右緣 (x≈292) 是空的。
+        # 使用者裁示：塞不下就移到「職業資料」標題右邊的空白處（原格子寫「見上方」）。
         def _fit_fs(text, max_w, start=DEFAULT_FONT_SIZE, floor=6):
             fs = start
             while fs > floor and c1.stringWidth(text, font_name, fs) > max_w:
@@ -24154,18 +24154,20 @@ def _fill_qiaomei_pdf(r: dict) -> bytes:
                 c1.setFont(font_name, fs)
                 c1.drawString(99, yp1(410 + ASCENT), co_name)
             else:
-                # 塞不下 → 放月薪列的空白處，前面標「公司名稱：」才看得懂
+                # 塞不下 → 放「職業資料」標題右邊的空白（表格上方 x≈110～298、top≈388～404），
+                # 原格子寫「見上方」（使用者 2026-10-13 選的位置；放月薪後面時格子空白看起來像「不見了」）
+                c1.setFont(font_name, 8)
+                c1.drawString(99, yp1(410 + ASCENT), "（見上方）")
                 label = "公司名稱：" + co_name
-                fs = _fit_fs(label, 124, floor=6)
+                fs = _fit_fs(label, 181, start=9, floor=6)
                 if fs:
                     c1.setFont(font_name, fs)
-                    c1.drawString(166, yp1(472 + ASCENT), label)
+                    c1.drawString(115, yp1(392 + fs * 0.8), label)
                 else:
-                    # 很長的名字（例：財團法人…所屬作業組織圓山大飯店）→ 分兩行
                     c1.setFont(font_name, 6)
                     _cut = len(label) // 2 + 1
-                    c1.drawString(166, yp1(467 + 5), label[:_cut])
-                    c1.drawString(166, yp1(475 + 5), label[_cut:])
+                    c1.drawString(115, yp1(388 + 5), label[:_cut])
+                    c1.drawString(115, yp1(396 + 5), label[_cut:])
             c1.setFont(font_name, DEFAULT_FONT_SIZE)
         if co_phone:
             c1.setFont(font_name, _fit_fs(co_phone, 45, floor=6) or 6)
