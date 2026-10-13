@@ -1397,8 +1397,11 @@ PLAN_ELIGIBILITY_RULES = [
         "company": "鄉民",
         "max_amount": 12,
         "priority": 52,
-        "always_eligible": True,  # 一律排進去、信用報告只看銀行不看私設
+        # 2026-10-13 使用者：不是每個客戶都能送——要給信用報告、440 分以上，銀行呆帳或協商就完全不用排
+        # （原本 always_eligible 固定排；實際 7 月後非警示戶只有 588/1333 件有排鄉民）
         "rules": [
+            {"type": "manual", "label": "⚠️ 先問：客人願不願意給信用報告（沒給不能送）"},
+            {"type": "simple", "label": "銀行沒有呆帳、沒有協商（自動掃信用卡／備註／法學）", "op": "no_bad_debt_or_negotiation"},
             {"type": "simple", "label": "年齡 18~60", "field": "age", "op": "between", "value": [18, 60]},
             {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
             {"type": "manual", "label": "聯徵分數 ≥ 440 分（紅線）",
@@ -1416,7 +1419,7 @@ PLAN_ELIGIBILITY_RULES = [
                  "hint": "需提供營利事業登記表"},
             ]},
             {"type": "info", "label": "💡 通常排在後面、業務確認 440 分後再送"},
-            {"type": "info", "label": "💡 排序：固定都排（融資商品、信用報告只看銀行不看動保私設）"},
+            {"type": "info", "label": "💡 信用報告只看銀行、不看動保私設"},
             {"type": "simple", "label": "🚫 警示戶不做（自動偵測）", "op": "no_warning_account"},
         ],
         "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面",
@@ -2915,12 +2918,19 @@ def _check_rule(rule, customer):
             if re.search(r"(?<!無)(?<!沒有)(?<!没有)呆帳", text):   # 「無呆帳」不算
                 return ("fail", label, "資料裡有寫「呆帳」")
             return ("pass", label, "沒看到呆帳紀錄")
-        # 機車或汽車任一台有空間（亞太老車 15 萬：機車汽車都可以）
+        # 銀行呆帳或協商（鄉民：有就不用排）
+        if op == "no_bad_debt_or_negotiation":
+            text = " ".join((customer.get(k, "") or "") for k in ["eval_credit_card", "eval_note", "eval_law"])
+            mm = re.search(r"(?<!無)(?<!沒有)(?<!没有)(呆帳|協商)", text)   # 「無呆帳」「沒有協商」不算
+            if mm:
+                return ("fail", label, f"資料裡有寫「{mm.group(1)}」")
+            return ("pass", label, "沒看到呆帳／協商紀錄")
         # 名下有任何汽機車（不管有沒有貸款）— 南亞用
         if op == "has_any_vehicle":
             if _customer_has_any_vehicle(customer):
                 return ("pass", label, "名下有汽機車")
             return ("fail", label, "名下沒有汽車或機車")
+        # 機車或汽車任一台有空間（亞太老車 15 萬：機車汽車都可以）
         if op == "any_vehicle_has_space":
             if _customer_has_motorcycle_with_space(customer) or _customer_has_car_with_space(customer):
                 return ("pass", label, "名下有可用車輛")
@@ -3198,7 +3208,7 @@ def evaluate_case(customer):
             else:
                 summary = "❌ 不符合（看 ❌ 項目）"
         elif plan.get("always_eligible"):
-            # 固定排的方案（鄉民/民間 4 家）：simple 通過就標 ✅、oneof/manual 不擋
+            # 固定排的方案（民間：零卡／商品貸／代書／當舖／南亞；鄉民 2026-10-13 起不是固定排）：simple 通過就標 ✅、oneof/manual 不擋
             eligible = True
             summary = "✅ 固定排（每個客戶都會送）"
         elif has_oneof_fail:
@@ -3261,9 +3271,8 @@ _SUGGEST_RANK = [
     ("亞太", 40, ""), ("21機車25萬", 45, ""), ("願望", 46, ""), ("和裕", 50, ""),
     # 喬美 → 21（626/630；使用者：喬美跟 21 通常一起送）
     ("喬美", 60, ""), ("21", 61, "通常跟喬美一起送"), ("麻吉", 62, ""),
-    # 分貝排貸救補前面（使用者：分貝金額比較高、貸救補只有 10 萬）
-    # ⚠️ 實際資料是貸救補先（201/201），照使用者裁示
-    ("分貝", 65, ""), ("貸救補", 70, ""),
+    # 貸救補 → 分貝（實際 201/201；使用者：分貝商品是新專案，排貸救補後面可以，有時一起送）
+    ("貸救補", 65, ""), ("分貝", 70, "可跟貸救補一起送"),
     # 警示戶：分貝 → 手機分期 → 零卡（實際最常見的整串）
     ("手機分期", 76, ""),
     # 民間／銀行：鄉民 → 銀行（570/570）→ 零卡（696/696）→ 商品貸（1479/1479）→ 南亞（31/31）→ 代書或當鋪
