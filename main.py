@@ -27741,11 +27741,15 @@ def _docs_flex(id_no: str, name: str):
     if not rows:
         lines.append({"type": "text", "text": "業務 AI 那邊還沒有這位客人的證件", "size": "sm", "color": "#64748b", "wrap": True})
     bubble = {
-        "type": "bubble", "size": "kilo",
-        "header": {"type": "box", "layout": "vertical", "backgroundColor": "#127a7d", "paddingAll": "14px", "contents": [
-            {"type": "text", "text": f"📎 收件 {day}", "size": "xs", "color": "#d6f3f1"},
-            {"type": "text", "text": name or "（未建檔）", "size": "lg", "weight": "bold", "color": "#ffffff", "margin": "sm"},
-            {"type": "text", "text": idv, "size": "sm", "color": "#d6f3f1"}]},
+        "type": "bubble", "size": "mega",
+        # 使用者 2026-10-14：日期＋姓名＋身分證要清楚（格式同業務建相簿：收件日期-姓名 身分證）；
+        # 深色底配淺色字「看字很痛苦」→ 白底、深色粗體大字，只留一條綠色細線當識別
+        "header": {"type": "box", "layout": "vertical", "backgroundColor": "#ffffff", "paddingAll": "14px", "contents": [
+            {"type": "box", "layout": "vertical", "height": "4px", "backgroundColor": "#127a7d", "contents": []},
+            {"type": "text", "text": "📎 收件", "size": "sm", "color": "#475569", "margin": "md"},
+            {"type": "text", "text": f"{day}-{name or '（未建檔）'}", "size": "xl", "weight": "bold", "color": "#0f172a",
+             "margin": "sm", "wrap": True},
+            {"type": "text", "text": idv, "size": "xl", "weight": "bold", "color": "#0f172a"}]},
         "body": {"type": "box", "layout": "vertical", "spacing": "xs", "paddingAll": "14px", "contents": [
             {"type": "text", "text": f"證件 {len(rows)} 張", "size": "sm", "weight": "bold", "color": "#0f172a"},
             {"type": "separator", "margin": "sm"},
@@ -28150,6 +28154,7 @@ async def docs_customer_page(request: Request, id_no: str, refresh: str = ""):
              .replace("__GROUPS__", json.dumps(_DOC_GROUP, ensure_ascii=False))
              .replace("__TOPNAV__", _page_topnav(role, "docs"))
              .replace("__SHEET_BTN__", btn).replace("__WARN__", warn)
+             .replace("__CUSTOMER__", _customer_panel_html(cust))
              .replace("__TITLE__", h(f"{name} 證件" if name else f"{idv} 證件"))
              .replace("__ADAPTER__", adapter))
     return HTMLResponse(html_)
@@ -28266,6 +28271,82 @@ def _docs_latest_customer(id_no: str):
     return dict(x) if x else None
 
 
+def _customer_sheet_sections(r):
+    """客戶資料表的欄位：[(區塊名, [(欄名, 值, 欄名, 值), ...]), ...]。
+    存檔 PDF 第一頁和證件頁上方的客戶資料都用這一份（使用者 2026-10-14：開卡片連結要看到客戶資料）"""
+    def v(k):
+        return str(r.get(k) or "").strip()
+
+    def ym(y, mo):   # 年資／居住時間：沒填的部分不印
+        return (f"{y}年" if y else "") + (f"{mo}月" if mo else "")
+
+    def who(n):      # 聯絡人：沒填就空白，不印「（ ）」
+        nm, rel, ph = v(f"contact{n}_name"), v(f"contact{n}_relation"), v(f"contact{n}_phone")
+        return (nm + (f"（{rel}）" if rel else "") + (" " + ph if ph else "")).strip()
+    live = (v("reg_city") + v("reg_district") + v("reg_address")) if v("live_same_as_reg") == "1" \
+        else (v("live_city") + v("live_district") + v("live_address"))
+    sections = [
+        ("基本資料", [("姓名", v("customer_name"), "身分證", v("id_no")), ("出生日期", v("birth_date"), "行動電話", v("phone")),
+                  ("電信業者", v("carrier"), "Email", v("email")), ("LINE ID", v("line_id"), "客戶FB", v("fb")),
+                  ("婚姻", v("marriage"), "學歷", v("education"))]),
+        ("身分證發證", [("發證日期", v("id_issue_date"), "發證地", v("id_issue_place")), ("換補發", v("id_issue_type"), "", "")]),
+        ("地址資料", [("戶籍地址", v("reg_city") + v("reg_district") + v("reg_address"), "戶籍電話", v("reg_phone")),
+                  ("住家地址", live, "現住電話", v("live_phone")),
+                  ("居住狀況", v("live_status"), "居住時間", ym(v("live_years"), v("live_months")))]),
+        ("職業資料", [("公司名稱", v("company_name_detail"), "公司電話",
+                   fmt_company_phone(v("company_phone_area"), v("company_phone_num"), v("company_phone_ext"))),
+                  ("公司地址", v("company_city") + v("company_district") + v("company_address"), "職稱", v("company_role")),
+                  ("年資", ym(v("company_years"), v("company_months")), "月薪", fmt_salary(v("company_salary")))]),
+        ("聯絡人", [("聯絡人1", who(1), "知情", v("contact1_known")), ("聯絡人2", who(2), "知情", v("contact2_known"))]),
+        ("貸款諮詢", [("警示戶", v("eval_alert_warning"), "資金需求", v("eval_fund_need")),
+                  ("近三月送件", (v("eval_sent_3m") + " " + v("eval_sent_3m_detail")).strip(), "當鋪私設", v("eval_alert")),
+                  ("勞保", v("eval_labor_ins"), "薪轉", v("eval_salary_transfer")),
+                  ("遲繳", (v("eval_late") + " " + v("eval_late_days")).strip(), "罰單／燃料稅", "／".join(x for x in (v("eval_fine"), v("eval_fuel_tax")) if x)),
+                  ("信用卡", v("eval_credit_card"), "動產/不動產", v("eval_property")),
+                  ("法學", v("eval_law"), "備註", v("eval_note"))]),
+    ]
+    return sections
+
+
+def _customer_panel_html(r) -> str:
+    """證件頁最上面的客戶資料（可收合）。沒建檔就回提示"""
+    if not r:
+        return ('<div class="cust-panel"><div class="cust-empty">行政系統還沒有這位客人的資料'
+                '（業務在群組建檔後就會出現）</div></div>')
+    secs = []
+    for sec, rows_ in _customer_sheet_sections(r):
+        cells = []
+        for a, b, c, d in rows_:
+            for k, val in ((a, b), (c, d)):
+                if k:
+                    cells.append(f'<div class="cp-k">{h(k)}</div><div class="cp-v">{h(val) or "<span class=cp-na>—</span>"}</div>')
+        secs.append(f'<div class="cp-sec"><div class="cp-h">{h(sec)}</div><div class="cp-grid">{"".join(cells)}</div></div>')
+    try:
+        debts = json.loads(r.get("debt_list") or "[]") or []
+    except Exception:
+        debts = []
+    if debts:
+        trs = "".join(
+            f'<tr><td>{h(d.get("co", ""))}</td><td>{h(d.get("lo", ""))}</td><td>{h(d.get("pe", ""))}/{h(d.get("pa", ""))}</td>'
+            f'<td>{h(d.get("mo", ""))}</td><td>{h(d.get("re", ""))}</td><td>{h(d.get("dy", ""))}</td><td>{h(d.get("sp", ""))}</td>'
+            f'<td>{h(d.get("pl", ""))}</td><td>{h(d.get("yr", ""))}</td></tr>' for d in debts)
+        secs.append('<div class="cp-sec cp-wide"><div class="cp-h">負債明細</div><div class="cp-tbl"><table><tr><th>商家</th><th>金額</th>'
+                    '<th>期數/已繳</th><th>月繳</th><th>剩餘</th><th>動保/公路</th><th>空間</th><th>車牌</th><th>出廠</th></tr>'
+                    + trs + '</table></div></div>')
+    try:
+        unloan = json.loads(r.get("unloan_vehicles") or "[]") or []
+    except Exception:
+        unloan = []
+    if unloan:
+        secs.append('<div class="cp-sec"><div class="cp-h">無貸款車輛</div><div class="cp-grid">' + "".join(
+            f'<div class="cp-k">{h(u.get("type", ""))}</div><div class="cp-v">{h(u.get("plate", ""))} {h(u.get("year", ""))}</div>'
+            for u in unloan) + '</div></div>')
+    gname = get_group_name(r.get("source_group_id") or "") if r.get("source_group_id") else ""
+    return (f'<details class="cust-panel" open><summary><span class="cp-title">📋 客戶資料</span>'
+            f'<span class="cp-sub">{h(gname)}　建立 {h((r.get("created_at") or "")[:10])}　（點這裡收起來）</span></summary>'
+            f'<div class="cp-body">{"".join(secs)}</div></details>')
+
+
 def _customer_sheet_pdf(r) -> bytes:
     """客戶資料表（存檔 PDF 第一頁）—— 欄位跟 /customer-pdf 那頁一樣，用 reportlab 在伺服器產生。
     （/customer-pdf 是瀏覽器端轉 PDF，伺服器拿不到；李嬋娟那份存檔的第 1～2 頁就是這張）"""
@@ -28285,40 +28366,12 @@ def _customer_sheet_pdf(r) -> bytes:
             fn = "Helvetica"
         st = ParagraphStyle("c", fontName=fn, fontSize=9, leading=12)
 
-        def v(k):
-            return str(r.get(k) or "").strip()
-
         def P(t):
             return Paragraph(h(t), st)
 
-        def ym(y, mo):   # 年資／居住時間：沒填的部分不印
-            return (f"{y}年" if y else "") + (f"{mo}月" if mo else "")
-
-        def who(n):      # 聯絡人：沒填就空白，不印「（ ）」
-            nm, rel, ph = v(f"contact{n}_name"), v(f"contact{n}_relation"), v(f"contact{n}_phone")
-            return (nm + (f"（{rel}）" if rel else "") + (" " + ph if ph else "")).strip()
-        live = (v("reg_city") + v("reg_district") + v("reg_address")) if v("live_same_as_reg") == "1" \
-            else (v("live_city") + v("live_district") + v("live_address"))
-        sections = [
-            ("基本資料", [("姓名", v("customer_name"), "身分證", v("id_no")), ("出生日期", v("birth_date"), "行動電話", v("phone")),
-                      ("電信業者", v("carrier"), "Email", v("email")), ("LINE ID", v("line_id"), "客戶FB", v("fb")),
-                      ("婚姻", v("marriage"), "學歷", v("education"))]),
-            ("身分證發證", [("發證日期", v("id_issue_date"), "發證地", v("id_issue_place")), ("換補發", v("id_issue_type"), "", "")]),
-            ("地址資料", [("戶籍地址", v("reg_city") + v("reg_district") + v("reg_address"), "戶籍電話", v("reg_phone")),
-                      ("住家地址", live, "現住電話", v("live_phone")),
-                      ("居住狀況", v("live_status"), "居住時間", ym(v("live_years"), v("live_months")))]),
-            ("職業資料", [("公司名稱", v("company_name_detail"), "公司電話",
-                       fmt_company_phone(v("company_phone_area"), v("company_phone_num"), v("company_phone_ext"))),
-                      ("公司地址", v("company_city") + v("company_district") + v("company_address"), "職稱", v("company_role")),
-                      ("年資", ym(v("company_years"), v("company_months")), "月薪", fmt_salary(v("company_salary")))]),
-            ("聯絡人", [("聯絡人1", who(1), "知情", v("contact1_known")), ("聯絡人2", who(2), "知情", v("contact2_known"))]),
-            ("貸款諮詢", [("警示戶", v("eval_alert_warning"), "資金需求", v("eval_fund_need")),
-                      ("近三月送件", (v("eval_sent_3m") + " " + v("eval_sent_3m_detail")).strip(), "當鋪私設", v("eval_alert")),
-                      ("勞保", v("eval_labor_ins"), "薪轉", v("eval_salary_transfer")),
-                      ("遲繳", (v("eval_late") + " " + v("eval_late_days")).strip(), "罰單／燃料稅", "／".join(x for x in (v("eval_fine"), v("eval_fuel_tax")) if x)),
-                      ("信用卡", v("eval_credit_card"), "動產/不動產", v("eval_property")),
-                      ("法學", v("eval_law"), "備註", v("eval_note"))]),
-        ]
+        def v(k):
+            return str(r.get(k) or "").strip()
+        sections = _customer_sheet_sections(r)
         data, styles = [], [("FONTNAME", (0, 0), (-1, -1), fn), ("FONTSIZE", (0, 0), (-1, -1), 9),
                             ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#bbbbbb")), ("VALIGN", (0, 0), (-1, -1), "MIDDLE")]
         for sec, rows_ in sections:

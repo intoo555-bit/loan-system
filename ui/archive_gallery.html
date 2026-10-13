@@ -158,6 +158,30 @@ details.error-detail{color:#a17745;margin:12px 0;font-size:10px;border:1px solid
 @media(max-width:490px){.grid{grid-template-columns:repeat(2,minmax(0,1fr))}.heading{gap:6px;margin-bottom:13px}.heading h1{font-size:17px;letter-spacing:-.5px}.heading h1 .suffix{font-size:15px;margin-left:4px}.heading-mark{display:none}.subheading{font-size:11px}.view-switch button{height:27px;width:28px}.view-switch{padding:2px}.actions{display:grid;grid-template-columns:1fr 1fr;gap:7px}.action{width:100%;font-size:11px;padding:0 6px;gap:5px}.action .icon{height:15px;width:15px}.toolbar-note{font-size:10px;gap:4px}.tab{padding:7px 8px;font-size:11px}.list-tools{gap:4px;flex-wrap:wrap}.sort-group{gap:6px}.mini-select{font-size:10px;max-width:97px}.meta{font-size:10px}.body{padding:9px 10px 10px}.list-view .media{width:73px;min-width:73px;height:61px}.list-view .body{display:block;padding:9px 11px 9px 4px}.list-view .card-bottom{margin-top:6px}.list-view .meta{margin-top:2px}.list-view .card{padding-left:28px}.list-view .card-check{left:9px}.preview-aside .detail-field.date-field{display:none}}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{transition:none!important;scroll-behavior:auto!important}}
 </style>
+<style id="loan-overrides">
+/* 使用者 2026-10-14：照片要跟相簿一樣大張；開連結要看到客戶資料 */
+.grid{grid-template-columns:repeat(auto-fill,minmax(300px,1fr))!important;gap:16px}
+.grid .media{aspect-ratio:4/3}
+.grid .media img{padding:0;filter:none;object-fit:contain;background:#e9eef2}
+@media(max-width:690px){.grid{grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:10px}}
+.grid.list-view{grid-template-columns:1fr!important}
+.viewer{width:96vw!important;max-width:96vw!important;height:94vh!important;max-height:94dvh!important}
+.cust-panel{background:#fff;border:1px solid var(--line);border-radius:14px;margin:0 0 14px;overflow:hidden}
+.cust-panel>summary{cursor:pointer;list-style:none;padding:12px 16px;display:flex;gap:12px;align-items:baseline;flex-wrap:wrap;background:#f6f9fa}
+.cust-panel>summary::-webkit-details-marker{display:none}
+.cp-title{font-weight:800;font-size:15px;color:#16324a}.cp-sub{font-size:12px;color:#6b7f90}
+.cp-body{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:12px;padding:14px 16px}
+.cp-sec{border:1px solid #edf1f4;border-radius:10px;overflow:hidden}.cp-wide{grid-column:1/-1}
+.cp-h{background:#3a3530;color:#fff;font-size:12px;font-weight:700;padding:5px 10px}
+.cp-grid{display:grid;grid-template-columns:88px 1fr;font-size:13px}
+.cp-k{background:#f6f3ee;color:#5a4e40;padding:6px 8px;border-bottom:1px solid #f0ece6;font-weight:600}
+.cp-v{padding:6px 8px;border-bottom:1px solid #f0ece6;word-break:break-all;color:#1f2a33}.cp-na{color:#b8c2ca}
+.cp-tbl{overflow-x:auto}.cp-tbl table{border-collapse:collapse;width:100%;font-size:12px}
+.cp-tbl th,.cp-tbl td{border-bottom:1px solid #f0ece6;padding:5px 8px;text-align:left;white-space:nowrap}.cp-tbl th{background:#f6f3ee}
+.cust-empty{padding:12px 16px;color:#6b7f90;font-size:13px}
+.cp-sec{min-width:0}
+@media(max-width:690px){.cp-body{grid-template-columns:minmax(0,1fr);padding:10px}.cp-grid{grid-template-columns:76px minmax(0,1fr)}}
+</style>
 </head>
 <body>
 __TOPNAV__
@@ -195,6 +219,7 @@ __TOPNAV__
   </div>
   <div class="view-switch" role="group" aria-label="顯示方式"><button type="button" id="gridView" class="active" aria-label="卡片檢視" aria-pressed="true" title="卡片檢視"><svg class="icon"><use href="#i-grid"/></svg></button><button type="button" id="listView" aria-label="清單檢視" aria-pressed="false" title="清單檢視"><svg class="icon"><use href="#i-list"/></svg></button></div>
  </header>
+ __CUSTOMER__
  <section class="toolbar" aria-label="附件操作">
   <div class="actions">
    <button type="button" class="action primary" id="downloadPdf"><svg class="icon"><use href="#i-download"/></svg><span>下載整理 PDF</span></button>

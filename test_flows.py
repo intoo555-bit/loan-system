@@ -1914,6 +1914,7 @@ check("客人證件頁（新介面）打得開、資料有 4 張都有縮圖", _
 import re as _re73
 check("新介面：設計稿的示範證件縮圖沒有帶上正式站", not _re73.search(r"base64,[A-Za-z0-9+/]{200,}", _r.text)
       and '"d01"' not in _r.text)
+check("證件頁上方直接有客戶資料（開卡片連結就看得到）", "📋 客戶資料" in _r.text and "基本資料" in _r.text and "證件甲" in _r.text)
 check("新介面：分類下拉是我們的 24 種", "人車合照" in _r.text and "強制險" in _r.text)
 _ids = ",".join(d["id"] for d in _d73[:2])
 _rz = _tc73.get("/archive/E300000001/zip", params={"ids": _ids})
