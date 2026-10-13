@@ -1626,6 +1626,35 @@ check("代書「不看條件」是說明、不是 ⚠️", _st({}, "代書", "�
 check("中租 1.4 倍是說明、不打 ⚠️", _st({}, "中租汽車", "1.4 倍") == "info")
 check("日報歸東豐／願望",m.normalize_section("東豐小額信貸") == "東豐" and m.normalize_section("願望小車25萬") == "願望")
 
+# ========== 65. 業務實際打的寫法要認得（2026-10-13 使用者：願望25萬沒用進去）==========
+# 規則表用全名（願望小車25萬），但業務打「願望25萬」——不認得就不會歸到日報「願望」那一格。
+# 順便把這次規則表新增的方案名都走一遍，避免同一個洞。
+print("\n=== 65. 新方案的各種寫法 ===")
+for _n, (_co, _sec) in enumerate([("願望25萬", "願望"), ("願望15萬", "願望"), ("願望工會", "願望"),
+                                   ("願望小車25萬", "願望"), ("願望工會15萬", "願望"),
+                                   ("亞太汽車25萬", "亞太"), ("亞太老車15萬", "亞太"),
+                                   ("東豐小額信貸", "東豐"), ("中租汽車", "中租")]):
+    _nm = "寫" + "一二三四五六七八九"[_n]
+    check(f"normalize_section({_co})={_sec}", m.normalize_section(_co) == _sec, m.normalize_section(_co))
+    _i1, _i2 = f"D3000{_n:02d}001", f"D3000{_n:02d}002"
+    bc(f"10/13-{_nm}甲 {_i1}", gid="TEST_B")
+    bc(f"10/13-{_nm}甲-{_co}/21商品", gid="TEST_B")
+    _d = get_cust(_i1)
+    check(f"[{_co}] 送件順序第一家歸{_sec}", _d and m.normalize_section(_d["current_company"]) == _sec,
+          _d and _d.get("current_company"))
+    bc(f"@AI {_nm}甲 送{_co}", gid="TEST_B")
+    _lines = [l.strip() for l in "\n".join(m.generate_report_lines("TEST_B")).splitlines()]
+    check(f"[{_co}] 日報有「{_sec}」那一格", _sec in _lines)
+    check(f"[{_co}] 日報沒有多長一格「{_co}」", _co == _sec or _co not in _lines)
+    a(f"{_nm}甲 {_co} 核准10萬")
+    _d = get_cust(_i1)
+    check(f"[{_co}] 核准後進待撥款", _d.get("report_section") == "待撥款", _d.get("report_section"))
+    bc(f"10/13-{_nm}乙 {_i2}", gid="TEST_B")
+    bc(f"10/13-{_nm}乙-{_co}/21商品", gid="TEST_B")
+    a(f"{_nm}乙 {_co} 婉拒 信用評分不足")
+    _d2 = get_cust(_i2)
+    check(f"[{_co}] 婉拒後推進下一家", _d2.get("current_company") == "21商品", _d2.get("current_company"))
+
 # ========== 總結 ==========
 print(f"\n{'='*50}")
 print(f"結果：{PASS} 通過、{FAIL} 失敗")
