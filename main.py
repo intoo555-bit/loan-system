@@ -10890,7 +10890,7 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
             if old_list and len(new_list) < len(old_list):
                 removed = [d for d in old_list if d not in new_list]
                 msg += f"\n（缺件清單也清掉：{'、'.join(removed)}）"
-            reply_text(reply_token, msg)
+            reply_text(reply_token, msg + _docs_reply_tail(target))
             return
         # Phase 1 fallback: pending_docs 邏輯
         old = (target["pending_docs"] or "").strip()
@@ -10920,7 +10920,7 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
         _push_target = _resolve_push_target_for_docs(group_id, target["source_group_id"])
         if _push_target and _push_target != group_id:
             push_text(_push_target, push_msg)
-        reply_text(reply_token, push_msg)
+        reply_text(reply_token, push_msg + _docs_reply_tail(target))
         return
 
     if t == "clear_missing_docs":
@@ -10949,7 +10949,7 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
                                 (json.dumps(cs, ensure_ascii=False), now_iso(), target["case_id"]))
             update_customer(target["case_id"], text=f"{name} {cmd_company} 缺件已全部補完",
                             from_group_id=group_id)
-            reply_text(reply_token, f"✅ {name} {cmd_company} 缺件已全部清除")
+            reply_text(reply_token, f"✅ {name} {cmd_company} 缺件已全部清除" + _docs_reply_tail(target))
             return
         # 不指定公司 → 清 pending_docs（phase 1 行為）
         new_text = f"{name} 缺件已全部補完"
@@ -10967,7 +10967,7 @@ def _handle_special_command_inner(cmd: Dict, reply_token: str, group_id: str):
         _push_target = _resolve_push_target_for_docs(group_id, target["source_group_id"])
         if _push_target and _push_target != group_id:
             push_text(_push_target, push_msg)
-        reply_text(reply_token, push_msg)
+        reply_text(reply_token, push_msg + _docs_reply_tail(target))
         return
 
     if t == "reorder_route":
@@ -27901,6 +27901,20 @@ def _docs_supplement_flex(id_no: str, name: str, new_rows):
         {"type": "button", "style": "link", "height": "sm", "color": "#139c9c", "margin": "sm",
          "action": {"type": "uri", "label": "看證件", "uri": _docs_link(idv)}}]}}
     return f"📎 補件 {day}-{name} {idv} +{len(new_rows)} 張", bubble
+
+
+def _docs_reply_tail(target) -> str:
+    """「已補」的回覆後面加「📎 看證件」連結（使用者 2026-10-14：不管有沒有新照片都能點進去看相簿）。
+    回覆訊息不算 LINE 訊息額度。試用期只在名稱含「測試」的群組加（其他群的業務還打不開）"""
+    try:
+        gid = target["source_group_id"] or ""
+        idv = target["id_no"] or ""
+        url, sec = _bizai_conf()
+        if not idv or not url or not sec or not _docs_can_post(gid):
+            return ""
+        return f"\n📎 看證件：{_docs_link(idv)}"
+    except Exception:
+        return ""
 
 
 def _schedule_docs_supplement(id_no: str, name: str, group_id: str):
