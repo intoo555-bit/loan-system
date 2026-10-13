@@ -4403,6 +4403,27 @@ def push_text(to_group_id: str, text: str):
         return False, str(e)
 
 
+def push_flex(to_group_id: str, alt_text: str, contents: dict):
+    """推一張 LINE 卡片（Flex Message）。只算 1 則訊息。alt_text＝聊天列表／通知上顯示的文字"""
+    if _console_capturing():
+        _console_capture_add(alt_text or "", "push", to_group_id)
+        return True, ""
+    if not CHANNEL_ACCESS_TOKEN:
+        return False, "未設定 CHANNEL_ACCESS_TOKEN"
+    try:
+        resp = req_lib.post(
+            "https://api.line.me/v2/bot/message/push",
+            headers={"Authorization": f"Bearer {CHANNEL_ACCESS_TOKEN}", "Content-Type": "application/json"},
+            json={"to": to_group_id, "messages": [{"type": "flex", "altText": (alt_text or "通知")[:400], "contents": contents}]},
+            timeout=10,
+        )
+        if 200 <= resp.status_code < 300:
+            return True, ""
+        return False, f"LINE push失敗({resp.status_code})：{resp.text[:200]}"
+    except Exception as e:
+        return False, str(e)
+
+
 def reply_text(reply_token: str, text: str):
     if _console_capturing():
         _console_capture_add(text or "", "reply")
@@ -27682,12 +27703,10 @@ def _schedule_docs_pull(id_no: str, name: str, group_id: str):
                 if res["error"]:
                     push_text(group_id, f"⚠️ {name} 證件拉取失敗：{res['error']}\n（打開證件頁會再試，或請管理員看一下）")
                 return
-            n = now_tw()
-            msg = (f"📎 {n.year - 1911}/{n.month}/{n.day}-{name} {normalize_id_no(id_no)} 收件（{res['total']} 張）\n"
-                   f"{_docs_label_summary(_docs_rows(id_no))}\n👉 {_docs_link(id_no)}")
+            alt, card = _docs_flex(id_no, name)
+            push_flex(group_id, alt, card)
             if res["error"]:
-                msg += f"\n⚠️ 還有幾張沒拉完：{res['error']}（打開連結會再補）"
-            push_text(group_id, msg)
+                push_text(group_id, f"⚠️ {name} 還有幾張證件沒拉完：{res['error']}（打開證件頁會再補）")
         except Exception as e:
             print(f"[證件] 建檔後拉取失敗：{e}")
 
@@ -27695,6 +27714,48 @@ def _schedule_docs_pull(id_no: str, name: str, group_id: str):
         _run()
     else:
         _threading.Thread(target=_run, daemon=True).start()
+
+
+def _docs_flex(id_no: str, name: str):
+    """群組「📎 收件」卡片：姓名、身分證、證件清單（有判讀的打勾、未判讀／失敗標出來）＋「看證件」按鈕。
+    使用者 2026-10-14 選的方式：卡片＋按鈕（照片不放進卡片 —— 那要開不用登入的網址給 LINE 抓，證件會存到 LINE 伺服器）"""
+    from collections import Counter as _C
+    idv = normalize_id_no(id_no)
+    rows = [r for r in _docs_rows(idv) if not _doc_is_contract(r)]
+    done = [r for r in rows if r.get("manual_label") or r.get("ai_label")]
+    pending = len(rows) - len(done)
+    cnt = _C(r["show_label"] for r in done)
+    names = sorted(cnt, key=lambda k: (_doc_rank(k), k))
+    n = now_tw()
+    day = f"{n.year - 1911}/{n.month}/{n.day}"
+    lines = [{"type": "box", "layout": "baseline", "spacing": "sm", "contents": [
+        {"type": "text", "text": "✅", "size": "sm", "flex": 0},
+        {"type": "text", "text": k + (f" ×{cnt[k]}" if cnt[k] > 1 else ""), "size": "sm", "color": "#334155", "flex": 1, "wrap": True}]}
+        for k in names[:14]]
+    if len(names) > 14:
+        lines.append({"type": "text", "text": f"…另外 {len(names) - 14} 種", "size": "xs", "color": "#64748b"})
+    if pending:
+        lines.append({"type": "box", "layout": "baseline", "spacing": "sm", "margin": "md", "contents": [
+            {"type": "text", "text": "🤖", "size": "sm", "flex": 0},
+            {"type": "text", "text": f"還有 {pending} 張未分類（打開後按「AI 判讀」）", "size": "sm", "color": "#b45309", "flex": 1, "wrap": True}]})
+    if not rows:
+        lines.append({"type": "text", "text": "業務 AI 那邊還沒有這位客人的證件", "size": "sm", "color": "#64748b", "wrap": True})
+    bubble = {
+        "type": "bubble", "size": "kilo",
+        "header": {"type": "box", "layout": "vertical", "backgroundColor": "#127a7d", "paddingAll": "14px", "contents": [
+            {"type": "text", "text": f"📎 收件 {day}", "size": "xs", "color": "#d6f3f1"},
+            {"type": "text", "text": name or "（未建檔）", "size": "lg", "weight": "bold", "color": "#ffffff", "margin": "sm"},
+            {"type": "text", "text": idv, "size": "sm", "color": "#d6f3f1"}]},
+        "body": {"type": "box", "layout": "vertical", "spacing": "xs", "paddingAll": "14px", "contents": [
+            {"type": "text", "text": f"證件 {len(rows)} 張", "size": "sm", "weight": "bold", "color": "#0f172a"},
+            {"type": "separator", "margin": "sm"},
+            {"type": "box", "layout": "vertical", "spacing": "xs", "margin": "sm", "contents": lines}]},
+        "footer": {"type": "box", "layout": "vertical", "paddingAll": "10px", "contents": [
+            {"type": "button", "style": "primary", "color": "#127a7d", "height": "sm",
+             "action": {"type": "uri", "label": "📎 看證件", "uri": _docs_link(idv)}}]},
+    }
+    alt = f"📎 {day}-{name} {idv} 收件（{len(rows)} 張）"
+    return alt, bubble
 
 
 def _docs_auth(request):
@@ -27945,14 +28006,14 @@ def _docs_folder_name(id_no: str, rows):
 
 
 @app.get("/archive/{id_no}/pdf")
-async def docs_pdf(request: Request, id_no: str):
+async def docs_pdf(request: Request, id_no: str, ids: str = ""):
     """整理好的 PDF（存檔用）：第一頁客戶資料表 → 證件照存檔順序（圖片一張一頁；客人傳的 PDF 整份接進去）。
     ⛔ 不含委任合約／簽名（合約存在業務 AI，不跟送件資料混在一起）"""
     if not _docs_auth(request):
         return JSONResponse({"error": "無權限"}, status_code=403)
     from pypdf import PdfReader as _R, PdfWriter as _W
     idv = normalize_id_no(id_no)
-    rows = _docs_rows(idv)
+    rows = _docs_pick(_docs_rows(idv), ids)
     w = _W()
     _fn, name = _docs_folder_name(idv, rows)
     sheet = _customer_sheet_pdf(_docs_latest_customer(idv))
@@ -27971,13 +28032,13 @@ async def docs_pdf(request: Request, id_no: str):
 
 
 @app.get("/archive/{id_no}/zip")
-async def docs_zip(request: Request, id_no: str):
+async def docs_zip(request: Request, id_no: str, ids: str = ""):
     """一位客人一個資料夾（名稱跟相簿一樣：收件日期-姓名-身分證），照片照順序編號。⛔ 不含委任合約"""
     if not _docs_auth(request):
         return JSONResponse({"error": "無權限"}, status_code=403)
     import zipfile as _zf
     idv = normalize_id_no(id_no)
-    rows = [r for r in _docs_rows(idv) if not _doc_is_contract(r)]
+    rows = [r for r in _docs_pick(_docs_rows(idv), ids) if not _doc_is_contract(r)]
     folder, _name = _docs_folder_name(idv, rows)
     buf = io.BytesIO()
     with _zf.ZipFile(buf, "w", _zf.ZIP_STORED) as z:
@@ -27990,32 +28051,58 @@ async def docs_zip(request: Request, id_no: str):
                              headers={"Content-Disposition": f"attachment; filename*=UTF-8''{_q(folder + '.zip')}"})
 
 
-_DOCS_VIEWER_JS = """
-<div id="vw" onclick="if(event.target.id==='vw')vwClose()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.88);z-index:999;overflow:auto;text-align:center">
- <div style="position:sticky;top:0;display:flex;justify-content:space-between;align-items:center;padding:8px 12px;color:#fff;background:rgba(0,0,0,.6);z-index:2">
-  <button onclick="vwGo(-1)" style="font-size:22px;background:none;border:0;color:#fff;cursor:pointer">‹ 上一張</button>
-  <span id="vwT" style="font-weight:700"></span>
-  <span><button onclick="vwZoom(-1)" style="font-size:20px;background:none;border:0;color:#fff;cursor:pointer">－</button>
-  <button onclick="vwZoom(1)" style="font-size:20px;background:none;border:0;color:#fff;cursor:pointer">＋</button>
-  <button onclick="vwGo(1)" style="font-size:22px;background:none;border:0;color:#fff;cursor:pointer">下一張 ›</button>
-  <button onclick="vwClose()" style="font-size:22px;background:none;border:0;color:#fff;cursor:pointer;margin-left:8px">✕</button></span>
- </div>
- <img id="vwI" style="max-width:none;margin:12px auto;display:block;cursor:zoom-in" onclick="vwZoom(1)">
-</div>
-<script>
-var VW=[],vwi=0,vwz=1;
-document.querySelectorAll('img[data-vw]').forEach(function(im,i){VW.push({src:im.getAttribute('data-vw'),t:im.getAttribute('data-t')});
-  im.style.cursor='zoom-in'; im.parentNode.onclick=function(e){e.preventDefault();vwOpen(i);};});
-function vwFit(){var I=document.getElementById('vwI');var W=window.innerWidth-24,H=window.innerHeight-70;
-  var r=Math.min(W/(I.naturalWidth||W),H/(I.naturalHeight||H),1);I.style.width=Math.round((I.naturalWidth||W)*r*vwz)+'px';}
-function vwOpen(i){vwi=i;vwz=1;var I=document.getElementById('vwI');I.onload=vwFit;I.src=VW[i].src;
-  document.getElementById('vwT').textContent=(i+1)+'/'+VW.length+'　'+VW[i].t;document.getElementById('vw').style.display='block';}
-function vwGo(d){if(!VW.length)return;vwOpen((vwi+d+VW.length)%VW.length);}
-function vwZoom(d){vwz=Math.max(1,Math.min(5,vwz+(d>0?0.75:-0.75)));vwFit();}
-function vwClose(){document.getElementById('vw').style.display='none';}
-document.addEventListener('keydown',function(e){if(document.getElementById('vw').style.display!=='block')return;
-  if(e.key==='ArrowRight')vwGo(1);if(e.key==='ArrowLeft')vwGo(-1);if(e.key==='Escape')vwClose();});
-</script>"""
+@app.get("/archive/{id_no}/data")
+async def docs_data(request: Request, id_no: str, refresh: str = ""):
+    if not _docs_auth(request):
+        return JSONResponse({"ok": False, "error": "無權限"}, status_code=403)
+    idv = normalize_id_no(id_no)
+    res = pull_customer_docs(idv) if refresh else {"error": ""}
+    return JSONResponse({"ok": True, "documents": _docs_payload(idv), "error": res.get("error") or ""})
+
+
+@app.post("/archive/doc/{doc_pk}/classify")
+async def docs_classify_one(request: Request, doc_pk: int):
+    """重新判讀單張（介面「重新判讀」）。⛔ 人工改過的不動"""
+    if not _docs_auth(request):
+        return JSONResponse({"ok": False, "error": "無權限"}, status_code=403)
+    if not os.getenv("ANTHROPIC_API_KEY", ""):
+        return JSONResponse({"ok": False, "error": "正式站沒有設定 ANTHROPIC_API_KEY"})
+    with db_conn() as conn:
+        _docs_ensure_table(conn.cursor())
+        x = conn.execute("SELECT id_no FROM customer_docs WHERE id=?", (doc_pk,)).fetchone()
+    if not x:
+        return JSONResponse({"ok": False, "error": "找不到這張"})
+    rows = _docs_rows(x["id_no"])
+    pos = next((n for n, r in enumerate(rows, 1) if r["id"] == doc_pk), None)
+    r = rows[pos - 1]
+    if r.get("manual_label"):
+        return JSONResponse({"ok": False, "error": "這張是人工分類，不重新判讀"})
+    import asyncio as _aio
+    try:
+        typ, note = await _aio.to_thread(_ai_classify_doc, r["file_path"], r["real_type"])
+        with db_conn(commit=True) as conn:
+            conn.execute("UPDATE customer_docs SET ai_label=?, ai_note=?, ai_at=? WHERE id=?", (typ, note, now_iso(), doc_pk))
+    except Exception as e:
+        with db_conn(commit=True) as conn:
+            conn.execute("UPDATE customer_docs SET ai_note=?, ai_at=? WHERE id=?",
+                         (f"判讀失敗：{type(e).__name__}: {str(e)[:80]}", now_iso(), doc_pk))
+    r = next(rr for rr in _docs_rows(x["id_no"]) if rr["id"] == doc_pk)
+    return JSONResponse({"ok": True, "document": _doc_payload(r, pos)})
+
+
+@app.post("/archive/{id_no}/card-preview")
+async def docs_card_preview(request: Request, id_no: str):
+    """把收件卡片傳到「系統通知群」給總管理看（業務群組不會收到）"""
+    if not _docs_auth(request):
+        return JSONResponse({"ok": False, "error": "無權限"}, status_code=403)
+    idv = normalize_id_no(id_no)
+    cust = _docs_latest_customer(idv)
+    alt, card = _docs_flex(idv, (cust or {}).get("customer_name", ""))
+    gids = get_notify_group_ids()
+    if not gids:
+        return JSONResponse({"ok": False, "error": "沒有設定系統通知群"})
+    ok, err = push_flex(gids[0], "【預覽】" + alt, card)
+    return JSONResponse({"ok": ok, "error": err})
 
 
 @app.get("/archive/{id_no}", response_class=HTMLResponse)
@@ -28024,7 +28111,7 @@ async def docs_customer_page(request: Request, id_no: str, refresh: str = ""):
     if not role:
         return RedirectResponse("/login")
     idv = normalize_id_no(id_no)
-    # 打開時順便補拉（客人之後補傳的照片）：5 分鐘內拉過就不重拉，按「重新拉」一定拉
+    # 打開時順便補拉（客人之後補傳的照片）：5 分鐘內拉過就不重拉
     with db_conn() as conn:
         cur = conn.cursor()
         _docs_ensure_table(cur)
@@ -28036,68 +28123,110 @@ async def docs_customer_page(request: Request, id_no: str, refresh: str = ""):
         except Exception:
             stale = True
     res = pull_customer_docs(idv) if stale else {"error": (lp["last_error"] if lp else ""), "new": 0}
-    all_rows = _docs_rows(idv)
-    rows = [r for r in all_rows if not _doc_is_contract(r)]
-    contracts = [r for r in all_rows if _doc_is_contract(r)]
-    folder, name = _docs_folder_name(idv, rows)
+    docs = _docs_payload(idv)
+    _folder, name = _docs_folder_name(idv, _docs_rows(idv))
     cust = _docs_latest_customer(idv)
-    _opts = "".join(f'<option>{h(c)}</option>' for c in _DOC_CATS)
+    if not _ARCHIVE_UI:
+        return HTMLResponse("⚠️ 證件介面檔（ui/archive_gallery.html）沒有部署上來，請通知管理員", status_code=500)
+    btn = ('<a class="action" style="text-decoration:none" href="/customer-pdf?case_id=' + h(cust["case_id"]) +
+           '" target="_blank"><span>📋 客戶資料表</span></a>') if cust else ""
+    btn += ('<button type="button" class="action quiet" onclick="cardPreview(this)"><span>📨 收件卡片預覽</span></button>'
+            '<script>function cardPreview(b){b.disabled=true;fetch(location.pathname+"/card-preview",{method:"POST"})'
+            '.then(r=>r.json()).then(d=>{alert(d.ok?"已傳到系統通知群，請到 LINE 看":"失敗："+(d.error||""));b.disabled=false;})'
+            '.catch(()=>{alert("網路錯誤");b.disabled=false;});}</script>')
+    notes = []
+    if res.get("error"):
+        notes.append("⚠️ " + h(res["error"]))
+    if not cust:
+        notes.append("行政系統還沒有這位客人的資料，下載的 PDF 不會有客戶資料表")
+    notes.append("下載 PDF／照片：勾選幾張就只下載那幾張；沒勾就是全部。第一頁是客戶資料表；合約／簽名不會放進去（合約請到業務 AI 看）")
+    warn = ('<div style="background:#fff;border:1px solid #e3e9ee;border-radius:12px;padding:10px 14px;margin:0 0 14px;'
+            'font-size:13px;color:#5c6f80;line-height:1.7">' + "<br>".join(notes) + "</div>")
+    adapter = (_ARCHIVE_ADAPTER.replace("__ID__", json.dumps(idv))
+               .replace("__SHOW__", json.dumps(((name + " ") if name else "") + idv, ensure_ascii=False))
+               .replace("__TOTAL__", str(len(docs)))
+               .replace("__DOCS__", json.dumps(docs, ensure_ascii=False).replace("</", "<\\/")))
+    html_ = (_ARCHIVE_UI.replace("__CATS__", json.dumps(_DOC_CATS, ensure_ascii=False))
+             .replace("__GROUPS__", json.dumps(_DOC_GROUP, ensure_ascii=False))
+             .replace("__TOPNAV__", _page_topnav(role, "docs"))
+             .replace("__SHEET_BTN__", btn).replace("__WARN__", warn)
+             .replace("__TITLE__", h(f"{name} 證件" if name else f"{idv} 證件"))
+             .replace("__ADAPTER__", adapter))
+    return HTMLResponse(html_)
 
-    def _card(r):
-        if r["real_type"].startswith("image/") and r["real_type"] != "image/heic":
-            thumb = (f'<a href="/archive/file/{r["id"]}" target="_blank"><img src="/archive/file/{r["id"]}" loading="lazy" '
-                     f'data-vw="/archive/file/{r["id"]}" data-t="{h(r["show_label"])}"></a>')
-        else:
-            thumb = f'<a href="/archive/file/{r["id"]}" target="_blank" style="display:block;padding:50px 0">📄 開檔案</a>'
-        if r.get("manual_label"):
-            tag = '<span style="color:#15803d">✔ 人工確認</span>'
-        elif r.get("ai_label"):
-            tag = f'<span style="color:#1a5f92" title="{h(r.get("ai_note") or "")}">🤖 AI 判讀</span>'
-        elif (r.get("ai_note") or "").startswith("判讀失敗"):
-            tag = f'<span style="color:#dc2626">⚠️ {h(r["ai_note"][:60])}</span>'
-        else:
-            tag = '<span style="color:#b45309">原標籤（未判讀）</span>'
-        sel = (f'<select onchange="setLbl({r["id"]},this.value)" style="margin-top:4px;font-size:12px;max-width:100%">'
-               f'<option value="">改成…</option>{_opts}</select>')
-        return (f'<div class="doc">{thumb}<div style="margin-top:4px;font-weight:700">{h(r["show_label"])}</div>'
-                f'<div class="muted">{tag}｜{h(r["source"] or "")} {h((r["remote_created_at"] or "")[:10])}</div>{sel}</div>')
 
-    err = res.get("error") or ""
-    warn = f'<div class="card" style="color:#b45309">⚠️ {h(err)}</div>' if err else ""
-    newtxt = f'（剛補拉 {res.get("new")} 張）' if res.get("new") else ""
-    sheet_btn = (f'<a class="btn s" href="/customer-pdf?case_id={h(cust["case_id"])}" target="_blank">📋 客戶資料表</a>'
-                 if cust else '<span class="muted">（行政系統還沒有這位客人的資料，PDF 不會有客戶資料表）</span>')
-    contract_html = (f'<details style="margin-top:16px"><summary class="muted" style="cursor:pointer">'
-                     f'已排除 {len(contracts)} 份判讀成委任合約／簽名的（合約請到業務 AI 看；判錯的點開用「改成…」改回）</summary>'
-                     f'<div class="grid" style="margin-top:8px">{"".join(_card(r) for r in contracts)}</div></details>') if contracts else ""
-    body = f"""<h2>📎 {h(name)} {h(idv)} 的證件</h2>
-<div class="card"><div>證件共 {len(rows)} 張{newtxt}：{h(_docs_label_summary(rows))}</div>
-<div style="margin-top:8px">{sheet_btn}
-<a class="btn g" href="/archive/{h(idv)}/pdf">⬇ 下載整理好的 PDF（含客戶資料表）</a>
-<a class="btn" href="/archive/{h(idv)}/zip">⬇ 下載全部照片（{h(folder)}）</a>
-<a class="btn s" href="/archive/{h(idv)}?refresh=1">🔄 從業務 AI 重新拉</a>
-<button class="btn" style="background:#6d28d9" onclick="aiAll(this)">🤖 AI 判讀全部</button></div>
-<div class="muted" style="margin-top:6px">點照片放大（可以＋－、上一張／下一張）。名稱判錯：用每張下面的「改成…」選對的，改過的以人工為準，AI 重判也不會蓋掉。</div></div>
-{warn}<div class="grid">{''.join(_card(r) for r in rows) or '<div class="muted">業務 AI 那邊還沒有這位客人的證件</div>'}</div>
-{contract_html}
-{_DOCS_VIEWER_JS}
-<script>
-function setLbl(pk, v){{ if(!v) return;
-  fetch('/archive/doc/'+pk+'/label',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{label:v}})}})
-   .then(r=>r.json()).then(d=>{{ if(d.ok) location.reload(); else alert(d.error||'失敗'); }}); }}
-function aiAll(btn){{ btn.disabled=true; btn.textContent='🤖 判讀中…';
-  fetch('/archive/{h(idv)}/classify',{{method:'POST'}}).then(r=>r.json()).then(d=>{{
-    if(!d.ok){{ alert(d.error||'失敗'); btn.disabled=false; btn.textContent='🤖 AI 判讀全部'; return; }}
-    if(d.done!==undefined){{ location.reload(); return; }}
-    poll(btn); }}).catch(e=>{{ poll(btn); }}); }}
-function poll(btn){{
-  fetch('/archive/{h(idv)}/classify-status').then(r=>r.json()).then(d=>{{
-    btn.textContent='🤖 判讀中 '+d.done+'/'+d.total+'…';
-    if(d.running){{ setTimeout(()=>poll(btn),2000); return; }}
-    if(d.errors&&d.errors.length) alert('判讀完成，失敗 '+d.errors.length+' 張（縮圖下面有紅字原因）');
-    location.reload(); }}).catch(e=>setTimeout(()=>poll(btn),3000)); }}
+def _docs_pick(rows, ids: str):
+    """?ids=1,2,3 → 只留勾選的（照原本順序）；沒給就全部"""
+    want = {x.strip() for x in (ids or "").split(",") if x.strip()}
+    return [r for r in rows if str(r["id"]) in want] if want else rows
+
+
+# 介面分組（證件管理介面的分頁）
+_DOC_GROUP = {"身分證正面": "identity", "身分證反面": "identity", "健保卡": "identity", "駕照": "identity",
+              "身分證查詢截圖": "identity",
+              "存摺封面": "finance", "勞保明細": "finance", "存摺內頁明細": "finance", "薪資證明": "finance",
+              "401報表或營登": "finance", "權狀或謄本": "finance", "信用卡正面": "finance", "信用卡反面": "finance",
+              "信用卡帳單": "finance", "汽車繳息": "finance",
+              "行照": "vehicle", "人車合照": "vehicle", "強制險": "vehicle", "手機型號": "vehicle", "IMEI": "vehicle",
+              "人與手機合照": "vehicle", "委任合約": "contract", "電子簽名": "contract", "其他": "other"}
+
+
+def _doc_payload(r, order: int) -> dict:
+    """給介面的一筆資料（介面規格：證件管理_串接說明.txt）"""
+    failed = (r.get("ai_note") or "").startswith("判讀失敗") and not r.get("ai_label") and not r.get("manual_label")
+    lb = r.get("manual_label") or r.get("ai_label") or ""
+    if not lb:   # 還沒判讀：業務 AI 的原標籤對得到清單就先用，對不到放「其他」並標「未判讀」
+        lb = r.get("label") if (r.get("label") or "") in _DOC_CATS else "其他"
+    is_img = r["real_type"].startswith("image/") and r["real_type"] != "image/heic"
+    return {"id": str(r["id"]), "category": lb, "source": "form" if "申請書" in (r.get("source") or "") else "chat",
+            "date": (r.get("remote_created_at") or r.get("pulled_at") or "")[:10],
+            "kind": "image" if is_img else "file",
+            "previewUrl": f"/archive/file/{r['id']}" if is_img else "", "fileUrl": f"/archive/file/{r['id']}",
+            "isManual": bool(r.get("manual_label")), "order": order,
+            "error": (r.get("ai_note") or "") if failed else "",
+            "unclassified": not (r.get("manual_label") or r.get("ai_label")) and not failed}
+
+
+def _docs_payload(idv: str) -> list:
+    return [_doc_payload(r, n) for n, r in enumerate(_docs_rows(idv), 1)]
+
+
+try:
+    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "ui", "archive_gallery.html"), encoding="utf-8") as _fp:
+        _ARCHIVE_UI = _fp.read()
+except Exception as _e:
+    _ARCHIVE_UI = ""
+    print(f"[證件] 讀不到 ui/archive_gallery.html：{_e}")
+
+_ARCHIVE_ADAPTER = """<script>
+(function(){
+ const ID=__ID__, G=window.DocumentGallery;
+ const go=(u)=>{location.href=u;};
+ const q=(p)=>(p&&p.scope==='selected'&&p.ids.length)?('?ids='+encodeURIComponent(p.ids.join(','))):'';
+ async function load(refresh){const r=await fetch('/archive/'+ID+'/data'+(refresh?'?refresh=1':''));const d=await r.json();
+   if(!d.ok)throw new Error(d.error||'讀取失敗'); if(d.error)alert('⚠️ '+d.error); return d;}
+ function wait(){return new Promise(res=>{const lab=document.querySelector('#classifyAll span');
+   (function tick(){fetch('/archive/'+ID+'/classify-status').then(r=>r.json()).then(d=>{
+     if(lab)lab.textContent='判讀中 '+d.done+'/'+d.total+'…';
+     if(d.running){setTimeout(tick,2000);return;} if(lab)lab.textContent='AI 判讀全部';
+     if(d.errors&&d.errors.length)alert('判讀完成，失敗 '+d.errors.length+' 張（卡片會標「判讀失敗」）'); res();
+   }).catch(()=>setTimeout(tick,3000));})();});}
+ G.setActions({
+  downloadPdf:async p=>{go('/archive/'+ID+'/pdf'+q(p));},
+  downloadImages:async p=>{go('/archive/'+ID+'/zip'+q(p));},
+  refetch:async p=>{const d=await load(true);return {replace:true,documents:d.documents,total:d.documents.length};},
+  classifyAll:async p=>{const r=await (await fetch('/archive/'+ID+'/classify',{method:'POST'})).json();
+    if(!r.ok){alert(r.error||'失敗');return null;} if(r.done===undefined)await wait();
+    const d=await load(false);return {replace:true,documents:d.documents,total:d.documents.length};},
+  classifyOne:async p=>{const r=await (await fetch('/archive/doc/'+p.ids[0]+'/classify',{method:'POST'})).json();
+    if(!r.ok){alert(r.error||'失敗');return null;} return {documents:[r.document]};},
+  openFile:async p=>{window.open('/archive/file/'+p.ids[0],'_blank');},
+  saveCategory:async x=>{const r=await (await fetch('/archive/doc/'+x.id+'/label',{method:'POST',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({label:x.category})})).json(); if(!r.ok)throw new Error(r.error||'失敗');},
+ });
+ G.setData({customerId:__SHOW__,total:__TOTAL__,documents:__DOCS__,demo:false});
+})();
 </script>"""
-    return _docs_page(role, f"{name} 證件", body)
 
 
 def _doc_is_contract(r) -> bool:

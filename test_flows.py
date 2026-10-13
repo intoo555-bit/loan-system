@@ -1868,11 +1868,18 @@ def _fake_fetch(doc_id, idv):
     return _png((int(doc_id) * 10 % 255, 80, 120)), "image/png", ""
 m._bizai_fetch = _fake_fetch
 
+_cards = []
+_orig_flex = m.push_flex
+def _fake_flex(gid, alt, contents):
+    _cards.append((gid, alt, contents)); pushes.append((gid, alt)); return True, ""
+m.push_flex = _fake_flex
 bc("10/13-證件甲 E300000001", gid="TEST_B")
-_pm = [t for g, t in pushes if "📎" in t]
-check("建檔後群組貼一則「📎 收件」", len(_pm) == 1 and pushes[0][0] == "TEST_B", pushes)
-check("收件訊息有張數、文件清單、永久連結", _pm and "收件（3 張）" in _pm[0] and "身分證正面" in _pm[0]
-      and "/archive/E300000001" in _pm[0], _pm)
+check("建檔後群組貼一張「📎 收件」卡片（只算 1 則）", len(_cards) == 1 and _cards[0][0] == "TEST_B", _cards)
+_cj = json.dumps(_cards[0][2], ensure_ascii=False) if _cards else ""
+check("卡片：通知文字有姓名、身分證、張數", _cards and "證件甲" in _cards[0][1] and "E300000001" in _cards[0][1]
+      and "收件（3 張）" in _cards[0][1], _cards and _cards[0][1])
+check("卡片：有「看證件」按鈕連到證件頁", '"uri"' in _cj and "/archive/E300000001" in _cj and "看證件" in _cj)
+check("卡片：還沒判讀的會寫「未分類」提醒", "3 張未分類" in _cj, _cj[:300])
 check("下載時一定帶身分證（業務 AI 會比對，不帶拿不到）", _fetch_calls and all(i == "E300000001" for _d, i in _fetch_calls), _fetch_calls)
 _rows = m._docs_rows("E300000001")
 check("照片存進自己的磁碟（一位客人一個資料夾）", len(_rows) == 3 and all(os.path.isfile(r["file_path"]) and
@@ -1901,7 +1908,18 @@ check("存檔清單頁：一位客人一列", _r.status_code == 200 and "證件�
 _r = _tc73.get("/archive", params={"q": "E300000001"})
 check("存檔清單可以用身分證搜尋", "證件甲" in _r.text)
 _r = _tc73.get("/archive/E300000001")
-check("客人證件頁：每張都有縮圖", _r.status_code == 200 and _r.text.count('<img src="/archive/file/') == 4, _r.text.count("<img"))
+_d73 = _tc73.get("/archive/E300000001/data").json()["documents"]
+check("客人證件頁（新介面）打得開、資料有 4 張都有縮圖", _r.status_code == 200 and "DocumentGallery" in _r.text and
+      len(_d73) == 4 and all(d["previewUrl"].startswith("/archive/file/") for d in _d73), _d73)
+import re as _re73
+check("新介面：設計稿的示範證件縮圖沒有帶上正式站", not _re73.search(r"base64,[A-Za-z0-9+/]{200,}", _r.text)
+      and '"d01"' not in _r.text)
+check("新介面：分類下拉是我們的 24 種", "人車合照" in _r.text and "強制險" in _r.text)
+_ids = ",".join(d["id"] for d in _d73[:2])
+_rz = _tc73.get("/archive/E300000001/zip", params={"ids": _ids})
+import zipfile as _zf73
+check("只下載勾選的照片（勾 2 張 → 壓縮檔 2 張）", len(_zf73.ZipFile(_io73.BytesIO(_rz.content)).namelist()) == 2
+      if _rz.status_code == 200 else False, _rz.status_code)
 _pk = m._docs_rows("E300000001")[0]["id"]
 _r = _tc73.get(f"/archive/file/{_pk}")
 check("單張照片打得開", _r.status_code == 200 and _r.headers.get("content-type", "").startswith("image/"))
@@ -1929,6 +1947,19 @@ bc("10/13-證件丁 E300000001", gid="TEST_C_GRP")
 check("試用期：建檔照樣拉照片，但不在群組貼收件訊息", not any("📎" in t for g, t in pushes), pushes)
 check("沒上鎖的 API 說明頁已關（/docs、/openapi.json）",
       TestClient(m.app).get("/docs").status_code == 404 and TestClient(m.app).get("/openapi.json").status_code == 404)
+_c = sqlite3.connect(TEST_DB)
+_c.execute("UPDATE customer_docs SET ai_label=label WHERE id_no='E300000001'")
+_c.commit(); _c.close()
+_alt, _card = m._docs_flex("E300000001", "證件甲")
+_cj = json.dumps(_card, ensure_ascii=False)
+check("判讀過的證件在卡片上打勾列出", "✅" in _cj and "身分證正面" in _cj, _cj[:300])
+m.check_auth = lambda req: "admin"
+_cards.clear()
+m.get_notify_group_ids = (lambda _o: (lambda: ["TEST_NOTIFY"]))(m.get_notify_group_ids)
+_rp = TestClient(m.app).post("/archive/E300000001/card-preview").json()
+check("「收件卡片預覽」傳到系統通知群（業務群收不到）", _rp.get("ok") and _cards and _cards[0][0] == "TEST_NOTIFY"
+      and _cards[0][1].startswith("【預覽】"), (_rp, _cards[:1]))
+m.push_flex = _orig_flex
 m.check_auth = _old_auth
 m._bizai_list, m._bizai_fetch = _orig_list, _orig_fetch
 m._DOCS_SYNC = False
@@ -1961,8 +1992,8 @@ check("業務 AI 標成圖片的 PDF，看檔案內容認出是 PDF", _rows["21"
 check("存檔時就照真正類型存（.pdf）", _rows["21"]["file_path"].endswith(".pdf"), _rows["21"]["file_path"])
 m.check_auth = lambda req: "admin"
 _tc74 = TestClient(m.app)
-_html = _tc74.get("/archive/E300000005").text
-check("證件頁：PDF 顯示「開檔案」、不會破圖", f'<img src="/archive/file/{_rows["21"]["id"]}"' not in _html and "開檔案" in _html)
+_d21 = [d for d in _tc74.get("/archive/E300000005/data").json()["documents"] if d["id"] == str(_rows["21"]["id"])][0]
+check("證件頁：PDF 當「檔案」不當圖片（不會破圖）", _d21["kind"] == "file" and _d21["previewUrl"] == "", _d21)
 _pdf = _tc74.get("/archive/E300000005/pdf")
 check("整理好的 PDF：合約 5 頁完整併進去（5＋2 張照片＝7 頁）",
       len(_pp73.PdfReader(_io73.BytesIO(_pdf.content)).pages) == 7, _pdf.status_code)
@@ -1996,7 +2027,7 @@ _tc74.post("/archive/E300000005/classify")
 _pdf2 = _tc74.get("/archive/E300000005/pdf")
 check("AI 判讀成委任合約的 → 不放進整理好的 PDF（剩 2 張照片）",
       len(_pp73.PdfReader(_io73.BytesIO(_pdf2.content)).pages) == 2, len(_pp73.PdfReader(_io73.BytesIO(_pdf2.content)).pages))
-check("證件頁把合約收在「已排除」區", "已排除 1 份" in _tc74.get("/archive/E300000005").text)
+check("判讀成合約的歸在「合約」分頁", any(d["category"] == "委任合約" for d in _tc74.get("/archive/E300000005/data").json()["documents"]))
 _r22 = [r for r in m._docs_rows("E300000005") if r["remote_doc_id"] == "22"][0]
 check("AI 重判不會蓋掉人工改的（那張還是強制險）", _r22["show_label"] == "強制險" and _r22["manual_label"] == "強制險",
       (_r22["show_label"], _r22["ai_label"], _r22["manual_label"]))
@@ -2014,8 +2045,14 @@ os.environ["ANTHROPIC_API_KEY"] = "fake-key-for-test"
 m._ai_doc_request = _bad
 _r = _tc74.post("/archive/E300000005/classify").json()
 check("判讀失敗會回報有幾張失敗", len(_r.get("errors", [])) == 3, _r)
-_html = _tc74.get("/archive/E300000005").text
-check("判讀失敗的那張，縮圖下面紅字寫原因（不可以默默空著）", "判讀失敗" in _html and "529" in _html)
+_c = sqlite3.connect(TEST_DB); _c.execute("UPDATE customer_docs SET ai_label=NULL WHERE id_no='E300000005' AND remote_doc_id='23'"); _c.commit(); _c.close()
+_tc74.post("/archive/E300000005/classify")
+_d23 = [d for d in _tc74.get("/archive/E300000005/data").json()["documents"] if d["id"] == str(_rows["23"]["id"])][0]
+check("判讀失敗的那張，卡片標判讀失敗＋原因（不可以默默空著）", "判讀失敗" in _d23["error"] and "529" in _d23["error"], _d23)
+m._ai_doc_request = lambda block, prompt: '{"type": "存摺封面", "note": "x"}'
+_r1 = _tc74.post(f"/archive/doc/{_rows['23']['id']}/classify").json()
+check("單張重新判讀（介面「重新判讀」）", _r1.get("ok") and _r1["document"]["category"] == "存摺封面" and not _r1["document"]["error"], _r1)
+check("人工分類過的那張不重新判讀", _tc74.post(f"/archive/doc/{_pk22}/classify").json().get("ok") is False)
 os.environ.pop("ANTHROPIC_API_KEY", None)
 m._DOCS_SYNC = False
 m._ai_doc_request = _orig_ai

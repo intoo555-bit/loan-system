@@ -1,0 +1,444 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<meta name="referrer" content="no-referrer">
+<title>__TITLE__</title>
+<style>
+:root{
+ --bg:#f3f6f8; --surface:#fff; --ink:#223747; --muted:#718392;
+ --line:#dfe7ec; --soft:#edf2f5; --accent:#167f87; --accent-dark:#126c73;
+ --accent-soft:#e6f5f4; --violet:#7755bc; --violet-soft:#f1edfa;
+ --amber:#a36a19; --amber-soft:#fff6e7; --radius:14px;
+ font-family: Inter,"Noto Sans CJK TC","Noto Sans TC","PingFang TC","Microsoft JhengHei",sans-serif;
+ font-synthesis:none;
+}
+*{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--ink);font-size:14px;-webkit-font-smoothing:antialiased}
+button,input,select{font:inherit} button{cursor:pointer} button:disabled{cursor:wait;opacity:.55} a{color:var(--accent)}
+button,input,select{outline:none} :focus-visible{outline:3px solid #7cc4c7;outline-offset:3px}
+button{touch-action:manipulation} [hidden]{display:none!important}
+svg.icon{width:18px;height:18px;flex:0 0 auto;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.wrap{width:min(1360px,100%);margin:auto;padding:26px 28px 22px}
+.heading{display:flex;align-items:center;justify-content:space-between;gap:20px;margin-bottom:18px}
+.heading-left{display:flex;gap:13px;align-items:center;min-width:0}
+.heading-mark{height:48px;width:48px;border:1px solid #d1e8e8;border-radius:14px;background:#e5f2f2;display:grid;place-items:center;color:var(--accent);flex:0 0 auto}
+.heading-mark .icon{width:25px;height:25px}
+h1{margin:0;font-size:23px;letter-spacing:-.45px;font-weight:750;line-height:1.35}
+h1 .suffix{font-weight:500;font-size:19px;margin-left:7px}
+.subheading{color:var(--muted);font-size:12px;margin-top:5px;display:flex;align-items:center;gap:8px}
+.preview-pill{font-size:11px;border:1px solid var(--line);background:#fff;color:var(--muted);border-radius:5px;line-height:1.6;padding:0 5px}
+.separator{color:#bec9d1}
+.view-switch{display:flex;padding:3px;gap:3px;border:1px solid var(--line);border-radius:10px;background:#e9eff2}
+.view-switch button{width:33px;height:32px;display:grid;place-items:center;border:0;background:none;color:#8b99a3;border-radius:7px}
+.view-switch button.active{background:#fff;color:var(--accent);box-shadow:0 1px 4px #20394d12}
+.toolbar{padding:13px 16px 11px;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius)}
+.actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.action{display:inline-flex;gap:7px;align-items:center;justify-content:center;border:1px solid var(--line);border-radius:8px;padding:0 14px;height:38px;background:#fff;color:#3d5363;font-weight:600;font-size:13px;white-space:nowrap;transition:background .15s,border-color .15s}
+.action:hover{background:#f5f9fa;border-color:#b5c8d1}
+.action.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.action.primary:hover{background:var(--accent-dark)}
+.action.ai{background:var(--violet-soft);border-color:#e1d8f2;color:#6847ab}
+.action.ai:hover{background:#e9e1f8;border-color:#c9b6e8}
+.action.quiet{background:#f8fafb}
+.toolbar-note{margin-top:9px;display:flex;align-items:center;gap:6px;font-size:11px;color:var(--muted);line-height:1.5}
+.toolbar-note .icon{width:13px;height:13px;color:#78948f}
+.filters{display:flex;justify-content:space-between;gap:16px;align-items:center;margin-top:18px;min-height:36px}
+.tabs{display:flex;gap:3px;overflow:auto;scrollbar-width:none;min-width:0}
+.tabs::-webkit-scrollbar{display:none}
+.tab{border:1px solid transparent;background:transparent;border-radius:8px;display:inline-flex;align-items:center;gap:6px;white-space:nowrap;color:#687d8b;font-size:12px;font-weight:550;padding:8px 10px;line-height:18px}
+.tab:hover{background:#e9eff2}
+.tab.active{color:#116f77;background:#e0f0f0;border-color:#c8e4e4;font-weight:650}
+.tab-count{font-family:Inter,Arial,sans-serif;font-size:11px;line-height:18px;min-width:18px;padding:0 4px;border-radius:5px;color:#82919b;background:#e9eef1;font-weight:600}
+.tab.active .tab-count{color:#167d83;background:#fff}
+.filter-right{display:flex;gap:9px;align-items:center;flex:0 0 auto}
+.pending-toggle{display:flex;align-items:center;gap:5px;border:1px solid #efdfc2;background:#fff9ef;color:var(--amber);padding:0 10px;border-radius:8px;height:34px;font-size:12px;white-space:nowrap}
+.pending-toggle .icon{width:14px;height:14px}
+.pending-toggle.active{background:#fcebd0;border-color:#d6ad69}
+.searchbox{height:34px;width:178px;background:#fff;border:1px solid var(--line);border-radius:8px;display:flex;align-items:center;gap:7px;padding:0 10px;color:#9aa8b0}
+.searchbox .icon{height:15px;width:15px}
+.searchbox input{width:100%;min-width:0;background:none;border:0;color:var(--ink);font-size:12px}
+.searchbox input::placeholder{color:#94a1aa}
+.list-tools{display:flex;align-items:center;justify-content:space-between;gap:12px;color:#7c8c97;font-size:11px;margin:11px 1px 12px;min-height:22px}
+.selection{display:flex;align-items:center;gap:10px}
+.check-label{display:inline-flex;align-items:center;gap:7px;cursor:pointer;color:#647b88;white-space:nowrap}
+input[type=checkbox]{appearance:none;-webkit-appearance:none;width:16px;height:16px;margin:0;border:1.5px solid #bfcbd4;border-radius:4px;display:inline-grid;place-items:center;background:#fff;cursor:pointer;flex:0 0 auto}
+input[type=checkbox]:checked{background:var(--accent);border-color:var(--accent)}
+input[type=checkbox]:checked:after{content:"";width:7px;height:4px;border:solid white;border-width:0 0 2px 2px;transform:translateY(-1px) rotate(-45deg)}
+input[type=checkbox]:indeterminate:after{content:"";width:8px;height:2px;background:var(--accent)}
+.text-button{background:none;border:0;padding:0;color:var(--accent);font-size:11px;line-height:1.6}
+.sort-group{display:flex;align-items:center;gap:12px}
+.mini-select{color:#748995;border:0;background:transparent;max-width:132px;font-size:11px;padding:2px 0;cursor:pointer}
+.grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:13px}
+.card{border:1px solid var(--line);border-radius:12px;background:#fff;min-width:0;overflow:hidden;position:relative;transition:border-color .15s,box-shadow .15s}
+.card:hover{border-color:#b7cbd3;box-shadow:0 4px 16px #29425308}
+.card.selected{border-color:#56aeb2;box-shadow:0 0 0 1px #56aeb2}
+.media{margin:7px 7px 0;position:relative;aspect-ratio:1.53;border:1px solid #ebf0f3;background:#f1f4f6;border-radius:7px;overflow:hidden;display:flex;align-items:center;justify-content:center;padding:0;width:calc(100% - 14px);color:#8298a5}
+.media img{display:block;width:100%;height:100%;object-fit:contain;padding:6px;filter:saturate(.86);transition:filter .2s}
+.media:hover img{filter:saturate(1)}
+.media .open-hint{position:absolute;right:6px;bottom:6px;width:26px;height:26px;background:#ffffffeb;border:1px solid #e3eaee;border-radius:7px;display:grid;place-items:center;color:#6b8492;opacity:0;transition:opacity .15s;box-shadow:0 1px 4px #0001}
+.card:hover .open-hint,.media:focus-visible .open-hint{opacity:1}
+.media .open-hint .icon{width:14px;height:14px}
+.card-check{position:absolute;left:15px;top:15px;z-index:1;padding:3px;line-height:0;background:#ffffffdb;border-radius:6px;box-shadow:0 1px 3px #2543540b}
+.card-number{position:absolute;right:15px;top:15px;background:#ffffffd9;border:1px solid #e7edf0;border-radius:5px;padding:2px 5px;color:#96a4ae;font-size:10px;line-height:1.1;font-family:Arial,sans-serif;pointer-events:none}
+.body{padding:10px 11px 11px;min-width:0}
+.card-title{margin:0;color:#2a4050;font-size:14px;font-weight:650;line-height:21px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.meta{display:flex;align-items:center;gap:5px;font-size:11px;color:#6d8190;margin-top:3px;line-height:17px;white-space:nowrap}
+.meta .icon{width:11px;height:11px;color:#95a7b0}
+.meta .dot{font-size:10px;color:#c4cdd3}
+.card-bottom{display:flex;align-items:center;justify-content:space-between;gap:4px;margin-top:9px}
+.status{display:inline-flex;align-items:center;gap:3px;font-size:11px;color:#6d8594;white-space:nowrap}
+.status .icon{width:12px;height:12px;color:#a18ac3}
+.status.manual{color:#17818a}.status.manual .icon{color:#17818a}
+.status.failed{color:#a56e1f}.status.failed .icon{color:#d4a143}
+.change{position:relative;display:inline-flex;align-items:center;gap:3px;padding:4px 6px;border:1px solid #e4ebef;border-radius:6px;font-size:11px;color:#657e8d;background:#fff;line-height:16px;white-space:nowrap}
+.change .icon{width:11px;height:11px}
+.change select{position:absolute;inset:0;opacity:0;width:100%;cursor:pointer;font-size:13px}
+.change:focus-within{outline:3px solid #7cc4c7;outline-offset:2px}
+.file-media{background:linear-gradient(135deg,#f5f8fb,#edf2f7);border-color:#e5edf2}
+.file-figure{display:flex;flex-direction:column;align-items:center;gap:8px}
+.file-illustration{height:56px;width:45px;position:relative;border-radius:6px;background:#fff;border:1.4px solid #bfccd6;box-shadow:0 3px 6px #28405409;color:#98aabc}
+.file-illustration:before{content:"";position:absolute;top:-1px;right:-1px;width:13px;height:13px;background:#edf2f7;border:1.3px solid #bfccd6;border-width:0 0 1.3px 1.3px;border-radius:0 5px 0 3px}
+.file-illustration:after{content:"";position:absolute;width:22px;height:2px;background:#c4d0da;left:10px;top:24px;box-shadow:0 7px 0 #c4d0da,0 14px 0 #dbe3e9}
+.file-figure .file-caption{font-size:10px;color:#8d9ca8;display:flex;align-items:center;gap:4px}
+.file-caption .icon{width:11px;height:11px}
+.error-media{background:#fdf8f0;border-color:#f0e3cf}
+.error-figure{display:flex;align-items:center;flex-direction:column;gap:8px;color:#b19266}
+.error-figure>.icon{height:31px;width:31px;stroke-width:1.4}
+.error-figure span{font-size:11px}
+.card.error-card{border-color:#e7dbca}
+.card.error-card:hover{border-color:#ceb28a}
+.error-card .status{cursor:pointer;background:transparent;border:0;padding:0;text-align:left}
+.blank{padding:65px 20px;text-align:center;border:1px dashed #ccd8df;border-radius:12px;color:#8496a1;background:#f9fbfc}
+.blank>.icon{height:36px;width:36px;color:#a5bbc6}.blank h2{font-weight:550;color:#5b7484;font-size:16px;margin:14px 0 8px}.blank p{font-size:12px}
+.page-foot{display:flex;align-items:center;justify-content:space-between;gap:14px;font-size:10px;color:#99a8b2;margin-top:16px;line-height:1.7}
+.page-foot .left{display:flex;gap:5px;align-items:center}.page-foot .icon{height:12px;width:12px}
+/* Compact list view shares the same DOM and real controls. */
+.grid.list-view{grid-template-columns:1fr;gap:8px}
+.list-view .card{display:flex;align-items:center;min-height:88px;padding-left:36px}
+.list-view .media{width:102px;min-width:102px;height:72px;aspect-ratio:auto;margin:7px}
+.list-view .card-check{left:13px;top:50%;transform:translateY(-50%);padding:0;background:transparent;box-shadow:none}
+.list-view .card-number{display:none}
+.list-view .body{display:grid;align-items:center;grid-template-columns:minmax(130px,1fr) minmax(175px,1fr) 190px;gap:20px;padding:12px 20px;flex:1}
+.list-view .meta,.list-view .card-bottom{margin:0}.list-view .card-title{font-size:14px}.list-view .file-illustration{height:40px;width:32px}.list-view .file-caption{display:none}
+.list-view .file-illustration:after{width:15px;left:7px;top:17px;box-shadow:0 6px 0 #c4d0da}.list-view .file-illustration:before{width:10px;height:10px}.list-view .error-figure{gap:3px}.list-view .error-figure>.icon{width:22px;height:22px}
+/* Image viewer: never pretends that the screenshot is an original file. */
+dialog{padding:0;border:1px solid #dee7ec;border-radius:16px;color:var(--ink);box-shadow:0 24px 100px #132d4459;background:#fff;max-width:calc(100vw - 32px);overscroll-behavior:contain}
+dialog::backdrop{background:#182b3dc4;backdrop-filter:blur(4px)}
+.viewer{width:990px;height:min(650px,88vh);max-height:88dvh;overflow:hidden}
+.dialog-top{height:59px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;padding:0 20px;gap:15px}
+.dialog-top h2{font-size:16px;margin:0;display:flex;gap:10px;align-items:center}.dialog-top .index{font-size:11px;color:#8c9ca7;font-weight:400}
+.icon-btn{width:32px;height:32px;border:1px solid transparent;border-radius:7px;display:inline-flex;align-items:center;justify-content:center;background:transparent;color:#718793}
+.icon-btn:hover{background:#eff4f7;border-color:#e4ebf0}.dialog-tools{display:flex;gap:4px}
+.viewer-body{display:grid;grid-template-columns:minmax(0,1fr) 242px;height:calc(100% - 59px)}
+.preview-stage{background:#eef2f5;position:relative;display:flex;align-items:center;justify-content:center;min-width:0;overflow:hidden}
+.preview-stage img{max-width:75%;max-height:75%;object-fit:contain;transition:transform .15s;transform-origin:center}
+.stage-caption{position:absolute;top:15px;left:15px;color:#7d92a0;background:#ffffffdc;border:1px solid #e2e9ee;border-radius:6px;font-size:10px;padding:4px 7px;z-index:1}
+.nav-arrow{position:absolute;top:50%;transform:translateY(-50%);width:32px;height:40px;background:#ffffffea;border:1px solid #dee7eb;border-radius:9px;color:#597787;display:grid;place-items:center;z-index:2}
+.nav-arrow.prev{left:12px}.nav-arrow.next{right:12px}.nav-arrow:disabled{opacity:.28}
+.zoom-controls{position:absolute;bottom:16px;left:50%;transform:translateX(-50%);display:flex;align-items:center;padding:4px;gap:9px;border:1px solid #dae4e9;border-radius:9px;background:#fff;z-index:2;color:#728895;font-size:11px}
+.zoom-controls button{background:none;border:0;padding:3px;display:flex;color:#718792}.zoom-controls button .icon{height:16px;width:16px}
+.preview-aside{border-left:1px solid var(--line);padding:21px 18px;display:flex;flex-direction:column;overflow:auto;font-size:12px}
+.detail-field{margin-bottom:20px}.detail-field .label{display:block;color:#92a1ab;font-size:11px;margin-bottom:6px}.detail-field .value{color:#405a6c;line-height:1.7}
+.detail-select{width:100%;border:1px solid var(--line);border-radius:7px;padding:8px 9px;background:#fff;font-size:12px;color:#3f5b6d}
+.preview-aside .status{margin-top:8px}.preview-aside .action{width:100%;font-size:12px;padding:0 9px;min-height:35px;height:35px}
+.aside-note{font-size:10px;color:#91a1ac;line-height:1.8;margin-top:10px}.aside-bottom{margin-top:auto}
+.stage-empty{padding:40px;text-align:center;color:#879ba7;max-width:300px;line-height:1.9}
+.stage-empty .icon{width:44px;height:44px;color:#a8b7c0}.stage-empty h3{font-weight:550;color:#566f81;font-size:16px;margin:16px 0 8px}.stage-empty p{font-size:12px}
+details.error-detail{color:#a17745;margin:12px 0;font-size:10px;border:1px solid #f0e1ca;background:#fff9ef;padding:8px;border-radius:6px;line-height:1.7;overflow-wrap:anywhere} details.error-detail summary{cursor:pointer;font-size:11px}
+.connection{width:435px;max-width:calc(100vw - 36px)}.connection-body{padding:23px}.connection h2{font-size:17px;margin:0 0 13px}.connection p{font-size:13px;line-height:1.85;color:#738995;margin:0 0 14px}.connection .connect-icon{height:43px;width:43px;border:1px solid #daebed;background:#eef8f8;border-radius:12px;display:grid;place-items:center;color:var(--accent);margin-bottom:15px}
+.connection-footer{padding:12px 20px;background:#f8fafb;border-top:1px solid var(--line);display:flex;justify-content:flex-end}.connection code{font-size:11px;display:block;border:1px solid #e3eaf0;border-radius:7px;background:#f5f8fa;padding:9px;color:#587386;overflow-wrap:anywhere}
+.toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);max-width:calc(100vw - 32px);border-radius:10px;padding:12px 18px;background:#253e4eed;color:#fff;box-shadow:0 7px 22px #172f4130;display:flex;align-items:center;gap:8px;font-size:12px;z-index:10;backdrop-filter:blur(8px)}
+.toast .icon{width:16px;height:16px;color:#9bdfd5}.toast[hidden]{display:none}
+@media(min-width:1600px){.wrap{padding-top:34px}}
+@media(max-width:1090px){.wrap{padding:22px}.grid{grid-template-columns:repeat(5,minmax(0,1fr))}.filters{flex-wrap:wrap;gap:10px}.tabs{flex:1}.searchbox{width:170px}.filter-right{margin-left:auto}.list-view .body{gap:12px;grid-template-columns:minmax(120px,1fr) minmax(130px,1fr) 160px}}
+@media(max-width:870px){.grid{grid-template-columns:repeat(4,minmax(0,1fr))}.viewer-body{grid-template-columns:minmax(0,1fr) 215px}.list-view .body{grid-template-columns:1fr 160px}.list-view .meta{grid-column:1;grid-row:2}.list-view .card-bottom{grid-column:2;grid-row:1 / span 2}.list-view .body{row-gap:4px}}
+@media(max-width:690px){.wrap{padding:18px 15px}.grid{grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.filters{display:block}.filter-right{justify-content:space-between;margin-top:10px}.searchbox{flex:1;width:auto}.tabs{padding-bottom:2px}.heading h1{font-size:19px}.heading h1 .suffix{font-size:16px}.heading-mark{width:41px;height:41px;border-radius:12px}.heading-left{gap:10px}.toolbar{padding:11px}.action{padding:0 10px;height:36px;font-size:12px}.toolbar-note{font-size:10px}.page-foot{align-items:flex-start;flex-direction:column;gap:3px}.viewer{height:90vh;max-height:90dvh}.viewer-body{grid-template-columns:1fr;grid-template-rows:minmax(200px,1fr) auto}.preview-aside{border-left:0;border-top:1px solid var(--line);padding:13px 16px;display:grid;grid-template-columns:1fr 1fr;gap:10px}.detail-field{margin:0}.aside-bottom{margin:0}.preview-aside .aside-note{display:none}.preview-aside details{margin:0}.dialog-top{padding:0 13px}.zoom-controls{bottom:9px}}
+@media(max-width:490px){.grid{grid-template-columns:repeat(2,minmax(0,1fr))}.heading{gap:6px;margin-bottom:13px}.heading h1{font-size:17px;letter-spacing:-.5px}.heading h1 .suffix{font-size:15px;margin-left:4px}.heading-mark{display:none}.subheading{font-size:11px}.view-switch button{height:27px;width:28px}.view-switch{padding:2px}.actions{display:grid;grid-template-columns:1fr 1fr;gap:7px}.action{width:100%;font-size:11px;padding:0 6px;gap:5px}.action .icon{height:15px;width:15px}.toolbar-note{font-size:10px;gap:4px}.tab{padding:7px 8px;font-size:11px}.list-tools{gap:4px;flex-wrap:wrap}.sort-group{gap:6px}.mini-select{font-size:10px;max-width:97px}.meta{font-size:10px}.body{padding:9px 10px 10px}.list-view .media{width:73px;min-width:73px;height:61px}.list-view .body{display:block;padding:9px 11px 9px 4px}.list-view .card-bottom{margin-top:6px}.list-view .meta{margin-top:2px}.list-view .card{padding-left:28px}.list-view .card-check{left:9px}.preview-aside .detail-field.date-field{display:none}}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{transition:none!important;scroll-behavior:auto!important}}
+</style>
+</head>
+<body>
+__TOPNAV__
+<svg width="0" height="0" style="position:absolute;overflow:hidden" aria-hidden="true"><defs>
+ <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7V5a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/><path d="M3 9h18M8 14h8M8 17h5"/></symbol>
+ <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></symbol>
+ <symbol id="i-list" viewBox="0 0 24 24"><path d="M8 5h13M8 12h13M8 19h13"/><path d="M3 5h.01M3 12h.01M3 19h.01" stroke-width="3"/></symbol>
+ <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3v11m-4-4 4 4 4-4M4 15v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4"/></symbol>
+ <symbol id="i-images" viewBox="0 0 24 24"><rect x="7" y="3" width="14" height="15" rx="2"/><path d="M17 21H5a2 2 0 0 1-2-2V7M7 14l4-4 5 5 3-3 2 2"/><circle cx="16" cy="7" r="1"/></symbol>
+ <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6.1 6.1A8 8 0 0 1 20 12M4 12a8 8 0 0 0 13.9 5.9"/></symbol>
+ <symbol id="i-sparkle" viewBox="0 0 24 24"><path d="m13 3 2.3 6.7L22 12l-6.7 2.3L13 21l-2.3-6.7L4 12l6.7-2.3L13 3ZM4 2v4M2 4h4"/></symbol>
+ <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V6a4 4 0 0 1 8 0v4M12 14v3"/></symbol>
+ <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></symbol>
+ <symbol id="i-warning" viewBox="0 0 24 24"><path d="m10.4 3.8-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.7-3.2l-8-14a1.9 1.9 0 0 0-3.3 0Z"/><path d="M12 9v5M12 17h.01"/></symbol>
+ <symbol id="i-chat" viewBox="0 0 24 24"><path d="M21 11a8.5 8.5 0 0 1-9 8.5 10 10 0 0 1-3-.4L3 21l1.7-5.3A8.1 8.1 0 0 1 3 11a9 9 0 0 1 18 0Z"/><path d="M8 11h.01M12 11h.01M16 11h.01" stroke-width="2.7"/></symbol>
+ <symbol id="i-doc" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6Z"/><path d="M14 2v6h6M8 13h8M8 17h6"/></symbol>
+ <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m7 9 5 5 5-5"/></symbol>
+ <symbol id="i-edit" viewBox="0 0 24 24"><path d="m16 3 5 5-12 12-6 1 1-6L16 3ZM13 6l5 5"/></symbol>
+ <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></symbol>
+ <symbol id="i-external" viewBox="0 0 24 24"><path d="M14 3h7v7M21 3l-10 10M11 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-6"/></symbol>
+ <symbol id="i-image-off" viewBox="0 0 24 24"><path d="M4 4 20 20M7 3h12a2 2 0 0 1 2 2v12M3 7v12a2 2 0 0 0 2 2h12M3 16l5-5M14 14l2-2 5 5"/><circle cx="15" cy="7" r="1"/></symbol>
+ <symbol id="i-x" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+ <symbol id="i-left" viewBox="0 0 24 24"><path d="m15 5-7 7 7 7"/></symbol>
+ <symbol id="i-right" viewBox="0 0 24 24"><path d="m9 5 7 7-7 7"/></symbol>
+ <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+ <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
+ <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+ <symbol id="i-plug" viewBox="0 0 24 24"><path d="M8 3v5M16 3v5M5 8h14v3a7 7 0 0 1-14 0V8ZM12 18v4"/></symbol>
+</defs></svg>
+<main class="wrap">
+ <header class="heading">
+  <div class="heading-left"><div class="heading-mark"><svg class="icon"><use href="#i-folder"/></svg></div>
+   <div><h1><span id="customerId">A100000001</span><span class="suffix">的證件</span></h1>
+   <div class="subheading"><span id="totalCount">共 15 份附件</span><span class="separator">·</span><span id="loadedCount">已載入 12 份</span><span class="preview-pill" id="previewPill" title="截圖可見 12 份；另外 3 份未提供。這是前端預覽，並非已連線的系統。">介面預覽</span></div></div>
+  </div>
+  <div class="view-switch" role="group" aria-label="顯示方式"><button type="button" id="gridView" class="active" aria-label="卡片檢視" aria-pressed="true" title="卡片檢視"><svg class="icon"><use href="#i-grid"/></svg></button><button type="button" id="listView" aria-label="清單檢視" aria-pressed="false" title="清單檢視"><svg class="icon"><use href="#i-list"/></svg></button></div>
+ </header>
+ <section class="toolbar" aria-label="附件操作">
+  <div class="actions">
+   <button type="button" class="action primary" id="downloadPdf"><svg class="icon"><use href="#i-download"/></svg><span>下載整理 PDF</span></button>
+   <button type="button" class="action" id="downloadImages"><svg class="icon"><use href="#i-images"/></svg><span id="downloadLabel">下載全部照片</span></button>
+   <button type="button" class="action quiet" id="refetch"><svg class="icon"><use href="#i-refresh"/></svg><span>從業務 AI 重拉</span></button>
+   __SHEET_BTN__
+   <button type="button" class="action ai" id="classifyAll"><svg class="icon"><use href="#i-sparkle"/></svg><span>AI 判讀全部</span></button>
+  </div>
+  <div class="toolbar-note"><svg class="icon"><use href="#i-lock"/></svg><span>手動分類優先，重新判讀不覆蓋。</span></div>
+ </section>
+ __WARN__
+ <section class="filters" aria-label="篩選附件">
+  <div class="tabs" id="categoryTabs" role="group" aria-label="證件類型"></div>
+  <div class="filter-right">
+   <button type="button" id="pendingToggle" class="pending-toggle" aria-pressed="false"><svg class="icon"><use href="#i-warning"/></svg><span id="pendingText">待處理 1</span></button>
+   <label class="searchbox"><svg class="icon"><use href="#i-search"/></svg><input id="search" type="search" autocomplete="off" placeholder="搜尋證件" aria-label="搜尋證件"></label>
+  </div>
+ </section>
+ <div class="list-tools">
+  <div class="selection"><label class="check-label"><input id="selectAll" type="checkbox"><span>全選</span></label><span id="selectionCount">12 份</span><button id="clearSelection" type="button" class="text-button" hidden>取消選取</button></div>
+  <div class="sort-group"><select class="mini-select" id="sourceFilter" aria-label="篩選來源"><option value="all">全部來源</option><option value="chat">LINE 聊天</option><option value="form">線上申請書</option></select><span class="separator">|</span><select class="mini-select" id="sort" aria-label="排列順序"><option value="original">原始順序</option><option value="newest">日期：新到舊</option><option value="oldest">日期：舊到新</option><option value="issue">待處理優先</option></select></div>
+ </div>
+ <section id="gallery" class="grid" aria-label="證件清單"></section>
+ <section class="blank" id="emptyState" hidden><svg class="icon"><use href="#i-search"/></svg><h2>沒有符合的附件</h2><button type="button" class="text-button" id="resetFilters">清除篩選</button></section>
+ <footer class="page-foot"><span class="left"><svg class="icon"><use href="#i-eye"/></svg><span>點縮圖放大 · Esc 關閉預覽</span></span><span id="previewNote">預覽使用截圖縮圖；下載、AI 功能需接回原系統。</span></footer>
+</main>
+<dialog class="viewer" id="viewer" aria-labelledby="viewerTitle">
+ <div class="dialog-top"><h2><span id="viewerTitle"></span><span class="index" id="viewerIndex"></span></h2><div class="dialog-tools"><button type="button" class="icon-btn" id="closeViewer" title="關閉（Esc）" aria-label="關閉預覽"><svg class="icon"><use href="#i-x"/></svg></button></div></div>
+ <div class="viewer-body">
+  <div class="preview-stage" id="previewStage"><span class="stage-caption" id="stageCaption">截圖縮圖</span><img id="previewImage" alt="" hidden><div id="stageEmpty" class="stage-empty" hidden></div><button class="nav-arrow prev" id="previousDoc" type="button" aria-label="上一份"><svg class="icon"><use href="#i-left"/></svg></button><button class="nav-arrow next" id="nextDoc" type="button" aria-label="下一份"><svg class="icon"><use href="#i-right"/></svg></button><div class="zoom-controls" id="zoomControls"><button type="button" id="zoomOut" aria-label="縮小"><svg class="icon"><use href="#i-minus"/></svg></button><span id="zoomLevel">100%</span><button type="button" id="zoomIn" aria-label="放大"><svg class="icon"><use href="#i-plus"/></svg></button></div></div>
+  <aside class="preview-aside"><div class="detail-field"><label class="label" for="viewerCategory">證件類型</label><select class="detail-select" id="viewerCategory"></select><span id="viewerStatus" class="status"></span></div><div class="detail-field"><span class="label">來源</span><span class="value" id="viewerSource"></span></div><div class="detail-field date-field"><span class="label">上傳日期</span><span class="value" id="viewerDate"></span></div><details class="error-detail" id="errorDetails" hidden><summary>判讀失敗詳情</summary><div id="errorText"></div></details><div class="aside-bottom"><button type="button" class="action" id="openOriginal"><svg class="icon"><use href="#i-external"/></svg><span>開啟原始附件</span></button><button type="button" class="action ai" id="retryOne" style="margin-top:8px"><svg class="icon"><use href="#i-refresh"/></svg><span>重新判讀</span></button><p class="aside-note" id="viewerNote">原始附件未提供；目前只展示截圖中的縮圖。</p></div></aside>
+ </div>
+</dialog>
+<dialog class="connection" id="connection" aria-labelledby="connectionTitle"><div class="connection-body"><div class="connect-icon"><svg class="icon"><use href="#i-plug"/></svg></div><h2 id="connectionTitle">尚未連接原系統</h2><p id="connectionText"></p><code id="connectionHint"></code></div><div class="connection-footer"><button type="button" class="action primary" id="closeConnection">知道了</button></div></dialog>
+<div class="toast" id="toast" role="status" aria-live="polite" hidden><svg class="icon"><use href="#i-check"/></svg><span id="toastText"></span></div>
+
+<script>
+'use strict';
+/**
+ * Standalone UI, no external libraries, no automatic uploads.
+ * The demo contains only the 12 thumbnails visible in the user's screenshot;
+ * total=15 is the source total, not a claim that unseen files were supplied.
+ * To integrate, call DocumentGallery.setActions(...) then .setData(...).
+ * Classification state is held in memory only. An optional saveCategory callback
+ * may persist manual changes after server-side authorization.
+ */
+const initialDocuments=[];
+(() => {
+ const $=(id)=>document.getElementById(id);
+ const svg=(name)=>`<svg class="icon" aria-hidden="true"><use href="#i-${name}"/></svg>`;
+ const escape=(v)=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+ const categories=__CATS__;
+ const groups=[['all','全部'],['identity','身分證明'],['finance','財力資料'],['vehicle','車輛／手機'],['contract','合約'],['other','其他']];
+ const categoryGroup=__GROUPS__;
+ const actions={};
+ const state={customerId:'',total:0,documents:initialDocuments.map(d=>({...d})),group:'all',pendingOnly:false,source:'all',sort:'original',query:'',selected:new Set(),view:'grid',currentId:null,zoom:1,demo:false,classificationWrites:new Set()};
+ let toastTimer;
+ const docById=(id)=>state.documents.find(d=>d.id===id);
+ const isIssue=(d)=>d.kind==='error'||!!d.error;
+ const sourceLabel=(source)=>source==='chat'?'LINE 聊天':source==='form'?'線上申請書':source;
+ const safeUrl=(value)=>{ if(!value)return ''; try{if(/^data:image\/(?:png|jpeg|webp|gif);base64,/i.test(value))return value;const u=new URL(value,location.href);if(['https:','http:','blob:'].includes(u.protocol))return u.href;}catch{}return ''; };
+ const notify=(message)=>{$('toastText').textContent=message;$('toast').hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('toast').hidden=true,3300);};
+ function showConnection(name,key,message){
+  $('connectionTitle').textContent=name+' · 尚未連接';
+  $('connectionText').textContent=message||'這份 HTML 是介面預覽。此功能需接回原系統，不會直接修改或下載真實客戶資料。';
+  $('connectionHint').textContent='串接點：DocumentGallery.setActions({ '+key+': … })';
+  if(!$('connection').open)$('connection').showModal();
+ }
+ function options(current,placeholder=false){return (placeholder?'<option value="" selected disabled>改分類</option>':'')+categories.map(c=>`<option value="${escape(c)}" ${!placeholder&&c===current?'selected':''}>${escape(c)}</option>`).join('');}
+ function filtered(){
+  const q=state.query.trim().toLowerCase();
+  return state.documents.filter(d=>(state.group==='all'||categoryGroup[d.category]===state.group)&&(!state.pendingOnly||isIssue(d)||d.unclassified)&&(state.source==='all'||d.source===state.source)&&(!q||`${d.category} ${sourceLabel(d.source)} ${d.date}`.toLowerCase().includes(q))).sort((a,b)=>{
+   if(state.sort==='newest')return b.date.localeCompare(a.date)||a.order-b.order;
+   if(state.sort==='oldest')return a.date.localeCompare(b.date)||a.order-b.order;
+   if(state.sort==='issue')return Number(isIssue(b)||!!b.unclassified)-Number(isIssue(a)||!!a.unclassified)||a.order-b.order;
+   return a.order-b.order;
+  });
+ }
+ function mediaContent(d){
+  if(d.kind==='error')return `<div class="error-figure">${svg('image-off')}<span>無法預覽</span></div>`;
+  if(d.kind==='file'||!safeUrl(d.previewUrl))return `<div class="file-figure"><div class="file-illustration"></div><span class="file-caption">開啟附件 ${svg('external')}</span></div>`;
+  return `<img src="${escape(safeUrl(d.previewUrl))}" alt="${escape(d.category)}${state.demo?'截圖縮圖':''}" loading="lazy" decoding="async" draggable="false"><span class="open-hint">${svg('eye')}</span>`;
+ }
+ function statusMarkup(d){
+  if(d.isManual)return `${svg('edit')}手動分類`;
+  if(isIssue(d))return `${svg('warning')}判讀失敗`;
+  if(d.unclassified)return `${svg('warning')}未判讀`;
+  return `${svg('sparkle')}AI 分類`;
+ }
+ function renderTabs(){
+  $('categoryTabs').innerHTML=groups.map(([id,label])=>{const n=state.documents.filter(d=>id==='all'||categoryGroup[d.category]===id).length;return `<button class="tab ${state.group===id?'active':''}" data-group="${id}" type="button" aria-pressed="${state.group===id}">${label}<span class="tab-count">${n}</span></button>`;}).join('');
+ }
+ function updateSelection(){
+  const visible=filtered(), picked=visible.filter(d=>state.selected.has(d.id)).length;
+  $('selectAll').checked=visible.length>0&&picked===visible.length;
+  $('selectAll').indeterminate=picked>0&&picked<visible.length;
+  $('selectAll').disabled=!visible.length;
+  $('selectionCount').textContent=state.selected.size?`已選 ${state.selected.size} 份`:`${visible.length} 份`;
+  $('clearSelection').hidden=!state.selected.size;
+  $('downloadLabel').textContent=state.selected.size?`下載已選照片（${state.selected.size}）`:'下載全部照片';
+ }
+ function render(){
+  $('customerId').textContent=state.customerId;
+  $('totalCount').textContent=`共 ${state.total} 份附件`;
+  $('loadedCount').textContent=`已載入 ${state.documents.length} 份`;
+  $('previewPill').hidden=!state.demo;
+  $('previewNote').hidden=!state.demo;
+  renderTabs();
+  const docs=filtered();
+  $('gallery').className='grid'+(state.view==='list'?' list-view':'');
+  $('gallery').innerHTML=docs.map(d=>`<article class="card ${state.selected.has(d.id)?'selected':''} ${d.kind==='error'?'error-card':''}" data-id="${escape(d.id)}">
+    <label class="card-check"><input type="checkbox" data-select="${escape(d.id)}" aria-label="選取${escape(d.category)}" ${state.selected.has(d.id)?'checked':''}></label>
+    <button class="media ${d.kind==='error'?'error-media':d.kind==='file'?'file-media':''}" data-open="${escape(d.id)}" type="button" aria-label="預覽${escape(d.category)}">${mediaContent(d)}</button>
+    <span class="card-number">${String(d.order).padStart(2,'0')}</span>
+    <div class="body"><h2 class="card-title">${escape(d.category)}</h2><div class="meta" title="${escape(sourceLabel(d.source))} · ${escape(d.date)}">${svg(d.source==='chat'?'chat':'doc')}<span>${escape(sourceLabel(d.source))}</span><span class="dot">·</span><time datetime="${escape(d.date)}">${escape(d.date.slice(5).replace('-','/'))}</time></div><div class="card-bottom">${isIssue(d)?`<button type="button" class="status ${d.isManual?'manual':'failed'}" data-open="${escape(d.id)}">${statusMarkup(d)}</button>`:`<span class="status ${d.isManual?'manual':''}">${statusMarkup(d)}</span>`}<label class="change">改分類 ${svg('chevron')}<select data-category="${escape(d.id)}" aria-label="${escape(d.category)}變更分類" ${state.classificationWrites.has(d.id)?'disabled':''}>${options(d.category,true)}</select></label></div></div>
+   </article>`).join('');
+  $('emptyState').hidden=!!docs.length;$('gallery').hidden=!docs.length;
+  $('pendingText').textContent=`待處理 ${state.documents.filter(d=>isIssue(d)||d.unclassified).length}`;
+  $('pendingToggle').classList.toggle('active',state.pendingOnly);
+  $('pendingToggle').setAttribute('aria-pressed',String(state.pendingOnly));
+  $('gridView').classList.toggle('active',state.view==='grid');$('listView').classList.toggle('active',state.view==='list');
+  $('gridView').setAttribute('aria-pressed',String(state.view==='grid'));$('listView').setAttribute('aria-pressed',String(state.view==='list'));
+  updateSelection();
+ }
+ async function changeCategory(id,category){
+  if(!categories.includes(category))return;
+  const d=docById(id);if(!d||state.classificationWrites.has(id))return;
+  const before={category:d.category,isManual:d.isManual};const editingCustomer=state.customerId;
+  d.category=category;d.isManual=true;state.classificationWrites.add(id);render();
+  if(state.currentId===id&&$('viewer').open)renderViewer();
+  try{
+   if(typeof actions.saveCategory==='function')await actions.saveCategory({customerId:state.customerId,id,category,isManual:true});
+   document.dispatchEvent(new CustomEvent('document-gallery:category-change',{detail:{customerId:state.customerId,id,category,isManual:true}}));
+   if(state.customerId===editingCustomer)notify(actions.saveCategory?'分類已儲存，AI 不覆蓋手動分類':'已調整分類（本頁預覽；重新整理即還原）');
+  }catch(error){if(state.customerId===editingCustomer){const active=docById(id);if(active)Object.assign(active,before);notify('分類儲存失敗，已保留原分類');}console.error('saveCategory failed',error);}
+  finally{state.classificationWrites.delete(id);render();if(state.currentId===id&&$('viewer').open)renderViewer();}
+ }
+ // Validate adapter data; do not execute arbitrary markup or URLs.
+ function normalize(d,i){
+  if(!d||typeof d.id!=='string'||!d.id)throw new TypeError('documents 每筆需要非空 id');
+  return {unclassified:!!d.unclassified,id:d.id,category:categories.includes(d.category)?d.category:'其他',source:String(d.source||'chat'),date:String(d.date||''),kind:['image','file','error'].includes(d.kind)?d.kind:'file',previewUrl:safeUrl(d.previewUrl||''),fileUrl:safeUrl(d.fileUrl||''),isManual:!!d.isManual,order:Number.isFinite(d.order)?d.order:i+1,error:String(d.error||'')};
+ }
+ // Preserve manual classification on refresh or AI updates. Server must enforce
+ // the same rule. The frontend safeguard does not replace authorization.
+ function setData(payload){
+  if(!payload||!Array.isArray(payload.documents))throw new TypeError('需要 documents 陣列');
+  const customer=String(payload.customerId??state.customerId),sameCustomer=customer===state.customerId;
+  const existing=new Map(state.documents.map(d=>[d.id,d]));
+  const seen=new Set();
+  const next=payload.documents.map((raw,i)=>{const d=normalize(raw,i);if(seen.has(d.id))throw new TypeError('documents id 不可重複');seen.add(d.id);const old=sameCustomer?existing.get(d.id):null;if(old?.isManual){d.category=old.category;d.isManual=true;}return d;});
+  if(!sameCustomer){state.selected.clear();state.currentId=null;state.classificationWrites.clear();if($('viewer').open)$('viewer').close();}
+  state.customerId=customer;state.documents=next;
+  state.total=Math.max(next.length,Number.isFinite(payload.total)?payload.total:next.length);
+  state.demo=payload.demo===true;
+  state.selected=new Set([...state.selected].filter(id=>seen.has(id)));render();
+  if($('viewer').open){if(docById(state.currentId))renderViewer();else $('viewer').close();}
+ }
+ function mergeResults(result){
+  if(result==null)return;
+  const changes=Array.isArray(result)?result:result.documents;
+  if(!Array.isArray(changes))return;
+  const changed=new Map(changes.filter(d=>d&&typeof d.id==='string').map(d=>[d.id,d]));
+  const docs=state.documents.map(d=>{const incoming=changed.get(d.id);if(!incoming)return d;changed.delete(d.id);return {...d,...incoming,...(d.isManual?{category:d.category,isManual:true}:{})};});
+  for(const d of changed.values())docs.push(d);
+  setData({customerId:state.customerId,total:result.total??state.total,documents:docs,demo:state.demo});
+ }
+ async function runAction(key,id=null){
+  const fn=actions[key];
+  const titles={downloadPdf:'下載 PDF',downloadImages:'下載照片',refetch:'業務 AI 重拉',classifyAll:'AI 判讀',classifyOne:'重新判讀',openFile:'原始附件'};
+  if(typeof fn!=='function'){
+   showConnection(titles[key]||'此功能',key,key.startsWith('download')?'目前只有截圖中的縮圖，沒有原始證件。接回原系統後才能下載完整 PDF 或照片，不會把截圖冒充原始附件。':null);return;
+  }
+  const trigger=$(key==='classifyOne'?'retryOne':key==='openFile'?'openOriginal':key);
+  if(trigger?.disabled)return;
+  if(trigger)trigger.disabled=true;
+  const customerAtStart=state.customerId;
+  try{
+   const ids=id?[id]:(key==='classifyAll'?state.documents.filter(d=>!d.isManual).map(d=>d.id):(state.selected.size?[...state.selected]:state.documents.map(d=>d.id)));
+   if(key==='classifyAll'&&!ids.length){notify('所有附件皆為手動分類，未送出重新判讀');return;}
+   const result=await fn({customerId:customerAtStart,ids,total:state.total,loadedIds:state.documents.map(d=>d.id),scope:id?'one':key==='classifyAll'?'nonManual':state.selected.size?'selected':'all',preserveManual:true});
+   // Discard a late response for a previous customer.
+   if(state.customerId!==customerAtStart)return;
+   if(['refetch','classifyAll','classifyOne'].includes(key)){
+    if(key==='refetch'&&result?.replace===true&&Array.isArray(result.documents))setData({customerId:customerAtStart,total:result.total,documents:result.documents,demo:state.demo});else mergeResults(result);
+    notify(result?'結果已更新':'請求已提交，等待系統回傳');
+   }
+  }catch(error){notify('操作未完成，請稍後重試');console.error(key+' failed',error);}
+  finally{if(trigger)trigger.disabled=false;}
+ }
+ function openViewer(id){if(!docById(id))return;state.currentId=id;state.zoom=1;renderViewer();if(!$('viewer').open)$('viewer').showModal();}
+ function renderViewer(){
+  const d=docById(state.currentId);if(!d)return;
+  const currentList=filtered(),position=currentList.findIndex(x=>x.id===d.id);
+  $('viewerTitle').textContent=d.category;$('viewerIndex').textContent=position>=0?`${position+1} / ${currentList.length}`:'';
+  $('viewerSource').textContent=sourceLabel(d.source);$('viewerDate').textContent=d.date||'未提供';$('viewerCategory').innerHTML=options(d.category);
+  $('viewerCategory').disabled=state.classificationWrites.has(d.id);
+  $('viewerStatus').innerHTML=statusMarkup(d);$('viewerStatus').className='status '+(d.isManual?'manual':d.kind==='error'?'failed':'');
+  $('errorDetails').hidden=!isIssue(d);$('errorText').textContent=d.error||'目前無法讀取此附件。';
+  $('errorDetails').open=false;
+  $('stageCaption').textContent=state.demo?'截圖縮圖':'附件預覽';$('viewerNote').hidden=!state.demo;
+  $('retryOne').disabled=d.isManual||state.classificationWrites.has(d.id);$('retryOne').title=d.isManual?'此附件為手動分類，不自動覆蓋':'';
+  const hasImage=d.kind==='image'&&!!safeUrl(d.previewUrl);
+  $('previewImage').hidden=!hasImage;$('zoomControls').hidden=!hasImage;$('stageEmpty').hidden=hasImage;
+  if(hasImage){$('previewImage').src=safeUrl(d.previewUrl);$('previewImage').alt=d.category;$('previewImage').style.transform=`scale(${state.zoom})`;}
+  else{$('previewImage').removeAttribute('src');$('stageEmpty').innerHTML=d.kind==='error'?`${svg('image-off')}<h3>無法預覽這份附件</h3><p>先確認原始檔案，或重新判讀。</p>`:`${svg('doc')}<h3>${escape(d.category)}</h3><p>${state.demo?'截圖只顯示附件連結，沒有原始檔案。':'此附件無縮圖，請開啟原始附件。'}</p>`;}
+  $('zoomLevel').textContent=Math.round(state.zoom*100)+'%';
+  $('previousDoc').disabled=position<=0;$('nextDoc').disabled=position<0||position>=currentList.length-1;
+ }
+ function moveViewer(step){const docs=filtered(),i=docs.findIndex(d=>d.id===state.currentId);if(i>=0&&docs[i+step])openViewer(docs[i+step].id);}
+ function resetFilters(){state.group='all';state.query='';state.pendingOnly=false;state.source='all';$('search').value='';$('sourceFilter').value='all';render();}
+ $('categoryTabs').addEventListener('click',e=>{const b=e.target.closest('[data-group]');if(b){state.group=b.dataset.group;render();}});
+ $('pendingToggle').addEventListener('click',()=>{state.pendingOnly=!state.pendingOnly;render();});
+ $('search').addEventListener('input',e=>{state.query=e.target.value;render();});
+ $('sourceFilter').addEventListener('change',e=>{state.source=e.target.value;render();});
+ $('sort').addEventListener('change',e=>{state.sort=e.target.value;render();});
+ $('resetFilters').addEventListener('click',resetFilters);
+ $('selectAll').addEventListener('change',e=>{filtered().forEach(d=>e.target.checked?state.selected.add(d.id):state.selected.delete(d.id));render();});
+ $('clearSelection').addEventListener('click',()=>{state.selected.clear();render();});
+ $('gallery').addEventListener('change',e=>{if(e.target.matches('[data-select]')){const id=e.target.dataset.select;e.target.checked?state.selected.add(id):state.selected.delete(id);e.target.closest('.card').classList.toggle('selected',e.target.checked);updateSelection();}if(e.target.matches('[data-category]'))changeCategory(e.target.dataset.category,e.target.value);});
+ $('gallery').addEventListener('click',e=>{const target=e.target.closest('[data-open]');if(target)openViewer(target.dataset.open);});
+ // Broken images are handled inline instead of exposing a stack trace.
+ $('gallery').addEventListener('error',e=>{if(e.target.tagName==='IMG'){const card=e.target.closest('.card');const d=docById(card?.dataset.id);if(d){d.kind='error';d.error='縮圖載入失敗，請確認原始附件。';render();}}},true);
+ $('gridView').addEventListener('click',()=>{state.view='grid';render();});$('listView').addEventListener('click',()=>{state.view='list';render();});
+ ['downloadPdf','downloadImages','refetch','classifyAll'].forEach(key=>$(key).addEventListener('click',()=>runAction(key)));
+ $('closeViewer').addEventListener('click',()=>$('viewer').close());$('closeConnection').addEventListener('click',()=>$('connection').close());
+ $('previousDoc').addEventListener('click',()=>moveViewer(-1));$('nextDoc').addEventListener('click',()=>moveViewer(1));
+ $('zoomIn').addEventListener('click',()=>{state.zoom=Math.min(3,state.zoom+.25);renderViewer();});$('zoomOut').addEventListener('click',()=>{state.zoom=Math.max(.5,state.zoom-.25);renderViewer();});
+ $('previewImage').addEventListener('error',()=>{const d=docById(state.currentId);if(d){d.kind='error';d.error='預覽圖片無法載入，請確認原始附件。';render();renderViewer();}});
+ $('viewerCategory').addEventListener('change',e=>changeCategory(state.currentId,e.target.value));
+ $('retryOne').addEventListener('click',()=>runAction('classifyOne',state.currentId));
+ $('openOriginal').addEventListener('click',()=>{const d=docById(state.currentId);if(!d)return;const url=safeUrl(d.fileUrl);if(url&&!state.demo){const win=window.open(url,'_blank','noopener,noreferrer');return;}runAction('openFile',d.id);});
+ $('viewer').addEventListener('keydown',e=>{if($('connection').open||/SELECT|INPUT|TEXTAREA/.test(e.target.tagName))return;if(e.key==='ArrowLeft'){e.preventDefault();moveViewer(-1);}if(e.key==='ArrowRight'){e.preventDefault();moveViewer(1);}});
+ for(const dialog of [$('viewer'),$('connection')])dialog.addEventListener('click',e=>{const r=dialog.getBoundingClientRect();if(e.target===dialog&&(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom))dialog.close();});
+ // Optional adapter API. No external network requests are made by this file.
+ window.DocumentGallery={
+  setData,
+  setActions(callbacks){if(!callbacks||typeof callbacks!=='object')throw new TypeError('需要回呼函式物件');Object.keys(callbacks).forEach(k=>{if(typeof callbacks[k]==='function')actions[k]=callbacks[k];});},
+  getState(){return {customerId:state.customerId,total:state.total,selectedIds:[...state.selected],documents:state.documents.map(d=>({...d})),demo:state.demo};},
+  resetDemo(){state.customerId='A100000001';state.documents=initialDocuments.map(d=>({...d}));state.selected.clear();state.total=15;state.demo=true;state.currentId=null;if($('viewer').open)$('viewer').close();resetFilters();},
+  open:openViewer,
+ };
+ render();
+})();
+</script>
+__ADAPTER__
+</body>
+</html>
