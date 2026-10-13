@@ -23390,17 +23390,11 @@ async def new_customer_post(request: Request):
 # =========================
 # 客戶PDF列印頁面
 # =========================
-@app.get("/customer-pdf", response_class=HTMLResponse)
-def customer_pdf(request: Request, case_id: str = ""):
-    from fastapi.responses import RedirectResponse
-    role = check_auth(request)
-    if not role: return RedirectResponse("/login")
-    if not case_id: return RedirectResponse("/pending-customers")
-    conn = get_conn(); cur = conn.cursor()
-    cur.execute("SELECT * FROM customers WHERE case_id=?", (case_id,))
-    row = cur.fetchone(); conn.close()
-    if not row: return RedirectResponse("/pending-customers")
-    r = dict(row)
+def _customer_sheet_html(r, scope: str = ""):
+    """客戶資料表的 HTML（/customer-pdf 那頁＝存檔 PDF 前兩頁的樣子）。回 (css, html)。
+    證件頁上方的客戶資料也用這一份（使用者 2026-10-14：「客戶資料顯示跟 PDF 兩頁一樣」）。
+    scope：證件頁傳 ".csheet "，樣式只套在那一區，不會影響證件頁其他地方。"""
+    pre = scope
     def v(k): return h(r.get(k, "") or "")
     gname = h(get_group_name(r.get("source_group_id", "")))
     created = h((r.get("created_at", "") or "")[:10])
@@ -23430,30 +23424,16 @@ def customer_pdf(request: Request, case_id: str = ""):
     reg_addr = f'{v("reg_city")}{v("reg_district")}{v("reg_address")}'
     company_addr = f'{v("company_city")}{v("company_district")}{v("company_address")}'
 
-    return f"""<!DOCTYPE html><html lang="zh-TW"><head><meta charset="UTF-8"><link rel="icon" type="image/x-icon" href="/favicon.ico?v=3">
-<title>客戶資料 - {v("customer_name")}</title>
-<style>
-@media print {{ @page {{ size: A4 portrait; margin: 10mm 12mm; }} .no-print {{ display: none !important; }} }}
-* {{ box-sizing: border-box; margin: 0; padding: 0; }}
-body {{ font-family: 'Microsoft JhengHei', 'PingFang TC', sans-serif; background: #fff; color: #1a1a1a; font-size: 13px; padding: 20px; }}
-.header {{ background: #3a3530; color: #fff; padding: 16px 20px; border-radius: 8px; margin-bottom: 16px; display: flex; justify-content: space-between; align-items: center; }}
-.header-name {{ font-size: 22px; font-weight: 700; }}
-.header-sub {{ font-size: 12px; color: #c8bfb5; margin-top: 4px; }}
-table {{ width: 100%; border-collapse: collapse; margin-bottom: 16px; }}
-th, td {{ border: 1px solid #bbb; padding: 7px 10px; font-size: 13px; line-height: 1.5; }}
-th {{ background: #f0ebe4; color: #3a3020; font-weight: 700; width: 100px; white-space: nowrap; text-align: left; }}
-td {{ background: #fff; }}
-.sec {{ background: #3a3530; color: #fff; font-size: 12px; font-weight: 700; padding: 6px 10px; }}
-.sec td {{ background: #3a3530; color: #fff; font-weight: 700; }}
-</style>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
-</head><body>
-<div class="no-print" style="text-align:center;margin-bottom:16px;">
-  <button id="pdf-btn" onclick="downloadPDF()" style="background:#4e7055;color:#fff;border:none;padding:10px 28px;border-radius:6px;font-size:14px;cursor:pointer;font-weight:600;">📄 下載 PDF</button>
-  <button onclick="if(document.referrer){{location.href=document.referrer}}else if(history.length>1){{history.back()}}else{{location.href='/pending-customers'}}" style="background:#6a5e4e;color:#fff;border:none;padding:10px 28px;border-radius:6px;font-size:14px;cursor:pointer;font-weight:600;margin-left:8px;">返回</button>
-</div>
-<div id="pdf-content">
-<div class="header">
+    css = f"""{pre}.header {{ background: #3a3530; color: #fff; padding: 16px 20px; border-radius: 8px; margin-bottom: 16px; display: flex; justify-content: space-between; align-items: center; }}
+{pre}.header-name {{ font-size: 22px; font-weight: 700; }}
+{pre}.header-sub {{ font-size: 12px; color: #c8bfb5; margin-top: 4px; }}
+{pre}table {{ width: 100%; border-collapse: collapse; margin-bottom: 16px; }}
+{pre}th, {pre}td {{ border: 1px solid #bbb; padding: 7px 10px; font-size: 13px; line-height: 1.5; }}
+{pre}th {{ background: #f0ebe4; color: #3a3020; font-weight: 700; width: 100px; white-space: nowrap; text-align: left; }}
+{pre}td {{ background: #fff; }}
+{pre}.sec {{ background: #3a3530; color: #fff; font-size: 12px; font-weight: 700; padding: 6px 10px; }}
+{pre}.sec td {{ background: #3a3530; color: #fff; font-weight: 700; }}"""
+    html_ = f"""<div class="header">
   <div><div class="header-name">{v("customer_name")}</div><div class="header-sub">群組：{gname}　建立日期：{created}</div></div>
   <div style="font-size:13px;color:#c8bfb5;font-weight:600;">客戶資料表</div>
 </div>
@@ -23525,7 +23505,39 @@ td {{ background: #fff; }}
 </table>
 {"<div style='font-size:13px;font-weight:700;color:#3a3530;margin-bottom:8px;'>負債明細</div>" + debt_html if debt_html else ""}
 {unloan_html}
+"""
+    return css, html_
+
+
+@app.get("/customer-pdf", response_class=HTMLResponse)
+def customer_pdf(request: Request, case_id: str = ""):
+    from fastapi.responses import RedirectResponse
+    role = check_auth(request)
+    if not role: return RedirectResponse("/login")
+    if not case_id: return RedirectResponse("/pending-customers")
+    conn = get_conn(); cur = conn.cursor()
+    cur.execute("SELECT * FROM customers WHERE case_id=?", (case_id,))
+    row = cur.fetchone(); conn.close()
+    if not row: return RedirectResponse("/pending-customers")
+    r = dict(row)
+    v = lambda k: h(r.get(k, "") or "")
+    sheet_css, sheet_html = _customer_sheet_html(r)
+    return f"""<!DOCTYPE html><html lang="zh-TW"><head><meta charset="UTF-8"><link rel="icon" type="image/x-icon" href="/favicon.ico?v=3">
+<title>客戶資料 - {v("customer_name")}</title>
+<style>
+@media print {{ @page {{ size: A4 portrait; margin: 10mm 12mm; }} .no-print {{ display: none !important; }} }}
+* {{ box-sizing: border-box; margin: 0; padding: 0; }}
+body {{ font-family: 'Microsoft JhengHei', 'PingFang TC', sans-serif; background: #fff; color: #1a1a1a; font-size: 13px; padding: 20px; }}
+{sheet_css}
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+</head><body>
+<div class="no-print" style="text-align:center;margin-bottom:16px;">
+  <button id="pdf-btn" onclick="downloadPDF()" style="background:#4e7055;color:#fff;border:none;padding:10px 28px;border-radius:6px;font-size:14px;cursor:pointer;font-weight:600;">📄 下載 PDF</button>
+  <button onclick="if(document.referrer){{location.href=document.referrer}}else if(history.length>1){{history.back()}}else{{location.href='/pending-customers'}}" style="background:#6a5e4e;color:#fff;border:none;padding:10px 28px;border-radius:6px;font-size:14px;cursor:pointer;font-weight:600;margin-left:8px;">返回</button>
 </div>
+<div id="pdf-content">
+{sheet_html}</div>
 <script>
 function downloadPDF() {{
   var btn = document.getElementById('pdf-btn');
@@ -28515,7 +28527,7 @@ async def docs_customer_page(request: Request, id_no: str, refresh: str = ""):
         notes.append("⚠️ " + h(res["error"]))
     if not cust:
         notes.append("行政系統還沒有這位客人的資料，下載的 PDF 不會有客戶資料表")
-    notes.append("下載 PDF／照片：勾選幾張就只下載那幾張；沒勾就是全部。第一頁是客戶資料表；合約／簽名不會放進去（合約請到業務 AI 看）")
+    notes.append("下載 PDF／照片：勾選幾張就只下載那幾張；沒勾就是全部。第一頁是客戶資料表")
     warn = ('<div style="background:#fff;border:1px solid #e3e9ee;border-radius:12px;padding:10px 14px;margin:0 0 14px;'
             'font-size:13px;color:#5c6f80;line-height:1.7">' + "<br>".join(notes) + "</div>")
     adapter = (_ARCHIVE_ADAPTER.replace("__ID__", json.dumps(idv))
@@ -28545,7 +28557,7 @@ _DOC_GROUP = {"身分證正面": "identity", "身分證反面": "identity", "健
               "401報表或營登": "finance", "權狀或謄本": "finance", "信用卡正面": "finance", "信用卡反面": "finance",
               "信用卡帳單": "finance", "汽車繳息": "finance",
               "行照": "vehicle", "人車合照": "vehicle", "強制險": "vehicle", "手機型號": "vehicle", "IMEI": "vehicle",
-              "人與手機合照": "vehicle", "委任合約": "contract", "電子簽名": "contract", "其他": "other"}
+              "人與手機合照": "vehicle", "委任合約": "other", "電子簽名": "other", "其他": "other"}   # 合約分頁拿掉（使用者 2026-10-14）
 
 
 def _doc_payload(r, order: int) -> dict:
@@ -28692,42 +28704,15 @@ def _customer_sheet_sections(r):
 
 
 def _customer_panel_html(r) -> str:
-    """證件頁最上面的客戶資料（可收合）。沒建檔就回提示"""
+    """證件頁最上面的客戶資料（可收合）。⛔ 跟「客戶資料表」頁（存檔 PDF 前兩頁）用同一份 _customer_sheet_html，
+    長得一模一樣、不會走岔（使用者 2026-10-14：「客戶資料顯示跟 PDF 兩頁一樣」）"""
     if not r:
         return ('<div class="cust-panel"><div class="cust-empty">行政系統還沒有這位客人的資料'
                 '（業務在群組建檔後就會出現）</div></div>')
-    secs = []
-    for sec, rows_ in _customer_sheet_sections(r):
-        cells = []
-        for a, b, c, d in rows_:
-            for k, val in ((a, b), (c, d)):
-                if k:
-                    cells.append(f'<div class="cp-k">{h(k)}</div><div class="cp-v">{h(val) or "<span class=cp-na>—</span>"}</div>')
-        secs.append(f'<div class="cp-sec"><div class="cp-h">{h(sec)}</div><div class="cp-grid">{"".join(cells)}</div></div>')
-    try:
-        debts = json.loads(r.get("debt_list") or "[]") or []
-    except Exception:
-        debts = []
-    if debts:
-        trs = "".join(
-            f'<tr><td>{h(d.get("co", ""))}</td><td>{h(d.get("lo", ""))}</td><td>{h(d.get("pe", ""))}/{h(d.get("pa", ""))}</td>'
-            f'<td>{h(d.get("mo", ""))}</td><td>{h(d.get("re", ""))}</td><td>{h(d.get("dy", ""))}</td><td>{h(d.get("sp", ""))}</td>'
-            f'<td>{h(d.get("pl", ""))}</td><td>{h(d.get("yr", ""))}</td></tr>' for d in debts)
-        secs.append('<div class="cp-sec cp-wide"><div class="cp-h">負債明細</div><div class="cp-tbl"><table><tr><th>商家</th><th>金額</th>'
-                    '<th>期數/已繳</th><th>月繳</th><th>剩餘</th><th>動保/公路</th><th>空間</th><th>車牌</th><th>出廠</th></tr>'
-                    + trs + '</table></div></div>')
-    try:
-        unloan = json.loads(r.get("unloan_vehicles") or "[]") or []
-    except Exception:
-        unloan = []
-    if unloan:
-        secs.append('<div class="cp-sec"><div class="cp-h">無貸款車輛</div><div class="cp-grid">' + "".join(
-            f'<div class="cp-k">{h(u.get("type", ""))}</div><div class="cp-v">{h(u.get("plate", ""))} {h(u.get("year", ""))}</div>'
-            for u in unloan) + '</div></div>')
-    gname = get_group_name(r.get("source_group_id") or "") if r.get("source_group_id") else ""
+    css, body = _customer_sheet_html(r, ".csheet ")
     return (f'<details class="cust-panel" open><summary><span class="cp-title">📋 客戶資料</span>'
-            f'<span class="cp-sub">{h(gname)}　建立 {h((r.get("created_at") or "")[:10])}　（點這裡收起來）</span></summary>'
-            f'<div class="cp-body">{"".join(secs)}</div></details>')
+            f'<span class="cp-sub">（點這裡收起來）</span></summary>'
+            f'<style>{css}</style><div class="csheet">{body}</div></details>')
 
 
 def _customer_sheet_pdf(r) -> bytes:

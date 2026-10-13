@@ -170,6 +170,8 @@ details.error-detail{color:#a17745;margin:12px 0;font-size:10px;border:1px solid
 .cust-panel>summary{cursor:pointer;list-style:none;padding:12px 16px;display:flex;gap:12px;align-items:baseline;flex-wrap:wrap;background:#f6f9fa}
 .cust-panel>summary::-webkit-details-marker{display:none}
 .cp-title{font-weight:800;font-size:15px;color:#16324a}.cp-sub{font-size:12px;color:#6b7f90}
+.csheet{padding:14px 16px;overflow-x:auto;background:#fff;color:#1a1a1a}
+.csheet table{min-width:560px}
 .cp-body{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:12px;padding:14px 16px}
 .cp-sec{border:1px solid #edf1f4;border-radius:10px;overflow:hidden}.cp-wide{grid-column:1/-1}
 .cp-h{background:#3a3530;color:#fff;font-size:12px;font-weight:700;padding:5px 10px}
@@ -276,7 +278,7 @@ const initialDocuments=[];
  const svg=(name)=>`<svg class="icon" aria-hidden="true"><use href="#i-${name}"/></svg>`;
  const escape=(v)=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
  const categories=__CATS__;
- const groups=[['all','全部'],['identity','身分證明'],['finance','財力資料'],['vehicle','車輛／手機'],['contract','合約'],['other','其他']];
+ const groups=[['all','全部'],['identity','身分證明'],['finance','財力資料'],['vehicle','車輛／手機'],['other','其他']];
  const categoryGroup=__GROUPS__;
  const actions={};
  const state={customerId:'',total:0,documents:initialDocuments.map(d=>({...d})),group:'all',pendingOnly:false,source:'all',sort:'original',query:'',selected:new Set(),view:'grid',currentId:null,zoom:1,demo:false,classificationWrites:new Set()};
