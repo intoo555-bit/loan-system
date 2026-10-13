@@ -28378,6 +28378,28 @@ async def docs_card_preview(request: Request, id_no: str):
     return JSONResponse({"ok": ok, "error": err})
 
 
+@app.post("/archive/{id_no}/supp-preview")
+async def docs_supp_preview(request: Request, id_no: str):
+    """補件小卡片預覽 → 系統通知群。拿「最後一次拉進來的那批」當作補件內容（沒有就拿最後 2 張示意）"""
+    if not _docs_auth(request):
+        return JSONResponse({"ok": False, "error": "無權限"}, status_code=403)
+    idv = normalize_id_no(id_no)
+    rows = [r for r in _docs_rows(idv) if not _doc_is_contract(r)]
+    if not rows:
+        return JSONResponse({"ok": False, "error": "這位客人還沒有證件"})
+    last = max((r["pulled_at"] or "")[:16] for r in rows)
+    batch = [r for r in rows if (r["pulled_at"] or "")[:16] == last]
+    if len(batch) == len(rows):   # 全部都是同一批拉的（沒有補件過）→ 拿最後 2 張示意
+        batch = sorted(rows, key=lambda r: r["id"])[-2:]
+    cust = _docs_latest_customer(idv)
+    alt, card = _docs_supplement_flex(idv, (cust or {}).get("customer_name", ""), batch)
+    gids = get_notify_group_ids()
+    if not gids:
+        return JSONResponse({"ok": False, "error": "沒有設定系統通知群"})
+    ok, err = push_flex(gids[0], "【預覽】" + alt, card)
+    return JSONResponse({"ok": ok, "error": err})
+
+
 @app.get("/archive/{id_no}", response_class=HTMLResponse)
 async def docs_customer_page(request: Request, id_no: str, refresh: str = ""):
     role = _docs_auth(request)
@@ -28403,8 +28425,9 @@ async def docs_customer_page(request: Request, id_no: str, refresh: str = ""):
         return HTMLResponse("⚠️ 證件介面檔（ui/archive_gallery.html）沒有部署上來，請通知管理員", status_code=500)
     btn = ('<a class="action" style="text-decoration:none" href="/customer-pdf?case_id=' + h(cust["case_id"]) +
            '" target="_blank"><span>📋 客戶資料表</span></a>') if cust else ""
-    btn += ('<button type="button" class="action quiet" onclick="cardPreview(this)"><span>📨 收件卡片預覽</span></button>'
-            '<script>function cardPreview(b){b.disabled=true;fetch(location.pathname+"/card-preview",{method:"POST"})'
+    btn += ('<button type="button" class="action quiet" onclick="cardPreview(this,\'card-preview\')"><span>📨 收件卡片預覽</span></button>'
+            '<button type="button" class="action quiet" onclick="cardPreview(this,\'supp-preview\')"><span>📨 補件卡片預覽</span></button>'
+            '<script>function cardPreview(b,k){b.disabled=true;fetch(location.pathname+"/"+k,{method:"POST"})'
             '.then(r=>r.json()).then(d=>{alert(d.ok?"已傳到系統通知群，請到 LINE 看":"失敗："+(d.error||""));b.disabled=false;})'
             '.catch(()=>{alert("網路錯誤");b.disabled=false;});}</script>')
     notes = []

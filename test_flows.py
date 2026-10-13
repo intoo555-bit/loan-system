@@ -1991,6 +1991,12 @@ check("已補＋有新照片 → 群組貼補件卡片（+1 張、補了什麼�
       and "補件" in _cards[0][1] and "+1 張" in _cj and "強制險" in _cj and "/album/E300000001" in _cj, _cards)
 check("補件卡片是小張的（kilo）", _cards and _cards[0][2]["size"] == "kilo")
 m._DOCS_POST_TO_GROUP = False
+m.check_auth = lambda req: "admin"
+_cards.clear()
+_rp = TestClient(m.app).post("/archive/E300000001/supp-preview").json()
+check("「補件卡片預覽」傳到系統通知群（小張、最後補的那批）", _rp.get("ok") and _cards and _cards[0][0] == "TEST_NOTIFY"
+      and _cards[0][2]["size"] == "kilo" and "強制險" in json.dumps(_cards[0][2], ensure_ascii=False), (_rp, _cards[:1]))
+check("證件頁有「補件卡片預覽」按鈕", "補件卡片預覽" in TestClient(m.app).get("/archive/E300000001").text)
 m.push_flex = _orig_flex
 m.check_auth = _old_auth
 m._bizai_list, m._bizai_fetch = _orig_list, _orig_fetch
