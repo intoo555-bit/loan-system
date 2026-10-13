@@ -1655,6 +1655,36 @@ for _n, (_co, _sec) in enumerate([("願望25萬", "願望"), ("願望15萬", "�
     _d2 = get_cust(_i2)
     check(f"[{_co}] 婉拒後推進下一家", _d2.get("current_company") == "21商品", _d2.get("current_company"))
 
+# ========== 66. 南亞（民間，2026-10-13 使用者）==========
+# 「一律排到代書跟當鋪前面、不看條件有汽機車就可以、警示戶可以送、填他們表格就可以」
+print("\n=== 66. 南亞規則 ===")
+_y = m.now_tw().year - 1911
+def _ny(**kw):
+    c = {"birth_date": f"{_y-35:03d}/01/01", "id_no": "A123456789", "eval_labor_ins": "公司保",
+         "eval_alert_warning": "否", "eval_late": "無", "eval_property": "", "debt_list": "[]", "unloan_vehicles": "[]"}
+    c.update(kw)
+    res = m.evaluate_case(c)["results"]
+    names = [r["company"] for r in res]
+    return {r["company"]: r for r in res}, names
+for _tag, _kw in [("評估表 1機", {"eval_property": "1機"}),
+                  ("評估表 1汽", {"eval_property": "1汽"}),
+                  ("只有無貸款車輛清單", {"unloan_vehicles": '[{"type": "機車", "year": "2010"}]'}),
+                  ("只有負債表汽車貸款（滿貸也算）", {"debt_list": '[{"co": "和潤汽車", "dy": "動保", "sp": "無", "pa": "3"}]'}),
+                  ("警示戶＋有機車", {"eval_property": "1機", "eval_alert_warning": "是"})]:
+    _r, _names = _ny(**_kw)
+    check(f"南亞［{_tag}］→ 可送", _r["南亞"]["eligible"] is True, _r["南亞"]["summary"])
+    check(f"南亞［{_tag}］排在代書前面", _names.index("南亞") < _names.index("代書"), _names)
+    check(f"南亞［{_tag}］排在當鋪前面", _names.index("南亞") < _names.index("當舖"), _names)
+_r, _names = _ny(eval_property="無")
+check("南亞［沒有汽機車］→ 不送", _r["南亞"]["eligible"] is False, _r["南亞"]["summary"])
+check("南亞［沒有汽機車］代書照樣排", _r["代書"]["eligible"] is True)
+_r, _ = _ny(eval_property="1機")
+check("南亞金額看審核（畫面不顯示 10 萬）", _r["南亞"].get("amount_by_review") is True)
+check("南亞文件＝填他們的表格", _r["南亞"]["required_docs"] == ["南亞填寫表"], _r["南亞"]["required_docs"])
+check("南亞私設可以送", "南亞" in m.PRIVATE_OK_PLANS)
+_r, _names = _ny(eval_property="1機")
+check("南亞不會插到同樣 10 萬的融資（貸救補）前面", _names.index("貸救補") < _names.index("南亞"), _names)
+
 # ========== 總結 ==========
 print(f"\n{'='*50}")
 print(f"結果：{PASS} 通過、{FAIL} 失敗")

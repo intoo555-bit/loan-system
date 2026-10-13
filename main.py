@@ -1477,6 +1477,24 @@ PLAN_ELIGIBILITY_RULES = [
         ],
         "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面"],
     },
+    # ===== 南亞（民間，2026-10-13 使用者）=====
+    # 不看條件、名下有汽車或機車就一律排，排在代書／當鋪前面；警示戶、私設都可以送；填南亞自己的表格。
+    # 金額看審核、不固定 → max_amount 10 只是排序用（同 10 萬時 priority 21 > 代書 20，所以剛好排在代書前面），畫面不顯示
+    {
+        "company": "南亞",
+        "max_amount": 10,
+        "priority": 21,
+        "always_eligible": True,
+        "amount_by_review": True,
+        "rules": [
+            {"type": "simple", "label": "名下有汽車或機車", "op": "has_any_vehicle"},
+            {"type": "info", "label": "💡 民間貸款、不看條件，有汽機車就排"},
+            {"type": "info", "label": "💡 金額看審核、不固定"},
+            {"type": "info", "label": "💡 警示戶、私設都可以送"},
+            {"type": "info", "label": "💡 排序：排在代書／當鋪前面"},
+        ],
+        "required_docs": ["南亞填寫表"],
+    },
     # ===== 貸救補（貸10）=====
     {
         "company": "貸救補",
@@ -2426,6 +2444,25 @@ def _customer_has_car(customer):
     return False
 
 
+def _customer_has_any_vehicle(customer):
+    """名下有沒有汽車或機車（不管有沒有貸款）
+    看：評估表財產／車輛有「汽」「機」、無貸款車輛清單、負債表有汽車／機車貸款
+    """
+    try:
+        prop = (customer.get("eval_property", "") or "") + (customer.get("eval_vehicle", "") or "")
+        if "汽" in prop or "機" in prop:
+            return True
+        uv = json.loads(customer.get("unloan_vehicles") or "[]") or []
+        if any((v.get("type") or "") for v in uv):
+            return True
+        debts = json.loads(customer.get("debt_list") or "[]") or []
+        if any(k in (d.get("co", "") or "") for d in debts for k in ("汽車", "機車", "重機")):
+            return True
+    except Exception:
+        pass
+    return False
+
+
 def _customer_has_heavy_bike(customer):
     """檢查客戶是否有重機
     判定：eval_property 或 eval_vehicle 含「重機」
@@ -2580,6 +2617,7 @@ PRIVATE_OK_PLANS = [
     "願望小車25萬",  # 公告：當鋪可以代償
     "願望工會15萬",
     "鄉民",        # 民間商品類
+    "南亞",        # 民間（2026-10-13 使用者：私設可以送）
     "手機分期",
     "手機無卡分期",
 ]
@@ -2878,6 +2916,11 @@ def _check_rule(rule, customer):
                 return ("fail", label, "資料裡有寫「呆帳」")
             return ("pass", label, "沒看到呆帳紀錄")
         # 機車或汽車任一台有空間（亞太老車 15 萬：機車汽車都可以）
+        # 名下有任何汽機車（不管有沒有貸款）— 南亞用
+        if op == "has_any_vehicle":
+            if _customer_has_any_vehicle(customer):
+                return ("pass", label, "名下有汽機車")
+            return ("fail", label, "名下沒有汽車或機車")
         if op == "any_vehicle_has_space":
             if _customer_has_motorcycle_with_space(customer) or _customer_has_car_with_space(customer):
                 return ("pass", label, "名下有可用車輛")
@@ -3170,6 +3213,7 @@ def evaluate_case(customer):
         results.append({
             "company": plan["company"],
             "max_amount": plan["max_amount"],
+            "amount_by_review": plan.get("amount_by_review", False),  # True＝max_amount 只是排序用、畫面不顯示金額
             "priority": plan.get("priority", 0),
             "eligible": eligible,
             "checks": checks,
@@ -18639,7 +18683,7 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
       // 預付資融 = 手機原融 / 機車原融 / 汽機車二胎 / 手機無卡分期（同一家、4 種專案）
       if (['手機原融','機車原融','汽機車二胎','手機無卡分期'].indexOf(company) >= 0) return '預付資融';
       // 手機分期 是獨立公司、不歸預付資融
-      if (['零卡(C)','商品貸','代書','當舖'].indexOf(company) >= 0) return '民間';
+      if (['零卡(C)','商品貸','代書','當舖','南亞'].indexOf(company) >= 0) return '民間';
       return company;
     }}
     function _planRowHtml(r) {{
@@ -18758,8 +18802,10 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
             sendFamOrder.forEach(function(fam) {{
               var plans = sendGrouped[fam];
               // 同家族取最高金額（除非該家族不顯示金額）
-              var maxAmt = Math.max.apply(null, plans.map(function(r){{return r.max_amount;}}));
-              var hideAmt = shouldHideAmount(plans[0].company, fam);
+              // amount_by_review（南亞：金額看審核）的 max_amount 只是排序用、不算進顯示金額
+              var amtPlans = plans.filter(function(r){{return !r.amount_by_review;}});
+              var maxAmt = Math.max.apply(null, amtPlans.map(function(r){{return r.max_amount;}}));
+              var hideAmt = shouldHideAmount(plans[0].company, fam) || !amtPlans.length;
               // 家族內所有方案是否都需 manual 確認
               var allManual = plans.every(function(r){{return r.eligible === 'manual';}});
               var tag = allManual ? '⚠️' : '✅';
@@ -20210,7 +20256,7 @@ function checkEligibility() {{
         let bgColor = r.eligible === true ? '#f0fdf4' : (r.eligible === 'manual' ? '#fef3c7' : '#fef2f2');
         let borderColor = r.eligible === true ? '#86efac' : (r.eligible === 'manual' ? '#fde047' : '#fca5a5');
         html += '<div style="background:' + bgColor + ';border:1px solid ' + borderColor + ';border-radius:8px;padding:12px;margin-bottom:10px">';
-        html += '<div style="font-weight:700;font-size:14px;margin-bottom:6px">' + icon + ' ' + r.company + '（最高 ' + r.max_amount + ' 萬）— ' + r.summary + '</div>';
+        html += '<div style="font-weight:700;font-size:14px;margin-bottom:6px">' + icon + ' ' + r.company + (r.amount_by_review ? '（金額看審核）' : '（最高 ' + r.max_amount + ' 萬）') + '— ' + r.summary + '</div>';
         if (r.checks && r.checks.length) {{
           html += '<ul style="margin:6px 0 0;padding-left:22px;font-size:12px;color:#374151">';
           r.checks.forEach(c => {{
