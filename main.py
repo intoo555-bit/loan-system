@@ -27732,7 +27732,8 @@ def _schedule_docs_pull(id_no: str, name: str, group_id: str):
 
 
 def _docs_flex(id_no: str, name: str):
-    """群組「收件」卡片（Flex）。版面照使用者 2026-10-14 給的設計圖：
+    """群組「收件」卡片（Flex）。字級：使用者 2026-10-14 說太大 → 標題 lg、其餘 md／sm。
+    版面照使用者 2026-10-14 給的設計圖：
     淺綠「收件」標籤 → 大字「收件日期-姓名」＋身分證 → 「證件 N 張」→ 淺灰框兩欄打勾清單 → 大的「看證件」按鈕。
     （深色底配淺色字使用者說「看字很痛苦」→ 全部白底深字）
     照片不放進卡片：那要開不用登入的網址給 LINE 抓，證件會存到 LINE 伺服器。"""
@@ -27749,10 +27750,10 @@ def _docs_flex(id_no: str, name: str):
 
     def _item(k):
         return {"type": "box", "layout": "horizontal", "spacing": "md", "alignItems": "center", "contents": [
-            {"type": "box", "layout": "vertical", "width": "22px", "height": "22px", "cornerRadius": "11px",
+            {"type": "box", "layout": "vertical", "width": "18px", "height": "18px", "cornerRadius": "9px",
              "backgroundColor": TEAL, "justifyContent": "center", "alignItems": "center", "flex": 0,
-             "contents": [{"type": "text", "text": "✓", "color": "#ffffff", "size": "sm", "weight": "bold", "align": "center"}]},
-            {"type": "text", "text": k + (f" ×{cnt[k]}" if cnt[k] > 1 else ""), "size": "md", "color": "#1e293b",
+             "contents": [{"type": "text", "text": "✓", "color": "#ffffff", "size": "xs", "weight": "bold", "align": "center"}]},
+            {"type": "text", "text": k + (f" ×{cnt[k]}" if cnt[k] > 1 else ""), "size": "sm", "color": "#1e293b",
              "flex": 1, "wrap": True}]}
 
     shown = names[:16]
@@ -27774,22 +27775,22 @@ def _docs_flex(id_no: str, name: str):
         "type": "bubble", "size": "mega",
         "body": {"type": "box", "layout": "vertical", "paddingAll": "16px", "contents": [
             # 「收件」標籤
-            {"type": "box", "layout": "horizontal", "backgroundColor": TEAL_BG, "cornerRadius": "10px", "paddingAll": "12px",
-             "contents": [{"type": "text", "text": "📄 收件", "size": "lg", "weight": "bold", "color": "#0e7f80"}]},
+            {"type": "box", "layout": "horizontal", "backgroundColor": TEAL_BG, "cornerRadius": "10px", "paddingAll": "8px",
+             "contents": [{"type": "text", "text": "📄 收件", "size": "md", "weight": "bold", "color": "#0e7f80"}]},
             # 收件日期-姓名（大字）＋身分證
-            {"type": "text", "text": f"{day}-{name or '（未建檔）'}", "size": "xxl", "weight": "bold", "color": INK,
+            {"type": "text", "text": f"{day}-{name or '（未建檔）'}", "size": "lg", "weight": "bold", "color": INK,
              "wrap": True, "margin": "xl"},
-            {"type": "text", "text": idv, "size": "xl", "color": GREY, "margin": "sm"},
+            {"type": "text", "text": idv, "size": "md", "color": GREY, "margin": "sm"},
             {"type": "separator", "margin": "xl", "color": "#e2e8f0"},
             # 證件 N 張
             {"type": "box", "layout": "baseline", "spacing": "sm", "margin": "xl", "contents": [
-                {"type": "text", "text": "證件", "size": "xl", "weight": "bold", "color": INK, "flex": 0},
-                {"type": "text", "text": f"{len(rows)} 張", "size": "xl", "weight": "bold", "color": TEAL, "flex": 0}]},
+                {"type": "text", "text": "證件", "size": "md", "weight": "bold", "color": INK, "flex": 0},
+                {"type": "text", "text": f"{len(rows)} 張", "size": "md", "weight": "bold", "color": TEAL, "flex": 0}]},
             # 打勾清單（淺灰框、兩欄）
             {"type": "box", "layout": "vertical", "backgroundColor": "#f1f5f7", "cornerRadius": "12px", "paddingAll": "16px",
              "margin": "lg", "contents": checklist},
             # 看證件
-            {"type": "button", "style": "primary", "color": TEAL, "height": "md", "margin": "xl",
+            {"type": "button", "style": "primary", "color": TEAL, "height": "sm", "margin": "lg",
              "action": {"type": "uri", "label": "👁 看證件 →", "uri": _docs_link(idv)}},
         ]},
     }
