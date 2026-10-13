@@ -1751,6 +1751,34 @@ for _v in ("無呆帳", "沒有協商"):
     _x = {x["company"]: x for x in _r["results"]}["鄉民"]
     check(f"鄉民：備註寫「{_v}」不算", _x["eligible"] != False, _x["summary"])
 
+# ========== 70. 「已從舊案帶入」不可以掛到別的客人身上（2026-10-13 吳鴻志）==========
+# 有的建檔路徑帶了舊案資料卻沒把筆數取走 → 下一位新客人建檔時跳「已從舊案帶入 57 項」
+print("\n=== 70. 舊案帶入筆數不可殘留 ===")
+_c = sqlite3.connect(TEST_DB)
+_c.execute("INSERT OR REPLACE INTO groups (group_id, group_name, group_type, is_active, created_at) VALUES (?,?,?,?,?)",
+           ("TEST_C_GRP", "C群", "SALES_GROUP", 1, now))
+_c.commit(); _c.close()
+bc("10/13-舊客甲 E200000001", gid="TEST_B")
+bc("10/13-舊客己 E200000006", gid="TEST_B")
+_c = sqlite3.connect(TEST_DB)
+_c.execute("UPDATE customers SET phone='0912000001', company_name_detail='測試公司', status='CLOSED' WHERE id_no IN ('E200000001','E200000006')")
+_c.commit(); _c.close()
+def _stale():   # 模擬「帶了舊案資料、但沒用 _copied_hint() 取走筆數」的建檔路徑（轉移／搬群組等）
+    m.create_customer_record("舊客甲", "E200000001", "", "TEST_C_GRP", "直接建檔")
+_stale()
+_ret = bc("10/13-新客乙 E200000002", gid="TEST_B")
+check("新客人建檔有回「已建立客戶」", "已建立客戶" in (_ret or ""), _ret)
+check("新客人建檔不會跳「已從舊案帶入」", "舊案帶入" not in (_ret or ""), _ret)
+_c = sqlite3.connect(TEST_DB)
+_c.execute("INSERT INTO customers (case_id,customer_name,id_no,source_group_id,company,status,phone,created_at,updated_at) "
+           "VALUES ('pend0070','待確認丙','E200000003','','', 'PENDING','0912000003',?,?)", (now, now))
+_c.commit(); _c.close()
+_stale()
+_ret = bc("10/13-待確認丙 E200000003", gid="TEST_B")
+check("待確認資料接上建檔不會跳「已從舊案帶入」（吳鴻志案）", "舊案帶入" not in (_ret or ""), _ret)
+_ret = bc("10/13-舊客己 E200000006", gid="TEST_C_GRP")
+check("真的舊客（別群組結案過）還是會跳「已從舊案帶入」", "舊案帶入" in (_ret or ""), _ret)
+
 # ========== 總結 ==========
 print(f"\n{'='*50}")
 print(f"結果：{PASS} 通過、{FAIL} 失敗")

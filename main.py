@@ -5045,6 +5045,10 @@ def init_settings():
 def create_customer_record(name, id_no, company, source_group_id, text,
                             route_plan="", current_company="", report_section="") -> str:
     """建立客戶（Bug 5/6/12 修復：context manager + transaction + id_no normalize）"""
+    # ⛔ 先清掉「上一筆帶入幾項」。這支有十幾個呼叫點，不是每個都會用 _copied_hint() 取走，
+    #    沒取走的數字會留在這條執行緒上，被下一位客人的建檔訊息拿去用。
+    #    2026-10-13 吳鴻志：只有一筆「待確認」接上、根本沒有舊案，卻跳「已從舊案帶入 57 項」。
+    _last_copy_ctx.n = 0
     id_no = normalize_id_no(id_no)
     now = now_iso()
     with db_conn(commit=True) as conn:
