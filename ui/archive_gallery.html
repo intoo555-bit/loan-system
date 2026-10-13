@@ -254,7 +254,7 @@ __TOPNAV__
  </section>
  <div class="list-tools">
   <div class="selection"><label class="check-label"><input id="selectAll" type="checkbox"><span>全選</span></label><span id="selectionCount">12 份</span><button id="clearSelection" type="button" class="text-button" hidden>取消選取</button></div>
-  <div class="sort-group"><select class="mini-select" id="sourceFilter" aria-label="篩選來源"><option value="all">全部來源</option><option value="chat">LINE 聊天</option><option value="form">線上申請書</option></select><span class="separator">|</span><select class="mini-select" id="sort" aria-label="排列順序"><option value="original">原始順序</option><option value="newest">日期：新到舊</option><option value="oldest">日期：舊到新</option><option value="issue">待處理優先</option></select></div>
+  <div class="sort-group"><select class="mini-select" id="sourceFilter" aria-label="篩選來源"><option value="all">全部來源</option><option value="chat">LINE 聊天</option><option value="form">線上申請書</option><option value="admin">行政上傳</option></select><span class="separator">|</span><select class="mini-select" id="sort" aria-label="排列順序"><option value="original">原始順序</option><option value="newest">日期：新到舊</option><option value="oldest">日期：舊到新</option><option value="issue">待處理優先</option></select></div>
  </div>
  <section id="gallery" class="grid" aria-label="證件清單"></section>
  <section class="blank" id="emptyState" hidden><svg class="icon"><use href="#i-search"/></svg><h2>沒有符合的附件</h2><button type="button" class="text-button" id="resetFilters">清除篩選</button></section>
@@ -293,7 +293,7 @@ const initialDocuments=[];
  let toastTimer;
  const docById=(id)=>state.documents.find(d=>d.id===id);
  const isIssue=(d)=>d.kind==='error'||!!d.error;
- const sourceLabel=(source)=>source==='chat'?'LINE 聊天':source==='form'?'線上申請書':source;
+ const sourceLabel=(source)=>source==='chat'?'LINE 聊天':source==='form'?'線上申請書':source==='admin'?'行政上傳':source;
  const safeUrl=(value)=>{ if(!value)return ''; try{if(/^data:image\/(?:png|jpeg|webp|gif);base64,/i.test(value))return value;const u=new URL(value,location.href);if(['https:','http:','blob:'].includes(u.protocol))return u.href;}catch{}return ''; };
  const notify=(message)=>{$('toastText').textContent=message;$('toast').hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('toast').hidden=true,3300);};
  function showConnection(name,key,message){

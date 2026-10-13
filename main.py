@@ -27632,7 +27632,10 @@ _DOC_CATS = ["身分證正面", "身分證反面", "健保卡", "駕照", "存�
              "存摺內頁明細", "薪資證明", "401報表或營登", "權狀或謄本",
              # 2026-10-14 新增（使用者：各家要的文件對不到分類的，客人要給的就加分類）
              "信用報告", "貸款證明", "店面／工作照", "所得／財產清單", "車輛照片", "證照", "攤商合約書",
-             "身分證查詢截圖", "委任合約", "電子簽名", "其他"]
+             "身分證查詢截圖",
+             # 行政自己查／自己做的（使用者 2026-10-14：這些客人不會傳，要能上傳進來一起送件）
+             "申請書／填寫表", "天書／車價截圖", "法學／罰單／動保截圖",
+             "委任合約", "電子簽名", "其他"]
 # 業務 AI 給的原始標籤（上傳欄位名）只拿來當「還沒判讀前」的暫時排序 ⛔ 不可信：
 #   2026-10-13 測試：「第二證件」「存摺封面照」那兩格其實是網頁截圖；LINE 聊天的一律標「AI自己判斷」
 _DOC_ORDER = [("身分證正",), ("身分證反", "身分證背"), ("身分證",), ("健保",), ("駕照", "第二證件"), ("存摺", "存簿"),
@@ -28462,6 +28465,52 @@ async def docs_classify_status(request: Request, id_no: str):
     return JSONResponse({"ok": True, **job})
 
 
+_DOCS_UPLOAD_MAX = 15 * 1024 * 1024
+
+
+@app.post("/archive/{id_no}/upload")
+async def docs_upload(request: Request, id_no: str):
+    """行政自己上傳（身分證查詢截圖、天書截圖、申請書…這些客人不會傳、業務 AI 拉不到的）。
+    使用者 2026-10-14：「這些資料都沒有辦法幫我分類到整包送件資料，我要怎麼上傳」
+    ⛔ 上傳時就選好分類 → 存成人工分類（AI 不會蓋）；只收圖片／PDF；一個檔 15MB 以內"""
+    if not _docs_auth(request):
+        return JSONResponse({"ok": False, "error": "無權限"}, status_code=403)
+    idv = normalize_id_no(id_no)
+    if not idv:
+        return JSONResponse({"ok": False, "error": "身分證不對"})
+    form = await request.form()
+    cat = str(form.get("category") or "")
+    if cat not in _DOC_CATS:
+        return JSONResponse({"ok": False, "error": "請選這是哪一種文件"})
+    files = [f for f in form.getlist("files") if hasattr(f, "read")]
+    if not files:
+        return JSONResponse({"ok": False, "error": "沒有選檔案"})
+    saved, bad = 0, []
+    folder = os.path.join(_docs_dir(), idv)
+    os.makedirs(folder, exist_ok=True)
+    with db_conn(commit=True) as conn:
+        _docs_ensure_table(conn.cursor())
+        for f in files:
+            data = await f.read()
+            ctype = _doc_sniff(data)
+            if not ctype or not (ctype == "application/pdf" or ctype.startswith("image/")):
+                bad.append(f"{f.filename}（不是圖片或 PDF）")
+                continue
+            if len(data) > _DOCS_UPLOAD_MAX:
+                bad.append(f"{f.filename}（超過 15MB）")
+                continue
+            rid = "up-" + uuid.uuid4().hex[:12]     # 「up-」開頭＝行政上傳，跟業務 AI 的編號分開
+            path = os.path.join(folder, rid + _doc_ext(ctype))
+            with open(path, "wb") as fp:
+                fp.write(data)
+            conn.execute("""INSERT INTO customer_docs (id_no, remote_doc_id, source, label, content_type, size, file_path,
+                            remote_created_at, pulled_at, manual_label) VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                         (idv, rid, "行政上傳", cat, ctype, len(data), path, now_iso(), now_iso(), cat))
+            saved += 1
+    return JSONResponse({"ok": saved > 0, "saved": saved, "bad": bad,
+                         "error": "；".join(bad) if bad and not saved else ""})
+
+
 @app.post("/archive/doc/{doc_pk}/delete")
 async def docs_delete(request: Request, doc_pk: int):
     """刪除一張（只有總管理）：放錯客人的證件、測試時誤掛的真客人資料（2026-10-14 陳曉琳的勞保掛在測試客底下）。
@@ -28913,8 +28962,22 @@ async def docs_customer_page(request: Request, id_no: str, refresh: str = ""):
     if not cust:
         notes.append("行政系統還沒有這位客人的資料，下載的 PDF 不會有客戶資料表")
     notes.append("下載 PDF／照片：勾選幾張就只下載那幾張；沒勾就是全部。第一頁是客戶資料表")
+    _up_opts = "".join(f'<option>{h(c)}</option>' for c in _DOC_CATS if c not in ("委任合約", "電子簽名"))
+    upload = (f'<form id="upForm" style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">'
+              f'<b style="color:#16324a">⬆ 行政上傳</b>'
+              f'<select name="category" required style="padding:7px;border:1px solid #cdd8e0;border-radius:8px">'
+              f'<option value="">這是哪一種？</option>{_up_opts}</select>'
+              f'<input type="file" name="files" multiple accept="image/*,application/pdf" required style="max-width:100%">'
+              f'<button type="submit" style="background:#127a7d;color:#fff;border:0;border-radius:8px;padding:8px 14px;font-weight:700;cursor:pointer">上傳</button>'
+              f'<span id="upMsg" style="font-size:13px"></span></form>'
+              f'<div style="font-size:12px;color:#8a96a3;margin-top:4px">身分證查詢截圖、天書／車價截圖、申請書這些客人不會傳的，在這裡上傳，會跟證件放在一起、一起下載。</div>'
+              '<script>document.getElementById("upForm").addEventListener("submit",function(e){e.preventDefault();'
+              'var f=this,m=document.getElementById("upMsg");m.textContent="上傳中…";'
+              'fetch(location.pathname+"/upload",{method:"POST",body:new FormData(f)}).then(r=>r.json()).then(d=>{'
+              'if(d.ok){m.textContent="✅ 已上傳 "+d.saved+" 個"+(d.bad.length?"（略過："+d.bad.join("、")+"）":"");setTimeout(()=>location.reload(),800);}'
+              'else m.textContent="❌ "+(d.error||"失敗");}).catch(()=>m.textContent="❌ 網路錯誤");});</script>')
     warn = ('<div style="background:#fff;border:1px solid #e3e9ee;border-radius:12px;padding:10px 14px;margin:0 0 14px;'
-            'font-size:13px;color:#5c6f80;line-height:1.7">' + "<br>".join(notes) + "</div>")
+            'font-size:13px;color:#5c6f80;line-height:1.7">' + "<br>".join(notes) + upload + "</div>")
     adapter = (_ARCHIVE_ADAPTER.replace("__ID__", json.dumps(idv))
                .replace("__SHOW__", json.dumps(((name + " ") if name else "") + idv, ensure_ascii=False))
                .replace("__TOTAL__", str(len(docs)))
@@ -28943,6 +29006,7 @@ _DOC_GROUP = {"身分證正面": "identity", "身分證反面": "identity", "健
               "信用卡帳單": "finance", "汽車繳息": "finance",
               "信用報告": "finance", "貸款證明": "finance", "所得／財產清單": "finance", "攤商合約書": "finance",
               "店面／工作照": "other", "證照": "identity", "車輛照片": "vehicle",
+              "申請書／填寫表": "other", "天書／車價截圖": "vehicle", "法學／罰單／動保截圖": "other",
               "行照": "vehicle", "人車合照": "vehicle", "強制險": "vehicle", "手機型號": "vehicle", "IMEI": "vehicle",
               "人與手機合照": "vehicle", "委任合約": "other", "電子簽名": "other", "其他": "other"}   # 合約分頁拿掉（使用者 2026-10-14）
 
@@ -28959,7 +29023,8 @@ def _doc_payload(r, order: int) -> dict:
         preview, view = f"/archive/file/{r['id']}/preview?page=1", f"/archive/file/{r['id']}/preview"
     else:
         preview = view = f"/archive/file/{r['id']}" if is_img else ""
-    return {"id": str(r["id"]), "category": lb, "source": "form" if "申請書" in (r.get("source") or "") else "chat",
+    src = r.get("source") or ""
+    return {"id": str(r["id"]), "category": lb, "source": "admin" if "行政" in src else ("form" if "申請書" in src else "chat"),
             "date": (r.get("remote_created_at") or r.get("pulled_at") or "")[:10],
             "kind": "image" if (is_img or pages) else "file", "pages": pages, "viewUrl": view,
             "previewUrl": preview, "fileUrl": f"/archive/file/{r['id']}",

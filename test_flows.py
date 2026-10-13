@@ -2306,6 +2306,26 @@ check("總管理刪除：檔案從硬碟刪掉、頁面上不見", _rd.get("ok")
 m.pull_customer_docs("G300000001")
 check("刪掉的不會被重拉回來（業務 AI 那邊還在）", all(r["remote_doc_id"] != "45" for r in m._docs_rows("G300000001")))
 check("刪掉的照片網址也打不開", TestClient(m.app).get(f"/archive/file/{_del['id']}").status_code == 404)
+# 行政上傳（身分證查詢截圖、天書截圖…客人不會傳的；使用者 2026-10-14）
+m.check_auth = lambda req: "admin"
+_tcu = TestClient(m.app)
+_r = _tcu.post("/archive/G300000001/upload", data={"category": "身分證查詢截圖"},
+               files=[("files", ("查詢.png", _png77((1, 2, 3)), "image/png")), ("files", ("天書.pdf", _pdf74(2), "application/pdf"))]).json()
+check("行政上傳：圖片＋PDF 都收", _r.get("ok") and _r.get("saved") == 2, _r)
+_r = _tcu.post("/archive/G300000001/upload", data={"category": "身分證查詢截圖"},
+               files=[("files", ("x.txt", b"hello", "text/plain"))]).json()
+check("行政上傳：不是圖片或 PDF → 擋下", _r.get("ok") is False and "不是圖片或 PDF" in _r.get("error", ""), _r)
+_r = _tcu.post("/archive/G300000001/upload", data={"category": ""}, files=[("files", ("q.png", _png77((1, 2, 3)), "image/png"))]).json()
+check("行政上傳：沒選分類 → 擋下", _r.get("ok") is False, _r)
+_up = [d for d in _tcu.get("/archive/G300000001/data").json()["documents"] if d["source"] == "admin"]
+check("上傳的出現在證件頁、來源寫行政上傳、算人工分類（AI 不蓋）",
+      len(_up) == 2 and all(d["category"] == "身分證查詢截圖" and d["isManual"] for d in _up), _up)
+_zn = _zf73.ZipFile(_io73.BytesIO(_tcu.get("/archive/G300000001/zip").content)).namelist()
+check("上傳的會一起下載", sum("身分證查詢截圖" in n for n in _zn) == 2, _zn)
+m.pull_customer_docs("G300000001")
+check("重拉業務 AI 不會動到行政上傳的", len([r for r in m._docs_rows("G300000001") if r["source"] == "行政上傳"]) == 2)
+check("新分類：申請書／填寫表、天書／車價截圖、法學／罰單／動保截圖",
+      all(c in m._DOC_CATS for c in ("申請書／填寫表", "天書／車價截圖", "法學／罰單／動保截圖")))
 m._bizai_list, m._bizai_fetch, m._bizai_judge = _o_list, _o_fetch, _o_judge
 m.check_auth = _old_auth75
 os.environ.pop("BUSINESS_AI_URL", None); os.environ.pop("BUSINESS_AI_SECRET", None)
