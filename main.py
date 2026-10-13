@@ -27797,36 +27797,72 @@ def _ai_classify_doc(path: str, real_type: str):
     return typ, str(d.get("note") or "")[:120]
 
 
+# 判讀進度（記憶體；重開機就沒了，沒關係 —— 判讀結果本身存在資料庫）
+_DOC_CLASSIFY_JOBS = {}
+
+
 def classify_customer_docs(id_no: str, only_new: bool = False) -> dict:
-    """AI 判讀這位客人的證件。⛔ 不動行政手動改過的名稱（manual_label 永遠優先）"""
-    rows = _docs_rows(id_no)
-    done, errors = 0, []
-    for r in rows:
+    """AI 判讀這位客人的證件。⛔ 不動行政手動改過的名稱（manual_label 永遠優先）
+    2026-10-13 正式站：15 張一張一張排隊判超過一分鐘，網頁先斷線 → 好幾格沒判到。
+    → 同時判 4 張；失敗的那張把原因寫進 ai_note，證件頁紅字顯示（不可以默默空著）。"""
+    from concurrent.futures import ThreadPoolExecutor
+    idv = normalize_id_no(id_no)
+    todo = []
+    for r in _docs_rows(idv):
         if only_new and r.get("ai_label"):
             continue
         p = r["file_path"] or ""
-        if not os.path.isfile(p) or not (r["real_type"] == "application/pdf" or r["real_type"].startswith("image/")):
-            continue
+        if os.path.isfile(p) and (r["real_type"] == "application/pdf" or r["real_type"].startswith("image/")):
+            todo.append(r)
+    job = _DOC_CLASSIFY_JOBS.setdefault(idv, {})
+    job.update({"running": True, "done": 0, "total": len(todo), "errors": []})
+
+    def _one(r):
         try:
-            typ, note = _ai_classify_doc(p, r["real_type"])
+            return r, _ai_classify_doc(r["file_path"], r["real_type"]), ""
         except Exception as e:
-            errors.append(f"第{r['id']}張（{type(e).__name__}: {str(e)[:60]}）")
-            continue
-        with db_conn(commit=True) as conn:
-            conn.execute("UPDATE customer_docs SET ai_label=?, ai_note=?, ai_at=? WHERE id=?",
-                         (typ, note, now_iso(), r["id"]))
-        done += 1
-    return {"ok": True, "done": done, "errors": errors}
+            return r, None, f"{type(e).__name__}: {str(e)[:80]}"
+
+    try:
+        with ThreadPoolExecutor(max_workers=4) as ex:
+            for r, res, err in ex.map(_one, todo):
+                with db_conn(commit=True) as conn:
+                    if res:
+                        conn.execute("UPDATE customer_docs SET ai_label=?, ai_note=?, ai_at=? WHERE id=?",
+                                     (res[0], res[1], now_iso(), r["id"]))
+                    else:
+                        conn.execute("UPDATE customer_docs SET ai_note=?, ai_at=? WHERE id=?",
+                                     ("判讀失敗：" + err, now_iso(), r["id"]))
+                        job["errors"].append(f"{r['show_label']}（{err[:40]}）")
+                job["done"] += 1
+    finally:
+        job["running"] = False
+    return {"ok": True, "done": job["done"] - len(job["errors"]), "errors": list(job["errors"])}
 
 
 @app.post("/archive/{id_no}/classify")
 async def docs_classify(request: Request, id_no: str):
+    """開始判讀（背景跑，馬上回；網頁用 classify-status 看進度）"""
     if not _docs_auth(request):
         return JSONResponse({"ok": False, "error": "無權限"}, status_code=403)
     if not os.getenv("ANTHROPIC_API_KEY", ""):
         return JSONResponse({"ok": False, "error": "正式站沒有設定 ANTHROPIC_API_KEY"})
-    import asyncio as _aio
-    return JSONResponse(await _aio.to_thread(classify_customer_docs, id_no))
+    idv = normalize_id_no(id_no)
+    if _DOC_CLASSIFY_JOBS.get(idv, {}).get("running"):
+        return JSONResponse({"ok": True, "started": False, "msg": "已經在判讀中"})
+    if _DOCS_SYNC:
+        return JSONResponse(classify_customer_docs(idv))
+    _DOC_CLASSIFY_JOBS[idv] = {"running": True, "done": 0, "total": 0, "errors": []}
+    _threading.Thread(target=classify_customer_docs, args=(idv,), daemon=True).start()
+    return JSONResponse({"ok": True, "started": True})
+
+
+@app.get("/archive/{id_no}/classify-status")
+async def docs_classify_status(request: Request, id_no: str):
+    if not _docs_auth(request):
+        return JSONResponse({"ok": False, "error": "無權限"}, status_code=403)
+    job = _DOC_CLASSIFY_JOBS.get(normalize_id_no(id_no)) or {"running": False, "done": 0, "total": 0, "errors": []}
+    return JSONResponse({"ok": True, **job})
 
 
 @app.post("/archive/doc/{doc_pk}/label")
@@ -27989,6 +28025,8 @@ async def docs_customer_page(request: Request, id_no: str, refresh: str = ""):
             tag = '<span style="color:#15803d">✔ 人工確認</span>'
         elif r.get("ai_label"):
             tag = f'<span style="color:#1a5f92" title="{h(r.get("ai_note") or "")}">🤖 AI 判讀</span>'
+        elif (r.get("ai_note") or "").startswith("判讀失敗"):
+            tag = f'<span style="color:#dc2626">⚠️ {h(r["ai_note"][:60])}</span>'
         else:
             tag = '<span style="color:#b45309">原標籤（未判讀）</span>'
         sel = (f'<select onchange="setLbl({r["id"]},this.value)" style="margin-top:4px;font-size:12px;max-width:100%">'
@@ -28010,11 +28048,17 @@ async def docs_customer_page(request: Request, id_no: str, refresh: str = ""):
 function setLbl(pk, v){{ if(!v) return;
   fetch('/archive/doc/'+pk+'/label',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{label:v}})}})
    .then(r=>r.json()).then(d=>{{ if(d.ok) location.reload(); else alert(d.error||'失敗'); }}); }}
-function aiAll(btn){{ btn.disabled=true; btn.textContent='🤖 判讀中…（一張約幾秒）';
+function aiAll(btn){{ btn.disabled=true; btn.textContent='🤖 判讀中…';
   fetch('/archive/{h(idv)}/classify',{{method:'POST'}}).then(r=>r.json()).then(d=>{{
     if(!d.ok){{ alert(d.error||'失敗'); btn.disabled=false; btn.textContent='🤖 AI 判讀全部'; return; }}
-    alert('判讀完成：'+d.done+' 張'+(d.errors.length?('\\n失敗 '+d.errors.length+' 張：'+d.errors.join('、')):'')); location.reload();
-  }}).catch(e=>{{ alert('網路錯誤'); btn.disabled=false; }}); }}
+    if(d.done!==undefined){{ location.reload(); return; }}
+    poll(btn); }}).catch(e=>{{ poll(btn); }}); }}
+function poll(btn){{
+  fetch('/archive/{h(idv)}/classify-status').then(r=>r.json()).then(d=>{{
+    btn.textContent='🤖 判讀中 '+d.done+'/'+d.total+'…';
+    if(d.running){{ setTimeout(()=>poll(btn),2000); return; }}
+    if(d.errors&&d.errors.length) alert('判讀完成，失敗 '+d.errors.length+' 張（縮圖下面有紅字原因）');
+    location.reload(); }}).catch(e=>setTimeout(()=>poll(btn),3000)); }}
 </script>"""
     return _docs_page(role, f"{name} 證件", body)
 

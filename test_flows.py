@@ -1947,7 +1947,8 @@ _FAKE["E300000005"] = [
 os.environ["BUSINESS_AI_URL"] = "https://fake-bizai.test"; os.environ["BUSINESS_AI_SECRET"] = "fakesecret"
 m._bizai_list = lambda idv: (_FAKE.get(idv, []), "")
 m._bizai_fetch = lambda doc_id, idv: ((_pdf74(5), "image/png", "") if str(doc_id) == "21"
-                                      else (_png((int(doc_id) * 9 % 255, 10, 10)), "image/png", ""))
+                                      else (_png((255, 0, 0) if str(doc_id) == "22" else (0, 0, 255)), "image/png", ""))
+m._DOCS_SYNC = True
 m.pull_customer_docs("E300000005")
 _rows = {r["remote_doc_id"]: r for r in m._docs_rows("E300000005")}
 check("業務 AI 標成圖片的委任合約，看檔案內容認出是 PDF", _rows["21"]["real_type"] == "application/pdf", _rows["21"]["real_type"])
@@ -1965,15 +1966,13 @@ _answers = {"22": '{"type": "行照", "note": "機車行照"}', "23": '```json\n
             "21": '{"type": "委任合約", "note": "合約文件"}'}
 _seen_blocks = []
 def _fake_ai(block, prompt):
+    """照圖片顏色回答（同時判 4 張，順序不固定，所以不能照呼叫順序）：紅→22 行照、藍→23 身分證正面"""
     _seen_blocks.append(block["type"])
-    data = block["source"]["data"]
-    for rid, r in _rows.items():
-        pass
-    # 用區塊種類＋順序對應：PDF→21；圖片照判讀順序
     if block["type"] == "document":
         return _answers["21"]
-    _fake_ai.n = getattr(_fake_ai, "n", 0) + 1
-    return _answers["22"] if _fake_ai.n == 1 else _answers["23"]
+    import base64 as _b64
+    px = _Img73.open(_io73.BytesIO(_b64.b64decode(block["source"]["data"]))).convert("RGB").getpixel((5, 5))
+    return _answers["22"] if px[0] > px[2] else _answers["23"]
 _orig_ai = m._ai_doc_request
 m._ai_doc_request = _fake_ai
 os.environ["ANTHROPIC_API_KEY"] = "fake-key-for-test"
@@ -1987,7 +1986,6 @@ check("證件頁標「🤖 AI 判讀」", "AI 判讀" in _tc74.get("/archive/E30
 _pk22 = [r for r in m._docs_rows("E300000005") if r["remote_doc_id"] == "22"][0]["id"]
 check("人工改成清單外的名稱 → 擋下", _tc74.post(f"/archive/doc/{_pk22}/label", json={"label": "亂寫"}).json().get("ok") is False)
 check("人工改成「強制險」", _tc74.post(f"/archive/doc/{_pk22}/label", json={"label": "強制險"}).json().get("ok") is True)
-_fake_ai.n = 0
 _tc74.post("/archive/E300000005/classify")
 _r22 = [r for r in m._docs_rows("E300000005") if r["remote_doc_id"] == "22"][0]
 check("AI 重判不會蓋掉人工改的（那張還是強制險）", _r22["show_label"] == "強制險" and _r22["manual_label"] == "強制險",
@@ -2001,6 +1999,15 @@ _typ, _note = m._ai_classify_doc([r for r in m._docs_rows("E300000005") if r["re
 check("AI 回清單外的種類 → 其他", _typ == "其他", _typ)
 os.environ.pop("ANTHROPIC_API_KEY", None)
 check("正式站沒設 AI 金鑰 → 按判讀會講清楚原因", "ANTHROPIC_API_KEY" in _tc74.post("/archive/E300000005/classify").json().get("error", ""))
+_bad = lambda block, prompt: (_ for _ in ()).throw(RuntimeError("AI 回 HTTP 529：overloaded"))
+os.environ["ANTHROPIC_API_KEY"] = "fake-key-for-test"
+m._ai_doc_request = _bad
+_r = _tc74.post("/archive/E300000005/classify").json()
+check("判讀失敗會回報有幾張失敗", len(_r.get("errors", [])) == 3, _r)
+_html = _tc74.get("/archive/E300000005").text
+check("判讀失敗的那張，縮圖下面紅字寫原因（不可以默默空著）", "判讀失敗" in _html and "529" in _html)
+os.environ.pop("ANTHROPIC_API_KEY", None)
+m._DOCS_SYNC = False
 m._ai_doc_request = _orig_ai
 m.check_auth = _old_auth
 m._bizai_list, m._bizai_fetch = _orig_list, _orig_fetch
