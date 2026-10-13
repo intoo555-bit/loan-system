@@ -1845,6 +1845,81 @@ check("寫入窗口：header 密碼錯 → 擋下", _r.status_code == 403)
 _r = _tc72.post("/api/customer-upsert", json={"secret": "t72secret", "id_no": "V100000072", "fields": {"email": "a@b.cc"}})
 check("寫入窗口：舊寫法（密碼放 body）先照收", _r.json().get("ok") is True, _r.text[:200])
 
+# ========== 73. 證件存檔：建檔後去業務 AI 拉證件、群組貼一則收件連結（2026-10-13）==========
+print("\n=== 73. 證件存檔 ===")
+import shutil as _sh73, io as _io73
+from PIL import Image as _Img73
+_sh73.rmtree(m._docs_dir(), ignore_errors=True)
+os.environ["BUSINESS_AI_URL"] = "https://fake-bizai.test"
+os.environ["BUSINESS_AI_SECRET"] = "fakesecret"
+m._DOCS_SYNC = True
+def _png(color):
+    b = _io73.BytesIO(); _Img73.new("RGB", (60, 40), color).save(b, "PNG"); return b.getvalue()
+_FAKE = {"E300000001": [
+    {"doc_id": 11, "created_at": "2026-10-13T10:01:00", "content_type": "image/png", "source": "LINE聊天", "label": "身分證反面"},
+    {"doc_id": 12, "created_at": "2026-10-13T10:02:00", "content_type": "image/png", "source": "LINE聊天", "label": "勞保明細"},
+    {"doc_id": 13, "created_at": "2026-10-13T10:03:00", "content_type": "image/png", "source": "線上申請書", "label": "身分證正面"}]}
+_fetch_calls = []
+_orig_list, _orig_fetch = m._bizai_list, m._bizai_fetch
+m._bizai_list = lambda idv: (_FAKE.get(idv, []), "")
+def _fake_fetch(doc_id, idv):
+    _fetch_calls.append((str(doc_id), idv))
+    return _png((int(doc_id) * 10 % 255, 80, 120)), "image/png", ""
+m._bizai_fetch = _fake_fetch
+
+bc("10/13-證件甲 E300000001", gid="TEST_B")
+_pm = [t for g, t in pushes if "📎" in t]
+check("建檔後群組貼一則「📎 收件」", len(_pm) == 1 and pushes[0][0] == "TEST_B", pushes)
+check("收件訊息有張數、文件清單、永久連結", _pm and "收件（3 張）" in _pm[0] and "身分證正面" in _pm[0]
+      and "/archive/E300000001" in _pm[0], _pm)
+check("下載時一定帶身分證（業務 AI 會比對，不帶拿不到）", _fetch_calls and all(i == "E300000001" for _d, i in _fetch_calls), _fetch_calls)
+_rows = m._docs_rows("E300000001")
+check("照片存進自己的磁碟（一位客人一個資料夾）", len(_rows) == 3 and all(os.path.isfile(r["file_path"]) and
+      os.sep + "E300000001" + os.sep in r["file_path"] for r in _rows), _rows)
+check("照行政存檔順序排：身分證正面 → 反面 → 勞保", [r["label"] for r in _rows] == ["身分證正面", "身分證反面", "勞保明細"],
+      [r["label"] for r in _rows])
+_fetch_calls.clear()
+_res = m.pull_customer_docs("E300000001")
+check("再拉一次不會重複下載", _res["new"] == 0 and _res["total"] == 3 and not _fetch_calls, (_res, _fetch_calls))
+_FAKE["E300000001"].append({"doc_id": 14, "created_at": "2026-10-14T09:00:00", "content_type": "image/png", "source": "LINE聊天", "label": "行照"})
+_res = m.pull_customer_docs("E300000001")
+check("客人補傳 → 只下載新的那張", _res["new"] == 1 and _res["total"] == 4, _res)
+
+bc("10/13-證件乙 E300000002", gid="TEST_B")
+check("業務 AI 還沒有證件 → 群組不貼（不吵）", not any("📎" in t or "證件" in t for g, t in pushes), pushes)
+m._bizai_list = lambda idv: (None, "業務 AI 限流中，等一分鐘再拉")
+bc("10/13-證件丙 E300000003", gid="TEST_B")
+check("拉失敗 → 群組有提醒（不可以安靜失敗）", any("證件拉取失敗" in t and "限流" in t for g, t in pushes), pushes)
+m._bizai_list = lambda idv: (_FAKE.get(idv, []), "")
+
+_old_auth = m.check_auth
+m.check_auth = lambda req: "adminB"
+_tc73 = TestClient(m.app)
+_r = _tc73.get("/archive")
+check("存檔清單頁：一位客人一列", _r.status_code == 200 and "證件甲" in _r.text and "E300000001" in _r.text, _r.status_code)
+_r = _tc73.get("/archive", params={"q": "E300000001"})
+check("存檔清單可以用身分證搜尋", "證件甲" in _r.text)
+_r = _tc73.get("/archive/E300000001")
+check("客人證件頁：每張都有縮圖", _r.status_code == 200 and _r.text.count('<img src="/archive/file/') == 4, _r.text.count("<img"))
+_pk = m._docs_rows("E300000001")[0]["id"]
+_r = _tc73.get(f"/archive/file/{_pk}")
+check("單張照片打得開", _r.status_code == 200 and _r.headers.get("content-type", "").startswith("image/"))
+_r = _tc73.get("/archive/E300000001/pdf")
+import pypdf as _pp73
+check("下載整理好的 PDF（4 頁）", _r.status_code == 200 and len(_pp73.PdfReader(_io73.BytesIO(_r.content)).pages) == 4,
+      _r.status_code)
+_r = _tc73.get("/archive/E300000001/zip")
+import zipfile as _zf73
+_names = _zf73.ZipFile(_io73.BytesIO(_r.content)).namelist() if _r.status_code == 200 else []
+check("下載全部照片：資料夾名跟相簿一樣（收件日期-姓名-身分證）、照順序編號",
+      _names and _names[0].startswith("115-10-13-證件甲-E300000001/01 身分證正面"), _names)
+m.check_auth = lambda req: "group_TEST_B"
+check("業務群組帳號看不到證件頁", TestClient(m.app).get("/archive/file/%d" % _pk).status_code == 403)
+m.check_auth = _old_auth
+m._bizai_list, m._bizai_fetch = _orig_list, _orig_fetch
+m._DOCS_SYNC = False
+os.environ.pop("BUSINESS_AI_URL", None); os.environ.pop("BUSINESS_AI_SECRET", None)
+
 # ========== 總結 ==========
 print(f"\n{'='*50}")
 print(f"結果：{PASS} 通過、{FAIL} 失敗")

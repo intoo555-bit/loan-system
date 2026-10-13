@@ -2,7 +2,7 @@ from fastapi import FastAPI, Request, BackgroundTasks
 # RedirectResponse 放全域：以前每個函式各自 `from fastapi.responses import ...`，
 # 漏掉的就會在「權限不足要導回 /login」那行炸 NameError（500 而不是登入頁）。
 # 放這裡之後就不可能再漏；函式內既有的區域 import 留著也不衝突。
-from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, RedirectResponse, StreamingResponse
 import uvicorn
 import requests as req_lib
 import os
@@ -11136,6 +11136,7 @@ def handle_new_case_block(block_text, source_group_id, reply_token) -> Optional[
         return "QUICK_REPLY_SENT"
     _new_cid = create_customer_record(name, id_no, company, source_group_id, block_text)
     msg = f"🆕 已建立客戶：{name}" + _copied_hint()
+    _schedule_docs_pull(id_no, name, source_group_id)   # 去業務 AI 拉證件、群組貼「📎 收件」
     if warnings:
         # ⛔ 業務打的日期「沒有存」—— 建檔日期一律用實際建檔當天（created_at）。
         #    2026-10-08 李冠偉：業務把 115/10/8 打成 15/10/8，提醒叫他「確認無誤？」
@@ -12761,6 +12762,7 @@ def _handle_bc_case_block_locked(block_text, source_group_id, reply_token, sourc
         if want_push_a:
             ok, _ = push_text(get_a_group_for_sales(source_group_id), block_text); pushed = ok
         msg = f"🆕 已建立客戶：{name}" + _copied_hint()
+        _schedule_docs_pull(id_no, name, source_group_id)   # 去業務 AI 拉證件、群組貼「📎 收件」
         if pushed: msg += f"\n✅ 已回貼A群：{name}"
         return msg
 
@@ -17998,6 +18000,8 @@ def _page_topnav(role, active):
              ("➕ 新增客戶", "/new-customer", "new"), ("📖 指令速查", "/guide", "guide")]
     if role in ("admin", "adminB", "ops_admin"):
         items.append(("📋 行政B", "/adminb", "adminb"))
+    if role in ("admin", "adminB", "ops_admin", "sales_admin", "normal"):
+        items.append(("📎 證件存檔", "/archive", "docs"))
     if role in ("admin", "adminB", "ops_admin", "sales_admin") or role.startswith("group_"):
         items.append(("💬 指令台", "/console", "console"))
     if role == "sales_admin":  # 業務管理員：裝置管理(admin 版在「管理」下拉裡)
@@ -27447,6 +27451,380 @@ def _start_backup_scheduler():
             print(f"[scheduler] job={_j.id} next_run={_j.next_run_time}")
     except Exception as e:
         print(f"[scheduler] start failed: {e}")
+
+
+# =========================
+# 📎 證件存檔（2026-10-13 使用者規劃）
+# =========================
+# 客人在官方 LINE（業務 AI）傳證件 → 業務在業務群建檔 → 這裡用身分證去業務 AI 拉照片，
+# 存在自己的磁碟（一位客人一個資料夾，用身分證分），群組貼一則「📎 收件」＋永久連結。
+# 使用者裁示：永久保存、證件存在行政系統（業務 AI 刪對話會連照片一起刪，不能當存檔）；
+#           不把照片一張張貼進群組（會亂、吃額度）；連結要登入、永久有效。
+# ⛔ 網址用 /archive 不用 /docs：/docs 是 FastAPI 預設的 API 說明頁。
+# 業務 AI 窗口說明：LINE顧問\行政系統寫入窗口_交接.md 第 6 段（header X-Loan-Secret、下載要同時帶 id_no、有限流）。
+_DOCS_SYNC = False   # 測試用：True＝建檔後同步拉（不開背景執行緒）
+_DOCS_ROLES = ("admin", "adminB", "ops_admin", "sales_admin", "normal")
+# 頁面順序：照行政實際整理的存檔（2026-10-13 對過李嬋娟 14 頁、吳宏彬 9 頁兩份真實 PDF）
+_DOC_ORDER = [("身分證正",), ("身分證反", "身分證背"), ("身分證",), ("健保",), ("駕照", "第二證件"), ("存摺", "存簿"),
+              ("行照",), ("勞保",), ("合照",), ("強制險",), ("手機", "型號"), ("IMEI",),
+              ("信用卡",), ("帳單",), ("薪轉", "明細")]
+
+
+def _docs_dir() -> str:
+    return os.path.join(os.path.dirname(os.path.abspath(DB_PATH)), "docs")
+
+
+def _docs_ensure_table(cur):
+    cur.execute("""CREATE TABLE IF NOT EXISTS customer_docs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id_no TEXT NOT NULL, remote_doc_id TEXT NOT NULL,
+        source TEXT, label TEXT, content_type TEXT, size INTEGER,
+        file_path TEXT, remote_created_at TEXT, pulled_at TEXT,
+        UNIQUE(id_no, remote_doc_id))""")
+    cur.execute("""CREATE TABLE IF NOT EXISTS customer_docs_pull (
+        id_no TEXT PRIMARY KEY, last_pull_at TEXT, last_error TEXT)""")
+
+
+def _bizai_conf():
+    return ((os.getenv("BUSINESS_AI_URL", "") or "").rstrip("/"), os.getenv("BUSINESS_AI_SECRET", "") or "")
+
+
+def _bizai_list(id_no: str):
+    """業務 AI 窗口 1：這個身分證的照片清單。回 (items, 錯誤訊息)；items=None 表示沒拉成"""
+    url, sec = _bizai_conf()
+    if not url or not sec:
+        return None, "未設定 BUSINESS_AI_URL／BUSINESS_AI_SECRET"
+    try:
+        r = req_lib.get(f"{url}/api/loan/docs", params={"id_no": id_no},
+                        headers={"X-Loan-Secret": sec}, timeout=20)
+    except Exception as e:
+        return None, f"連不到業務 AI：{type(e).__name__}"
+    if r.status_code == 401:
+        return None, "業務 AI 密碼不對（BUSINESS_AI_SECRET 要跟業務 AI 的 LOAN_SYS_SECRET 一樣）"
+    if r.status_code == 429:
+        return None, "業務 AI 限流中，等一分鐘再拉"
+    try:
+        d = r.json()
+    except Exception:
+        return None, f"業務 AI 回的不是資料（HTTP {r.status_code}）"
+    if not d.get("ok"):
+        return None, f"業務 AI 回錯誤：{d.get('msg') or d.get('error') or r.status_code}"
+    return d.get("items") or [], ""
+
+
+def _bizai_fetch(doc_id, id_no: str):
+    """業務 AI 窗口 2：下載單一檔案（⛔ 一定要同時帶 id_no，業務 AI 會比對）。回 (bytes, content_type, 錯誤訊息)"""
+    url, sec = _bizai_conf()
+    try:
+        r = req_lib.get(f"{url}/api/loan/docs/{doc_id}", params={"id_no": id_no},
+                        headers={"X-Loan-Secret": sec}, timeout=40)
+    except Exception as e:
+        return None, "", f"下載失敗：{type(e).__name__}"
+    if r.status_code == 429:
+        return None, "", "業務 AI 限流中，等一分鐘再拉"
+    if r.status_code != 200:
+        return None, "", f"下載失敗（HTTP {r.status_code}）"
+    return r.content, r.headers.get("Content-Type", ""), ""
+
+
+def _doc_ext(content_type: str) -> str:
+    ct = (content_type or "").lower()
+    for k, e in (("jpeg", ".jpg"), ("jpg", ".jpg"), ("png", ".png"), ("webp", ".webp"), ("heic", ".heic"),
+                 ("pdf", ".pdf"), ("gif", ".gif"), ("mp4", ".mp4")):
+        if k in ct:
+            return e
+    return ".bin"
+
+
+def pull_customer_docs(id_no: str) -> dict:
+    """去業務 AI 拉這位客人的證件，新的才下載。回 {"ok", "new", "total", "error"}。
+    ⛔ 失敗不可以安靜：錯誤記在 customer_docs_pull.last_error，證件頁會顯示出來。"""
+    idv = normalize_id_no(id_no or "")
+    if not idv:
+        return {"ok": False, "new": 0, "total": 0, "error": "沒有身分證"}
+    items, err = _bizai_list(idv)
+    new = 0
+    with db_conn(commit=True) as conn:
+        cur = conn.cursor()
+        _docs_ensure_table(cur)
+        if items is not None:
+            have = {r[0] for r in cur.execute("SELECT remote_doc_id FROM customer_docs WHERE id_no=?", (idv,))}
+            folder = os.path.join(_docs_dir(), idv)
+            for it in items:
+                rid = str(it.get("doc_id") or "")
+                if not rid or rid in have:
+                    continue
+                data, ctype, ferr = _bizai_fetch(rid, idv)
+                if data is None:
+                    err = ferr
+                    break   # 限流或斷線：先停，下次再補（已下載的保留）
+                ctype = ctype or it.get("content_type") or ""
+                os.makedirs(folder, exist_ok=True)
+                path = os.path.join(folder, f"{rid}{_doc_ext(ctype)}")
+                with open(path, "wb") as fp:
+                    fp.write(data)
+                cur.execute("""INSERT OR IGNORE INTO customer_docs
+                    (id_no, remote_doc_id, source, label, content_type, size, file_path, remote_created_at, pulled_at)
+                    VALUES (?,?,?,?,?,?,?,?,?)""",
+                    (idv, rid, it.get("source") or "", it.get("label") or "", ctype, len(data),
+                     path, it.get("created_at") or "", now_iso()))
+                new += 1
+        cur.execute("INSERT OR REPLACE INTO customer_docs_pull (id_no, last_pull_at, last_error) VALUES (?,?,?)",
+                    (idv, now_iso(), err or ""))
+        total = cur.execute("SELECT COUNT(*) FROM customer_docs WHERE id_no=?", (idv,)).fetchone()[0]
+    if err:
+        print(f"[證件] {idv} 拉取：{err}")
+    return {"ok": not err, "new": new, "total": total, "error": err or ""}
+
+
+def _doc_rank(label: str) -> int:
+    lb = label or ""
+    for i, keys in enumerate(_DOC_ORDER):
+        if any(k in lb for k in keys):
+            return i
+    return len(_DOC_ORDER)
+
+
+def _docs_rows(id_no: str):
+    with db_conn() as conn:
+        cur = conn.cursor()
+        _docs_ensure_table(cur)
+        rows = [dict(r) for r in cur.execute("SELECT * FROM customer_docs WHERE id_no=?", (normalize_id_no(id_no),))]
+    rows.sort(key=lambda r: (_doc_rank(r["label"]), r["remote_created_at"] or "", r["id"]))
+    return rows
+
+
+def _docs_label_summary(rows) -> str:
+    from collections import Counter as _C
+    c = _C((r["label"] or "未分類") for r in rows)
+    order = sorted(c, key=lambda k: (_doc_rank(k if k != "未分類" else ""), k))
+    return "、".join(k + (f"×{c[k]}" if c[k] > 1 else "") for k in order)
+
+
+def _docs_link(id_no: str) -> str:
+    base = (os.getenv("PUBLIC_BASE_URL", "") or "https://loan-system-a7xd.onrender.com").rstrip("/")
+    return f"{base}/archive/{normalize_id_no(id_no)}"
+
+
+def _schedule_docs_pull(id_no: str, name: str, group_id: str):
+    """業務在群組建檔成功後呼叫：去業務 AI 拉證件，有照片就在同一群組貼一則「📎 收件」。
+    ⛔ 只貼一則（則數 × 群組人數計費）；沒照片不貼（客人還沒傳，不吵）。"""
+    url, sec = _bizai_conf()
+    if not id_no or not group_id or not url or not sec:
+        return
+
+    def _run():
+        try:
+            res = pull_customer_docs(id_no)
+            if res["total"] <= 0:
+                if res["error"]:
+                    push_text(group_id, f"⚠️ {name} 證件拉取失敗：{res['error']}\n（打開證件頁會再試，或請管理員看一下）")
+                return
+            n = now_tw()
+            msg = (f"📎 {n.year - 1911}/{n.month}/{n.day}-{name} {normalize_id_no(id_no)} 收件（{res['total']} 張）\n"
+                   f"{_docs_label_summary(_docs_rows(id_no))}\n👉 {_docs_link(id_no)}")
+            if res["error"]:
+                msg += f"\n⚠️ 還有幾張沒拉完：{res['error']}（打開連結會再補）"
+            push_text(group_id, msg)
+        except Exception as e:
+            print(f"[證件] 建檔後拉取失敗：{e}")
+
+    if _DOCS_SYNC:
+        _run()
+    else:
+        _threading.Thread(target=_run, daemon=True).start()
+
+
+def _docs_auth(request):
+    role = check_auth(request)
+    return role if role in _DOCS_ROLES else ""
+
+
+def _docs_disk_text() -> str:
+    total = 0
+    try:
+        for root, _d, files in os.walk(_docs_dir()):
+            for f in files:
+                total += os.path.getsize(os.path.join(root, f))
+    except Exception:
+        pass
+    try:
+        import shutil as _sh
+        du = _sh.disk_usage(os.path.dirname(os.path.abspath(DB_PATH)))
+        return (f"證件已用 {total / 1048576:.1f} MB｜硬碟 {du.used / 1073741824:.2f} / {du.total / 1073741824:.1f} GB"
+                f"（{du.used * 100 // max(du.total, 1)}%）")
+    except Exception:
+        return f"證件已用 {total / 1048576:.1f} MB"
+
+
+_DOCS_CSS = """*{box-sizing:border-box}body{margin:0;font-family:'Noto Sans TC','Microsoft JhengHei',sans-serif;background:#eef3f6;overflow-x:hidden}
+.wrap{max-width:1000px;margin:0 auto;padding:18px 16px 60px}h2{color:#16324a;margin:6px 0 10px}
+.card{background:#fff;border:1px solid #e3e9ee;border-radius:12px;padding:14px;margin-bottom:12px}
+.muted{color:#6b7f90;font-size:12px}.btn{display:inline-block;background:#1a5f92;color:#fff;text-decoration:none;border:0;border-radius:8px;padding:8px 14px;font-size:13px;font-weight:700;margin:2px;cursor:pointer}
+.btn.g{background:#4e7055}.btn.s{background:#8a7a68}
+.tbl{overflow-x:auto}table{width:100%;border-collapse:collapse;font-size:13px}th,td{padding:7px 6px;border-bottom:1px solid #eef2f5;text-align:left;white-space:nowrap}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+.doc{background:#fafbfc;border:1px solid #e3e9ee;border-radius:10px;padding:6px;text-align:center;font-size:12px}
+.doc img{width:100%;height:140px;object-fit:contain;background:#f1f4f6;border-radius:6px}
+input[type=text]{padding:8px 10px;border:1px solid #cdd8e0;border-radius:8px;font-size:14px;width:min(320px,100%)}"""
+
+
+def _docs_page(role, title, body):
+    return HTMLResponse(f"""<!DOCTYPE html><html lang="zh-Hant"><head><meta charset="UTF-8"><link rel="icon" type="image/x-icon" href="/favicon.ico?v=3">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>{h(title)}</title><style>{_DOCS_CSS}</style></head>
+<body>{_page_topnav(role, "docs")}<div class="wrap">{body}</div></body></html>""")
+
+
+@app.get("/archive", response_class=HTMLResponse)
+async def docs_list_page(request: Request, q: str = ""):
+    role = _docs_auth(request)
+    if not role:
+        return RedirectResponse("/login")
+    with db_conn() as conn:
+        cur = conn.cursor()
+        _docs_ensure_table(cur)
+        rows = cur.execute("""SELECT d.id_no, COUNT(*) n, MIN(d.remote_created_at) first_at, MAX(d.pulled_at) last_at,
+              (SELECT customer_name FROM customers c WHERE c.id_no=d.id_no AND c.status!='DELETED' ORDER BY created_at DESC LIMIT 1) name,
+              (SELECT source_group_id FROM customers c WHERE c.id_no=d.id_no AND c.status!='DELETED' ORDER BY created_at DESC LIMIT 1) gid,
+              (SELECT phone FROM customers c WHERE c.id_no=d.id_no AND c.status!='DELETED' ORDER BY created_at DESC LIMIT 1) phone
+            FROM customer_docs d GROUP BY d.id_no ORDER BY last_at DESC LIMIT 500""").fetchall()
+    qq = (q or "").strip()
+    trs = []
+    for r in rows:
+        if qq and not any(qq.upper() in (str(r[k] or "")).upper() for k in ("id_no", "name", "phone")):
+            continue
+        trs.append(f'<tr><td>{h((r["first_at"] or "")[:10])}</td><td>{h(r["name"] or "")}</td><td>{h(r["id_no"])}</td>'
+                   f'<td>{h(get_group_name(r["gid"]) if r["gid"] else "")}</td><td>{r["n"]}</td>'
+                   f'<td><a class="btn" href="/archive/{h(r["id_no"])}">看</a></td></tr>')
+    url, sec = _bizai_conf()
+    conf = "✅ 已設定業務 AI 連線" if (url and sec) else "⚠️ 還沒設定 BUSINESS_AI_URL／BUSINESS_AI_SECRET，拉不到照片"
+    body = f"""<h2>📎 證件存檔</h2>
+<div class="card"><form method="get"><input type="text" name="q" value="{h(qq)}" placeholder="姓名／身分證／電話">
+<button class="btn" type="submit">搜尋</button></form>
+<div class="muted" style="margin-top:6px">{h(_docs_disk_text())}｜{h(conf)}</div></div>
+<div class="card tbl"><table><tr><th>收件日期</th><th>姓名</th><th>身分證</th><th>群組</th><th>張數</th><th></th></tr>
+{''.join(trs) or '<tr><td colspan="6" class="muted">還沒有存檔</td></tr>'}</table></div>"""
+    return _docs_page(role, "證件存檔", body)
+
+
+@app.get("/archive/file/{doc_pk}")
+async def docs_file(request: Request, doc_pk: int):
+    if not _docs_auth(request):
+        return JSONResponse({"error": "無權限"}, status_code=403)
+    with db_conn() as conn:
+        cur = conn.cursor()
+        _docs_ensure_table(cur)
+        r = cur.execute("SELECT * FROM customer_docs WHERE id=?", (doc_pk,)).fetchone()
+    if not r or not r["file_path"] or not os.path.isfile(r["file_path"]):
+        return JSONResponse({"error": "找不到檔案"}, status_code=404)
+    return FileResponse(r["file_path"], media_type=r["content_type"] or "application/octet-stream")
+
+
+def _docs_folder_name(id_no: str, rows):
+    """資料夾名稱跟業務建相簿一樣：收件日期-姓名-身分證（日期用民國）"""
+    with db_conn() as conn:
+        x = conn.execute("SELECT customer_name FROM customers WHERE id_no=? AND status!='DELETED' ORDER BY created_at DESC LIMIT 1",
+                         (id_no,)).fetchone()
+    name = ((x[0] if x else "") or "")
+    first = min(((r["remote_created_at"] or r["pulled_at"] or "") for r in rows), default="")
+    try:
+        day = f"{int(first[:4]) - 1911}-{int(first[5:7]):02d}-{int(first[8:10]):02d}"
+    except Exception:
+        day = ""
+    return "-".join(x for x in (day, name, id_no) if x), name
+
+
+@app.get("/archive/{id_no}/pdf")
+async def docs_pdf(request: Request, id_no: str):
+    """照存檔順序合成一份 PDF（圖片一張一頁；客人傳的 PDF 整份接進去）"""
+    if not _docs_auth(request):
+        return JSONResponse({"error": "無權限"}, status_code=403)
+    from PIL import Image as _Img
+    from pypdf import PdfReader as _R, PdfWriter as _W
+    idv = normalize_id_no(id_no)
+    rows = _docs_rows(idv)
+    w = _W()
+    for r in rows:
+        p = r["file_path"]
+        if not p or not os.path.isfile(p):
+            continue
+        try:
+            if p.lower().endswith(".pdf"):
+                for pg in _R(p).pages:
+                    w.add_page(pg)
+            elif (r["content_type"] or "").startswith("image/"):
+                buf = io.BytesIO()
+                _Img.open(p).convert("RGB").save(buf, "PDF", resolution=150)
+                for pg in _R(io.BytesIO(buf.getvalue())).pages:
+                    w.add_page(pg)
+        except Exception as e:
+            print(f"[證件] PDF 略過 {p}：{e}")
+    out = io.BytesIO()
+    w.write(out)
+    _fn, name = _docs_folder_name(idv, rows)
+    from urllib.parse import quote as _q
+    return StreamingResponse(io.BytesIO(out.getvalue()), media_type="application/pdf",
+                             headers={"Content-Disposition": f"attachment; filename*=UTF-8''{_q((name or idv) + '.pdf')}"})
+
+
+@app.get("/archive/{id_no}/zip")
+async def docs_zip(request: Request, id_no: str):
+    """一位客人一個資料夾（名稱跟相簿一樣：收件日期-姓名-身分證），照片照順序編號"""
+    if not _docs_auth(request):
+        return JSONResponse({"error": "無權限"}, status_code=403)
+    import zipfile as _zf
+    idv = normalize_id_no(id_no)
+    rows = _docs_rows(idv)
+    folder, _name = _docs_folder_name(idv, rows)
+    buf = io.BytesIO()
+    with _zf.ZipFile(buf, "w", _zf.ZIP_STORED) as z:
+        for i, r in enumerate(rows, 1):
+            p = r["file_path"]
+            if p and os.path.isfile(p):
+                z.write(p, f"{folder}/{i:02d} {(r['label'] or '未分類')}{os.path.splitext(p)[1]}")
+    from urllib.parse import quote as _q
+    return StreamingResponse(io.BytesIO(buf.getvalue()), media_type="application/zip",
+                             headers={"Content-Disposition": f"attachment; filename*=UTF-8''{_q(folder + '.zip')}"})
+
+
+@app.get("/archive/{id_no}", response_class=HTMLResponse)
+async def docs_customer_page(request: Request, id_no: str, refresh: str = ""):
+    role = _docs_auth(request)
+    if not role:
+        return RedirectResponse("/login")
+    idv = normalize_id_no(id_no)
+    # 打開時順便補拉（客人之後補傳的照片）：5 分鐘內拉過就不重拉，按「重新拉」一定拉
+    with db_conn() as conn:
+        cur = conn.cursor()
+        _docs_ensure_table(cur)
+        lp = cur.execute("SELECT last_pull_at, last_error FROM customer_docs_pull WHERE id_no=?", (idv,)).fetchone()
+    stale = True
+    if lp and lp["last_pull_at"] and not refresh:
+        try:
+            stale = (now_tw().replace(tzinfo=None) - datetime.fromisoformat(lp["last_pull_at"][:19])).total_seconds() > 300
+        except Exception:
+            stale = True
+    res = pull_customer_docs(idv) if stale else {"error": (lp["last_error"] if lp else ""), "new": 0}
+    rows = _docs_rows(idv)
+    folder, name = _docs_folder_name(idv, rows)
+    cards = []
+    for r in rows:
+        if (r["content_type"] or "").startswith("image/"):
+            thumb = f'<a href="/archive/file/{r["id"]}" target="_blank"><img src="/archive/file/{r["id"]}" loading="lazy"></a>'
+        else:
+            thumb = f'<a href="/archive/file/{r["id"]}" target="_blank" style="display:block;padding:50px 0">📄 開檔案</a>'
+        cards.append(f'<div class="doc">{thumb}<div style="margin-top:4px;font-weight:700">{h(r["label"] or "未分類")}</div>'
+                     f'<div class="muted">{h(r["source"] or "")} {h((r["remote_created_at"] or "")[:10])}</div></div>')
+    err = res.get("error") or ""
+    warn = f'<div class="card" style="color:#b45309">⚠️ {h(err)}</div>' if err else ""
+    newtxt = f'（剛補拉 {res.get("new")} 張）' if res.get("new") else ""
+    body = f"""<h2>📎 {h(name)} {h(idv)} 的證件</h2>
+<div class="card"><div>共 {len(rows)} 張{newtxt}：{h(_docs_label_summary(rows))}</div>
+<div style="margin-top:8px"><a class="btn g" href="/archive/{h(idv)}/pdf">⬇ 下載整理好的 PDF</a>
+<a class="btn" href="/archive/{h(idv)}/zip">⬇ 下載全部照片（{h(folder)}）</a>
+<a class="btn s" href="/archive/{h(idv)}?refresh=1">🔄 從業務 AI 重新拉</a></div></div>
+{warn}<div class="grid">{''.join(cards) or '<div class="muted">業務 AI 那邊還沒有這位客人的證件</div>'}</div>"""
+    return _docs_page(role, f"{name} 證件", body)
 
 
 # =========================
