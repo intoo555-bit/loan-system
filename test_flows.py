@@ -1541,6 +1541,52 @@ check("80 萬 不在 30～50 萬 → 不一樣", not m._apply_same("800000", "30
 check("關係：媽媽＝母、老公≠父", m._apply_same("母", "媽媽", "contact1_relation")
       and not m._apply_same("父", "老公", "contact1_relation"))
 
+# ========== 63. 亞太新規則（2026-10-13 使用者口述）==========
+# 亞太機車／汽車 25萬：持有 1 年、車齡 15 年內
+# 車齡超過 15 年、持有 1 年以上、名下無動擔 → 可送 15 萬（機車汽車都可以）
+print("\n=== 63. 亞太汽車25萬／老車15萬 ===")
+def _apt(extra):
+    c = {"birth_date": "080/01/01", "id_no": "A123456789", "contact1_relation": "母",
+         "eval_labor_ins": "公司保", "eval_alert_warning": "否"}
+    c.update(extra)
+    return {r["company"]: r["eligible"] is not False for r in m.evaluate_case(c)["results"]}
+_y = m.now_tw().year
+_new_car = _apt({"eval_property": "1汽", "unloan_vehicles": json.dumps([{"type": "汽車", "year": str(_y - 8)}])})
+_old_car = _apt({"eval_property": "1汽", "unloan_vehicles": json.dumps([{"type": "汽車", "year": str(_y - 20)}])})
+_old_moto = _apt({"unloan_vehicles": json.dumps([{"type": "機車", "year": str(_y - 20)}])})
+_old_moto_lien = _apt({"debt_list": json.dumps([{"co": "裕融機車", "dy": "動保", "sp": "有", "yr": str(_y - 20)}])})
+check("車齡 8 年汽車 → 可送亞太汽車25萬", _new_car["亞太汽車25萬"])
+check("車齡 8 年汽車 → 不走老車15萬（該送 25 萬）", not _new_car["亞太老車15萬"])
+check("車齡 20 年汽車 → 不可送 25 萬", not _old_car["亞太汽車25萬"])
+check("車齡 20 年汽車、無動擔 → 可送老車15萬", _old_car["亞太老車15萬"])
+check("車齡 20 年機車、無動擔 → 可送老車15萬", _old_moto["亞太老車15萬"])
+check("車齡 20 年機車、有動擔 → 不可送老車15萬", not _old_moto_lien["亞太老車15萬"])
+_pr = {p["company"]: p["priority"] for p in m.PLAN_ELIGIBILITY_RULES}
+check("金額高先送：汽車25萬排在老車15萬前面", _pr["亞太汽車25萬"] > _pr["亞太老車15萬"])
+check("日報歸亞太", m.normalize_section("亞太汽車25萬") == "亞太" and m.normalize_section("亞太老車15萬") == "亞太")
+
+# ========== 64. 東豐／願望（2026-10-13 使用者貼公告）==========
+print("\n=== 64. 東豐小額信貸／願望小車 ===")
+def _ev(c):
+    return {r["company"]: r["eligible"] is not False for r in m.evaluate_case(c)["results"]}
+_b = {"birth_date": "080/01/01", "id_no": "A123456789", "contact1_relation": "母", "contact2_relation": "父",
+      "unloan_vehicles": json.dumps([{"type": "機車", "year": str(_y - 5)}])}
+# 東豐：同業繳息半年 / 現職勞保 擇一（使用者裁示）
+check("東豐：無勞保但同業繳息 8 期 → 可送", _ev(dict(_b, eval_labor_ins="無", debt_list=json.dumps([{"co": "裕融機車", "pa": "8"}])))["東豐小額信貸"])
+check("東豐：公司保、沒有繳息紀錄 → 可送", _ev(dict(_b, eval_labor_ins="公司保"))["東豐小額信貸"])
+check("東豐：無勞保、繳息 3 期 → 不可送", not _ev(dict(_b, eval_labor_ins="無", debt_list=json.dumps([{"co": "裕融機車", "pa": "3"}])))["東豐小額信貸"])
+check("東豐：56 歲 → 不可送", not _ev(dict(_b, eval_labor_ins="公司保", birth_date="059/01/01"))["東豐小額信貸"])
+# 願望：公司保 25 萬 / 工會 15 萬 / 有呆帳不送 / 當鋪可代償
+_w = _ev(dict(_b, eval_labor_ins="公司保"))
+check("願望：公司保 → 可送 25 萬", _w["願望小車25萬"])
+check("願望：公司保 → 不走工會 15 萬", not _w["願望工會15萬"])
+check("願望：工會保 → 可送工會 15 萬", _ev(dict(_b, eval_labor_ins="工會保"))["願望工會15萬"])
+check("願望：信用卡寫呆帳 → 不可送", not _ev(dict(_b, eval_labor_ins="公司保", eval_credit_card="國泰呆帳"))["願望小車25萬"])
+check("願望：寫「無呆帳」不能誤判", _ev(dict(_b, eval_labor_ins="公司保", eval_note="無呆帳"))["願望小車25萬"])
+check("願望：66 歲 → 不可送", not _ev(dict(_b, eval_labor_ins="公司保", birth_date="049/01/01"))["願望小車25萬"])
+check("願望：當鋪私設也能送（當鋪可代償）", "願望小車25萬" in m.PRIVATE_OK_PLANS)
+check("日報歸東豐／願望", m.normalize_section("東豐小額信貸") == "東豐" and m.normalize_section("願望小車25萬") == "願望")
+
 # ========== 總結 ==========
 print(f"\n{'='*50}")
 print(f"結果：{PASS} 通過、{FAIL} 失敗")

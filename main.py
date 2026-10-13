@@ -969,6 +969,7 @@ COMPANY_ALIAS = {
     "貸就補10": "貸救補",
     # 願望：日報欄位叫「願望」，業務打「願望貸」「願望小車」也認（使用者 2026-10-05：三個都是同一家）
     "願望貸": "願望", "願望小車": "願望",
+    "願望小車25萬": "願望", "願望工會15萬": "願望", "東豐小額信貸": "東豐",
     # 南亞：日報欄位叫「南亞」，機車／汽車都歸同一格（使用者 2026-10-08）
     "南亞機車": "南亞", "南亞汽車": "南亞",
     # 新新專/維力
@@ -1094,6 +1095,56 @@ PLAN_ELIGIBILITY_RULES = [
             {"type": "simple", "label": "🚫 警示戶不做（自動偵測）", "op": "no_warning_account"},
         ],
         "required_docs": ["身分證正反", "第二證件", "機車合照", "行照", "強制險截圖"],
+    },
+    # 2026-10-13 使用者新增：亞太汽車 25 萬，條件跟機車 25 萬一樣（持有 1 年、車齡 15 年內），只是看汽車
+    {
+        "company": "亞太汽車25萬",
+        "max_amount": 25,
+        "priority": 75,
+        "rules": APT_RED_LINES + [
+            {"type": "simple", "label": "年齡 20~50", "field": "age", "op": "between", "value": [20, 50]},
+            {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
+            {"type": "simple", "label": "聯絡人 1 為二等親屬", "op": "contact1_2nd_kin"},
+            {"type": "oneof", "label": "財務能力（擇一）", "options": [
+                {"type": "simple", "label": "勞保/軍保/公保滿半年（不可部分工時）", "field": "eval_labor_ins", "op": "in", "value": ["公司保", "軍保", "公保"], "manual_check": "需確認滿半年 + 非部分工時"},
+                {"type": "simple", "label": "有不動產（不能有私設當鋪）", "field": "eval_property", "op": "contains", "value": "不動產", "exclude_field": "eval_alert", "exclude_value": "有"},
+                {"type": "manual", "label": "負責人有營登、設立 1 年以上", "hint": "需提供營登表或網站截圖"},
+            ]},
+            {"type": "simple", "label": "客戶必須有汽車", "op": "has_car"},
+            {"type": "simple", "label": "車齡 ≤ 15 年", "field": "vehicle_year", "op": "year_age_le", "value": 15},
+            {"type": "manual", "label": "汽車持有滿 1 年（業務需確認）"},
+            {"type": "simple", "label": "原融（單車、汽車無動保）", "op": "not_has_dynbao",
+             "manual_check": "若有動保 → 不能送 25 萬"},
+            {"type": "simple", "label": "代償專案：前貸須是 中租/合迪/和潤/裕融（自動偵測）", "op": "dynbao_from_apt_legit"},
+            {"type": "simple", "label": "名下有可用汽車（不能汽車滿貸）", "op": "car_has_space"},
+            {"type": "simple", "label": "🚫 警示戶不做（自動偵測）", "op": "no_warning_account"},
+        ],
+        "required_docs": ["身分證正反", "第二證件", "汽車合照", "行照", "強制險截圖"],
+    },
+    # 2026-10-13 使用者新增：車齡超過 15 年的老車（機車、汽車都可以）
+    # 持有 1 年以上 + 名下無動擔 → 可送 15 萬。金額比 25 萬低，所以排在 25 萬後面
+    {
+        "company": "亞太老車15萬",
+        "max_amount": 15,
+        "priority": 72,
+        "rules": APT_RED_LINES + [
+            {"type": "simple", "label": "年齡 20~50", "field": "age", "op": "between", "value": [20, 50]},
+            {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
+            {"type": "simple", "label": "聯絡人 1 為二等親屬", "op": "contact1_2nd_kin"},
+            {"type": "oneof", "label": "財務能力（擇一）", "options": [
+                {"type": "simple", "label": "勞保/軍保/公保滿半年（不可部分工時）", "field": "eval_labor_ins", "op": "in", "value": ["公司保", "軍保", "公保"], "manual_check": "需確認滿半年 + 非部分工時"},
+                {"type": "simple", "label": "有不動產（不能有私設當鋪）", "field": "eval_property", "op": "contains", "value": "不動產", "exclude_field": "eval_alert", "exclude_value": "有"},
+                {"type": "manual", "label": "負責人有營登、設立 1 年以上", "hint": "需提供營登表或網站截圖"},
+            ]},
+            # 車齡取「最年輕那台」：最年輕的都超過 15 年 = 沒有能送 25 萬的車
+            {"type": "simple", "label": "車齡超過 15 年（15 年內請送 25 萬）", "field": "vehicle_year", "op": "year_age_gt", "value": 15},
+            {"type": "manual", "label": "機車／汽車持有滿 1 年以上（業務需確認）"},
+            {"type": "simple", "label": "名下無動擔", "op": "not_has_dynbao",
+             "manual_check": "確認客戶名下車輛都沒有動擔"},
+            {"type": "simple", "label": "名下有可用機車或汽車", "op": "any_vehicle_has_space"},
+            {"type": "simple", "label": "🚫 警示戶不做（自動偵測）", "op": "no_warning_account"},
+        ],
+        "required_docs": ["身分證正反", "第二證件", "車輛合照", "行照", "強制險截圖"],
     },
     {
         "company": "亞太機車15萬",
@@ -1990,6 +2041,70 @@ PLAN_ELIGIBILITY_RULES = [
         "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面",
                           "重機行照", "重機鑑價/估價"],
     },
+    # ===== 東豐（2026-10-13 使用者貼公告）=====
+    # 公告沒寫最高金額，使用者說 25 萬；兩個必備條件「擇一就可以」（使用者裁示）
+    {
+        "company": "東豐小額信貸",
+        "max_amount": 25,
+        "priority": 74,
+        "rules": [
+            {"type": "simple", "label": "年齡 20~55", "field": "age", "op": "between", "value": [20, 55]},
+            {"type": "manual", "label": "限本島；新住民進件須附台籍正職保人"},
+            {"type": "oneof", "label": "必備條件（擇一）", "options": [
+                {"type": "simple", "label": "同業繳息半年以上（附繳息資料）", "op": "debt_paid_ge", "value": 6,
+                 "manual_check": "需附繳息資料"},
+                {"type": "simple", "label": "現職滿一年 + 投保現職公司勞保（7 日內）+ 薪轉半年",
+                 "field": "eval_labor_ins", "op": "in", "value": ["公司保", "軍保", "公保"],
+                 "manual_check": "需確認現職滿一年、勞保 7 日內、薪轉半年（軍公教附證件＋薪轉或健保明細）"},
+            ]},
+            {"type": "simple", "label": "兩位聯絡人都是二等親（沒有就要三位、其中一位知情）",
+             "op": "any_contact_2nd_kin", "manual_check": "兩位都要二等親；不保密可加分"},
+            {"type": "manual", "label": "住家電話＋聯絡人電話合計 3 支能接通",
+             "hint": "住家電話沒人接／沒有市話 → 要多加聯絡人補足"},
+            {"type": "manual", "label": "負債表要填完整（動擔查詢網查得到的都要列）",
+             "hint": "附完整繳息紀錄；超過 2 筆動擔至少附 2 筆完整繳息明細"},
+        ],
+        "required_docs": ["身分證正反", "第二證件", "薪轉半年（或同業繳息資料）", "負債表"],
+    },
+    # ===== 願望小車貸（2026-10-13 使用者貼公告）=====
+    # 最高 25 萬、84 期；當鋪可以代償（所以放進 PRIVATE_OK_PLANS）
+    # 使用者：一定要給信用報告才能送 → 要先問客人願不願意給，再決定排不排
+    {
+        "company": "願望小車25萬",
+        "max_amount": 25,
+        "priority": 74,
+        "rules": [
+            {"type": "simple", "label": "年齡 18~65（18~19、60 以上要補保人）", "field": "age", "op": "between", "value": [18, 65],
+             "manual_check": "未滿 20 或 60 以上要補保人，財力佳可另外討論"},
+            {"type": "manual", "label": "⚠️ 先問：客人願不願意給信用報告（沒給不能送）"},
+            {"type": "simple", "label": "銀行沒有呆帳（自動掃信用卡／備註／法學）", "op": "no_bad_debt"},
+            {"type": "oneof", "label": "財力（擇一）", "options": [
+                {"type": "simple", "label": "勞保滿 3 個月，或新轉（前後工作中斷不超過 1 個月）",
+                 "field": "eval_labor_ins", "op": "in", "value": ["公司保", "軍保", "公保"],
+                 "manual_check": "需確認滿 3 個月；新轉要附勞保異動明細證明有銜接"},
+                {"type": "manual", "label": "自營商滿 3 個月（附 401 報表）"},
+            ]},
+            {"type": "simple", "label": "名下有可用機車", "op": "motorcycle_has_space"},
+            {"type": "manual", "label": "機車持有時間不限；非本人行照可先進件，核准後過戶"},
+        ],
+        "required_docs": ["身分證正反", "信用報告", "人+車合照", "行照"],
+    },
+    {
+        "company": "願望工會15萬",
+        "max_amount": 15,
+        "priority": 71,
+        "rules": [
+            {"type": "simple", "label": "年齡 18~65（18~19、60 以上要補保人）", "field": "age", "op": "between", "value": [18, 65],
+             "manual_check": "未滿 20 或 60 以上要補保人，財力佳可另外討論"},
+            {"type": "manual", "label": "⚠️ 先問：客人願不願意給信用報告（沒給不能送）"},
+            {"type": "simple", "label": "銀行沒有呆帳（自動掃信用卡／備註／法學）", "op": "no_bad_debt"},
+            {"type": "simple", "label": "工會保滿 3 個月", "field": "eval_labor_ins", "op": "=", "value": "工會保",
+             "manual_check": "需確認滿 3 個月；如果是自營商（附 401）可以送 25 萬"},
+            {"type": "simple", "label": "名下有可用機車", "op": "motorcycle_has_space"},
+            {"type": "manual", "label": "機車持有時間不限；非本人行照可先進件，核准後過戶"},
+        ],
+        "required_docs": ["身分證正反", "信用報告", "人+車合照", "行照"],
+    },
 ]
 
 
@@ -2461,6 +2576,8 @@ PRIVATE_OK_PLANS = [
     "21商品",      # 21 商品系列、警示戶可送、私設也可送
     "21機車12萬",
     "21機車25萬",  # 注意：21汽車 A/B/C 不在此清單（21汽車有「警示戶不做」紅線）
+    "願望小車25萬",  # 公告：當鋪可以代償
+    "願望工會15萬",
     "鄉民",        # 民間商品類
     "手機分期",
     "手機無卡分期",
@@ -2705,6 +2822,31 @@ def _check_rule(rule, customer):
             if _customer_has_motorcycle_with_space(customer):
                 return ("pass", label, "名下有可用機車")
             return ("fail", label, "名下機車滿貸/無空間、不能送機車類")
+        # 負債表裡任一筆已繳期數 ≥ value（東豐：同業繳息半年以上）
+        if op == "debt_paid_ge":
+            best = 0
+            try:
+                for d in json.loads(customer.get("debt_list") or "[]"):
+                    try:
+                        best = max(best, int(re.sub(r"[^\d]", "", d.get("pa", "") or "") or 0))
+                    except ValueError:
+                        continue
+            except Exception:
+                pass
+            if best >= int(value):
+                return ("pass", label, f"最多已繳 {best} 期")
+            return ("fail", label, f"最多已繳 {best} 期（未滿 {value} 期）")
+        # 銀行呆帳（願望：有呆帳就不用送）
+        if op == "no_bad_debt":
+            text = " ".join((customer.get(k, "") or "") for k in ["eval_credit_card", "eval_note", "eval_law"])
+            if re.search(r"(?<!無)(?<!沒有)(?<!没有)呆帳", text):   # 「無呆帳」不算
+                return ("fail", label, "資料裡有寫「呆帳」")
+            return ("pass", label, "沒看到呆帳紀錄")
+        # 機車或汽車任一台有空間（亞太老車 15 萬：機車汽車都可以）
+        if op == "any_vehicle_has_space":
+            if _customer_has_motorcycle_with_space(customer) or _customer_has_car_with_space(customer):
+                return ("pass", label, "名下有可用車輛")
+            return ("fail", label, "名下機車／汽車都滿貸或沒有車")
         # 有不動產：eval_property 含「不動產」 OR 居住狀況「自有」
         if op == "has_real_estate":
             prop = (customer.get("eval_property", "") or "").strip()
@@ -2842,6 +2984,9 @@ def _check_rule(rule, customer):
                     ok = True
                 else:
                     ok = False
+                actual_str = f"車齡 {actual} 年"
+            elif op == "year_age_gt":
+                ok = int(actual) > int(value)
                 actual_str = f"車齡 {actual} 年"
             elif op == "in":
                 ok = actual in value
@@ -5670,6 +5815,7 @@ COMPANY_SECTION_MAP = {
     "亞太工15": "亞太", "亞太25": "亞太", "亞太15": "亞太",
     "亞太汽車": "亞太",
     "亞太機25萬": "亞太", "亞太機車25萬": "亞太", "亞太機車15萬": "亞太",
+    "亞太汽車25萬": "亞太", "亞太老車15萬": "亞太", "亞太老車": "亞太",
     "21商品": "21",
     "合信機車": "合信", "合信手機": "合信", "合信二輪": "合信",
     "第一商品": "第一", "第一機車": "第一",
