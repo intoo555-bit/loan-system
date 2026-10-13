@@ -2326,6 +2326,20 @@ m.pull_customer_docs("G300000001")
 check("重拉業務 AI 不會動到行政上傳的", len([r for r in m._docs_rows("G300000001") if r["source"] == "行政上傳"]) == 2)
 check("新分類：申請書／填寫表、天書／車價截圖、法學／罰單／動保截圖",
       all(c in m._DOC_CATS for c in ("申請書／填寫表", "天書／車價截圖", "法學／罰單／動保截圖")))
+# 更新前就分類好的勞保（沒拿過判讀）→ 打開證件頁要補拿（使用者 2026-10-14：一直寫「勞保日期還沒判讀」）
+_c = sqlite3.connect(TEST_DB); _c.execute("UPDATE customer_docs SET judge_json=NULL WHERE id_no='G300000001'"); _c.commit(); _c.close()
+m._DOCS_SYNC = True
+_judge_calls.clear()
+_tcu.get("/archive/G300000001")
+check("打開證件頁 → 沒拿過判讀的勞保／合照會去拿（勞保那張前面測刪除時刪掉了，看合照）", any(k == "stamp" for k, d, i in _judge_calls), _judge_calls)
+_judge_calls.clear(); _tcu.get("/archive/G300000001")
+check("拿過了就不再拿", not _judge_calls, _judge_calls)
+m._bizai_judge = lambda kind, d, idv: {"ok": False, "error": "業務 AI 限流中"}
+_c = sqlite3.connect(TEST_DB); _c.execute("UPDATE customer_docs SET judge_json=NULL WHERE id_no='G300000001'"); _c.commit(); _c.close()
+_tcu.get("/archive/G300000001")
+_lab2 = [d for d in _tcu.get("/archive/G300000001/data").json()["documents"] if d["category"] == "人車合照"]
+check("拿不到判讀 → 卡片寫原因（不默默空著）、下次再試", _lab2 and "限流" in _lab2[0]["judge"] and "再試" in _lab2[0]["judge"], _lab2)
+m._DOCS_SYNC = False
 m._bizai_list, m._bizai_fetch, m._bizai_judge = _o_list, _o_fetch, _o_judge
 m.check_auth = _old_auth75
 os.environ.pop("BUSINESS_AI_URL", None); os.environ.pop("BUSINESS_AI_SECRET", None)

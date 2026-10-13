@@ -27853,6 +27853,43 @@ def judge_customer_docs(id_no: str, force: bool = False) -> int:
     return n
 
 
+_DOC_JUDGE_JOBS = {}
+
+
+def _docs_need_judge(idv: str) -> bool:
+    for r in _docs_rows(idv):
+        kind = _JUDGE_KIND.get(r["show_label"])
+        if not kind:
+            continue
+        try:
+            old = json.loads(r.get("judge_json") or "{}")
+        except Exception:
+            old = {}
+        if old.get("_kind") != kind or old.get("_transient"):
+            return True
+    return False
+
+
+def _judge_bg(idv: str):
+    """背景拿判讀。2026-10-14 使用者：證件頁一直寫「勞保日期還沒判讀」——
+    原本只在「分類剛判完」才去拿，更新前就分類好的照片永遠拿不到 → 打開頁面時補拿"""
+    if _DOC_JUDGE_JOBS.get(idv) or not _docs_need_judge(idv):
+        return
+    _DOC_JUDGE_JOBS[idv] = True
+
+    def _run():
+        try:
+            judge_customer_docs(idv)
+        except Exception as e:
+            print(f"[證件] 背景拿判讀失敗：{e}")
+        finally:
+            _DOC_JUDGE_JOBS.pop(idv, None)
+    if _DOCS_SYNC:
+        _run()
+    else:
+        _threading.Thread(target=_run, daemon=True).start()
+
+
 def _doc_judge(r) -> dict:
     """這張的判讀結果（分類跟判讀種類對得上才算）"""
     try:
@@ -27866,9 +27903,11 @@ def _doc_judge_text(r) -> str:
     """證件卡片上的一行判讀摘要"""
     j = _doc_judge(r)
     if not j:
-        return ""
-    if j.get("error") or not j.get("ok", True):
-        return "🤖 判讀不出來" if j.get("ok") else ""
+        return "⏳ AI 判讀中…" if _JUDGE_KIND.get(r.get("show_label") or "") else ""
+    if j.get("_transient"):
+        return f"⏳ 判讀還沒拿到（{j.get('error') or '連不到業務 AI'}），等一下會再試"
+    if j.get("error"):
+        return f"🤖 判讀不出來（{j.get('error')}）"
     if j["_kind"] == "labor":
         if not j.get("is_labor", True):
             return "🤖 這張看起來不是勞保明細"
@@ -28461,7 +28500,9 @@ async def docs_classify(request: Request, id_no: str):
 async def docs_classify_status(request: Request, id_no: str):
     if not _docs_auth(request):
         return JSONResponse({"ok": False, "error": "無權限"}, status_code=403)
-    job = _DOC_CLASSIFY_JOBS.get(normalize_id_no(id_no)) or {"running": False, "done": 0, "total": 0, "errors": []}
+    idv = normalize_id_no(id_no)
+    job = dict(_DOC_CLASSIFY_JOBS.get(idv) or {"running": False, "done": 0, "total": 0, "errors": []})
+    job["judging"] = bool(_DOC_JUDGE_JOBS.get(idv))
     return JSONResponse({"ok": True, **job})
 
 
@@ -28943,6 +28984,7 @@ async def docs_customer_page(request: Request, id_no: str, refresh: str = ""):
         except Exception:
             stale = True
     res = pull_customer_docs(idv) if stale else {"error": (lp["last_error"] if lp else ""), "new": 0}
+    _judge_bg(idv)   # 勞保／合照還沒拿到判讀 → 背景去拿（拿到後頁面會自動更新）
     docs = _docs_payload(idv)
     _folder, name = _docs_folder_name(idv, _docs_rows(idv))
     cust = _docs_latest_customer(idv)
@@ -29078,8 +29120,8 @@ _ARCHIVE_ADAPTER = """<script>
  // 照片拉進來會自動判讀（背景）：打開時還在判 → 顯示進度，判完自動更新畫面
  (function watch(){fetch('/archive/'+ID+'/classify-status').then(r=>r.json()).then(d=>{
    const box=document.getElementById('autoAi'),t=document.getElementById('autoAiText');
-   if(d.running){box.hidden=false;t.textContent='AI 自動判讀中 '+d.done+'/'+(d.total||'?')+'…';setTimeout(watch,2500);return;}
-   if(!box.hidden){box.hidden=true;load(false).then(x=>G.setData({customerId:__SHOW__,total:x.documents.length,documents:x.documents,demo:false}));}
+   if(d.running||d.judging){box.hidden=false;t.textContent=d.running?('AI 自動判讀中 '+d.done+'/'+(d.total||'?')+'…'):'AI 判讀勞保／時間浮水印中…';setTimeout(watch,2500);return;}
+   if(!box.hidden){location.reload();}
  }).catch(()=>{});})();
 })();
 </script>"""
