@@ -22543,6 +22543,17 @@ async def customer_lookup(
     })
 
 
+def _ext_secret(request, fallback: str = "") -> str:
+    """business_ai 連線的密碼：優先看 header「X-Loan-Secret」，沒有才用網址／body 帶的（舊寫法）。
+    2026-10-13：密碼和身分證放網址會被各種紀錄記下來 → 改放 header。
+    ⛔ 舊寫法先照收，等業務 AI 改成 header 才關（兩邊不用同時上線）。"""
+    try:
+        h = (request.headers.get("x-loan-secret") or "").strip() if request is not None else ""
+    except Exception:
+        h = ""
+    return h or (fallback or "")
+
+
 def _vba_secret_ok(secret: str) -> bool:
     stored = get_setting("vba_secret")
     if stored:
@@ -22603,11 +22614,24 @@ def _case_logs_for_api(case_id: str, limit: int = 30) -> list:
     return out
 
 
+@app.post("/api/customer-status")
+async def customer_status_post(request: Request):
+    """新寫法（2026-10-13）：密碼放 header「X-Loan-Secret」、身分證放 body {"id_no": ...}，都不出現在網址上。"""
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    return await customer_status(request, id_no=str(data.get("id_no") or ""), secret="")
+
+
 @app.get("/api/customer-status")
-async def customer_status(id_no: str = "", secret: str = ""):
+async def customer_status(request: Request, id_no: str = "", secret: str = ""):
     """供 business_ai 業務AI串接：只用身分證查客戶是否存在、辦到哪一關、名下資產/負債/送件。
-    唯讀，不修改任何資料。驗證沿用 vba_secret。"""
-    if not _vba_secret_ok(secret):
+    唯讀，不修改任何資料。驗證沿用 vba_secret。
+    密碼：header「X-Loan-Secret」（新）或網址 ?secret=（舊，業務 AI 改完後關掉）。"""
+    if not _vba_secret_ok(_ext_secret(request, secret)):
         return JSONResponse({"ok": False, "error": "無權限"}, status_code=403)
     idv = (id_no or "").strip().upper()
     if not idv:
@@ -22805,7 +22829,7 @@ async def customer_upsert(request: Request):
         data = await request.json()
     except Exception:
         return JSONResponse({"ok": False, "error": "資料格式錯誤（要 JSON）"}, status_code=400)
-    if not isinstance(data, dict) or not _vba_secret_ok(str(data.get("secret") or "")):
+    if not isinstance(data, dict) or not _vba_secret_ok(_ext_secret(request, str(data.get("secret") or ""))):
         return JSONResponse({"ok": False, "error": "無權限"}, status_code=403)
     idv = normalize_id_no(str(data.get("id_no") or ""))
     if not idv or not re.match(r"^[A-Z][A-Z0-9][0-9]{8}$", idv):

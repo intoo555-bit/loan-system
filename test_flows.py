@@ -1822,6 +1822,29 @@ _lg = [r[0] for r in _c.execute("SELECT message_text FROM case_logs WHERE id_no=
 _c.close()
 check("統一日期有寫案件歷程（看得到原本打什麼）", any("0750312" in t and "075/03/12" in t for t in _lg), _lg)
 
+# ========== 72. 業務 AI 連線：密碼改放 header、身分證不放網址（2026-10-13）；舊寫法先照收 ==========
+print("\n=== 72. 連線密碼放 header ===")
+m.set_setting("vba_secret", m.hash_pw("t72secret"))
+bc("10/13-連線甲 V100000072", gid="TEST_B")
+_tc72 = TestClient(m.app)
+_H = {"X-Loan-Secret": "t72secret"}
+_r = _tc72.post("/api/customer-status", json={"id_no": "V100000072"}, headers=_H)
+check("新寫法：POST＋header 查得到", _r.status_code == 200 and _r.json().get("exists") is True, _r.text[:200])
+_r = _tc72.post("/api/customer-status", json={"id_no": "V100000072"}, headers={"X-Loan-Secret": "錯的".encode().hex()})
+check("新寫法：header 密碼錯 → 擋下", _r.status_code == 403)
+_r = _tc72.post("/api/customer-status", json={"id_no": "V100000072"})
+check("新寫法：沒帶密碼 → 擋下", _r.status_code == 403)
+_r = _tc72.get("/api/customer-status", params={"id_no": "V100000072"}, headers=_H)
+check("GET＋header 也可以", _r.status_code == 200 and _r.json().get("exists") is True)
+_r = _tc72.get("/api/customer-status", params={"id_no": "V100000072", "secret": "t72secret"})
+check("舊寫法（密碼放網址）先照收，業務 AI 不會斷線", _r.status_code == 200 and _r.json().get("exists") is True)
+_r = _tc72.post("/api/customer-upsert", json={"id_no": "V100000072", "customer_name": "連線甲", "fields": {"phone": "0912000072"}}, headers=_H)
+check("寫入窗口：header 密碼可以", _r.json().get("ok") is True, _r.text[:200])
+_r = _tc72.post("/api/customer-upsert", json={"id_no": "V100000072", "fields": {}}, headers={"X-Loan-Secret": "wrong"})
+check("寫入窗口：header 密碼錯 → 擋下", _r.status_code == 403)
+_r = _tc72.post("/api/customer-upsert", json={"secret": "t72secret", "id_no": "V100000072", "fields": {"email": "a@b.cc"}})
+check("寫入窗口：舊寫法（密碼放 body）先照收", _r.json().get("ok") is True, _r.text[:200])
+
 # ========== 總結 ==========
 print(f"\n{'='*50}")
 print(f"結果：{PASS} 通過、{FAIL} 失敗")
