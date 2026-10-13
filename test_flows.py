@@ -1713,6 +1713,30 @@ _r, _o, _b = _so(eval_property="1機1汽", unloan_vehicles='[{"type": "機車", 
 check("有汽車＋機車 → 汽車家族排在機車前面", _o.index("和潤汽車") < _o.index("21機車25萬"), _o)
 check("21汽車A／B／C 只排一個", sum(1 for x in _o if x.startswith("21汽車")) == 1, _o)
 
+# ========== 68. 建議順序照行政實際順序（2026-10-13 正式站 7 月後 1447 件對帳＋使用者裁示）==========
+# 期望值來源：真實送件順序統計（括號是「前者在後者前面」的件數），不是從程式反推
+print("\n=== 68. 建議順序對帳真實順序 ===")
+def _before(o, a, b):
+    ia = next((i for i, x in enumerate(o) if x.startswith(a)), None)
+    ib = next((i for i, x in enumerate(o) if x.startswith(b)), None)
+    return ia is not None and ib is not None and ia < ib
+_r, _o, _b = _so(eval_property="1機1汽", unloan_vehicles='[{"type": "機車", "year": "2019"}, {"type": "汽車", "year": "2018"}]')
+for _a, _bb, _why in [("中租", "裕融", "19/19"), ("裕融", "21汽車", "17/17"), ("和潤", "21汽車", "5/5 ＋使用者：中租/和潤/21"),
+                      ("21汽車", "亞太", "11/11"), ("亞太", "21機車25萬", "64/90 ＋使用者：亞太扣比較少"),
+                      ("21機車25萬", "和裕", "7/7"), ("和裕", "喬美", "688/727"), ("喬美", "分貝", "使用者"),
+                      ("分貝", "貸救補", "使用者：分貝金額比較高（實際是貸救補先 201/201）"),
+                      ("貸救補", "鄉民", ""), ("鄉民", "銀行", "570/570"), ("銀行", "零卡", "696/696"),
+                      ("零卡", "商品貸", "1479/1479"), ("商品貸", "南亞", ""), ("南亞", "代書", "31/31")]:
+    check(f"建議順序：{_a} 在 {_bb} 前面（{_why}）", _before(_o, _a, _bb), _o)
+_r, _o, _b = _so(eval_property="無", unloan_vehicles="[]")
+check("沒車：亞太商品 → 和裕商品 → 喬美 → 21商品（414/416、626/630）",
+      _before(_o, "亞太商品", "和裕商品") and _before(_o, "和裕商品", "喬美") and _before(_o, "喬美", "21商品"), _o)
+check("21商品 提醒「通常跟喬美一起送」", any(o["company"] == "21商品" and "喬美" in o["note"] for o in _r["suggested_order"]))
+for _lab, _want in [("公司保", "代書"), ("軍保", "代書"), ("工會保", "當舖"), ("無勞保", "當舖"), ("漁保", "當舖"), ("", "當舖")]:
+    _r, _o, _b = _so(eval_labor_ins=_lab, eval_property="無", unloan_vehicles="[]")
+    _other = "當舖" if _want == "代書" else "代書"
+    check(f"勞保欄「{_lab or '空白'}」→ 排{_want}、不排{_other}", _want in _o and _other not in _o, _o)
+
 # ========== 總結 ==========
 print(f"\n{'='*50}")
 print(f"結果：{PASS} 通過、{FAIL} 失敗")

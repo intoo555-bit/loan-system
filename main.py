@@ -3251,52 +3251,72 @@ def evaluate_case(customer):
 
 
 # ===== 建議送件順序（2026-10-13 使用者：寫建議送但沒有排順序出來）=====
-# 照老行政 SOP（memory project_send_order_sop）：
-#   金額大先送（汽車家族自然排前面）→ 同家族只排最大那個 → 少送方案放「備選」→
-#   代書／當鋪二選一 → 手機分期最後
-_SUGGEST_FAMILY_PREFIX = ["21汽車", "21", "亞太", "和裕", "麻吉", "裕融", "和潤", "分貝", "願望"]
-_SUGGEST_BACKUP = ("興達", "融易", "第一汽車", "第一信貸", "手機原融", "機車原融", "汽機車二胎", "手機無卡分期", "東豐")
+# 不照金額排，照「行政實際排的順序」排：
+#   2026-10-13 拿正式站備份 7 月後 1453 件真實送件順序統計，再由使用者逐條裁示。
+#   每一條後面的數字＝真實順序裡「前者排在後者前面」的件數。
+_SUGGEST_RANK = [
+    # 汽車類先（使用者：中租／和潤／21；第一跟中租一起送）。中租→裕融 19/19、裕融→21汽車 17/17、和潤→21汽車 5/5
+    ("中租", 10, ""), ("第一", 11, "跟中租一起送"), ("裕融", 20, ""), ("和潤", 21, ""), ("21汽車", 30, ""),
+    # 機車／25萬：亞太先（使用者：亞太扣比較少；實際 64/90）→ 21機車25萬 → 和裕機車（7/7）
+    ("亞太", 40, ""), ("21機車25萬", 45, ""), ("願望", 46, ""), ("和裕", 50, ""),
+    # 喬美 → 21（626/630；使用者：喬美跟 21 通常一起送）
+    ("喬美", 60, ""), ("21", 61, "通常跟喬美一起送"), ("麻吉", 62, ""),
+    # 分貝排貸救補前面（使用者：分貝金額比較高、貸救補只有 10 萬）
+    # ⚠️ 實際資料是貸救補先（201/201），照使用者裁示
+    ("分貝", 65, ""), ("貸救補", 70, ""),
+    # 警示戶：分貝 → 手機分期 → 零卡（實際最常見的整串）
+    ("手機分期", 76, ""),
+    # 民間／銀行：鄉民 → 銀行（570/570）→ 零卡（696/696）→ 商品貸（1479/1479）→ 南亞（31/31）→ 代書或當鋪
+    ("鄉民", 80, ""), ("銀行", 82, "可跟融資同時送"), ("零卡", 84, ""), ("商品貸", 86, ""),
+    ("南亞", 88, ""), ("代書", 90, "勞保未滿 3 個月改排當鋪"), ("當舖", 90, ""),
+]
+# 少送方案：條件特殊才排 → 放「備選」不進順序（memory project_send_order_sop 第 4 條；東豐＝貸救補婉拒後才看）
+_SUGGEST_BACKUP = ("興達", "融易", "手機原融", "機車原融", "汽機車二胎", "手機無卡分期", "東豐")
+_SUGGEST_RANK_DEFAULT = 75   # 沒列到的方案：放在融資跟民間中間
 
 
-def _suggest_family(company):
-    for p in _SUGGEST_FAMILY_PREFIX:
-        if company.startswith(p):
-            return p
-    return company
+def _suggest_rank(company):
+    """回 (排序數字, 家族, 提醒)。前綴比對，長的先比（21汽車 要在 21 前面、21機車25萬 也是）"""
+    best = None
+    for prefix, rank, note in _SUGGEST_RANK:
+        if company.startswith(prefix) and (best is None or len(prefix) > len(best[0])):
+            best = (prefix, rank, note)
+    if not best:
+        return _SUGGEST_RANK_DEFAULT, company, ""
+    prefix, rank, note = best
+    # 家族＝同一家公司：21機車25萬／21商品 都算 21；21汽車 是另一個家族
+    fam = "21" if prefix in ("21機車25萬",) else prefix
+    return rank, fam, note
 
 
 def suggest_send_order(results, customer):
-    """回 (建議順序, 備選)：每項 {"company", "note"}。results 要先照金額大→priority 排好"""
+    """回 (建議順序, 備選)：每項 {"company", "note"}"""
     cand = [r for r in results if r["eligible"] in (True, "manual")]
-    # 金額大先送，不分 ✅／⚠️（SOP 12：看實際可貸金額、選大的先送）
-    cand.sort(key=lambda r: (-r["max_amount"], -r["priority"]))
-    order, backup, seen_fam = [], [], set()
     labor = (customer.get("eval_labor_ins", "") or "").strip()
-    has_labor = labor not in ("", "無", "沒有")
-    last = []
+    # 代書／當鋪看這個：公司勞保／軍保／公保 才排代書；工會保、無勞保、漁保、農保 排當鋪
+    # （實際 7 月後：代書時勞保欄 公司保 993／軍保 5；當舖時 工會保 175、公司保 170（未滿 3 月）、無勞保 93）
+    # ⚠️ 欄位值是「無勞保」不是「無」，不能用「有沒有填」判斷
+    has_labor = labor in ("公司保", "軍保", "公保")
+    # 同家族只排金額最大那個（SOP 1；實際 21機車25萬 跟 21商品 同排 0/122）
+    cand.sort(key=lambda r: (-r["max_amount"], -r["priority"]))
+    picked, backup, seen_fam = [], [], set()
     for r in cand:
         co = r["company"]
-        note = "要確認" if r["eligible"] == "manual" else ""
         if co.startswith(_SUGGEST_BACKUP):
             backup.append({"company": co, "note": "少送方案、條件特殊才排"})
             continue
-        # 代書／當鋪二選一（SOP 6：勞保滿 3 個月排代書，不滿或沒勞保排當鋪）
-        if co == "代書" and not has_labor:
+        # 代書／當鋪二選一（實際同排 1/1007）：有勞保排代書，沒勞保排當鋪
+        if (co == "代書" and not has_labor) or (co == "當舖" and has_labor):
             continue
-        if co == "當舖" and has_labor:
-            continue
-        if co == "代書":
-            note = "勞保未滿 3 個月改排當鋪"
-        fam = _suggest_family(co)
-        if fam in seen_fam:      # SOP 1：同家族只排金額最大那個
+        rank, fam, note = _suggest_rank(co)
+        if fam in seen_fam:
             continue
         seen_fam.add(fam)
-        item = {"company": co, "note": note}
-        if co == "手機分期":     # SOP 5：最後備案
-            last.append(item)
-        else:
-            order.append(item)
-    return order + last, backup
+        if r["eligible"] == "manual":
+            note = "要確認" + ("、" + note if note else "")
+        picked.append((rank, -r["max_amount"], {"company": co, "note": note}))
+    picked.sort(key=lambda x: (x[0], x[1]))
+    return [x[2] for x in picked], backup
 
 
 IGNORE_NAME_SET = {
