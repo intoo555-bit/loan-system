@@ -229,7 +229,8 @@ __TOPNAV__
    <button type="button" class="action" id="downloadImages"><svg class="icon"><use href="#i-images"/></svg><span id="downloadLabel">下載全部照片</span></button>
    <button type="button" class="action quiet" id="refetch"><svg class="icon"><use href="#i-refresh"/></svg><span>從業務 AI 重拉</span></button>
    __SHEET_BTN__
-   <button type="button" class="action ai" id="classifyAll"><svg class="icon"><use href="#i-sparkle"/></svg><span>AI 判讀全部</span></button>
+   <button type="button" class="action ai" id="classifyAll" hidden><svg class="icon"><use href="#i-sparkle"/></svg><span>AI 判讀全部</span></button>
+   <span id="autoAi" class="toolbar-note" hidden><svg class="icon"><use href="#i-sparkle"/></svg><span id="autoAiText">AI 自動判讀中…</span></span>
   </div>
   <div class="toolbar-note"><svg class="icon"><use href="#i-lock"/></svg><span>手動分類優先，重新判讀不覆蓋。</span></div>
  </section>

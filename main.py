@@ -27501,7 +27501,9 @@ _DOC_CATS = ["身分證正面", "身分證反面", "健保卡", "駕照", "存�
 _DOC_ORDER = [("身分證正",), ("身分證反", "身分證背"), ("身分證",), ("健保",), ("駕照", "第二證件"), ("存摺", "存簿"),
               ("行照",), ("勞保",), ("合照",), ("強制險",), ("手機", "型號"), ("IMEI",),
               ("信用卡",), ("帳單",), ("薪轉", "明細")]
-_DOCS_AUTO_CLASSIFY = False   # 試用期：拉進來不自動判讀，總管理按「AI 判讀」驗過準確度再打開
+# 使用者 2026-10-14：「拉進去照片之後應該是要直接自動判讀」→ 打開（拿掉「AI 判讀全部」按鈕）
+# ⚠️ 準確度還沒用真證件驗過；判錯靠行政「改分類」（人工優先，AI 不蓋）
+_DOCS_AUTO_CLASSIFY = True
 _DOC_AI_MODEL = "claude-sonnet-5-5"
 
 
@@ -27642,7 +27644,22 @@ def pull_customer_docs(id_no: str) -> dict:
         total = cur.execute("SELECT COUNT(*) FROM customer_docs WHERE id_no=?", (idv,)).fetchone()[0]
     if err:
         print(f"[證件] {idv} 拉取：{err}")
+    if new:
+        _auto_classify_bg(idv)
     return {"ok": not err, "new": new, "total": total, "error": err or ""}
+
+
+def _auto_classify_bg(idv: str):
+    """有新照片 → 背景自動判讀（不讓網頁等）；正在判就不重複開"""
+    if not _DOCS_AUTO_CLASSIFY or not os.getenv("ANTHROPIC_API_KEY", ""):
+        return
+    if _DOC_CLASSIFY_JOBS.get(idv, {}).get("running"):
+        return
+    _DOC_CLASSIFY_JOBS[idv] = {"running": True, "done": 0, "total": 0, "errors": []}
+    if _DOCS_SYNC:
+        classify_customer_docs(idv, only_new=True)
+    else:
+        _threading.Thread(target=classify_customer_docs, args=(idv, True), daemon=True).start()
 
 
 def _doc_label(r) -> str:
@@ -27682,7 +27699,7 @@ def _docs_label_summary(rows) -> str:
 
 def _docs_link(id_no: str) -> str:
     base = (os.getenv("PUBLIC_BASE_URL", "") or "https://loan-system-a7xd.onrender.com").rstrip("/")
-    return f"{base}/archive/{normalize_id_no(id_no)}"
+    return f"{base}/album/{normalize_id_no(id_no)}"   # 卡片連結＝相簿頁（使用者 2026-10-14：跟 LINE 相簿一樣）
 
 
 def _schedule_docs_pull(id_no: str, name: str, group_id: str):
@@ -27694,9 +27711,7 @@ def _schedule_docs_pull(id_no: str, name: str, group_id: str):
 
     def _run():
         try:
-            res = pull_customer_docs(id_no)
-            if _DOCS_AUTO_CLASSIFY and res["new"] and os.getenv("ANTHROPIC_API_KEY", ""):
-                classify_customer_docs(id_no, only_new=True)
+            res = pull_customer_docs(id_no)   # 有新照片會自動判讀（背景）
             if not _DOCS_POST_TO_GROUP:
                 return
             if res["total"] <= 0:
@@ -27717,9 +27732,12 @@ def _schedule_docs_pull(id_no: str, name: str, group_id: str):
 
 
 def _docs_flex(id_no: str, name: str):
-    """群組「📎 收件」卡片：姓名、身分證、證件清單（有判讀的打勾、未判讀／失敗標出來）＋「看證件」按鈕。
-    使用者 2026-10-14 選的方式：卡片＋按鈕（照片不放進卡片 —— 那要開不用登入的網址給 LINE 抓，證件會存到 LINE 伺服器）"""
+    """群組「收件」卡片（Flex）。版面照使用者 2026-10-14 給的設計圖：
+    淺綠「收件」標籤 → 大字「收件日期-姓名」＋身分證 → 「證件 N 張」→ 淺灰框兩欄打勾清單 → 大的「看證件」按鈕。
+    （深色底配淺色字使用者說「看字很痛苦」→ 全部白底深字）
+    照片不放進卡片：那要開不用登入的網址給 LINE 抓，證件會存到 LINE 伺服器。"""
     from collections import Counter as _C
+    TEAL, TEAL_BG, INK, GREY = "#139c9c", "#dff3f2", "#0f172a", "#64748b"
     idv = normalize_id_no(id_no)
     rows = [r for r in _docs_rows(idv) if not _doc_is_contract(r)]
     done = [r for r in rows if r.get("manual_label") or r.get("ai_label")]
@@ -27728,35 +27746,52 @@ def _docs_flex(id_no: str, name: str):
     names = sorted(cnt, key=lambda k: (_doc_rank(k), k))
     n = now_tw()
     day = f"{n.year - 1911}/{n.month}/{n.day}"
-    lines = [{"type": "box", "layout": "baseline", "spacing": "sm", "contents": [
-        {"type": "text", "text": "✅", "size": "sm", "flex": 0},
-        {"type": "text", "text": k + (f" ×{cnt[k]}" if cnt[k] > 1 else ""), "size": "sm", "color": "#334155", "flex": 1, "wrap": True}]}
-        for k in names[:14]]
-    if len(names) > 14:
-        lines.append({"type": "text", "text": f"…另外 {len(names) - 14} 種", "size": "xs", "color": "#64748b"})
+
+    def _item(k):
+        return {"type": "box", "layout": "horizontal", "spacing": "md", "alignItems": "center", "contents": [
+            {"type": "box", "layout": "vertical", "width": "22px", "height": "22px", "cornerRadius": "11px",
+             "backgroundColor": TEAL, "justifyContent": "center", "alignItems": "center", "flex": 0,
+             "contents": [{"type": "text", "text": "✓", "color": "#ffffff", "size": "sm", "weight": "bold", "align": "center"}]},
+            {"type": "text", "text": k + (f" ×{cnt[k]}" if cnt[k] > 1 else ""), "size": "md", "color": "#1e293b",
+             "flex": 1, "wrap": True}]}
+
+    shown = names[:16]
+    half = (len(shown) + 1) // 2
+    cols = [{"type": "box", "layout": "vertical", "spacing": "md", "flex": 1, "contents": [_item(k) for k in part] or [{"type": "filler"}]}
+            for part in (shown[:half], shown[half:])]
+    checklist = []
+    if shown:
+        checklist.append({"type": "box", "layout": "horizontal", "spacing": "lg", "contents": cols})
+    if len(names) > 16:
+        checklist.append({"type": "text", "text": f"…另外 {len(names) - 16} 種", "size": "sm", "color": GREY, "margin": "md"})
     if pending:
-        lines.append({"type": "box", "layout": "baseline", "spacing": "sm", "margin": "md", "contents": [
-            {"type": "text", "text": "🤖", "size": "sm", "flex": 0},
-            {"type": "text", "text": f"還有 {pending} 張未分類（打開後按「AI 判讀」）", "size": "sm", "color": "#b45309", "flex": 1, "wrap": True}]})
+        checklist.append({"type": "text", "text": f"🤖 還有 {pending} 張 AI 判讀中", "size": "sm",
+                          "color": "#b45309", "wrap": True, "margin": "md" if shown else "none"})
     if not rows:
-        lines.append({"type": "text", "text": "業務 AI 那邊還沒有這位客人的證件", "size": "sm", "color": "#64748b", "wrap": True})
+        checklist.append({"type": "text", "text": "業務 AI 那邊還沒有這位客人的證件", "size": "sm", "color": GREY, "wrap": True})
+
     bubble = {
         "type": "bubble", "size": "mega",
-        # 使用者 2026-10-14：日期＋姓名＋身分證要清楚（格式同業務建相簿：收件日期-姓名 身分證）；
-        # 深色底配淺色字「看字很痛苦」→ 白底、深色粗體大字，只留一條綠色細線當識別
-        "header": {"type": "box", "layout": "vertical", "backgroundColor": "#ffffff", "paddingAll": "14px", "contents": [
-            {"type": "box", "layout": "vertical", "height": "4px", "backgroundColor": "#127a7d", "contents": []},
-            {"type": "text", "text": "📎 收件", "size": "sm", "color": "#475569", "margin": "md"},
-            {"type": "text", "text": f"{day}-{name or '（未建檔）'}", "size": "xl", "weight": "bold", "color": "#0f172a",
-             "margin": "sm", "wrap": True},
-            {"type": "text", "text": idv, "size": "xl", "weight": "bold", "color": "#0f172a"}]},
-        "body": {"type": "box", "layout": "vertical", "spacing": "xs", "paddingAll": "14px", "contents": [
-            {"type": "text", "text": f"證件 {len(rows)} 張", "size": "sm", "weight": "bold", "color": "#0f172a"},
-            {"type": "separator", "margin": "sm"},
-            {"type": "box", "layout": "vertical", "spacing": "xs", "margin": "sm", "contents": lines}]},
-        "footer": {"type": "box", "layout": "vertical", "paddingAll": "10px", "contents": [
-            {"type": "button", "style": "primary", "color": "#127a7d", "height": "sm",
-             "action": {"type": "uri", "label": "📎 看證件", "uri": _docs_link(idv)}}]},
+        "body": {"type": "box", "layout": "vertical", "paddingAll": "16px", "contents": [
+            # 「收件」標籤
+            {"type": "box", "layout": "horizontal", "backgroundColor": TEAL_BG, "cornerRadius": "10px", "paddingAll": "12px",
+             "contents": [{"type": "text", "text": "📄 收件", "size": "lg", "weight": "bold", "color": "#0e7f80"}]},
+            # 收件日期-姓名（大字）＋身分證
+            {"type": "text", "text": f"{day}-{name or '（未建檔）'}", "size": "xxl", "weight": "bold", "color": INK,
+             "wrap": True, "margin": "xl"},
+            {"type": "text", "text": idv, "size": "xl", "color": GREY, "margin": "sm"},
+            {"type": "separator", "margin": "xl", "color": "#e2e8f0"},
+            # 證件 N 張
+            {"type": "box", "layout": "baseline", "spacing": "sm", "margin": "xl", "contents": [
+                {"type": "text", "text": "證件", "size": "xl", "weight": "bold", "color": INK, "flex": 0},
+                {"type": "text", "text": f"{len(rows)} 張", "size": "xl", "weight": "bold", "color": TEAL, "flex": 0}]},
+            # 打勾清單（淺灰框、兩欄）
+            {"type": "box", "layout": "vertical", "backgroundColor": "#f1f5f7", "cornerRadius": "12px", "paddingAll": "16px",
+             "margin": "lg", "contents": checklist},
+            # 看證件
+            {"type": "button", "style": "primary", "color": TEAL, "height": "md", "margin": "xl",
+             "action": {"type": "uri", "label": "👁 看證件 →", "uri": _docs_link(idv)}},
+        ]},
     }
     alt = f"📎 {day}-{name} {idv} 收件（{len(rows)} 張）"
     return alt, bubble
@@ -28108,6 +28143,125 @@ async def docs_zip(request: Request, id_no: str, ids: str = ""):
                              headers={"Content-Disposition": f"attachment; filename*=UTF-8''{_q(folder + '.zip')}"})
 
 
+def _album_title(cust, idv: str) -> str:
+    """相簿標題，跟業務建 LINE 相簿一樣：收件日期＋姓名＋送件順序（例：115/10/13姚漢威亞太/和裕/喬美）"""
+    if not cust:
+        return idv
+    d = (cust.get("created_at") or "")[:10]
+    try:
+        day = f"{int(d[:4]) - 1911}/{int(d[5:7])}/{int(d[8:10])}"
+    except Exception:
+        day = ""
+    order = []
+    try:
+        for x in (json.loads(cust.get("route_plan") or "{}") or {}).get("order", []) or []:
+            co = x.get("company") if isinstance(x, dict) else x
+            if co:
+                order.append(str(co))
+    except Exception:
+        pass
+    return f"{day}{cust.get('customer_name') or ''}{'/'.join(order)}"
+
+
+@app.get("/archive/{id_no}/sheet.jpg")
+async def docs_sheet_image(request: Request, id_no: str, page: int = 1):
+    """客戶資料表轉成圖片（相簿頁第一張，跟行政以前拍進相簿的那張一樣）"""
+    if not _docs_auth(request):
+        return JSONResponse({"error": "無權限"}, status_code=403)
+    pdf = _customer_sheet_pdf(_docs_latest_customer(normalize_id_no(id_no)))
+    if not pdf:
+        return JSONResponse({"error": "沒有客戶資料"}, status_code=404)
+    import fitz
+    with fitz.open(stream=pdf, filetype="pdf") as d:
+        if page < 1 or page > len(d):
+            return JSONResponse({"error": "沒有這頁"}, status_code=404)
+        pm = d[page - 1].get_pixmap(dpi=150)
+        data = pm.tobytes("jpeg")
+    return StreamingResponse(io.BytesIO(data), media_type="image/jpeg", headers={"Cache-Control": "private, max-age=60"})
+
+
+_ALBUM_CSS = """*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Noto Sans TC','Microsoft JhengHei',sans-serif;background:#fff;color:#111;overflow-x:hidden}
+.top{padding:16px 14px 10px}.title{font-size:22px;font-weight:800;line-height:1.35;word-break:break-all}
+.sub{color:#8a8f98;font-size:14px;margin-top:6px}.links{margin-top:10px;display:flex;gap:8px;flex-wrap:wrap}
+.links a{font-size:13px;color:#139c9c;text-decoration:none;border:1px solid #bfe5e3;border-radius:16px;padding:5px 12px}
+.alb{display:grid;grid-template-columns:repeat(2,1fr);gap:3px}
+@media(min-width:700px){.alb{grid-template-columns:repeat(3,1fr)}}@media(min-width:1100px){.alb{grid-template-columns:repeat(4,1fr)}}
+.alb button{border:0;padding:0;background:#eef1f3;aspect-ratio:1;overflow:hidden;cursor:pointer;position:relative;display:block;width:100%}
+.alb img{width:100%;height:100%;object-fit:cover;display:block}
+.alb .tag{position:absolute;left:6px;bottom:6px;background:rgba(0,0,0,.55);color:#fff;font-size:12px;padding:2px 7px;border-radius:10px}
+.empty{padding:30px 14px;color:#8a8f98}
+#vw{display:none;position:fixed;inset:0;background:#000;z-index:99;flex-direction:column}
+#vw.on{display:flex}#vwTop{display:flex;align-items:center;justify-content:space-between;color:#fff;padding:10px 12px;gap:10px}
+#vwTop b{font-size:15px}#vwTop a,#vwTop button{color:#fff;background:rgba(255,255,255,.15);border:0;border-radius:16px;padding:6px 12px;font-size:14px;text-decoration:none;cursor:pointer}
+#vwBox{flex:1;overflow:auto;display:flex;align-items:flex-start;justify-content:center;touch-action:pan-x pan-y pinch-zoom}
+#vwImg{max-width:100%;margin:auto;display:block}
+.nav{position:fixed;top:50%;transform:translateY(-50%);background:rgba(255,255,255,.18);color:#fff;border:0;font-size:30px;width:44px;height:64px;border-radius:8px;cursor:pointer}
+.nav.l{left:6px}.nav.r{right:6px}"""
+
+
+@app.get("/album/{id_no}", response_class=HTMLResponse)
+async def docs_album_page(request: Request, id_no: str):
+    """卡片連結打開的「相簿」：標題＝收件日期姓名送件順序、N 張照片、兩欄大圖（第一張是客戶資料表），點開看大張、左右換、單張下載。
+    使用者 2026-10-14 給 LINE 相簿截圖：「這個連結要跟客戶的資料一起可以看、跟相簿一樣」"""
+    role = _docs_auth(request)
+    if not role:
+        return RedirectResponse("/login")
+    idv = normalize_id_no(id_no)
+    with db_conn() as conn:
+        _docs_ensure_table(conn.cursor())
+        lp = conn.execute("SELECT last_pull_at FROM customer_docs_pull WHERE id_no=?", (idv,)).fetchone()
+    try:
+        stale = not lp or (now_tw().replace(tzinfo=None) - datetime.fromisoformat((lp["last_pull_at"] or "")[:19])).total_seconds() > 300
+    except Exception:
+        stale = True
+    if stale:
+        pull_customer_docs(idv)   # 客人後來補傳的也拉進來
+    cust = _docs_latest_customer(idv)
+    items = []   # (大圖網址, 下載網址, 標籤, 縮圖網址)
+    if cust:
+        sheet = _customer_sheet_pdf(cust)
+        if sheet:
+            import fitz
+            with fitz.open(stream=sheet, filetype="pdf") as d:
+                for p in range(1, len(d) + 1):
+                    _u = f"/archive/{idv}/sheet.jpg?page={p}"
+                    items.append((_u, _u, "客戶資料表", _u))
+    for r in _docs_rows(idv):
+        if _doc_is_contract(r):
+            continue
+        pages = _pdf_pages(r["file_path"]) if r["real_type"] == "application/pdf" else 0
+        if pages:
+            items.append((f"/archive/file/{r['id']}/preview", f"/archive/file/{r['id']}?dl=1", r["show_label"],
+                          f"/archive/file/{r['id']}/preview?page=1"))   # 縮圖＝第一頁，點開＝全部頁
+        elif r["real_type"].startswith("image/") and r["real_type"] != "image/heic":
+            items.append((f"/archive/file/{r['id']}", f"/archive/file/{r['id']}?dl=1", r["show_label"], f"/archive/file/{r['id']}"))
+    thumbs = "".join(
+        f'<button onclick="vw({i})"><img src="{h(th)}" loading="lazy" alt="{h(t)}"><span class="tag">{h(t)}</span></button>'
+        for i, (u, _d, t, th) in enumerate(items))
+    data = json.dumps([{"u": u, "d": d, "t": t} for u, d, t, _th in items], ensure_ascii=False).replace("</", "<\\/")
+    title = _album_title(cust, idv)
+    html_ = f"""<!DOCTYPE html><html lang="zh-Hant"><head><meta charset="UTF-8"><link rel="icon" type="image/x-icon" href="/favicon.ico?v=3">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>{h(title)}</title><style>{_ALBUM_CSS}</style></head><body>
+<div class="top"><div class="title">{h(title)}</div><div class="sub">{len(items)}張照片</div>
+<div class="links"><a href="/archive/{h(idv)}">🗂 證件管理（分類、AI 判讀、下載）</a><a href="/archive/{h(idv)}/pdf">⬇ 整理好的 PDF</a></div></div>
+<div class="alb">{thumbs or '<div class="empty">業務 AI 那邊還沒有這位客人的證件</div>'}</div>
+<div id="vw"><div id="vwTop"><button onclick="vwClose()">✕</button><b id="vwT"></b><a id="vwD" href="#" download>⬇ 下載</a></div>
+<div id="vwBox"><img id="vwImg" alt=""></div><button class="nav l" onclick="vwGo(-1)">‹</button><button class="nav r" onclick="vwGo(1)">›</button></div>
+<script>
+var A={data},I=0,sx=null;
+function vw(i){{I=(i+A.length)%A.length;var x=A[I];document.getElementById('vwImg').src=x.u;document.getElementById('vwD').href=x.d;
+ document.getElementById('vwT').textContent=(I+1)+'/'+A.length+'　'+x.t;document.getElementById('vw').classList.add('on');document.getElementById('vwBox').scrollTop=0;}}
+function vwGo(d){{vw(I+d);}}function vwClose(){{document.getElementById('vw').classList.remove('on');}}
+document.addEventListener('keydown',function(e){{if(!document.getElementById('vw').classList.contains('on'))return;
+ if(e.key==='ArrowRight')vwGo(1);if(e.key==='ArrowLeft')vwGo(-1);if(e.key==='Escape')vwClose();}});
+var B=document.getElementById('vwBox');B.addEventListener('touchstart',function(e){{if(e.touches.length===1)sx=e.touches[0].clientX;}});
+B.addEventListener('touchend',function(e){{if(sx===null)return;var dx=e.changedTouches[0].clientX-sx;sx=null;
+ if(Math.abs(dx)>60&&window.visualViewport&&visualViewport.scale<=1.01)vwGo(dx<0?1:-1);}});
+</script></body></html>"""
+    return HTMLResponse(html_)
+
+
 @app.get("/archive/{id_no}/data")
 async def docs_data(request: Request, id_no: str, refresh: str = ""):
     if not _docs_auth(request):
@@ -28288,6 +28442,12 @@ _ARCHIVE_ADAPTER = """<script>
     headers:{'Content-Type':'application/json'},body:JSON.stringify({label:x.category})})).json(); if(!r.ok)throw new Error(r.error||'失敗');},
  });
  G.setData({customerId:__SHOW__,total:__TOTAL__,documents:__DOCS__,demo:false});
+ // 照片拉進來會自動判讀（背景）：打開時還在判 → 顯示進度，判完自動更新畫面
+ (function watch(){fetch('/archive/'+ID+'/classify-status').then(r=>r.json()).then(d=>{
+   const box=document.getElementById('autoAi'),t=document.getElementById('autoAiText');
+   if(d.running){box.hidden=false;t.textContent='AI 自動判讀中 '+d.done+'/'+(d.total||'?')+'…';setTimeout(watch,2500);return;}
+   if(!box.hidden){box.hidden=true;load(false).then(x=>G.setData({customerId:__SHOW__,total:x.documents.length,documents:x.documents,demo:false}));}
+ }).catch(()=>{});})();
 })();
 </script>"""
 

@@ -1878,8 +1878,8 @@ check("建檔後群組貼一張「📎 收件」卡片（只算 1 則）", len(_
 _cj = json.dumps(_cards[0][2], ensure_ascii=False) if _cards else ""
 check("卡片：通知文字有姓名、身分證、張數", _cards and "證件甲" in _cards[0][1] and "E300000001" in _cards[0][1]
       and "收件（3 張）" in _cards[0][1], _cards and _cards[0][1])
-check("卡片：有「看證件」按鈕連到證件頁", '"uri"' in _cj and "/archive/E300000001" in _cj and "看證件" in _cj)
-check("卡片：還沒判讀的會寫「未分類」提醒", "3 張未分類" in _cj, _cj[:300])
+check("卡片：有「看證件」按鈕連到相簿頁", '"uri"' in _cj and "/album/E300000001" in _cj and "看證件" in _cj)
+check("卡片：還沒判讀完的會寫「AI 判讀中」", "3 張 AI 判讀中" in _cj, _cj[:300])
 check("下載時一定帶身分證（業務 AI 會比對，不帶拿不到）", _fetch_calls and all(i == "E300000001" for _d, i in _fetch_calls), _fetch_calls)
 _rows = m._docs_rows("E300000001")
 check("照片存進自己的磁碟（一位客人一個資料夾）", len(_rows) == 3 and all(os.path.isfile(r["file_path"]) and
@@ -1952,8 +1952,25 @@ _c = sqlite3.connect(TEST_DB)
 _c.execute("UPDATE customer_docs SET ai_label=label WHERE id_no='E300000001'")
 _c.commit(); _c.close()
 _alt, _card = m._docs_flex("E300000001", "證件甲")
+# 相簿頁（使用者 2026-10-14 給 LINE 相簿截圖：標題＝收件日期姓名送件順序、N張照片、第一張客戶資料表）
+m.check_auth = lambda req: "admin"
+_c = sqlite3.connect(TEST_DB)
+_c.execute("""UPDATE customers SET route_plan='{"order": ["亞太商品", "和裕商品", "喬美"], "current_index": 0}'
+              WHERE id_no='E300000001' AND status!='DELETED'""")
+_c.commit(); _c.close()
+_ra = TestClient(m.app).get("/album/E300000001")
+_n_sheet = len(_pp73.PdfReader(_io73.BytesIO(m._customer_sheet_pdf(m._docs_latest_customer("E300000001")))).pages)
+check("相簿頁：標題＝收件日期＋姓名＋送件順序（跟 LINE 相簿一樣）", _ra.status_code == 200 and "證件甲亞太商品/和裕商品/喬美" in _ra.text,
+      _ra.status_code)
+check("相簿頁：第一張是客戶資料表，接著證件，寫幾張照片",
+      _ra.text.index("客戶資料表") < _ra.text.index("身分證正面") and f"{_n_sheet + 4}張照片" in _ra.text)
+_rs = TestClient(m.app).get("/archive/E300000001/sheet.jpg?page=1")
+check("客戶資料表轉成圖片", _rs.status_code == 200 and _rs.headers["content-type"] == "image/jpeg", _rs.status_code)
+check("相簿頁：每張都可以單張下載", _ra.text.count("?dl=1") == 4, _ra.text.count("?dl=1"))
+m.check_auth = lambda req: "group_TEST_B"
+check("相簿頁：沒權限的帳號打不開", TestClient(m.app).get("/album/E300000001", follow_redirects=False).status_code in (302, 303, 307))
 _cj = json.dumps(_card, ensure_ascii=False)
-check("判讀過的證件在卡片上打勾列出", "✅" in _cj and "身分證正面" in _cj, _cj[:300])
+check("判讀過的證件在卡片上打勾列出", "✓" in _cj and "身分證正面" in _cj, _cj[:300])
 m.check_auth = lambda req: "admin"
 _cards.clear()
 m.get_notify_group_ids = (lambda _o: (lambda: ["TEST_NOTIFY"]))(m.get_notify_group_ids)
@@ -2066,6 +2083,17 @@ m._ai_doc_request = lambda block, prompt: '{"type": "存摺封面", "note": "x"}
 _r1 = _tc74.post(f"/archive/doc/{_rows['23']['id']}/classify").json()
 check("單張重新判讀（介面「重新判讀」）", _r1.get("ok") and _r1["document"]["category"] == "存摺封面" and not _r1["document"]["error"], _r1)
 check("人工分類過的那張不重新判讀", _tc74.post(f"/archive/doc/{_pk22}/classify").json().get("ok") is False)
+# 使用者 2026-10-14「拉進去照片之後應該是要直接自動判讀」
+os.environ["ANTHROPIC_API_KEY"] = "fake-key-for-test"
+m._ai_doc_request = lambda block, prompt: '{"type": "健保卡", "note": "x"}'
+_FAKE["E300000005"].append({"doc_id": 26, "created_at": "2026-10-14T09:00:00", "content_type": "image/png",
+                            "source": "LINE聊天", "label": "AI自己判斷"})
+m.pull_customer_docs("E300000005")
+_r26 = [r for r in m._docs_rows("E300000005") if r["remote_doc_id"] == "26"][0]
+check("新照片拉進來自動判讀（不用按按鈕）", _r26["ai_label"] == "健保卡", (_r26["ai_label"], _r26["ai_note"]))
+_r22b = [r for r in m._docs_rows("E300000005") if r["remote_doc_id"] == "22"][0]
+check("自動判讀只判新的、人工改過的不動", _r22b["show_label"] == "強制險", _r22b["show_label"])
+check("證件頁已經沒有「AI 判讀全部」按鈕", 'id="classifyAll" hidden' in _tc74.get("/archive/E300000005").text)
 os.environ.pop("ANTHROPIC_API_KEY", None)
 m._DOCS_SYNC = False
 m._ai_doc_request = _orig_ai
