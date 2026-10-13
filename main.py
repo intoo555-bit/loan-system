@@ -27983,7 +27983,8 @@ async def docs_list_page(request: Request, q: str = ""):
 
 
 @app.get("/archive/file/{doc_pk}")
-async def docs_file(request: Request, doc_pk: int):
+async def docs_file(request: Request, doc_pk: int, dl: str = ""):
+    """看／下載單張。dl=1 → 下載，檔名「姓名_證件種類」（使用者 2026-10-14：點進去要能單張下載）"""
     if not _docs_auth(request):
         return JSONResponse({"error": "無權限"}, status_code=403)
     with db_conn() as conn:
@@ -27992,7 +27993,59 @@ async def docs_file(request: Request, doc_pk: int):
         r = cur.execute("SELECT * FROM customer_docs WHERE id=?", (doc_pk,)).fetchone()
     if not r or not r["file_path"] or not os.path.isfile(r["file_path"]):
         return JSONResponse({"error": "找不到檔案"}, status_code=404)
-    return FileResponse(r["file_path"], media_type=_doc_real_type(r["file_path"], r["content_type"]) or "application/octet-stream")
+    rt = _doc_real_type(r["file_path"], r["content_type"]) or "application/octet-stream"
+    if dl:
+        cust = _docs_latest_customer(r["id_no"])
+        lb = r["manual_label"] or r["ai_label"] or r["label"] or "證件"
+        fname = f'{(cust or {}).get("customer_name") or r["id_no"]}_{lb}{_doc_ext(rt)}'
+        return FileResponse(r["file_path"], media_type=rt, filename=fname)
+    return FileResponse(r["file_path"], media_type=rt)
+
+
+def _pdf_pages(path: str) -> int:
+    try:
+        import fitz
+        with fitz.open(path) as d:
+            return len(d)
+    except Exception:
+        return 0
+
+
+@app.get("/archive/file/{doc_pk}/preview")
+async def docs_file_preview(request: Request, doc_pk: int, page: int = 0):
+    """PDF 轉成圖片給人看（使用者 2026-10-14：PDF 沒辦法打開來看 —— LINE 內建瀏覽器常常不顯示 PDF）。
+    page=1 → 只有第一頁（縮圖）；page=0 → 全部頁面由上往下接成一張長圖（最多 12 頁）"""
+    if not _docs_auth(request):
+        return JSONResponse({"error": "無權限"}, status_code=403)
+    with db_conn() as conn:
+        _docs_ensure_table(conn.cursor())
+        r = conn.execute("SELECT * FROM customer_docs WHERE id=?", (doc_pk,)).fetchone()
+    if not r or not r["file_path"] or not os.path.isfile(r["file_path"]):
+        return JSONResponse({"error": "找不到檔案"}, status_code=404)
+    if _doc_real_type(r["file_path"], r["content_type"]) != "application/pdf":
+        return RedirectResponse(f"/archive/file/{doc_pk}")
+    try:
+        import fitz
+        from PIL import Image as _Img
+        imgs = []
+        with fitz.open(r["file_path"]) as d:
+            pages = [d[0]] if page == 1 else [d[i] for i in range(min(len(d), 12))]
+            for pg in pages:
+                pm = pg.get_pixmap(dpi=70 if page == 1 else 130)
+                imgs.append(_Img.frombytes("RGB", (pm.width, pm.height), pm.samples))
+        W = max(im.width for im in imgs)
+        out = _Img.new("RGB", (W, sum(im.height for im in imgs) + 12 * (len(imgs) - 1)), (200, 206, 212))
+        y = 0
+        for im in imgs:
+            out.paste(im, ((W - im.width) // 2, y))
+            y += im.height + 12
+        buf = io.BytesIO()
+        out.save(buf, "JPEG", quality=82)
+        return StreamingResponse(io.BytesIO(buf.getvalue()), media_type="image/jpeg",
+                                 headers={"Cache-Control": "private, max-age=600"})
+    except Exception as e:
+        print(f"[證件] PDF 轉圖失敗 {doc_pk}：{e}")
+        return JSONResponse({"error": "PDF 轉圖失敗"}, status_code=500)
 
 
 def _docs_folder_name(id_no: str, rows):
@@ -28183,10 +28236,15 @@ def _doc_payload(r, order: int) -> dict:
     if not lb:   # 還沒判讀：業務 AI 的原標籤對得到清單就先用，對不到放「其他」並標「未判讀」
         lb = r.get("label") if (r.get("label") or "") in _DOC_CATS else "其他"
     is_img = r["real_type"].startswith("image/") and r["real_type"] != "image/heic"
+    pages = _pdf_pages(r["file_path"]) if r["real_type"] == "application/pdf" else 0
+    if pages:
+        preview, view = f"/archive/file/{r['id']}/preview?page=1", f"/archive/file/{r['id']}/preview"
+    else:
+        preview = view = f"/archive/file/{r['id']}" if is_img else ""
     return {"id": str(r["id"]), "category": lb, "source": "form" if "申請書" in (r.get("source") or "") else "chat",
             "date": (r.get("remote_created_at") or r.get("pulled_at") or "")[:10],
-            "kind": "image" if is_img else "file",
-            "previewUrl": f"/archive/file/{r['id']}" if is_img else "", "fileUrl": f"/archive/file/{r['id']}",
+            "kind": "image" if (is_img or pages) else "file", "pages": pages, "viewUrl": view,
+            "previewUrl": preview, "fileUrl": f"/archive/file/{r['id']}",
             "isManual": bool(r.get("manual_label")), "order": order,
             "error": (r.get("ai_note") or "") if failed else "",
             "unclassified": not (r.get("manual_label") or r.get("ai_label")) and not failed}

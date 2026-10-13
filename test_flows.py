@@ -1994,7 +1994,19 @@ check("存檔時就照真正類型存（.pdf）", _rows["21"]["file_path"].endsw
 m.check_auth = lambda req: "admin"
 _tc74 = TestClient(m.app)
 _d21 = [d for d in _tc74.get("/archive/E300000005/data").json()["documents"] if d["id"] == str(_rows["21"]["id"])][0]
-check("證件頁：PDF 當「檔案」不當圖片（不會破圖）", _d21["kind"] == "file" and _d21["previewUrl"] == "", _d21)
+# 使用者 2026-10-14「PDF 沒辦法打開來看」→ PDF 轉成圖片給人看（LINE 內建瀏覽器常常不顯示 PDF）
+check("證件頁：PDF 轉成圖片看（縮圖第一頁、點開 5 頁全部）", _d21["kind"] == "image" and _d21["pages"] == 5
+      and _d21["previewUrl"].endswith("/preview?page=1") and _d21["viewUrl"].endswith("/preview"), _d21)
+_pv = _tc74.get(_d21["viewUrl"])
+_pv1 = _tc74.get(_d21["previewUrl"])
+_im_all = _Img73.open(_io73.BytesIO(_pv.content)) if _pv.status_code == 200 else None
+_im_one = _Img73.open(_io73.BytesIO(_pv1.content)) if _pv1.status_code == 200 else None
+check("PDF 全部頁面接成一張長圖、第一頁縮圖比較短", _im_all and _im_one and _pv.headers["content-type"] == "image/jpeg"
+      and _im_all.height > _im_one.height * 4, (_pv.status_code, _pv1.status_code))
+_dl = _tc74.get(f"/archive/file/{_rows['22']['id']}", params={"dl": "1"})
+check("點開照片可以單張下載（檔名＝姓名或身分證_證件種類）", _dl.status_code == 200 and "attachment" in _dl.headers.get("content-disposition", "")
+      and "E300000005" in _dl.headers.get("content-disposition", "").encode("latin-1").decode("utf-8", "ignore") + _dl.headers.get("content-disposition", ""),
+      _dl.headers.get("content-disposition"))
 _pdf = _tc74.get("/archive/E300000005/pdf")
 check("整理好的 PDF：合約 5 頁完整併進去（5＋2 張照片＝7 頁）",
       len(_pp73.PdfReader(_io73.BytesIO(_pdf.content)).pages) == 7, _pdf.status_code)

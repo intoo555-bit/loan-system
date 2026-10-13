@@ -181,6 +181,9 @@ details.error-detail{color:#a17745;margin:12px 0;font-size:10px;border:1px solid
 .cust-empty{padding:12px 16px;color:#6b7f90;font-size:13px}
 .cp-sec{min-width:0}
 @media(max-width:690px){.cp-body{grid-template-columns:minmax(0,1fr);padding:10px}.cp-grid{grid-template-columns:76px minmax(0,1fr)}}
+.preview-stage img{max-width:98%!important;max-height:96%!important}
+.preview-stage.pdf-pages{overflow:auto;align-items:flex-start}
+.preview-stage.pdf-pages img{max-width:none!important;max-height:none!important;width:min(1000px,96%);transform-origin:top center}
 </style>
 </head>
 <body>
@@ -250,7 +253,7 @@ __TOPNAV__
  <div class="dialog-top"><h2><span id="viewerTitle"></span><span class="index" id="viewerIndex"></span></h2><div class="dialog-tools"><button type="button" class="icon-btn" id="closeViewer" title="關閉（Esc）" aria-label="關閉預覽"><svg class="icon"><use href="#i-x"/></svg></button></div></div>
  <div class="viewer-body">
   <div class="preview-stage" id="previewStage"><span class="stage-caption" id="stageCaption">截圖縮圖</span><img id="previewImage" alt="" hidden><div id="stageEmpty" class="stage-empty" hidden></div><button class="nav-arrow prev" id="previousDoc" type="button" aria-label="上一份"><svg class="icon"><use href="#i-left"/></svg></button><button class="nav-arrow next" id="nextDoc" type="button" aria-label="下一份"><svg class="icon"><use href="#i-right"/></svg></button><div class="zoom-controls" id="zoomControls"><button type="button" id="zoomOut" aria-label="縮小"><svg class="icon"><use href="#i-minus"/></svg></button><span id="zoomLevel">100%</span><button type="button" id="zoomIn" aria-label="放大"><svg class="icon"><use href="#i-plus"/></svg></button></div></div>
-  <aside class="preview-aside"><div class="detail-field"><label class="label" for="viewerCategory">證件類型</label><select class="detail-select" id="viewerCategory"></select><span id="viewerStatus" class="status"></span></div><div class="detail-field"><span class="label">來源</span><span class="value" id="viewerSource"></span></div><div class="detail-field date-field"><span class="label">上傳日期</span><span class="value" id="viewerDate"></span></div><details class="error-detail" id="errorDetails" hidden><summary>判讀失敗詳情</summary><div id="errorText"></div></details><div class="aside-bottom"><button type="button" class="action" id="openOriginal"><svg class="icon"><use href="#i-external"/></svg><span>開啟原始附件</span></button><button type="button" class="action ai" id="retryOne" style="margin-top:8px"><svg class="icon"><use href="#i-refresh"/></svg><span>重新判讀</span></button><p class="aside-note" id="viewerNote">原始附件未提供；目前只展示截圖中的縮圖。</p></div></aside>
+  <aside class="preview-aside"><div class="detail-field"><label class="label" for="viewerCategory">證件類型</label><select class="detail-select" id="viewerCategory"></select><span id="viewerStatus" class="status"></span></div><div class="detail-field"><span class="label">來源</span><span class="value" id="viewerSource"></span></div><div class="detail-field date-field"><span class="label">上傳日期</span><span class="value" id="viewerDate"></span></div><details class="error-detail" id="errorDetails" hidden><summary>判讀失敗詳情</summary><div id="errorText"></div></details><div class="aside-bottom"><a class="action" id="downloadOne" style="text-decoration:none;margin-bottom:8px" download><span>⬇ 下載這張</span></a><button type="button" class="action" id="openOriginal"><svg class="icon"><use href="#i-external"/></svg><span>開啟原始附件</span></button><button type="button" class="action ai" id="retryOne" style="margin-top:8px"><svg class="icon"><use href="#i-refresh"/></svg><span>重新判讀</span></button><p class="aside-note" id="viewerNote">原始附件未提供；目前只展示截圖中的縮圖。</p></div></aside>
  </div>
 </dialog>
 <dialog class="connection" id="connection" aria-labelledby="connectionTitle"><div class="connection-body"><div class="connect-icon"><svg class="icon"><use href="#i-plug"/></svg></div><h2 id="connectionTitle">尚未連接原系統</h2><p id="connectionText"></p><code id="connectionHint"></code></div><div class="connection-footer"><button type="button" class="action primary" id="closeConnection">知道了</button></div></dialog>
@@ -360,7 +363,7 @@ const initialDocuments=[];
  // Validate adapter data; do not execute arbitrary markup or URLs.
  function normalize(d,i){
   if(!d||typeof d.id!=='string'||!d.id)throw new TypeError('documents 每筆需要非空 id');
-  return {unclassified:!!d.unclassified,id:d.id,category:categories.includes(d.category)?d.category:'其他',source:String(d.source||'chat'),date:String(d.date||''),kind:['image','file','error'].includes(d.kind)?d.kind:'file',previewUrl:safeUrl(d.previewUrl||''),fileUrl:safeUrl(d.fileUrl||''),isManual:!!d.isManual,order:Number.isFinite(d.order)?d.order:i+1,error:String(d.error||'')};
+  return {unclassified:!!d.unclassified,pages:Number(d.pages)||0,viewUrl:safeUrl(d.viewUrl||''),id:d.id,category:categories.includes(d.category)?d.category:'其他',source:String(d.source||'chat'),date:String(d.date||''),kind:['image','file','error'].includes(d.kind)?d.kind:'file',previewUrl:safeUrl(d.previewUrl||''),fileUrl:safeUrl(d.fileUrl||''),isManual:!!d.isManual,order:Number.isFinite(d.order)?d.order:i+1,error:String(d.error||'')};
  }
  // Preserve manual classification on refresh or AI updates. Server must enforce
  // the same rule. The frontend safeguard does not replace authorization.
@@ -423,7 +426,8 @@ const initialDocuments=[];
   $('retryOne').disabled=d.isManual||state.classificationWrites.has(d.id);$('retryOne').title=d.isManual?'此附件為手動分類，不自動覆蓋':'';
   const hasImage=d.kind==='image'&&!!safeUrl(d.previewUrl);
   $('previewImage').hidden=!hasImage;$('zoomControls').hidden=!hasImage;$('stageEmpty').hidden=hasImage;
-  if(hasImage){$('previewImage').src=safeUrl(d.previewUrl);$('previewImage').alt=d.category;$('previewImage').style.transform=`scale(${state.zoom})`;}
+  $('previewStage').classList.toggle('pdf-pages',d.pages>0);$('downloadOne').href=d.fileUrl?d.fileUrl+'?dl=1':'#';
+  if(hasImage){$('previewImage').src=d.viewUrl||safeUrl(d.previewUrl);$('previewImage').alt=d.category;$('previewImage').style.transform=`scale(${state.zoom})`;}
   else{$('previewImage').removeAttribute('src');$('stageEmpty').innerHTML=d.kind==='error'?`${svg('image-off')}<h3>無法預覽這份附件</h3><p>先確認原始檔案，或重新判讀。</p>`:`${svg('doc')}<h3>${escape(d.category)}</h3><p>${state.demo?'截圖只顯示附件連結，沒有原始檔案。':'此附件無縮圖，請開啟原始附件。'}</p>`;}
   $('zoomLevel').textContent=Math.round(state.zoom*100)+'%';
   $('previousDoc').disabled=position<=0;$('nextDoc').disabled=position<0||position>=currentList.length-1;
