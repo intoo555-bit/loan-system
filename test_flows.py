@@ -1585,7 +1585,12 @@ check("願望：信用卡寫呆帳 → 不可送", not _ev(dict(_b, eval_labor_i
 check("願望：寫「無呆帳」不能誤判", _ev(dict(_b, eval_labor_ins="公司保", eval_note="無呆帳"))["願望小車25萬"])
 check("願望：66 歲 → 不可送", not _ev(dict(_b, eval_labor_ins="公司保", birth_date="049/01/01"))["願望小車25萬"])
 check("願望：當鋪私設也能送（當鋪可代償）", "願望小車25萬" in m.PRIVATE_OK_PLANS)
-check("日報歸東豐／願望", m.normalize_section("東豐小額信貸") == "東豐" and m.normalize_section("願望小車25萬") == "願望")
+# 分貝：2026-10-13 使用者「分貝現在改規則不用一定要二等親 現金都可以」→ 警示戶直接可送、不用再確認
+_fb = [r for r in m.evaluate_case(dict(_b, eval_alert_warning="是"))["results"] if r["company"] == "分貝商品"][0]
+_fb_ck = [ch for ch in _fb["checks"] if "警示戶" in ch["label"]][0]
+check("分貝商品：警示戶 → 這條直接通過（不用再確認撥二等親）", _fb_ck["status"] == "pass")
+check("分貝商品：警示戶 → 可送", _fb["eligible"] is not False)
+check("日報歸東豐／願望",m.normalize_section("東豐小額信貸") == "東豐" and m.normalize_section("願望小車25萬") == "願望")
 
 # ========== 總結 ==========
 print(f"\n{'='*50}")
