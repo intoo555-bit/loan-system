@@ -1685,6 +1685,34 @@ check("南亞私設可以送", "南亞" in m.PRIVATE_OK_PLANS)
 _r, _names = _ny(eval_property="1機")
 check("南亞不會插到同樣 10 萬的融資（貸救補）前面", _names.index("貸救補") < _names.index("南亞"), _names)
 
+# ========== 67. 建議送件順序（2026-10-13 使用者：寫建議送但沒排順序；21可以送麻吉就不會排）==========
+print("\n=== 67. 建議送件順序 ===")
+def _so(**kw):
+    c = {"birth_date": f"{_y-35:03d}/01/01", "id_no": "A123456789", "contact1_relation": "母", "contact2_relation": "父",
+         "eval_labor_ins": "公司保", "eval_alert_warning": "否", "eval_late": "無", "eval_property": "1機",
+         "debt_list": "[]", "unloan_vehicles": '[{"type": "機車", "year": "2019"}]'}
+    c.update(kw)
+    r = m.evaluate_case(c)
+    return r, [o["company"] for o in r["suggested_order"]], [o["company"] for o in r["backup_plans"]]
+_r, _o, _b = _so()
+_res = {x["company"]: x for x in _r["results"]}
+check("21機車25萬 是 ⚠️（要確認）時，麻吉也要降成不排",
+      _res["21機車25萬"]["eligible"] == "manual" and all(_res[k]["eligible"] in ("demoted", False) for k in _res if k.startswith("麻吉")),
+      {k: v["eligible"] for k, v in _res.items() if k.startswith(("21", "麻吉"))})
+check("建議順序沒有麻吉", not any(x.startswith("麻吉") for x in _o), _o)
+check("同家族只排最大：有 21機車25萬 就不排 21機車12萬／21商品", "21機車25萬" in _o and "21機車12萬" not in _o and "21商品" not in _o, _o)
+check("同家族只排最大：有 亞太機車25萬 就不排 亞太機車15萬／亞太商品", "亞太機車25萬" in _o and "亞太機車15萬" not in _o and "亞太商品" not in _o, _o)
+check("金額大先送：21機車25萬 在 和裕機車 前面", _o.index("21機車25萬") < _o.index("和裕機車"), _o)
+check("有勞保 → 排代書、不排當鋪", "代書" in _o and "當舖" not in _o, _o)
+check("南亞在代書前面", _o.index("南亞") < _o.index("代書"), _o)
+check("融易是少送方案 → 放備選、不進順序", not any(x.startswith("融易") for x in _o) and any(x.startswith("融易") for x in _b), (_o, _b))
+_r, _o, _b = _so(eval_labor_ins="", eval_property="無", unloan_vehicles="[]")
+check("沒勞保 → 排當鋪、不排代書", "當舖" in _o and "代書" not in _o, _o)
+check("沒車 → 不排南亞", "南亞" not in _o, _o)
+_r, _o, _b = _so(eval_property="1機1汽", unloan_vehicles='[{"type": "機車", "year": "2019"}, {"type": "汽車", "year": "2018"}]')
+check("有汽車＋機車 → 汽車家族排在機車前面", _o.index("和潤汽車") < _o.index("21機車25萬"), _o)
+check("21汽車A／B／C 只排一個", sum(1 for x in _o if x.startswith("21汽車")) == 1, _o)
+
 # ========== 總結 ==========
 print(f"\n{'='*50}")
 print(f"結果：{PASS} 通過、{FAIL} 失敗")

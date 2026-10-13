@@ -3223,13 +3223,15 @@ def evaluate_case(customer):
             "private_blocked": private_blocked,
         })
     # 21 vs 麻吉：21 系列任一可送 → 麻吉系列降級（CLAUDE.md 規則 #3）
+    # 2026-10-13 使用者：「21可以送麻吉就不會排了」——⚠️（可送、要確認）也算 21 可以送，⚠️ 的麻吉也要降；
+    # 21汽車 是汽車方案、不是麻吉的替代品，不算
     has_21_passed = any(
-        r["eligible"] is True and r["company"].startswith("21")
+        r["eligible"] in (True, "manual") and r["company"].startswith("21") and not r["company"].startswith("21汽車")
         for r in results
     )
     if has_21_passed:
         for r in results:
-            if r["company"].startswith("麻吉") and r["eligible"] is True:
+            if r["company"].startswith("麻吉") and r["eligible"] in (True, "manual"):
                 r["eligible"] = "demoted"
                 r["summary"] = "21 已可送、麻吉備案不排"
     # 排序：可送（含 manual）→ 不可送、金額大優先、priority 高優先
@@ -3237,12 +3239,64 @@ def evaluate_case(customer):
         eligible_score = {True: 0, "manual": 1, "demoted": 2, False: 3}[r["eligible"]]
         return (eligible_score, -r["max_amount"], -r["priority"])
     results.sort(key=sort_key)
+    suggested, backup = suggest_send_order(results, customer)
     return {
         "results": results,
+        "suggested_order": suggested,
+        "backup_plans": backup,
         "private_status": "confirmed" if has_private else None,
         "unknown_dynbao": unknown_dynbao,
         "house_private": has_house_private,
     }
+
+
+# ===== 建議送件順序（2026-10-13 使用者：寫建議送但沒有排順序出來）=====
+# 照老行政 SOP（memory project_send_order_sop）：
+#   金額大先送（汽車家族自然排前面）→ 同家族只排最大那個 → 少送方案放「備選」→
+#   代書／當鋪二選一 → 手機分期最後
+_SUGGEST_FAMILY_PREFIX = ["21汽車", "21", "亞太", "和裕", "麻吉", "裕融", "和潤", "分貝", "願望"]
+_SUGGEST_BACKUP = ("興達", "融易", "第一汽車", "第一信貸", "手機原融", "機車原融", "汽機車二胎", "手機無卡分期", "東豐")
+
+
+def _suggest_family(company):
+    for p in _SUGGEST_FAMILY_PREFIX:
+        if company.startswith(p):
+            return p
+    return company
+
+
+def suggest_send_order(results, customer):
+    """回 (建議順序, 備選)：每項 {"company", "note"}。results 要先照金額大→priority 排好"""
+    cand = [r for r in results if r["eligible"] in (True, "manual")]
+    # 金額大先送，不分 ✅／⚠️（SOP 12：看實際可貸金額、選大的先送）
+    cand.sort(key=lambda r: (-r["max_amount"], -r["priority"]))
+    order, backup, seen_fam = [], [], set()
+    labor = (customer.get("eval_labor_ins", "") or "").strip()
+    has_labor = labor not in ("", "無", "沒有")
+    last = []
+    for r in cand:
+        co = r["company"]
+        note = "要確認" if r["eligible"] == "manual" else ""
+        if co.startswith(_SUGGEST_BACKUP):
+            backup.append({"company": co, "note": "少送方案、條件特殊才排"})
+            continue
+        # 代書／當鋪二選一（SOP 6：勞保滿 3 個月排代書，不滿或沒勞保排當鋪）
+        if co == "代書" and not has_labor:
+            continue
+        if co == "當舖" and has_labor:
+            continue
+        if co == "代書":
+            note = "勞保未滿 3 個月改排當鋪"
+        fam = _suggest_family(co)
+        if fam in seen_fam:      # SOP 1：同家族只排金額最大那個
+            continue
+        seen_fam.add(fam)
+        item = {"company": co, "note": note}
+        if co == "手機分期":     # SOP 5：最後備案
+            last.append(item)
+        else:
+            order.append(item)
+    return order + last, backup
 
 
 IGNORE_NAME_SET = {
@@ -18816,6 +18870,18 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
               html += '<div style="background:#fff;border:1px solid #d4d4d4;border-radius:5px;padding:8px 10px;font-size:13px;color:' + color + '">' + tag + ' <b>' + fam + '</b>' + amtTxt + ' ' + planCntTxt + '</div>';
             }});
             html += '</div>';
+            if (d.suggested_order && d.suggested_order.length) {{
+              html += '<div style="margin-top:10px;padding:8px 10px;background:#fff;border:1px solid #86efac;border-radius:5px;font-size:13px">';
+              html += '<div style="font-weight:700;color:#15803d;margin-bottom:4px">📌 建議順序</div><ol style="margin:0;padding-left:22px">';
+              d.suggested_order.forEach(function(o) {{
+                html += '<li>' + o.company + (o.note ? ' <span style="color:#92400e;font-size:11px">（' + o.note + '）</span>' : '') + '</li>';
+              }});
+              html += '</ol>';
+              if (d.backup_plans && d.backup_plans.length) {{
+                html += '<div style="margin-top:6px;font-size:11px;color:#6b7280">備選（少送方案、條件特殊才排）：' + d.backup_plans.map(function(o){{return o.company;}}).join('、') + '</div>';
+              }}
+              html += '</div>';
+            }}
             html += '<div style="font-size:11px;color:#6b7280;margin-top:8px">⚠️ = 規則 OK 但需人工確認；汽車/重機/銀行/代書/當鋪 金額看天書/權威/鑑價、不顯示固定金額</div>';
           }}
           html += '</div>';
@@ -20341,6 +20407,8 @@ def api_check_eligibility(request: Request, case_id: str = ""):
         "private_status": eval_result["private_status"],
         "unknown_dynbao": eval_result["unknown_dynbao"],
         "house_private": eval_result["house_private"],
+        "suggested_order": eval_result["suggested_order"],
+        "backup_plans": eval_result["backup_plans"],
     })
 
 
