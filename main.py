@@ -22995,6 +22995,39 @@ def _apply_clean_value(key: str, val) -> str:
     return v
 
 
+def _apply_merge_rows(key: str, cur_v, new_v) -> str:
+    """負債明細／無貸款車輛已經有資料時，把新送來的**空格**補進對得上的那一列；回合併後 JSON（沒變回 ""）。
+    使用者 2026-10-14 陳秋蘭：負債帶進來了，車牌／出廠卻是空的 ——
+      整欄「只補空白」→ 第一次送進來的那筆沒車牌，之後業務 AI 讀到車牌再送也永遠進不來。
+    ⛔ 只補空格，有值的一格都不動（行政填的優先）；⛔ 不新增列（名稱寫法不同會變兩筆）
+    ⛔ 只在一對一時補：同名的車貸（或同車種的車）兩邊各只有一筆，否則分不出哪筆配哪筆 → 不補"""
+    try:
+        cur, new = json.loads(cur_v or "[]"), json.loads(new_v or "[]")
+    except Exception:
+        return ""
+    if not isinstance(cur, list) or not isinstance(new, list):
+        return ""
+    if key == "debt_list":
+        keyf, subs = (lambda d: str(d.get("co") or "").strip()), ("pl", "yr", "da", "dy", "sp")
+    else:
+        keyf, subs = (lambda d: str(d.get("type") or "").strip()), ("plate", "year")
+    changed = False
+    for nd in new:
+        if not isinstance(nd, dict) or not keyf(nd):
+            continue
+        same_cur = [d for d in cur if isinstance(d, dict) and keyf(d) == keyf(nd)]
+        same_new = [d for d in new if isinstance(d, dict) and keyf(d) == keyf(nd)]
+        if len(same_cur) != 1 or len(same_new) != 1:
+            continue
+        d = same_cur[0]
+        for s in subs:
+            nv = str(nd.get(s) or "").strip()
+            if nv and nv != "-" and not str(d.get(s) or "").strip():     # "-"＝信貸那列本來就沒有這格，不補
+                d[s] = nv
+                changed = True
+    return json.dumps(cur, ensure_ascii=False) if changed else ""
+
+
 # 「描述型」欄位：兩邊各用自己的話寫（行政「和潤車貸過件」vs AI「融資也正常/無」），
 # 比字一定不一樣 → 只補空白、不跳提醒。2026-10-09 卓泰禎測試：15 項提醒裡 6 項是這種，業務會看到麻痺。
 _APPLY_NO_REMIND = {
@@ -23125,6 +23158,10 @@ async def customer_upsert(request: Request):
             cur_v = r.get(k)
             if cur_v is None or str(cur_v).strip() in ("", "{}", "[]"):
                 fill[k] = v
+            elif k in ("debt_list", "unloan_vehicles"):
+                mv = _apply_merge_rows(k, cur_v, v)      # 已有資料 → 只補對得上那列的空格（車牌／出廠）
+                if mv:
+                    fill[k] = mv
             elif k not in _APPLY_NO_REMIND and not _apply_same(cur_v, v, k):
                 _show = (lambda x: _salary_as_wan(x)) if k == "company_salary" else str
                 conflicts.append({"field": k, "label": APPLY_FIELD_LABELS[k],

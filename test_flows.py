@@ -2612,6 +2612,28 @@ _r81 = TestClient(m.app).post("/api/customer-upsert", headers={"X-Loan-Secret": 
 check("行政的負債表已經有填 → 不覆蓋、不跳提醒", json.loads(get_cust("L300000001")["debt_list"])[0]["co"] == "中租機車"
       and not any(c["field"] == "debt_list" for c in _r81.get("conflicts", [])), _r81)
 
+# 已經帶進來的那筆沒車牌 → 之後業務 AI 讀到車牌再送，要補得進去（2026-10-14 陳秋蘭：車牌／出廠沒帶入）
+_c = sqlite3.connect(TEST_DB)
+_c.execute("""UPDATE customers SET debt_list=?, unloan_vehicles=? WHERE id_no='L300000001'""",
+           (json.dumps([{"co": "和潤機車", "lo": "70000", "dy": "", "sp": "有", "pl": "", "yr": "", "src": "業務AI"},
+                        {"co": "裕融", "dy": "-", "sp": "-", "pl": "", "yr": ""}], ensure_ascii=False),
+            json.dumps([{"type": "汽車", "plate": "", "year": ""}], ensure_ascii=False)))
+_c.commit(); _c.close()
+_body81b = {"id_no": "L300000001", "fields": {
+    "debt_list": [{"co": "和潤", "kind": "車貸", "vehicle": "機車", "lo": "90000", "pl": "NTV-9226", "yr": "2023.10", "sp": "無"},
+                  {"co": "裕融", "kind": "信貸", "lo": "50000"}],
+    "unloan_vehicles": [{"type": "汽車", "plate": "6555-TW", "year": "2008.02"}]}}
+TestClient(m.app).post("/api/customer-upsert", headers={"X-Loan-Secret": "t81secret"}, json=_body81b)
+_c81 = get_cust("L300000001"); _d81 = json.loads(_c81["debt_list"])
+check("後送來的車牌／出廠補進那筆車貸的空格", _d81[0]["pl"] == "NTV-9226" and _d81[0]["yr"] == "2023.10", _d81[0])
+check("有值的格子不動（金額、空間不被蓋掉）", _d81[0]["lo"] == "70000" and _d81[0]["sp"] == "有", _d81[0])
+check("信貸那列的「-」不被補", _d81[1]["dy"] == "-" and _d81[1]["sp"] == "-" and len(_d81) == 2, _d81)
+check("無貸款車輛的車牌／出廠也補得進去", json.loads(_c81["unloan_vehicles"]) == [{"type": "汽車", "plate": "6555-TW", "year": "2008.02"}],
+      _c81["unloan_vehicles"])
+# 兩筆同名車貸 → 分不出配哪筆 → 不補
+check("同名兩筆 → 不補", m._apply_merge_rows("debt_list", json.dumps([{"co": "和潤機車"}, {"co": "和潤機車"}]),
+                                         json.dumps([{"co": "和潤機車", "pl": "A-1"}])) == "")
+
 # 「無可知情」＝保密（使用者 2026-10-14）—— 原本字裡有「知情」被當成知情
 check("聯絡人「無可知情」不算知情", not m._customer_has_known_contact({"contact1_known": "無可知情", "contact2_known": "保密"}))
 check("聯絡人「可知情」算知情", m._customer_has_known_contact({"contact1_known": "可知情"}))
