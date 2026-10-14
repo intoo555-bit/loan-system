@@ -19328,12 +19328,24 @@ def _adminb_license_html(customer, role) -> str:
         if vals["at_mfg"]:
             vals["at_mfg"] = vals["at_mfg"].replace(".", "/")      # 行照印 2021.10，這格的寫法是 2023/08
         if any(vals.values()):
-            lic.append({"name": f'{j.get("種類") or "行照"} {vals["at_plate"]}'.strip(), "vals": vals})
+            try:
+                cc = int(re.sub(r"[^\d]", "", vals["at_disp"]) or 0)
+            except ValueError:
+                cc = 0
+            kind = "機車" if 50 <= cc < 600 else "汽車" if cc >= 1000 else "車種分不出來"
+            lic.append({"name": f'{kind}行照 {vals["at_plate"]}' + (f"（{cc}cc）" if cc else ""), "kind": kind, "vals": vals})
+    # 這區是「機車額外資料」（亞太機車／商品／工會的申請書要的）→ 汽車行照不帶進來
+    cars = [x for x in lic if x["kind"] == "汽車"]
+    lic = [x for x in lic if x["kind"] != "汽車"]
     if not lic:
+        if cars:
+            return ('<div style="font-size:12px;color:#8a7e70;margin-bottom:8px">📋 這區是<b>機車</b>的資料；客戶存檔裡的行照是'
+                    + "、".join(h(x["name"]) for x in cars) + '，不帶進來</div>')
         return ('<div style="font-size:12px;color:#8a7e70;margin-bottom:8px">📋 證件存檔裡還沒有讀好的行照'
                 f'（<a href="/archive/{h(customer["id_no"])}" target="_blank">打開證件存檔</a>會自動讀）</div>')
     opts = "".join(f'<option value="{i}">{h(x["name"])}</option>' for i, x in enumerate(lic))
-    pick = f'<select id="licPick" class="ab-sel" style="width:auto">{opts}</select>' if len(lic) > 1 else ""
+    pick = (f'<select id="licPick" class="ab-sel" style="width:auto">{opts}</select>' if len(lic) > 1
+            else f'<span style="font-size:12px;color:#0369a1;font-weight:700">{h(lic[0]["name"])}</span>')
     return ('<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">'
             '<button type="button" onclick="licFill()" style="background:#0369a1;color:#fff;border:0;border-radius:6px;'
             'padding:6px 12px;font-weight:700;cursor:pointer">📋 從行照帶入</button>' + pick +
@@ -30242,7 +30254,7 @@ def docs_send_pack(request: Request, id_no: str, co: str = ""):
     want.add("申請書／填寫表")
     pick = [r for r in rows if r["show_label"] in want]
     folder, _name = _docs_folder_name(idv, rows)
-    folder = f"{folder}_{plan['company']}送件"
+    folder = f"{folder}_{normalize_section(plan['company']) or plan['company']}送件"
     apps = []
     if cust:
         tkey = _PACK_TEMPLATE_ALIAS.get(plan["company"], plan["company"])
@@ -30513,9 +30525,30 @@ def docs_customer_page(request: Request, id_no: str, refresh: str = ""):
     btn = ('<a class="action" style="text-decoration:none" href="/customer-pdf?case_id=' + h(cust["case_id"]) +
            '" target="_blank"><span>📋 客戶資料表</span></a>') if cust else ""
     _pk_co = _docs_current_company(cust) if cust else ""
-    if _pk_co:   # 送件包：目前送的那家要的證件＋申請書（使用者 2026-10-14）
-        btn += (f'<a class="action" style="text-decoration:none" href="/archive/{h(idv)}/pack">'
-                f'<span>📦 {h(_pk_co)} 送件包</span></a>')
+    if _pk_co:   # 送件包：要的證件＋申請書（使用者 2026-10-14：「不用打方案，打哪一家就好」「按鈕只會顯示第一家？」）
+        try:
+            _pk_list = [str(x.get("company") if isinstance(x, dict) else x)
+                        for x in (json.loads(cust.get("route_plan") or "{}") or {}).get("order", []) or []]
+        except Exception:
+            _pk_list = []
+        if not _pk_list:
+            try:
+                _pk_list = [x["company"] for x in evaluate_case(cust).get("suggested_order", [])]
+            except Exception:
+                _pk_list = []
+        if _pk_co not in _pk_list:
+            _pk_list.insert(0, _pk_co)
+        _seen, _pk_opts = set(), ""
+        for c_ in _pk_list:
+            nm = normalize_section(c_) or c_
+            if nm in _seen or not _plan_for_company(c_):
+                continue
+            _seen.add(nm)
+            _pk_opts += f'<option value="{h(c_)}"{" selected" if c_ == _pk_co else ""}>{h(nm)}</option>'
+        btn += ('<span class="action" style="display:inline-flex;gap:6px;align-items:center"><span>📦 送件包</span>'
+                f'<select id="pkCo" style="border:1px solid #cdd8e0;border-radius:6px;padding:3px 6px">{_pk_opts}</select>'
+                f'<button type="button" onclick="location.href=\'/archive/{h(idv)}/pack?co=\'+encodeURIComponent(document.getElementById(\'pkCo\').value)"'
+                ' style="border:0;background:#127a7d;color:#fff;border-radius:6px;padding:4px 10px;cursor:pointer">下載</button></span>')
     btn += ('<button type="button" class="action quiet" onclick="cardPreview(this,\'card-preview\')"><span>📨 收件卡片預覽</span></button>'
             '<button type="button" class="action quiet" onclick="cardPreview(this,\'supp-preview\')"><span>📨 補件卡片預覽</span></button>'
             '<button type="button" class="action quiet" onclick="cardPreview(this,\'card-send\')"><span>📨 傳卡片到客人的群組</span></button>'

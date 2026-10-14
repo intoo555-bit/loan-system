@@ -3042,10 +3042,27 @@ _lb93 = {r["show_label"] for r in m._docs_rows("E300000001")}
 check("送件包：那家要的、存檔裡有的證件都放進去（勞保明細）", "勞保明細" not in _lb93 or any("勞保明細" in n for n in _names93), (_lb93, _names93))
 check("送件包：那家不要的不放（行照：亞太商品不用）", not any("行照" in n for n in _names93), (_lb93, _names93))
 check("送件包：缺的寫在「還缺.txt」", any(n.endswith("還缺.txt") for n in _names93), _names93)
-check("證件頁有「📦 亞太商品 送件包」按鈕", "送件包" in _tc93.get("/archive/E300000001").text)
+_p93 = _tc93.get("/archive/E300000001").text
+check("證件頁有送件包，選單寫公司名（亞太、和裕），不寫方案名", "送件包" in _p93 and ">亞太</option>" in _p93
+      and ">和裕</option>" in _p93 and ">亞太商品</option>" not in _p93, _p93[:0])
 check("指定別家：?co=和裕", _tc93.get("/archive/E300000001/pack", params={"co": "和裕"}).status_code == 200)
 # 官方賴名稱自己打
 _r = _tc93.get("/archive/accounts")
+# 行照帶入：下拉寫機車／汽車；「機車額外資料」不帶汽車行照
+_lic_html = m._adminb_license_html({"id_no": "E300000001"}, "admin")
+check("行照帶入：寫清楚是機車還是汽車（或分不出來）", ("機車行照" in _lic_html or "汽車行照" in _lic_html or "分不出來" in _lic_html
+      or "還沒有讀好" in _lic_html), _lic_html[:200])
+_dr, _dj = m._docs_rows, m._doc_judge
+m._docs_rows = lambda idv: [{"show_label": "行照", "id": 1}, {"show_label": "行照", "id": 2}]
+m._doc_judge = lambda r: {"欄位": {"車牌": "NTV-9226", "排氣量": "124", "顏色": "藍灰"}} if r["id"] == 1 else     {"欄位": {"車牌": "6555-TW", "排氣量": "1998", "顏色": "白"}}
+_lic_html = m._adminb_license_html({"id_no": "X"}, "admin")
+check("機車額外資料：只帶機車行照（124cc），汽車行照（1998cc）不帶", "機車行照 NTV-9226（124cc）" in _lic_html
+      and "6555-TW" not in _lic_html, _lic_html[:300])
+m._doc_judge = lambda r: {"欄位": {"車牌": "6555-TW", "排氣量": "1998"}}
+m._docs_rows = lambda idv: [{"show_label": "行照", "id": 2}]
+_lic_html = m._adminb_license_html({"id_no": "X"}, "admin")
+check("只有汽車行照 → 寫「這區是機車的資料」，不帶", "這區是" in _lic_html and "licFill" not in _lic_html, _lic_html[:300])
+m._docs_rows, m._doc_judge = _dr, _dj
 check("對照頁有一格可以自己打官方賴名稱", "自己打官方賴名稱" in _r.text)
 _r = _tc93.post("/archive/accounts", data={"a0": "自己打的官方賴", "g0": "TEST_B"}, follow_redirects=False)
 check("自己打的官方賴存得進去", m._bizai_account_group("自己打的官方賴") == "TEST_B")
