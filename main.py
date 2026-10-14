@@ -2132,6 +2132,14 @@ PLAN_ELIGIBILITY_RULES = [
 ]
 
 
+def _ym_txt(y, m) -> str:
+    """年資／居住時間顯示：沒填的部分不印。
+    2026-10-14 真客戶陳秋蘭的客戶資料表印成「5年月」「年3月」—— 原本固定寫「{年}年{月}月」"""
+    y, m = str(y or "").strip(), str(m or "").strip()
+    y = "" if y in ("0", "0.0") and m else y
+    return (f"{y}年" if y else "") + (f"{m}個月" if m and m not in ("0", "0.0") else "")
+
+
 def _calc_age_from_birth(birth_str):
     """從 birth_date 算年齡。支援 086/12/15（民國）或 1985-12-15"""
     if not birth_str:
@@ -23525,11 +23533,11 @@ def _customer_sheet_html(r, scope: str = ""):
 <tr><th>戶籍地址</th><td colspan="3">{reg_addr}</td></tr>
 <tr><th>戶籍電話</th><td>{v("reg_phone")}</td><th>現住電話</th><td>{v("live_phone")}</td></tr>
 <tr><th>住家地址</th><td colspan="3">{live_addr}</td></tr>
-<tr><th>居住狀況</th><td style="{'font-weight:700;color:#b91c1c;background:#fef2f2' if r.get('eval_house_private')=='有' else ''}">{v("live_status")}{(' ⚠️ 房屋有私設' if r.get('eval_house_private')=='有' else '')}</td><th>居住時間</th><td>{v("live_years")}年{v("live_months")}月</td></tr>
+<tr><th>居住狀況</th><td style="{'font-weight:700;color:#b91c1c;background:#fef2f2' if r.get('eval_house_private')=='有' else ''}">{v("live_status")}{(' ⚠️ 房屋有私設' if r.get('eval_house_private')=='有' else '')}</td><th>居住時間</th><td>{_ym_txt(v("live_years"), v("live_months"))}</td></tr>
 <tr class="sec"><td colspan="4">職業資料</td></tr>
 <tr><th>公司名稱</th><td colspan="3">{v("company_name_detail")}</td></tr>
 <tr><th>公司電話</th><td>{fmt_company_phone(v("company_phone_area"), v("company_phone_num"), v("company_phone_ext"))}</td><th>職稱</th><td>{v("company_role")}</td></tr>
-<tr><th>年資</th><td>{v("company_years")}年{v("company_months")}月</td><th>月薪</th><td>{fmt_salary(v("company_salary"))}</td></tr>
+<tr><th>年資</th><td>{_ym_txt(v("company_years"), v("company_months"))}</td><th>月薪</th><td>{fmt_salary(v("company_salary"))}</td></tr>
 <tr><th>公司地址</th><td colspan="3">{company_addr}</td></tr>
 </table>
 <table style="width:100%;border-collapse:collapse;margin-bottom:16px;table-layout:fixed">
@@ -23568,7 +23576,7 @@ def _customer_sheet_html(r, scope: str = ""):
 <tr><th>資金需求</th><td>{v("eval_fund_need")}</td><th>近三月送件</th><td>{v("eval_sent_3m")} {v("eval_sent_3m_detail")}</td></tr>
 <tr><th>當鋪私設</th><td>{v("eval_alert")}</td><th>警示戶</th><td style="{'font-weight:700;color:#b91c1c;background:#fef2f2' if r.get('eval_alert_warning')=='是' else ''}">{v("eval_alert_warning") or "－"}</td></tr>
 <tr><th>勞保</th><td colspan="3">{v("eval_labor_ins")}</td></tr>
-<tr><th>薪轉</th><td>{v("eval_salary_transfer")}</td><th>遲繳</th><td>{v("eval_late")} {v("eval_late_days")}天</td></tr>
+<tr><th>薪轉</th><td>{v("eval_salary_transfer")}</td><th>遲繳</th><td>{v("eval_late")}{(" " + v("eval_late_days") + "天") if v("eval_late_days") else ""}</td></tr>
 <tr><th>罰單</th><td>{v("eval_fine")}</td><th>燃料稅</th><td>{v("eval_fuel_tax")}</td></tr>
 <tr><th>欠費總額</th><td colspan="3" style="font-weight:700;color:#b84a35">${total_fee:,}</td></tr>
 <tr><th>信用卡</th><td>{v("eval_credit_card")}</td><th>動產/不動產</th><td>{v("eval_property")}</td></tr>
@@ -23892,11 +23900,11 @@ def _build_customer_pdf_body(r: dict) -> str:
 <tr><th>戶籍地址</th><td colspan="3">{reg_addr}</td></tr>
 <tr><th>戶籍電話</th><td>{v("reg_phone")}</td><th>現住電話</th><td>{v("live_phone")}</td></tr>
 <tr><th>住家地址</th><td colspan="3">{live_addr}</td></tr>
-<tr><th>居住狀況</th><td style="{'font-weight:700;color:#b91c1c;background:#fef2f2' if r.get('eval_house_private')=='有' else ''}">{v("live_status")}{(' ⚠️ 房屋有私設' if r.get('eval_house_private')=='有' else '')}</td><th>居住時間</th><td>{v("live_years")}年{v("live_months")}月</td></tr>
+<tr><th>居住狀況</th><td style="{'font-weight:700;color:#b91c1c;background:#fef2f2' if r.get('eval_house_private')=='有' else ''}">{v("live_status")}{(' ⚠️ 房屋有私設' if r.get('eval_house_private')=='有' else '')}</td><th>居住時間</th><td>{_ym_txt(v("live_years"), v("live_months"))}</td></tr>
 <tr class="sec"><td colspan="4">職業資料</td></tr>
 <tr><th>公司名稱</th><td colspan="3">{v("company_name_detail")}</td></tr>
 <tr><th>公司電話</th><td>{fmt_company_phone(v("company_phone_area"), v("company_phone_num"), v("company_phone_ext"))}</td><th>職稱</th><td>{v("company_role")}</td></tr>
-<tr><th>年資</th><td>{v("company_years")}年{v("company_months")}月</td><th>月薪</th><td>{fmt_salary(v("company_salary"))}</td></tr>
+<tr><th>年資</th><td>{_ym_txt(v("company_years"), v("company_months"))}</td><th>月薪</th><td>{fmt_salary(v("company_salary"))}</td></tr>
 <tr><th>公司地址</th><td colspan="3">{company_addr}</td></tr>
 </table>
 <table style="width:100%;border-collapse:collapse;margin-bottom:16px;table-layout:fixed">
@@ -23935,7 +23943,7 @@ def _build_customer_pdf_body(r: dict) -> str:
 <tr><th>資金需求</th><td>{v("eval_fund_need")}</td><th>近三月送件</th><td>{v("eval_sent_3m")} {v("eval_sent_3m_detail")}</td></tr>
 <tr><th>當鋪私設</th><td>{v("eval_alert")}</td><th>警示戶</th><td style="{'font-weight:700;color:#b91c1c;background:#fef2f2' if r.get('eval_alert_warning')=='是' else ''}">{v("eval_alert_warning") or "－"}</td></tr>
 <tr><th>勞保</th><td colspan="3">{v("eval_labor_ins")}</td></tr>
-<tr><th>薪轉</th><td>{v("eval_salary_transfer")}</td><th>遲繳</th><td>{v("eval_late")} {v("eval_late_days")}天</td></tr>
+<tr><th>薪轉</th><td>{v("eval_salary_transfer")}</td><th>遲繳</th><td>{v("eval_late")}{(" " + v("eval_late_days") + "天") if v("eval_late_days") else ""}</td></tr>
 <tr><th>罰單</th><td>{v("eval_fine")}</td><th>燃料稅</th><td>{v("eval_fuel_tax")}</td></tr>
 <tr><th>欠費總額</th><td colspan="3" style="font-weight:700;color:#b84a35">${total_fee:,}</td></tr>
 <tr><th>信用卡</th><td>{v("eval_credit_card")}</td><th>動產/不動產</th><td>{v("eval_property")}</td></tr>

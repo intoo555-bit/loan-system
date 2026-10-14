@@ -2515,6 +2515,17 @@ _r80 = TestClient(m.app).post("/api/customer-upsert", headers={"X-Loan-Secret": 
 m._threading.Thread = _oT80
 check("再送一次（更新）也會去拉（客人後來補傳的）", _r80.get("action") == "updated" and len(_started) == 1, _r80)
 m.pull_customer_docs = _oP80
+# 客戶資料表：沒填的部分不印（2026-10-14 真客戶客戶資料表印成「5年月」「年3月」「天」）
+check("年資／居住時間：只填年、只填月、都填",
+      (m._ym_txt("5", ""), m._ym_txt("", "3"), m._ym_txt("2", "6"), m._ym_txt("0", "3"), m._ym_txt("", "")) == ("5年", "3個月", "2年6個月", "3個月", ""))
+_c = sqlite3.connect(TEST_DB)
+_c.execute("UPDATE customers SET live_years='5', live_months='', company_years='', company_months='3', eval_late='', eval_late_days='' WHERE id_no='K300000001'")
+_c.commit(); _cid80 = _c.execute("SELECT case_id FROM customers WHERE id_no='K300000001'").fetchone()[0]; _c.close()
+m.check_auth = lambda req: "admin"
+_hp = TestClient(m.app).get(f"/customer-pdf?case_id={_cid80}").text
+check("客戶資料表不會印出「5年月」「年3月」「 天」", "5年月" not in _hp and "年3月" not in _hp and "<td> 天</td>" not in _hp
+      and "5年" in _hp and "3個月" in _hp)
+m.check_auth = _old_auth75
 os.environ.pop("BUSINESS_AI_URL", None); os.environ.pop("BUSINESS_AI_SECRET", None)
 
 # ========== 總結 ==========
