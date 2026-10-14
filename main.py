@@ -1750,7 +1750,7 @@ PLAN_ELIGIBILITY_RULES = [
         "max_amount": 30,
         "priority": 77,
         "rules": [
-            {"type": "simple", "label": "汽車不是老車（2011 以前沒天書 → 只有裕融信福貸）", "op": "car_not_old"},
+            # ⛔ 不套老車規則：第一看的是「名下汽車貸款繳滿一年」，不看天書（使用者 2026-10-14）
             {"type": "simple", "label": "年齡 20~65", "field": "age", "op": "between", "value": [20, 65]},
             {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
             {"type": "simple", "label": "客戶必須有汽車貸款（沒車貸不能送）", "op": "has_car_loan",

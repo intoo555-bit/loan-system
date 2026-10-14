@@ -1747,12 +1747,13 @@ _yo = _y + 1911 if _y < 1000 else _y
 _old = lambda yr: {x["company"]: x for x in _so(eval_property="1汽", unloan_vehicles=json.dumps([{"type": "汽車", "year": str(yr)}]),
                                                  debt_list="[]")[0]["results"]}
 _rold = _old(_yo - 18)     # 例：今年 2026 → 2008 的車
-for _co in ("中租汽車", "和潤汽車", "21汽車A", "第一汽車", "裕融優質"):
+for _co in ("中租汽車", "和潤汽車", "21汽車A", "裕融優質", "裕融福克來"):
     check(f"老車（{_yo - 18}）→ {_co} 不排", _rold[_co]["eligible"] is False and any(
         c["status"] == "fail" and "老車" in c["label"] for c in _rold[_co]["checks"]), _rold[_co]["checks"])
 check("老車 → 裕融信福貸 可以送、最高 10 萬", _rold["裕融信福貸"]["eligible"] is not False and _rold["裕融信福貸"]["max_amount"] == 10,
       (_rold["裕融信福貸"]["eligible"], _rold["裕融信福貸"]["max_amount"]))
 check("老車規則不套亞太（亞太看 15 年，不看天書）", not any("老車" in c["label"] for c in _rold["亞太汽車25萬"]["checks"]))
+check("老車規則不套第一汽車（第一看汽車貸款繳滿一年，不看天書）", not any("老車" in c["label"] for c in _rold["第一汽車"]["checks"]))
 _rnew = _old(_yo - 14)     # 天書最舊那年（今年 2026 → 2012）
 check(f"{_yo - 14} 的車有天書 → 不算老車，和潤汽車那條過、信福貸照 50 萬",
       not any(c["status"] == "fail" and "老車" in c["label"] for c in _rnew["和潤汽車"]["checks"]) and _rnew["裕融信福貸"]["max_amount"] == 50)
