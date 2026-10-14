@@ -27911,7 +27911,7 @@ def _doc_real_type(path: str, fallback: str = "") -> str:
         return fallback or ""
 
 
-def _bizai_judge(kind: str, doc_id, id_no: str) -> dict:
+def _bizai_judge(kind: str, doc_id, id_no: str, refresh: bool = False) -> dict:
     """業務 AI 窗口 3／4：kind＝labor（勞保判讀）或 stamp（時間相機浮水印）。回業務 AI 的原始結構。
     ⛔ 判讀只在業務 AI 做一份（labor_insurance.判讀 已用 18 份真明細驗過 54/54），這裡只拿、不重做。
     業務 AI 有快取，同一張只判一次；這裡也存一份，不會每次打開頁面都去問。"""
@@ -27922,6 +27922,8 @@ def _bizai_judge(kind: str, doc_id, id_no: str) -> dict:
         path, params = kind, {"id_no": id_no}
         if kind.startswith("fields:"):      # 第 8 段：身分證／行照／存摺讀到的欄位；kind 帶我們的分類（行政改過的以行政為準）
             path, params["kind"] = "fields", kind[len("fields:"):]
+        if refresh:
+            params["refresh"] = 1           # 業務 AI 那邊也有存舊答案 → 要它重讀
         r = req_lib.get(f"{url}/api/loan/docs/{doc_id}/{path}", params=params,
                         headers={"X-Loan-Secret": sec}, timeout=90)
         if r.status_code == 429:
@@ -28050,6 +28052,9 @@ _JUDGE_KIND = {"勞保明細": "labor", "人車合照": "stamp", "人與手機�
 _FIELDS_KIND = {"身分證正面": "身分證正面", "身分證反面": "身分證背面", "健保卡": "健保卡", "行照": "行照",
                 "存摺封面": "存摺封面", "信用卡正面": "信用卡", "信用卡帳單": "信用卡帳單"}
 _JUDGE_KIND.update({k: "fields:" + v for k, v in _FIELDS_KIND.items()})
+# 業務 AI 讀的欄位改版了 → 版本 +1，舊答案會自動重拿一次（兩邊都存了舊答案，不重拿永遠是舊的）
+#   2：發證日期／發證地／換補發改從身分證「正面」讀（2026-10-14 交接第 8 段更正）
+_FIELDS_VER = 2
 
 
 def judge_customer_docs(id_no: str, force: bool = False) -> int:
@@ -28065,10 +28070,13 @@ def judge_customer_docs(id_no: str, force: bool = False) -> int:
             old = json.loads(r.get("judge_json") or "{}")
         except Exception:
             pass
-        if old.get("_kind") == kind and not force and not old.get("_transient"):
+        stale = kind.startswith("fields:") and old.get("_kind") == kind and old.get("_v") != _FIELDS_VER
+        if old.get("_kind") == kind and not force and not old.get("_transient") and not stale:
             continue
-        res = _bizai_judge(kind, r["remote_doc_id"], idv)
+        res = _bizai_judge(kind, r["remote_doc_id"], idv, refresh=stale) if stale else _bizai_judge(kind, r["remote_doc_id"], idv)
         res["_kind"] = kind
+        if kind.startswith("fields:"):
+            res["_v"] = _FIELDS_VER
         if not res.get("ok"):          # 連線／限流問題：下次再試（業務 AI 判讀失敗會回 ok:true＋error，那個要存）
             res["_transient"] = True
         with db_conn(commit=True) as conn:
@@ -28091,6 +28099,8 @@ def _docs_need_judge(idv: str) -> bool:
         except Exception:
             old = {}
         if old.get("_kind") != kind or old.get("_transient"):
+            return True
+        if kind.startswith("fields:") and old.get("_v") != _FIELDS_VER:
             return True
     return False
 

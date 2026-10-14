@@ -2264,7 +2264,7 @@ _JUDGE = {"labor": {"ok": True, "is_labor": True, "查詢日": "115/10/11", "明
                     "目前投保": [{"單位": "大明工程行", "類型": "公司保", "加保日期": "114/09/01", "加保滿幾個月": 13}]},
           "stamp": {"ok": True, "has_stamp": True, "datetime": "2026-10-13 15:20", "address": "台中市西屯區台灣大道三段1號"}}
 _judge_calls = []
-def _fake_judge(kind, doc_id, idv):
+def _fake_judge(kind, doc_id, idv, **kw):
     _judge_calls.append((kind, str(doc_id), idv))
     return dict(_JUDGE[kind]) if kind in _JUDGE else {"ok": True, "欄位": {}}
 m._bizai_judge = _fake_judge
@@ -2364,7 +2364,7 @@ _tcu.get("/archive/G300000001")
 check("打開證件頁 → 沒拿過判讀的勞保／合照會去拿（勞保那張前面測刪除時刪掉了，看合照）", any(k == "stamp" for k, d, i in _judge_calls), _judge_calls)
 _judge_calls.clear(); _tcu.get("/archive/G300000001")
 check("拿過了就不再拿", not _judge_calls, _judge_calls)
-m._bizai_judge = lambda kind, d, idv: {"ok": False, "error": "業務 AI 限流中"}
+m._bizai_judge = lambda kind, d, idv, **kw: {"ok": False, "error": "業務 AI 限流中"}
 _c = sqlite3.connect(TEST_DB); _c.execute("UPDATE customer_docs SET judge_json=NULL WHERE id_no='G300000001'"); _c.commit(); _c.close()
 _tcu.get("/archive/G300000001")
 _lab2 = [d for d in _tcu.get("/archive/G300000001/data").json()["documents"] if d["category"] == "人車合照"]
@@ -2423,8 +2423,8 @@ _F79 = {"身分證正面": {"姓名": "欄位乙", "身分證號": "J300000001",
                  "出廠年月": "2021.10", "廠牌": "睿能", "引擎號碼": ""},
         "存摺封面": {"戶名": "欄 位乙", "銀行": "", "分行": "台中分行", "帳號": "1234"}}
 _calls79 = []
-def _fj79(kind, d, idv):
-    _calls79.append((kind, str(d)))
+def _fj79(kind, d, idv, **kw):
+    _calls79.append((kind, str(d)) + (("refresh",) if kw.get("refresh") else ()))
     return {"ok": True, "AI判讀待確認": True, "種類": kind, "欄位": dict(_F79.get(kind.split(":", 1)[-1], {}))}
 _o79 = (m._bizai_list, m._bizai_fetch, m._bizai_judge)
 m._bizai_list = lambda idv: ([{"doc_id": int(k), "created_at": "2026-10-14T09:00:00", "content_type": "image/png",
@@ -2484,6 +2484,15 @@ check("系統生日跟身分證不一樣 → 提醒（系統的寫法 0750313 �
 _c = sqlite3.connect(TEST_DB); _c.execute("UPDATE customer_docs SET manual_label='身分證正面' WHERE id_no='J300000001' AND remote_doc_id='83'"); _c.commit(); _c.close()
 _calls79.clear(); m.judge_customer_docs("J300000001")
 check("改分類 → 用新分類重拿，其他張不重拿", _calls79 == [("fields:身分證正面", "83")], _calls79)
+# 業務 AI 讀的欄位改版（發證三欄改從正面讀）→ 舊答案要自動重拿一次，而且叫業務 AI 重讀（它也存了舊的）
+_c = sqlite3.connect(TEST_DB)
+_c.execute("""UPDATE customer_docs SET judge_json=? WHERE id_no='J300000001' AND remote_doc_id='81'""",
+           (json.dumps({"_kind": "fields:身分證正面", "ok": True, "欄位": {"姓名": "欄位乙"}}, ensure_ascii=False),))
+_c.commit(); _c.close()
+_calls79.clear(); m.judge_customer_docs("J300000001")
+check("舊版欄位答案 → 自動重拿、帶 refresh；新版的不重拿", _calls79 == [("fields:身分證正面", "81", "refresh")], _calls79)
+_calls79.clear(); m.judge_customer_docs("J300000001")
+check("重拿過就不再拿", not _calls79, _calls79)
 # 窗口網址
 _got = {}
 class _R79:
