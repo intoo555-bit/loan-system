@@ -4949,6 +4949,8 @@ def init_db():
         #    舊案只要這個月被碰一下（改資料、救資料）就會被算成本月結案，
         #    而且它在原本那個月的統計裡會消失 → 歷史數字被之後的操作侵蝕。
         ("closed_at", "TEXT"),
+        # 業務 AI 的哪個官方賴送來的（2026-10-14）—— 對到群組用，見 _bizai_account_group
+        ("bizai_account", "TEXT"),
     ]:
         ensure_column(cur, "customers", col, defn)
 
@@ -22995,6 +22997,20 @@ def _apply_clean_value(key: str, val) -> str:
     return v
 
 
+def _bizai_account_map() -> dict:
+    """官方賴名稱 → 群組 group_id（行政在 /archive/accounts 設）。
+    使用者 2026-10-14：業務 AI 分官方賴，正式接上之後要查得到是哪個群組的；一個官方賴只給一個群組用。"""
+    try:
+        m_ = json.loads(get_setting("bizai_account_groups") or "{}")
+        return m_ if isinstance(m_, dict) else {}
+    except Exception:
+        return {}
+
+
+def _bizai_account_group(account: str) -> str:
+    return str(_bizai_account_map().get((account or "").strip()) or "")
+
+
 def _apply_merge_rows(key: str, cur_v, new_v) -> str:
     """負債明細／無貸款車輛已經有資料時，把新送來的**空格**補進對得上的那一列；回合併後 JSON（沒變回 ""）。
     使用者 2026-10-14 陳秋蘭：負債帶進來了，車牌／出廠卻是空的 ——
@@ -23106,6 +23122,8 @@ async def customer_upsert(request: Request):
     if not idv or not re.match(r"^[A-Z][A-Z0-9][0-9]{8}$", idv):
         return JSONResponse({"ok": False, "error": "身分證格式錯誤"})
     name = str(data.get("customer_name") or "").strip()[:20]
+    account = str(data.get("source_account") or "").strip()[:40]      # 哪個官方賴（業務 AI 帶）
+    acct_gid = _bizai_account_group(account)
     raw = data.get("fields") or {}
     if not isinstance(raw, dict):
         return JSONResponse({"ok": False, "error": "fields 要是物件"})
@@ -23126,6 +23144,15 @@ async def customer_upsert(request: Request):
         cur.execute("""SELECT * FROM customers WHERE id_no=? AND status IN ('ACTIVE','PENDING')
                        ORDER BY CASE status WHEN 'ACTIVE' THEN 0 ELSE 1 END, updated_at DESC LIMIT 1""", (idv,))
         row = cur.fetchone()
+        if row is None and acct_gid and name:
+            # 業務先在群組建檔（群組那行沒打身分證）、申請書後到 → 對上那一筆，不要另外建一筆
+            # ⛔ 只在那個群組「剛好一筆」同名、而且身分證是空的才對（同 create_customer_record 的同名規則）
+            cur.execute("""SELECT * FROM customers WHERE customer_name=? AND source_group_id=?
+                           AND status IN ('ACTIVE','PENDING') AND COALESCE(id_no,'')=''""", (name, acct_gid))
+            _same = cur.fetchall()
+            if len(_same) == 1:
+                row = _same[0]
+                cur.execute("UPDATE customers SET id_no=? WHERE case_id=?", (idv, row["case_id"]))
 
         if row is None:
             # ② 沒有進行中的案子 → 建「待確認」
@@ -23133,9 +23160,11 @@ async def customer_upsert(request: Request):
                 return JSONResponse({"ok": False, "error": "新客戶要有姓名"})
             case_id = short_id()
             cur.execute("""INSERT INTO customers
-                (case_id,customer_name,id_no,source_group_id,company,last_update,status,created_at,updated_at)
-                VALUES (?,?,?,?,?,?,'PENDING',?,?)""",
-                (case_id, name, idv, "", "", "線上申請書：" + name, now, now))
+                (case_id,customer_name,id_no,source_group_id,company,last_update,status,created_at,updated_at,bizai_account)
+                VALUES (?,?,?,?,?,?,'PENDING',?,?,?)""",
+                (case_id, name, idv, acct_gid, "", "線上申請書：" + name, now, now, account))
+            # ⭐ 掛上官方賴對到的群組 → 業務之後在群組打「日期-姓名-順序」（沒身分證）才接得到這一筆
+            #   （create_customer_record 用「同群組同姓名的待確認」去找）
             if fields:
                 cur.execute(f"UPDATE customers SET {','.join(f'{k}=?' for k in fields)} WHERE case_id=?",
                             (*fields.values(), case_id))
@@ -23153,6 +23182,10 @@ async def customer_upsert(request: Request):
         # ① 有進行中的案子 → 只補空格；不一樣的不改、跳提醒
         r = dict(row)
         case_id = r["case_id"]
+        if account and not r.get("bizai_account"):
+            cur.execute("UPDATE customers SET bizai_account=? WHERE case_id=?", (account, case_id))
+        if acct_gid and not r.get("source_group_id"):      # 之前沒群組的待確認 → 補上
+            cur.execute("UPDATE customers SET source_group_id=? WHERE case_id=?", (acct_gid, case_id))
         conflicts = []
         for k, v in fields.items():
             cur_v = r.get(k)
@@ -29141,6 +29174,56 @@ async def docs_set_label(request: Request, doc_pk: int):
     return JSONResponse({"ok": True})
 
 
+@app.get("/archive/accounts", response_class=HTMLResponse)
+def bizai_accounts_page(request: Request, saved: str = ""):
+    """業務 AI 官方賴 → 群組 對照（⛔ 要放在 /archive/{id_no} 前面，不然 accounts 會被當成身分證）。
+    官方賴名稱不用手打：業務 AI 送過資料的官方賴會自己列出來，選群組就好。"""
+    if check_auth(request) != "admin":
+        return RedirectResponse("/login")
+    mp = _bizai_account_map()
+    with db_conn() as conn:
+        seen = [r[0] for r in conn.execute(
+            "SELECT DISTINCT bizai_account FROM customers WHERE COALESCE(bizai_account,'')!=''").fetchall()]
+        groups = conn.execute("SELECT group_id, group_name FROM groups WHERE group_type='SALES_GROUP' AND is_active=1 "
+                              "ORDER BY group_name").fetchall()
+    trs = []
+    for i, acct in enumerate(sorted(set(seen) | set(mp))):
+        opts = '<option value="">（還沒對）</option>' + "".join(
+            f'<option value="{h(g["group_id"])}"{" selected" if mp.get(acct) == g["group_id"] else ""}>{h(g["group_name"])}</option>'
+            for g in groups)
+        trs.append(f'<tr><td>{h(acct)}<input type="hidden" name="a{i}" value="{h(acct)}"></td>'
+                   f'<td><select name="g{i}">{opts}</select></td></tr>')
+    msg = f'<div class="muted" style="color:#166534">✅ 已存，補上群組的待確認客戶：{h(saved)} 位</div>' if saved else ""
+    body = f"""<h2>📱 官方賴 → 群組</h2>
+<div class="card">線上申請書從哪個官方賴來，就掛到對應的群組；業務在群組打「日期-姓名-順序」時才接得到同一筆資料。<br>
+<span class="muted">一個官方賴只對一個群組。業務 AI 送過資料的官方賴會自己出現在這裡。</span>{msg}</div>
+<div class="card tbl"><form method="post"><table><tr><th>官方賴</th><th>群組</th></tr>
+{''.join(trs) or '<tr><td colspan="2" class="muted">業務 AI 還沒送過帶官方賴名稱的資料</td></tr>'}</table>
+<button class="btn" type="submit" style="margin-top:10px">儲存</button></form></div>"""
+    return _docs_page("admin", "官方賴對群組", body)
+
+
+@app.post("/archive/accounts")
+async def bizai_accounts_save(request: Request):
+    if check_auth(request) != "admin":
+        return RedirectResponse("/login", status_code=303)
+    form = await request.form()
+    mp = {}
+    for k, v in form.items():
+        if k.startswith("a") and k[1:].isdigit():
+            acct, gid = str(v).strip(), str(form.get("g" + k[1:]) or "").strip()
+            if acct and gid:
+                mp[acct] = gid
+    set_setting("bizai_account_groups", json.dumps(mp, ensure_ascii=False))
+    # 之前進來還沒群組的待確認 → 一起補上（⛔ 只補空的，已經有群組的不動）
+    n = 0
+    with db_conn(commit=True) as conn:
+        for acct, gid in mp.items():
+            n += conn.execute("UPDATE customers SET source_group_id=? WHERE bizai_account=? AND status='PENDING' "
+                              "AND COALESCE(source_group_id,'')=''", (gid, acct)).rowcount
+    return RedirectResponse(f"/archive/accounts?saved={n}", status_code=303)
+
+
 @app.get("/archive", response_class=HTMLResponse)
 def docs_list_page(request: Request, q: str = "", g: str = ""):
     role = _docs_auth(request)
@@ -29184,7 +29267,7 @@ def docs_list_page(request: Request, q: str = "", g: str = ""):
 <div class="card"><form method="get"><input type="text" name="q" value="{h(qq)}" placeholder="姓名／身分證／電話">
 <select name="g" onchange="this.form.submit()">{gopts}</select>
 <button class="btn" type="submit">搜尋</button></form>
-<div class="muted" style="margin-top:6px">{h(_docs_disk_text())}｜{h(conf)}</div></div>
+<div class="muted" style="margin-top:6px">{h(_docs_disk_text())}｜{h(conf)}｜<a href="/archive/accounts">📱 官方賴對群組</a></div></div>
 <div class="card tbl"><table><tr><th>收件日期</th><th>姓名</th><th>身分證</th><th>群組</th><th>送件順序</th><th>張數</th><th></th></tr>
 {''.join(trs) or '<tr><td colspan="7" class="muted">還沒有存檔</td></tr>'}</table></div>"""
     return _docs_page(role, "證件存檔", body)

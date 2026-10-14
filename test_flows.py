@@ -2676,6 +2676,39 @@ check("群組沒排 → 顯示系統建議順序，第一家寫「建議先送�
       "建議順序（系統排的，群組還沒排）" in _ml82 and "10/14-某乙-中租汽車/和裕" in _ml82 and "建議先送" in _ml82 and "目前送" not in _ml82, _ml82)
 m.check_auth = _old_auth
 
+# ========== 83. 業務 AI 官方賴 → 群組（2026-10-14：正式接上後要查得到是哪個群組的）==========
+print("\n=== 83. 官方賴對群組 ===")
+_H83 = {"X-Loan-Secret": "t81secret"}
+_up83 = lambda idv, nm, acct: TestClient(m.app).post("/api/customer-upsert", headers=_H83, json={
+    "id_no": idv, "customer_name": nm, "source_account": acct, "fields": {"phone": "0912345678"}}).json()
+_up83("M300000001", "帳號甲", "測試官方賴")
+_c83 = get_cust("M300000001")
+check("還沒設對照 → 待確認、沒群組，但記下是哪個官方賴", _c83["status"] == "PENDING" and not _c83["source_group_id"]
+      and _c83["bizai_account"] == "測試官方賴", dict(_c83))
+m.check_auth = lambda req: "admin"
+_tc83 = TestClient(m.app)
+check("對照頁自己列出送過資料的官方賴", "測試官方賴" in _tc83.get("/archive/accounts").text)
+_r = _tc83.post("/archive/accounts", data={"a0": "測試官方賴", "g0": "TEST_B"}, follow_redirects=False)
+check("存對照 → 之前沒群組的待確認一起補上", get_cust("M300000001")["source_group_id"] == "TEST_B" and "saved=1" in _r.headers.get("location", ""),
+      _r.headers.get("location"))
+m.check_auth = _old_auth
+_up83("M300000002", "帳號乙", "測試官方賴")
+check("設好之後新進來的直接掛群組", get_cust("M300000002")["source_group_id"] == "TEST_B")
+bc("10/14-帳號乙-喬美/和裕", gid="TEST_B")
+_c = sqlite3.connect(TEST_DB); _c.row_factory = sqlite3.Row
+_rows83 = _c.execute("SELECT * FROM customers WHERE customer_name='帳號乙' AND status!='DELETED'").fetchall(); _c.close()
+check("業務在群組打順序（沒身分證）→ 接到業務 AI 那一筆，不另外建", len(_rows83) == 1 and _rows83[0]["status"] == "ACTIVE"
+      and _rows83[0]["id_no"] == "M300000002" and _rows83[0]["phone"] == "0912345678", [dict(x) for x in _rows83])
+# 反過來：業務先在群組建檔，申請書後到
+bc("10/14-帳號丙-喬美/和裕", gid="TEST_B")
+_up83("M300000003", "帳號丙", "測試官方賴")
+_c = sqlite3.connect(TEST_DB); _c.row_factory = sqlite3.Row
+_rows83 = _c.execute("SELECT * FROM customers WHERE customer_name='帳號丙' AND status!='DELETED'").fetchall(); _c.close()
+check("群組先建、申請書後到 → 補進群組那一筆（身分證、電話都補上）", len(_rows83) == 1 and _rows83[0]["id_no"] == "M300000003"
+      and _rows83[0]["phone"] == "0912345678" and _rows83[0]["status"] == "ACTIVE", [dict(x) for x in _rows83])
+_up83("M300000004", "帳號丁", "沒設過的官方賴")
+check("沒對照的官方賴 → 不亂掛群組", not get_cust("M300000004")["source_group_id"])
+
 # ========== 總結 ==========
 print(f"\n{'='*50}")
 print(f"結果：{PASS} 通過、{FAIL} 失敗")
