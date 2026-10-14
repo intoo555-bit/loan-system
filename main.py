@@ -28529,16 +28529,50 @@ def _docs_current_company(cust) -> str:
     return co
 
 
+def _route_order_text(cust) -> str:
+    """送件順序寫成群組那一行的樣子（例：10/14-宋薏文-和裕/喬美/21/貸10/分貝商/C/商/南亞/當）。
+    使用者 2026-10-14：「順序部分就跟群組一樣這樣出現」。
+    ⭐ 優先用業務在群組打的原文（簡稱是業務自己的寫法，系統存的是正式名「21商品／貸救補」）；
+    ⛔ 但只在原文解析出來跟現在的順序一模一樣時才用 —— 改過順序就是舊的，改用系統存的順序組一行"""
+    if not cust:
+        return ""
+    try:
+        order = [str(x.get("company") if isinstance(x, dict) else x)
+                 for x in (json.loads(cust.get("route_plan") or "{}") or {}).get("order", []) or []]
+    except Exception:
+        order = []
+    order = [x for x in order if x and x != "None"]
+    if not order:
+        return ""
+    try:
+        with db_conn() as conn:
+            logs = conn.execute("SELECT message_text FROM case_logs WHERE case_id=? ORDER BY id DESC LIMIT 60",
+                                (cust.get("case_id") or "",)).fetchall()
+        for lg in logs:
+            for ln in str(lg["message_text"] or "").splitlines():
+                p = parse_route_order_line(ln) if "-" in ln or "－" in ln else {}
+                if p and p.get("companies") == order:
+                    return ln.strip()
+    except Exception:
+        pass
+    d = (cust.get("created_at") or "")[:10]
+    day = f"{int(d[5:7])}/{int(d[8:10])}" if len(d) == 10 and d[4] == "-" else ""
+    return f"{day}-{cust.get('customer_name') or ''}-{'/'.join(order)}"
+
+
 def _docs_missing_html(cust, rows) -> str:
     """證件頁一行：目前送的那家還缺什麼。
     使用者 2026-10-14：「不用打那麼清楚，會拉太長；只要說明客戶目前缺什麼 —— 一家一家往下送，
-    核准了後面可能不會送、客戶中途不要結案也不會到後面」→ ⛔ 只看目前這一家，不列後面幾家"""
+    核准了後面可能不會送、客戶中途不要結案也不會到後面」→ ⛔ 只看目前這一家，不列後面幾家
+    ＋ 最上面一行送件順序（跟群組一樣的寫法，見 _route_order_text）"""
     if not cust:
         return ""
+    ro = _route_order_text(cust)
+    rline = f'<div class="ms-line">📋 送件順序：<b>{h(ro)}</b></div>' if ro else ""
     warns = [f"{r['show_label']}：{w.replace('⚠️ ', '')}" for r in rows for w in _doc_field_warnings(r, cust)]
     wline = (f'<div class="ms-line"><span class="ms-check">⚠️ 要跟客戶確認（AI 讀的，請看照片）：'
              f'{h("、".join(warns))}</span></div>') if warns else ""
-    return wline + _docs_missing_line(cust, rows)
+    return rline + wline + _docs_missing_line(cust, rows)
 
 
 def _docs_missing_line(cust, rows) -> str:
@@ -29084,7 +29118,7 @@ async def docs_set_label(request: Request, doc_pk: int):
 
 
 @app.get("/archive", response_class=HTMLResponse)
-def docs_list_page(request: Request, q: str = ""):
+def docs_list_page(request: Request, q: str = "", g: str = ""):
     role = _docs_auth(request)
     if not role:
         return RedirectResponse("/login")
@@ -29099,22 +29133,36 @@ def docs_list_page(request: Request, q: str = ""):
               (SELECT source_group_id FROM customers c WHERE c.id_no=d.id_no AND c.status!='DELETED' ORDER BY created_at DESC LIMIT 1) gid,
               (SELECT phone FROM customers c WHERE c.id_no=d.id_no AND c.status!='DELETED' ORDER BY created_at DESC LIMIT 1) phone
             FROM customer_docs d GROUP BY d.id_no ORDER BY last_at DESC LIMIT 500""").fetchall()
-    qq = (q or "").strip()
+    qq, gg = (q or "").strip(), (g or "").strip()
+    gnames = get_all_group_names()
+    # 群組篩選（使用者 2026-10-14：「證件存檔那頁也要多一個可以搜尋群組用的」）—— 只列有存檔的群組
+    gopts = "".join(f'<option value="{h(x)}"{" selected" if gg == x else ""}>{h(gnames.get(x) or x)}</option>'
+                    for x in sorted({r["gid"] for r in rows if r["gid"]}, key=lambda x: gnames.get(x) or x))
+    gopts = (f'<option value="">全部群組</option>{gopts}'
+             f'<option value="_none"{" selected" if gg == "_none" else ""}>還沒有群組</option>')
     trs = []
     for r in rows:
         if qq and not any(qq.upper() in (str(r[k] or "")).upper() for k in ("id_no", "name", "phone")):
             continue
+        if gg and (r["gid"] or "_none") != gg:
+            continue
+        with db_conn() as conn:
+            c = conn.execute("SELECT * FROM customers WHERE id_no=? AND status!='DELETED' ORDER BY created_at DESC LIMIT 1",
+                             (r["id_no"],)).fetchone()
+        ro = _route_order_text(dict(c)) if c else ""
         trs.append(f'<tr><td>{h((r["first_at"] or "")[:10])}</td><td>{h(r["name"] or "")}</td><td>{h(r["id_no"])}</td>'
-                   f'<td>{h(get_group_name(r["gid"]) if r["gid"] else "")}</td><td>{r["n"]}</td>'
+                   f'<td>{h(gnames.get(r["gid"]) or r["gid"] if r["gid"] else "")}</td>'
+                   f'<td style="font-size:13px">{h(ro)}</td><td>{r["n"]}</td>'
                    f'<td><a class="btn" href="/archive/{h(r["id_no"])}">看</a></td></tr>')
     url, sec = _bizai_conf()
     conf = "✅ 已設定業務 AI 連線" if (url and sec) else "⚠️ 還沒設定 BUSINESS_AI_URL／BUSINESS_AI_SECRET，拉不到照片"
     body = f"""<h2>📎 證件存檔</h2>
 <div class="card"><form method="get"><input type="text" name="q" value="{h(qq)}" placeholder="姓名／身分證／電話">
+<select name="g" onchange="this.form.submit()">{gopts}</select>
 <button class="btn" type="submit">搜尋</button></form>
 <div class="muted" style="margin-top:6px">{h(_docs_disk_text())}｜{h(conf)}</div></div>
-<div class="card tbl"><table><tr><th>收件日期</th><th>姓名</th><th>身分證</th><th>群組</th><th>張數</th><th></th></tr>
-{''.join(trs) or '<tr><td colspan="6" class="muted">還沒有存檔</td></tr>'}</table></div>"""
+<div class="card tbl"><table><tr><th>收件日期</th><th>姓名</th><th>身分證</th><th>群組</th><th>送件順序</th><th>張數</th><th></th></tr>
+{''.join(trs) or '<tr><td colspan="7" class="muted">還沒有存檔</td></tr>'}</table></div>"""
     return _docs_page(role, "證件存檔", body)
 
 

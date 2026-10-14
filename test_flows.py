@@ -2638,6 +2638,31 @@ check("同名兩筆 → 不補", m._apply_merge_rows("debt_list", json.dumps([{"
 check("聯絡人「無可知情」不算知情", not m._customer_has_known_contact({"contact1_known": "無可知情", "contact2_known": "保密"}))
 check("聯絡人「可知情」算知情", m._customer_has_known_contact({"contact1_known": "可知情"}))
 
+# ========== 82. 證件存檔：群組篩選＋送件順序跟群組一樣的寫法（2026-10-14 使用者）==========
+print("\n=== 82. 存檔頁群組篩選／送件順序 ===")
+_line82 = "10/14-證件甲-和裕/喬美/21/貸10/分貝商/C/商/南亞/當"
+_rp82 = m.make_route_json(m.parse_route_order_line(_line82)["companies"])
+_c = sqlite3.connect(TEST_DB)
+_cid82 = _c.execute("SELECT case_id FROM customers WHERE id_no='E300000001' AND status!='DELETED' ORDER BY created_at DESC").fetchone()[0]
+_c.execute("UPDATE customers SET route_plan=? WHERE case_id=?", (_rp82, _cid82))
+_c.execute("INSERT INTO case_logs (case_id,customer_name,id_no,company,message_text,from_group_id,created_at) VALUES (?,?,?,?,?,?,?)",
+           (_cid82, "證件甲", "E300000001", "", _line82 + "\n@AI", "TEST_B", datetime.now().isoformat()))
+_c.commit(); _c.close()
+m.check_auth = lambda req: "admin"
+_tc82 = TestClient(m.app)
+_r = _tc82.get("/archive")
+check("存檔清單：送件順序用業務在群組打的原文（簡稱照業務寫的）", _line82 in _r.text, _r.text[-1500:])
+_r = _tc82.get("/archive/E300000001")
+check("客人證件頁：最上面一行送件順序，缺件那行還在", "📋 送件順序：" in _r.text and _line82 in _r.text and "目前送" in _r.text)
+check("群組篩選：選 B群 看得到", "證件甲" in _tc82.get("/archive", params={"g": "TEST_B"}).text)
+check("群組篩選：選「還沒有群組」看不到 B群 的人", "證件甲" not in _tc82.get("/archive", params={"g": "_none"}).text)
+# 順序改過 → 原文是舊的，不可以再用
+_c = sqlite3.connect(TEST_DB)
+_c.execute("UPDATE customers SET route_plan=? WHERE case_id=?", (m.make_route_json(["喬美", "和裕"]), _cid82)); _c.commit(); _c.close()
+_ro82 = m._route_order_text(get_cust("E300000001"))
+check("順序改過 → 改用現在的順序組一行（不顯示舊的原文）", _ro82.endswith("-證件甲-喬美/和裕"), _ro82)
+m.check_auth = _old_auth
+
 # ========== 總結 ==========
 print(f"\n{'='*50}")
 print(f"結果：{PASS} 通過、{FAIL} 失敗")
