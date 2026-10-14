@@ -27991,9 +27991,9 @@ def _doc_fields_check(j: dict, label: str, cust) -> tuple:
             co = _docs_current_company(cust) if cust else ""
             need = _plan_hold_need(_plan_for_company(co), j.get("種類") or "") if co else None
             if need and mon < need[0]:
-                # 使用者 2026-10-14：只是行照不見去補發就沒問題 → 提醒是「要問」，不是「不能送」
-                ask = ("問客戶為什麼換補照（只是遺失補發就沒問題）" if src == "換補照"
-                       else "問客戶是不是剛買／剛過戶")
+                # 使用者 2026-10-14：只是行照不見去補發就沒問題，「反正要請他補證明來」→ 提醒補證明，不是「不能送」
+                ask = ("請客戶補證明換補照原因（遺失補發就沒問題）" if src == "換補照"
+                       else "請客戶補證明（剛買／剛過戶）")
                 warn.append(f"⚠️ 持有 {mon} 個月，{co} 要{need[1]} → {ask}")
         # ⛔ 出廠年月是西元（2021.10），業務 AI 刻意不轉 → 不可以拿去當民國
         y = re.match(r"\s*(\d{4})", f.get("出廠年月") or "")
