@@ -1933,6 +1933,19 @@ _s = _sub(_ev84(eval_property="不動產", _dj_cats={"權狀或謄本": 1})[0], 
 check("「有不動產、須提供權狀」：權狀收到了 → ✅", _s is None or _s["status"] in ("pass",), _s)
 check("中租「老車專案不做」改成說明（老車那條已經自動判）", _sub(_ev84(**_car87)[0], "中租汽車", "老車專案不做")["status"] == "info")
 # 使用者 2026-10-14：「融易頭家貸為何要跳提醒，他不能送喔，他又不是老闆」
+# 使用者 2026-10-14（回測後裁示）：分貝改裝有沒有貸款都可以送、不用清貸款；第一信貸近期有核准都可以送
+_dl90 = json.dumps([{"co": "和潤機車", "dy": "動保", "sp": "無", "yr": "2020", "re": "$82,368", "pa": "5"}], ensure_ascii=False)
+_r90, _ = _ev84(debt_list=_dl90, unloan_vehicles="[]")
+check("分貝機車改裝：機車滿貸、前貸 8 萬多 → 照樣可以送（不用清貸款）", _r90["分貝機車改裝"]["eligible"] is not False, _r90["分貝機車改裝"]["checks"])
+check("分貝機車改裝：不扣前貸（實拿照 8 萬）", _r90["分貝機車改裝"]["net_amount"] == 8, _r90["分貝機車改裝"].get("amount_text"))
+check("和裕機車照樣要扣前貸（會清貸款）", _r90["和裕機車"]["eligible"] is False)
+check("分貝機車改裝：完全沒機車 → 不能送", _ev84(eval_property="1汽", unloan_vehicles='[{"type": "汽車", "year": "2020"}]')[0]["分貝機車改裝"]["eligible"] is False)
+_rp90 = json.dumps({"order": ["21商品", "第一信貸"], "current_index": 1, "history": [{"company": "21商品", "status": "核准"}]}, ensure_ascii=False)
+_s = _sub(_ev84(route_plan=_rp90)[0], "第一信貸", "近期有核准")
+check("第一信貸：這件 21 核准過 → ✅（不用一定是銀行信貸）", _s["status"] == "pass" and "21商品" in _s["actual"], _s)
+check("第一信貸：負債表有剛撥款的 → ✅", _sub(_ev84(debt_list='[{"co": "裕融汽車", "dy": "動保", "sp": "有", "pa": "1"}]', eval_property="1汽1機")[0],
+                                         "第一信貸", "近期有核准")["status"] == "pass")
+check("第一信貸：近期都沒核准 → ❌", _ev84()[0]["第一信貸"]["eligible"] is False)
 # 2026-10-14 回測（7 月後 514 件有核准的案子）抓到：聯絡人寫「哥哥」被當成不是二等親
 for _rel, _ok in (("哥哥", True), ("哥", True), ("爺", True), ("阿嬤", True), ("妹妹", True), ("父", True), ("夫", True),
                   ("表弟", False), ("堂哥", False), ("叔叔", False), ("阿姨", False), ("姪子", False), ("外甥女", False),

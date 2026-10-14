@@ -1335,6 +1335,7 @@ PLAN_ELIGIBILITY_RULES = [
         "company": "汽機車二胎",
         "max_amount": 20,
         "priority": 66,
+        "no_payoff": True,   # 不用清前貸 → 不扣機車前貸、不看「機車滿貸」（使用者 2026-10-14）
         "rules": [
             {"type": "simple", "label": "年齡 20~59", "field": "age", "op": "between", "value": [20, 59]},
             {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
@@ -1630,6 +1631,7 @@ PLAN_ELIGIBILITY_RULES = [
         "company": "分貝汽車改裝1+1",
         "max_amount": 15,
         "priority": 71,
+        "no_payoff": True,   # 不用清前貸 → 不扣機車前貸、不看「機車滿貸」（使用者 2026-10-14）
         "rules": [
             {"type": "simple", "label": "年齡 20~65", "field": "age", "op": "between", "value": [20, 65]},
             {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
@@ -1646,6 +1648,7 @@ PLAN_ELIGIBILITY_RULES = [
         "company": "分貝機車改裝",
         "max_amount": 8,
         "priority": 67,
+        "no_payoff": True,   # 不用清前貸 → 不扣機車前貸、不看「機車滿貸」（使用者 2026-10-14）
         "rules": [
             {"type": "simple", "label": "年齡 20~65", "field": "age", "op": "between", "value": [20, 65]},
             {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
@@ -1653,7 +1656,8 @@ PLAN_ELIGIBILITY_RULES = [
             {"type": "simple", "label": "21 體系（麻吉/21/分貝/樂分期/分期趣/慢點付）含利息剩餘 < 25 萬",
              "op": "group21_remain_lt", "value": 250000},
             {"type": "simple", "label": "警示戶可送（撥二等親、朋友或現金都可以）", "op": "alert_warning_handler"},
-            {"type": "simple", "label": "名下有可用機車（不能機車滿貸）", "op": "motorcycle_has_space"},
+            # 2026-10-14 回測：機車滿貸也核准 9 件；使用者：「有貸款沒貸款都可以送，他又不用清貸款」→ 只要名下有機車
+            {"type": "simple", "label": "名下有機車（滿貸也可以，不用清前貸）", "op": "has_moto"},
         ],
         "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面（警示戶可用二等親或朋友的）", "勞保（一週內，有就給、沒有也可以送）", "機車行照", "機車繳款明細（機車有貸款才要）"],
     },
@@ -1777,12 +1781,11 @@ PLAN_ELIGIBILITY_RULES = [
         "rules": [
             {"type": "simple", "label": "年齡 20~65", "field": "age", "op": "between", "value": [20, 65]},
             {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
-            {"type": "simple", "label": "客戶必須有銀行信貸紀錄（沒銀行貸款不能送）", "op": "has_bank_loan",
-             "manual_check": "需確認近一個月內有銀行信貸撥款"},
+            # 使用者 2026-10-14：「第一信貸近期有核准都可以送」（原本只認銀行信貸；回測 8 件沒銀行信貸也核准）
+            {"type": "simple", "label": "近期有核准撥款（哪一家都可以）", "op": "recent_approval"},
             {"type": "simple", "label": "勞保/軍保/公保滿半年（須一週內）",
              "field": "eval_labor_ins", "op": "in", "value": ["公司保", "軍保", "公保"],
              "manual_check": "需確認滿半年 + 勞保須一週內"},
-            {"type": "simple", "label": "銀行信貸須是近一個月內撥款的（自動偵測 pa≤1）", "op": "recent_bank_loan"},
             {"type": "simple", "label": "🚫 警示戶不做（自動偵測）", "op": "no_warning_account"},
         ],
         "required_docs": ["身分證正反", "第二證件（健保卡/駕照）", "存摺封面", "勞保（一週內）", "身分證查詢截圖", "核准函", "撥款存摺紀錄", "撥款的存摺封面"],
@@ -1820,6 +1823,7 @@ PLAN_ELIGIBILITY_RULES = [
         "company": "興達汽機車二胎",
         "max_amount": 10,
         "priority": 49,
+        "no_payoff": True,   # 不用清前貸 → 不扣機車前貸、不看「機車滿貸」（使用者 2026-10-14）
         "rules": [
             {"type": "simple", "label": "年齡 20~55", "field": "age", "op": "between", "value": [20, 55]},
             {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
@@ -3348,6 +3352,25 @@ def _check_rule(rule, customer):
         if op == "has_car_any":
             ok = _customer_has_car_any(customer)
             return ("pass" if ok else "fail", label, "有汽車" if ok else "沒有汽車")
+        # 特殊 op：名下有機車（不管有沒有貸款、有沒有空間）
+        if op == "has_moto":
+            ok = "機" in str(customer.get("eval_property") or "") or any(
+                isinstance(v, dict) and v.get("type") == "機車" for v in _json_list(customer.get("unloan_vehicles"))) or any(
+                isinstance(d, dict) and "機車" in str(d.get("co") or "") for d in _json_list(customer.get("debt_list")))
+            return ("pass" if ok else "fail", label, "有機車" if ok else "沒有機車")
+        # 特殊 op：近期有核准撥款（第一信貸）：這件案子核准過、或負債表有剛撥款的（已繳 0～1 期）
+        if op == "recent_approval":
+            try:
+                hist = (json.loads(customer.get("route_plan") or "{}") or {}).get("history") or []
+            except Exception:
+                hist = []
+            ok_co = [h.get("company") for h in hist if isinstance(h, dict) and h.get("status") == "核准" and h.get("company")]
+            if ok_co:
+                return ("pass", label, f"這件 {'、'.join(ok_co)} 核准過")
+            for d in _json_list(customer.get("debt_list")):
+                if isinstance(d, dict) and d.get("co") and str(d.get("pa") or "").strip() in ("0", "1"):
+                    return ("pass", label, f"負債表 {d['co']} 剛撥款（已繳 {d['pa']} 期）")
+            return ("fail", label, "近期沒有核准撥款")
         # 特殊 op：職稱是老闆／負責人
         if op == "is_boss":
             role = (customer.get("company_role") or "").strip()
@@ -3848,7 +3871,7 @@ def evaluate_case(customer):
 
         # 機車前貸額度檢查（適用所有名稱含「機車」的方案）
         # 規則：max_amount - 機車前貸剩餘 必須 > 10 萬（業務鐵則）
-        if moto_remain > 0 and "機車" in plan["company"]:
+        if moto_remain > 0 and "機車" in plan["company"] and not plan.get("no_payoff"):
             margin = plan["max_amount"] * 10000 - moto_remain
             if margin < 100000:
                 checks.append({
@@ -3893,7 +3916,7 @@ def evaluate_case(customer):
         # 使用者 2026-10-14（陳秋蘭：和潤機車剩 14,040）：機車方案要先清前貸 → 實拿＝最高 − 前貸剩餘；
         #   清完比亞太商品少就送商品、比較多就送機車（同一家挑實拿多的）
         _net, _net_txt = plan["max_amount"], ""
-        if moto_remain > 0 and "機車" in plan["company"]:
+        if moto_remain > 0 and "機車" in plan["company"] and not plan.get("no_payoff"):
             _net = round(plan["max_amount"] - moto_remain / 10000, 1)
             _net_txt = f"最高 {plan['max_amount']:g} 萬，清掉機車前貸 {moto_remain:,} 元後約 {_net:g} 萬"
         if plan.get("book_multiplier"):
