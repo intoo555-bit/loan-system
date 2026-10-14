@@ -2973,13 +2973,6 @@ def _self_employed_opt(opt, customer):
     return ("fail", opt.get("label", ""), f"職稱「{role}」不是老闆／負責人")
 
 
-# 身分證背面「出生地」是台灣的寫法（例「高雄市」「臺灣省臺中縣」）。⛔ 不可以只比第一個字：
-#   「中國大陸」「南韓」「北韓」「東帝汶」第一個字都跟台灣縣市一樣 → 要比完整縣市名
-_TW_PLACES = ("臺灣", "台灣", "福建省", "臺北", "台北", "新北", "桃園", "臺中", "台中", "臺南", "台南", "高雄", "基隆",
-              "新竹", "苗栗", "彰化", "南投", "雲林", "嘉義", "屏東", "宜蘭", "花蓮", "臺東", "台東", "澎湖", "金門",
-              "連江", "馬祖")
-
-
 @_ensure_4tuple
 def _check_rule(rule, customer):
     """單條規則比對、回 (status, label, actual_str, sub) 4-tuple
@@ -3054,16 +3047,17 @@ def _check_rule(rule, customer):
         if op == "has_car_any":
             ok = _customer_has_car_any(customer)
             return ("pass" if ok else "fail", label, "有汽車" if ok else "沒有汽車")
-        # 特殊 op：汽車不是老車（老車＝沒有天書，只有裕融信福貸能送，見 _OLD_CAR_AGE）
-        # 特殊 op：新住民（身分證背面「出生地」不是台灣）→ 要附台籍正職保人
+        # 特殊 op：新住民＝沒有中華民國身分證（拿居留證）→ 要附台籍正職保人
+        #   使用者 2026-10-14：「新住民是指他沒有身分證；有身分證（背面有寫）基本上就沒關係」
+        #   ⛔ 不看出生地：外國出生、已經拿到身分證的不算新住民
         if op == "new_resident_guarantor":
-            j = _customer_doc_judge(customer, "fields:身分證背面")
-            bp = str((j.get("欄位") or {}).get("出生地") or "").strip() if j else ""
-            if not bp:
-                return ("manual", label, "看身分證背面「出生地」")
-            if bp.startswith(_TW_PLACES):
-                return ("pass", label, f"出生地 {bp}，不是新住民")
-            return ("manual", label + "（新住民 → 要附台籍正職保人）", f"出生地 {bp}")
+            idv = (customer.get("id_no") or "").strip().upper()
+            if not idv:
+                return ("unknown", label, "身分證字號沒填")
+            if re.fullmatch(r"[A-Z][12]\d{8}", idv):
+                return ("pass", label, "有中華民國身分證，不是新住民")
+            return ("manual", label + "（居留證 → 新住民，要附台籍正職保人）", "居留證")
+        # 特殊 op：汽車不是老車（老車＝沒有天書，只有裕融信福貸能送，見 _OLD_CAR_AGE）
         if op in ("car_not_old", "car_only_old"):
             st = _customer_car_old_status(customer)
             price, _nf = _customer_car_book(customer)
