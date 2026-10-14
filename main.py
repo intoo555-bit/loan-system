@@ -1384,6 +1384,7 @@ PLAN_ELIGIBILITY_RULES = [
         "company": "銀行",
         "max_amount": 30,
         "priority": 56,
+        "amount_text": "月薪 22 倍內",   # 使用者 2026-10-14：「可以貸款到 2.2 倍」（銀行信貸 22 倍）
         "rules": [
             {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
             {"type": "simple", "label": "信用正常（無呆帳/協商/卡強停）", "op": "creditcard_no_bad"},
@@ -1435,6 +1436,7 @@ PLAN_ELIGIBILITY_RULES = [
         "company": "零卡(C)",
         "max_amount": 3,
         "priority": 25,
+        "amount_text": "看客戶申請多少",   # 使用者 2026-10-14：看客戶自己申請多少額度，沒有額度問題
         "always_eligible": True,  # 一律排進去
         "rules": [
             {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
@@ -1449,6 +1451,7 @@ PLAN_ELIGIBILITY_RULES = [
         "company": "商品貸",
         "max_amount": 5,
         "priority": 22,
+        "amount_text": "看客戶申請多少",
         "always_eligible": True,  # 一律排進去
         "rules": [
             {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
@@ -1961,6 +1964,7 @@ PLAN_ELIGIBILITY_RULES = [
         "company": "裕融新優加",
         "max_amount": 150,
         "priority": 87,
+        "amount_text": "看天書",   # 使用者 2026-10-14：看天書，不是最高 150；max_amount 只拿來排先後
         "rules": [
             {"type": "simple", "label": "汽車不是老車（2011 以前沒天書 → 只有裕融信福貸）", "op": "car_not_old"},
             {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
@@ -1979,6 +1983,7 @@ PLAN_ELIGIBILITY_RULES = [
         "company": "裕融優質",
         "max_amount": 150,
         "priority": 85,
+        "amount_text": "看天書",   # 使用者 2026-10-14：看天書，不是最高 150；max_amount 只拿來排先後
         "rules": [
             {"type": "simple", "label": "汽車不是老車（2011 以前沒天書 → 只有裕融信福貸）", "op": "car_not_old"},
             {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
@@ -1997,6 +2002,7 @@ PLAN_ELIGIBILITY_RULES = [
         "company": "裕融福克來",
         "max_amount": 150,
         "priority": 82,
+        "amount_text": "看天書",   # 使用者 2026-10-14：看天書，不是最高 150；max_amount 只拿來排先後
         "rules": [
             {"type": "simple", "label": "汽車不是老車（2011 以前沒天書 → 只有裕融信福貸）", "op": "car_not_old"},
             {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
@@ -2013,15 +2019,16 @@ PLAN_ELIGIBILITY_RULES = [
     },
     {
         "company": "裕融信福貸",
-        "max_amount": 50,
+        # 使用者 2026-10-14：「信福貸就是老車專案，最高 10 萬；沒有天書的客人就送這個」（原本寫 50）
+        "max_amount": 10,
         "priority": 79,
         "rules": [
             {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
             {"type": "simple", "label": "客戶必須有汽車", "op": "has_car"},
-            {"type": "info", "label": "不限車齡"},
+            {"type": "simple", "label": "老車（沒有天書）才送這個；有天書送新優加／優質／福克來", "op": "car_only_old"},
             {"type": "manual", "label": "需符合 1 項條件以上"},
             {"type": "info", "label": "✅ 接受三種情境：他行代償、借新還舊、原車融資"},
-            {"type": "info", "label": "💡 可貸金額 = 天書/權威/鑑價 × 1.3；無天書/權威/鑑價 → 老車專案最高 10 萬"},
+            {"type": "info", "label": "💡 老車專案（沒有天書）最高 10 萬"},
             {"type": "simple", "label": "汽車有空間（自動偵測 sp 欄位）", "op": "car_has_space"},
             {"type": "simple", "label": "🚫 警示戶不做（警示戶送和潤）", "op": "no_warning_account"},
         ],
@@ -2034,6 +2041,7 @@ PLAN_ELIGIBILITY_RULES = [
         "company": "中租汽車",
         "max_amount": 150,
         "priority": 73,
+        "amount_text": "看天書",   # 使用者 2026-10-14：看天書，不是最高 150；max_amount 只拿來排先後
         "rules": [
             {"type": "simple", "label": "汽車不是老車（2011 以前沒天書 → 只有裕融信福貸）", "op": "car_not_old"},
             {"type": "simple", "label": "客戶必須有汽車", "op": "has_car"},
@@ -2051,6 +2059,7 @@ PLAN_ELIGIBILITY_RULES = [
         "company": "和潤汽車",
         "max_amount": 150,
         "priority": 73,
+        "amount_text": "看天書",   # 使用者 2026-10-14：看天書，不是最高 150；max_amount 只拿來排先後
         "rules": [
             {"type": "simple", "label": "汽車不是老車（2011 以前沒天書 → 只有裕融信福貸）", "op": "car_not_old"},
             {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
@@ -2069,6 +2078,7 @@ PLAN_ELIGIBILITY_RULES = [
         "company": "和潤重機",
         "max_amount": 100,
         "priority": 60,
+        "amount_text": "看鑑價",
         "rules": [
             {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
             {"type": "simple", "label": "客戶必須有重機（看 eval_property 含「重機」）", "op": "has_heavy_bike"},
@@ -2920,6 +2930,14 @@ def _check_rule(rule, customer):
             if min(ages) > _OLD_CAR_AGE:
                 return ("fail", label, f"最新那台 {y} 年，沒有天書（老車只能送裕融信福貸）")
             return ("pass", label, f"{y} 年，有天書")
+        if op == "car_only_old":
+            ages = _customer_car_ages(customer)
+            if not ages:
+                return ("unknown", label, "汽車出廠年沒填")
+            y = now_tw().year - min(ages)
+            if min(ages) > _OLD_CAR_AGE:
+                return ("pass", label, f"最新那台 {y} 年，沒有天書")
+            return ("fail", label, f"{y} 年有天書 → 送裕融其他方案")
         # 特殊 op：客戶有汽車
         if op == "has_car":
             ok = _customer_has_car(customer)
@@ -3364,13 +3382,20 @@ def evaluate_case(customer):
             eligible = True
             summary = "✅ 全部達標"
         _max = plan["max_amount"]
-        if plan["company"] == "裕融信福貸" and _customer_only_old_cars(customer):
-            _max = 10        # 老車專案（沒有天書）最高 10 萬（使用者 2026-10-14）
-            checks.append({"status": "pass", "label": "🚗 老車（沒有天書）→ 走老車專案，最高 10 萬", "actual": "老車"})
+        if plan["company"] == "喬美":
+            # 使用者：勞保＋兩張信用卡（各兩期帳單）→ 40 萬；沒有 → 10 萬（memory required_docs_rules；原本寫死 14）
+            _lab = (customer.get("eval_labor_ins") or "").strip() in ("公司保", "軍保", "公保")
+            _card = _check_creditcard_status(customer)[0] == "good"
+            _max = 40 if (_lab and _card) else 10
+            checks.append({"status": "manual" if _max == 40 else "pass",
+                           "label": ("💰 有勞保＋信用卡 → 最高 40 萬（要兩張卡、各兩期帳單，請確認）" if _max == 40
+                                     else "💰 沒有勞保＋兩張信用卡 → 最高 10 萬"), "actual": f"{_max} 萬"})
         results.append({
             "company": plan["company"],
             "max_amount": _max,
             "amount_by_review": plan.get("amount_by_review", False),  # True＝max_amount 只是排序用、畫面不顯示金額
+            # 沒有固定上限的方案：畫面寫這段（看天書／看鑑價／月薪 22 倍內／看客戶申請多少），⛔ 不寫「最高 X 萬」
+            "amount_text": plan.get("amount_text") or ("看審核" if plan.get("amount_by_review") else ""),
             "priority": plan.get("priority", 0),
             "eligible": eligible,
             "checks": checks,
@@ -19088,7 +19113,7 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
       html += icon + ' ' + r.company;
       // 同家族不重複顯示金額（汽車/銀行類略過）
       if (!isCarOrBike && fam !== '銀行' && fam !== '民間') {{
-        html += ' — ' + r.max_amount + '萬';
+        html += ' — ' + (r.amount_text ? '金額' + r.amount_text : r.max_amount + '萬');
       }}
       if (r.eligible === 'manual') html += ' <span style="color:#92400e;font-size:11px;font-weight:400">(需確認)</span>';
       if (r.eligible === false && r.private_blocked) html += ' <span style="color:#dc2626;font-size:11px;font-weight:400">(私設不可送)</span>';
@@ -19169,7 +19194,7 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
               var plans = sendGrouped[fam];
               // 同家族取最高金額（除非該家族不顯示金額）
               // amount_by_review（南亞：金額看審核）的 max_amount 只是排序用、不算進顯示金額
-              var amtPlans = plans.filter(function(r){{return !r.amount_by_review;}});
+              var amtPlans = plans.filter(function(r){{return !r.amount_by_review && !r.amount_text;}});
               var maxAmt = Math.max.apply(null, amtPlans.map(function(r){{return r.max_amount;}}));
               var hideAmt = shouldHideAmount(plans[0].company, fam) || !amtPlans.length;
               // 家族內所有方案是否都需 manual 確認
@@ -20638,7 +20663,7 @@ function checkEligibility() {{
         let bgColor = r.eligible === true ? '#f0fdf4' : (r.eligible === 'manual' ? '#fef3c7' : '#fef2f2');
         let borderColor = r.eligible === true ? '#86efac' : (r.eligible === 'manual' ? '#fde047' : '#fca5a5');
         html += '<div style="background:' + bgColor + ';border:1px solid ' + borderColor + ';border-radius:8px;padding:12px;margin-bottom:10px">';
-        html += '<div style="font-weight:700;font-size:14px;margin-bottom:6px">' + icon + ' ' + r.company + (r.amount_by_review ? '（金額看審核）' : '（最高 ' + r.max_amount + ' 萬）') + '— ' + r.summary + '</div>';
+        html += '<div style="font-weight:700;font-size:14px;margin-bottom:6px">' + icon + ' ' + r.company + (r.amount_text ? '（金額' + r.amount_text + '）' : '（最高 ' + r.max_amount + ' 萬）') + '— ' + r.summary + '</div>';
         if (r.checks && r.checks.length) {{
           html += '<ul style="margin:6px 0 0;padding-left:22px;font-size:12px;color:#374151">';
           r.checks.forEach(c => {{

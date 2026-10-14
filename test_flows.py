@@ -1756,7 +1756,20 @@ check("老車規則不套亞太（亞太看 15 年，不看天書）", not any("
 check("老車規則不套第一汽車（第一看汽車貸款繳滿一年，不看天書）", not any("老車" in c["label"] for c in _rold["第一汽車"]["checks"]))
 _rnew = _old(_yo - 14)     # 天書最舊那年（今年 2026 → 2012）
 check(f"{_yo - 14} 的車有天書 → 不算老車，和潤汽車那條過、信福貸照 50 萬",
-      not any(c["status"] == "fail" and "老車" in c["label"] for c in _rnew["和潤汽車"]["checks"]) and _rnew["裕融信福貸"]["max_amount"] == 50)
+      not any(c["status"] == "fail" and "老車" in c["label"] for c in _rnew["和潤汽車"]["checks"]))
+# 使用者 2026-10-14：「信福貸是老車專案 10 萬，沒有天書的客人才送這個」
+check("有天書的車 → 不送裕融信福貸（送裕融其他方案）", _rnew["裕融信福貸"]["eligible"] is False, _rnew["裕融信福貸"]["checks"])
+# 使用者 2026-10-14：看天書的不是最高 150；銀行看月薪倍數；零卡／商品貸看客戶申請多少
+for _co, _txt in (("中租汽車", "看天書"), ("和潤汽車", "看天書"), ("裕融優質", "看天書"), ("和潤重機", "看鑑價"),
+                  ("銀行", "月薪 22 倍內"), ("零卡(C)", "看客戶申請多少"), ("商品貸", "看客戶申請多少"), ("南亞", "看審核")):
+    check(f"{_co} 金額寫「{_txt}」不寫最高幾萬", _rnew[_co]["amount_text"] == _txt, _rnew[_co].get("amount_text"))
+check("有固定上限的方案不寫金額說明（照寫最高幾萬）", _rnew["亞太汽車25萬"]["amount_text"] == "")
+# 喬美：勞保＋兩張信用卡各兩期帳單 → 40 萬；沒有 → 10 萬
+_jm = lambda **kw: {x["company"]: x for x in _so(**kw)[0]["results"]}["喬美"]
+check("喬美：有勞保＋信用卡正常 → 最高 40 萬（要確認兩張卡）", _jm(eval_credit_card="正常繳款")["max_amount"] == 40,
+      _jm(eval_credit_card="正常繳款")["max_amount"])
+check("喬美：沒信用卡 → 最高 10 萬", _jm(eval_credit_card="")["max_amount"] == 10)
+check("喬美：沒勞保 → 最高 10 萬", _jm(eval_labor_ins="無勞保", eval_credit_card="正常繳款")["max_amount"] == 10)
 _ro2 = _old(_yo - 15)
 check(f"{_yo - 15} 就是老車", _ro2["和潤汽車"]["eligible"] is False)
 _r9, _o9, _b9 = _so(eval_property="1汽", unloan_vehicles='[{"type": "汽車"}]', debt_list="[]")
