@@ -2595,6 +2595,10 @@ _r81 = TestClient(m.app).post("/api/customer-upsert", headers={"X-Loan-Secret": 
 check("行政的負債表已經有填 → 不覆蓋、不跳提醒", json.loads(get_cust("L300000001")["debt_list"])[0]["co"] == "中租機車"
       and not any(c["field"] == "debt_list" for c in _r81.get("conflicts", [])), _r81)
 
+# 「無可知情」＝保密（使用者 2026-10-14）—— 原本字裡有「知情」被當成知情
+check("聯絡人「無可知情」不算知情", not m._customer_has_known_contact({"contact1_known": "無可知情", "contact2_known": "保密"}))
+check("聯絡人「可知情」算知情", m._customer_has_known_contact({"contact1_known": "可知情"}))
+
 # ========== 總結 ==========
 print(f"\n{'='*50}")
 print(f"結果：{PASS} 通過、{FAIL} 失敗")

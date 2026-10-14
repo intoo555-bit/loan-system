@@ -2518,7 +2518,8 @@ def _customer_has_known_contact(customer):
             v = (customer.get(k, "") or "").strip()
             if not v:
                 continue
-            if ("不知" in v) or ("保密" in v):
+            # ⛔「無可知情」＝保密（使用者 2026-10-14）—— 字裡有「知情」，原本被當成知情
+            if ("不知" in v) or ("保密" in v) or ("無可" in v):
                 continue
             if "知情" in v or v in ["是", "有"]:
                 return True
@@ -26013,8 +26014,8 @@ def _do_download_excel(request: Request, case_id: str):
                 "J9": v("company_phone_ext"),
                 "C10": co_role, "E10": sal_e10,
                 "G10": g10_val, "H10": h10_val, "I10": i10_val, "J10": j10_val,
-                "C17": c1_name, "E17": c1_rel_21, "H17": (c1_phone or "").replace("-", "").replace(" ", ""), "K17": "保密" if c1_known == "保密" else "",
-                "C18": c2_name, "E18": c2_rel_21, "H18": (c2_phone or "").replace("-", "").replace(" ", ""), "K18": "保密" if c2_known == "保密" else "",
+                "C17": c1_name, "E17": c1_rel_21, "H17": (c1_phone or "").replace("-", "").replace(" ", ""), "K17": "保密" if (c1_known == "保密" or "無可" in (c1_known or "")) else "",   # 無可知情＝保密
+                "C18": c2_name, "E18": c2_rel_21, "H18": (c2_phone or "").replace("-", "").replace(" ", ""), "K18": "保密" if (c2_known == "保密" or "無可" in (c2_known or "")) else "",   # 無可知情＝保密
             }
 
         return {}  # Unknown plan - no data fill
