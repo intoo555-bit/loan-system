@@ -3357,8 +3357,9 @@ def _suggest_rank(company):
     if not best:
         return _SUGGEST_RANK_DEFAULT, company, ""
     prefix, rank, note = best
-    # 家族＝同一家公司：21機車25萬／21商品 都算 21；21汽車 是另一個家族
-    fam = "21" if prefix in ("21機車25萬",) else prefix
+    # 家族＝同一家公司：21汽車／21機車25萬／21商品 都算 21 → 只排金額最高那個
+    # （使用者 2026-10-14：「同一間的要挑最高的送件」，21汽車 也一樣；原本 21汽車 另算一家）
+    fam = "21" if prefix in ("21機車25萬", "21汽車") else prefix
     return rank, fam, note
 
 
