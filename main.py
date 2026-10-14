@@ -28121,7 +28121,8 @@ def _doc_labor_check(j: dict, cust) -> list:
             tail = (f"，上一份 {prev}（{j.get('上一份退保日期') or '?'} 退保"
                     f"{'，跟這份接著' if j.get('接續') else ''}）") if prev else ""
             warn.append(f"⚠️ 客戶填年資 {dtxt.strip()}，勞保 {main_.get('單位') or ''} 只保 {ins} 個月{tail}"
-                        "→ 問客戶是不是同一份工作／同一個老闆")
+                        f"→ 問客戶是不是同一個老闆；不是的話年資只算 {ins} 個月，客戶資料的年資要改")
+            # 使用者 2026-10-14：「假設不同負責人，那年資就不是三年」→ 寫出改成多少，⛔ 不自動改（要先問過客戶）
     return warn
 
 

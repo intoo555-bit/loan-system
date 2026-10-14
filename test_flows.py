@@ -2481,7 +2481,7 @@ _lj = {"_kind": "labor", "ok": True, "is_labor": True, "明細幾天前印的": 
 _w = m._doc_labor_check(_lj, {"company_name": "大米食品", "company_years": "3", "company_months": ""})
 check("同時保兩個 → 問是不是同一間公司／同一個負責人", any("同時保 2 個" in w and "同一個負責人" in w for w in _w), _w)
 check("客戶填 3 年、勞保這家只保 5 個月 → 問是不是同一個老闆，並寫出上一份跟這份接著",
-      any("客戶填年資 3 年" in w and "大米食品有限公司 只保 5 個月" in w and "大米食品行" in w and "接著" in w and "同一個老闆" in w for w in _w), _w)
+      any("客戶填年資 3 年" in w and "大米食品有限公司 只保 5 個月" in w and "大米食品行" in w and "接著" in w and "同一個老闆" in w and "年資只算 5 個月" in w for w in _w), _w)
 _w = m._doc_labor_check({**_lj, "目前投保": _lj["目前投保"][:1]}, {"company_name": "大米食品", "company_years": "0", "company_months": "6"})
 check("年資跟勞保差 3 個月內 → 不提醒", not _w, _w)
 _jt = m._doc_judge_text({"show_label": "勞保明細", "judge_json": json.dumps(_lj)}, {"company_name": "大米食品", "company_years": "3"})
