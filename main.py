@@ -30450,7 +30450,8 @@ def _pack_picker_html(cust) -> str:
     seen, opts = set(), ""
     for c_ in lst:
         nm = normalize_section(c_) or c_
-        if nm in seen or nm in _PACK_SKIP or not _plan_for_company(c_):   # 銀行／民間不列
+        # 銀行／民間不列；⚠️ 用「包含」比：規則表的名字是「零卡(C)」，正規化後還是「零卡(C)」，用等於會漏掉（2026-10-15 使用者：零卡不用送件包）
+        if nm in seen or any(k in nm for k in _PACK_SKIP) or not _plan_for_company(c_):
             continue
         seen.add(nm)
         opts += f'<option value="{h(c_)}"{" selected" if c_ == co else ""}>{h(nm)}</option>'
@@ -30800,9 +30801,7 @@ def docs_customer_page(request: Request, id_no: str, refresh: str = ""):
         return HTMLResponse("⚠️ 證件介面檔（ui/archive_gallery.html）沒有部署上來，請通知管理員", status_code=500)
     btn = ('<a class="action" style="text-decoration:none" href="/customer-pdf?case_id=' + h(cust["case_id"]) +
            '" target="_blank"><span>📋 客戶資料表</span></a>') if cust else ""
-    _pk = _pack_picker_html(cust)
-    if _pk:
-        btn += f'<span class="action" style="display:inline-flex;gap:6px;align-items:center">{_pk}</span>'
+    # 送件包只放行政B 頁（使用者 2026-10-15：「證件存檔那邊就不用送件包按鈕，這個只有行政B才用的到」）
     btn += ('<button type="button" class="action quiet" onclick="cardPreview(this,\'card-preview\')"><span>📨 收件卡片預覽</span></button>'
             '<button type="button" class="action quiet" onclick="cardPreview(this,\'supp-preview\')"><span>📨 補件卡片預覽</span></button>'
             '<button type="button" class="action quiet" onclick="cardPreview(this,\'card-send\')"><span>📨 傳卡片到客人的群組</span></button>'

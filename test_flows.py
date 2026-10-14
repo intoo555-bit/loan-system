@@ -3042,19 +3042,20 @@ _lb93 = {r["show_label"] for r in m._docs_rows("E300000001")}
 check("送件包：那家要的、存檔裡有的證件都放進去（勞保明細）", "勞保明細" not in _lb93 or any("勞保明細" in n for n in _names93), (_lb93, _names93))
 check("送件包：那家不要的不放（行照：亞太商品不用）", not any("行照" in n for n in _names93), (_lb93, _names93))
 check("送件包：缺的寫在「還缺.txt」", any(n.endswith("還缺.txt") for n in _names93), _names93)
-_p93 = _tc93.get("/archive/E300000001").text
-check("證件頁有送件包，選單寫公司名（亞太、和裕），不寫方案名", "送件包" in _p93 and ">亞太</option>" in _p93
+_p93 = m._pack_picker_html(get_cust("E300000001"))
+check("送件包選單寫公司名（亞太、和裕），不寫方案名", "送件包" in _p93 and ">亞太</option>" in _p93
       and ">和裕</option>" in _p93 and ">亞太商品</option>" not in _p93, _p93[:0])
+check("證件頁沒有送件包按鈕（只有行政B 頁有）", 'id="pkCo"' not in _tc93.get("/archive/E300000001").text)
 check("指定別家：?co=和裕", _tc93.get("/archive/E300000001/pack", params={"co": "和裕"}).status_code == 200)
 # 官方賴名稱自己打
 # 使用者 2026-10-14：「只需要出現融資的送件包跟商品貸，其他不用」
 _c = sqlite3.connect(TEST_DB)
 _c.execute("UPDATE customers SET route_plan=?, current_company='亞太商品' WHERE case_id=?",
-           (m.make_route_json(["亞太商品", "和裕", "零卡", "商品貸", "代書", "銀行"]), _cid93))
+           (m.make_route_json(["亞太商品", "和裕", "零卡", "零卡(C)", "商品貸", "代書", "銀行"]), _cid93))
 _c.commit(); _c.close()
-_p93 = _tc93.get("/archive/E300000001").text
+_p93 = m._pack_picker_html(get_cust("E300000001"))
 _opt93 = _re73.findall(r'<option value="[^"]*"(?: selected)?>([^<]+)</option>', _p93.split('id="pkCo"')[1].split("</select>")[0]) if 'id="pkCo"' in _p93 else []
-check("送件包選單：只有融資＋商品貸（亞太、和裕、商品貸），零卡／代書／銀行不列", _opt93 == ["亞太", "和裕", "商品貸"], _opt93)
+check("送件包選單：只有融資＋商品貸（亞太、和裕、商品貸），零卡／零卡(C)／代書／銀行不列", _opt93 == ["亞太", "和裕", "商品貸"], _opt93)
 # 使用者 2026-10-14：「裕融是汽車送件包，還是把機車塞進去了」
 _dj93 = m._doc_judge
 m._doc_judge = lambda r: ({"欄位": {"排氣量": "124", "車牌": "NTV-9226"}} if r.get("show_label") == "行照" else _dj93(r))
