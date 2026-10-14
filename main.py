@@ -27986,6 +27986,15 @@ def _doc_fields_check(j: dict, label: str, cust) -> tuple:
         if d:
             mon = (t.year - d[0]) * 12 + t.month - d[1] - (t.day < d[2])
             info.append(f"持有 {mon} 個月（{src} {d[0] - 1911:03d}/{d[1]:02d}/{d[2]:02d}）")
+            # 使用者 2026-10-14：換補照日期很近 → 「不符合送亞太那些就要問」客戶原因（發照日期很近也要問）
+            #   ⛔ 幾個月才夠 不寫死：從規則表那一家的「持有滿 N」條件讀（唯一真相，規則表改了這裡跟著變）
+            co = _docs_current_company(cust) if cust else ""
+            need = _plan_hold_need(_plan_for_company(co), j.get("種類") or "") if co else None
+            if need and mon < need[0]:
+                # 使用者 2026-10-14：只是行照不見去補發就沒問題 → 提醒是「要問」，不是「不能送」
+                ask = ("問客戶為什麼換補照（只是遺失補發就沒問題）" if src == "換補照"
+                       else "問客戶是不是剛買／剛過戶")
+                warn.append(f"⚠️ 持有 {mon} 個月，{co} 要{need[1]} → {ask}")
         # ⛔ 出廠年月是西元（2021.10），業務 AI 刻意不轉 → 不可以拿去當民國
         y = re.match(r"\s*(\d{4})", f.get("出廠年月") or "")
         if y:
@@ -28002,6 +28011,38 @@ def _doc_fields_check(j: dict, label: str, cust) -> tuple:
             warn.append(f"⚠️ 名字不是本人（{nm}）")
         info.append(" ".join(x for x in (f.get("發卡銀行"), f"有效到 {f['有效日期']}" if f.get("有效日期") else "") if x))
     return [x for x in info if x], warn
+
+
+def _plan_hold_need(plan, doc_kind: str = ""):
+    """規則表這一家要車輛持有幾個月 → (月數, 原文) 或 None。
+    從條件文字讀（亞太「機車持有滿 1 年」、亞太工會「持有滿 3 個月」、21汽車「持有滿半年」）；
+    行照是機車、條件寫汽車（或反過來）→ 不適用。願望「持有時間不限」是 info，不會被讀到。"""
+    if not plan:
+        return None
+
+    def walk(x):
+        if isinstance(x, dict):
+            if x.get("type") == "manual" and "持有滿" in str(x.get("label", "")):
+                yield x["label"]
+            for v in x.values():
+                yield from walk(v)
+        elif isinstance(x, list):
+            for v in x:
+                yield from walk(v)
+    for lb in walk(plan):
+        if "不動產" in lb or "信用卡" in lb:
+            continue
+        pre = lb.split("持有滿")[0]
+        if doc_kind and (("機車" in pre and "汽車" not in pre and "汽車" in doc_kind)
+                         or ("汽車" in pre and "機車" not in pre and "機車" in doc_kind)):
+            continue
+        m_ = re.search(r"持有滿\s*(半年|(\d+)\s*(年|個月))", lb)
+        if not m_:
+            continue
+        n = 6 if m_.group(1) == "半年" else int(m_.group(2)) * (12 if m_.group(3) == "年" else 1)
+        rest = lb.split("或", 1)[1].split("（")[0].strip().removesuffix("可送").removesuffix("件") if "或" in lb else ""
+        return n, m_.group(0).replace("持有", "") + (f"（{rest}可送）" if rest else "")
+    return None
 
 
 def _doc_field_warnings(r, cust) -> list:

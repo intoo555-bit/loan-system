@@ -2423,6 +2423,23 @@ check("證件頁上方彙總：行照車主不是本人", "證件跟客戶資料
 _ix, _wx = m._doc_fields_check({"欄位": {"發照日期_民國": "110/10/25", "換補照日期_民國": "114/10/01"}}, "行照", {"customer_name": "欄位乙"})
 check("行照有換補照日期 → 持有時間從換補照算（114/10/01 → 12 個月）",
       any("持有 12 個月（換補照 114/10/01）" in x for x in _ix), _ix)
+# 持有未滿目前送的那家要求 → 提醒問客戶（使用者 2026-10-14：亞太要持有 1 年；只是遺失補發就沒問題）
+_cu79 = {"customer_name": "欄位乙", "current_company": "亞太機車25萬"}
+_ix, _wx = m._doc_fields_check({"種類": "機車行照", "欄位": {"發照日期_民國": "110/10/25", "換補照日期_民國": "115/08/01"}}, "行照", _cu79)
+check("亞太機車25萬、換補照 2 個月 → ⚠️ 問客戶為什麼換補照（遺失補發沒問題）",
+      any("亞太機車25萬 要滿 1 年" in w and "遺失補發就沒問題" in w for w in _wx), _wx)
+_ix, _wx = m._doc_fields_check({"種類": "機車行照", "欄位": {"發照日期_民國": "115/08/01"}}, "行照", _cu79)
+check("沒換補照、發照很近 → ⚠️ 問是不是剛買／剛過戶", any("剛買／剛過戶" in w for w in _wx), _wx)
+_ix, _wx = m._doc_fields_check({"種類": "機車行照", "欄位": {"發照日期_民國": "110/10/25", "換補照日期_民國": "114/08/01"}}, "行照", _cu79)
+check("持有滿 1 年 → 不提醒", not _wx, _wx)
+_ix, _wx = m._doc_fields_check({"種類": "汽車行照", "欄位": {"發照日期_民國": "115/08/01"}}, "行照", _cu79)
+check("亞太機車要的是機車持有 → 汽車行照不套用", not _wx, _wx)
+_ix, _wx = m._doc_fields_check({"種類": "機車行照", "欄位": {"發照日期_民國": "115/08/01"}}, "行照",
+                                {"customer_name": "欄位乙", "current_company": "願望小車25萬"})
+check("願望（持有時間不限）→ 不提醒", not _wx, _wx)
+_ix, _wx = m._doc_fields_check({"種類": "汽車行照", "欄位": {"發照日期_民國": "115/08/01"}}, "行照",
+                                {"customer_name": "欄位乙", "current_company": "21汽車A"})
+check("21汽車：要滿半年，新車一手／親屬過戶可送也寫出來", any("滿半年（新車一手車主、親屬過戶可送）" in w for w in _wx), _wx)
 # 生日打錯
 _c = sqlite3.connect(TEST_DB); _c.execute("UPDATE customers SET birth_date='0750313' WHERE id_no='J300000001'"); _c.commit(); _c.close()
 _d79 = {d["category"]: d for d in TestClient(m.app).get("/archive/J300000001/data").json()["documents"]}
