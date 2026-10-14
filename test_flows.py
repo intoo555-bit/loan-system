@@ -1788,6 +1788,66 @@ check("行政填「查不到」→ 老車，只送裕融信福貸 10 萬", _rnf[
       and _rnf["裕融信福貸"]["max_amount"] == 10)
 _r9b, _o9b, _ = _so(eval_property="1汽", debt_list="[]", unloan_vehicles='[{"type": "汽車", "tp": "19"}]')
 check("沒填出廠年但有車價 → 照排，不擋", not any("汽車出廠年" in x for x in _r9b["missing_info"]), _r9b["missing_info"])
+
+# ========== 使用者 2026-10-14：勞保看明細判、自營商看職稱、東豐本島／新住民、機車扣前貸挑實拿多的 ==========
+def _ev84(**kw):
+    c = {"birth_date": f"{_y-35:03d}/01/01", "id_no": "A123456789", "contact1_relation": "母", "contact2_relation": "父",
+         "eval_labor_ins": "公司保", "eval_alert_warning": "否", "eval_late": "無", "eval_property": "1機",
+         "debt_list": "[]", "unloan_vehicles": '[{"type": "機車", "year": "2019"}]', "company_salary": "3.5",
+         "company_years": "3", "eval_salary_transfer": "有薪轉", "eval_alert": "無", "live_city": "台中市",
+         "_dj_labor": {}, "_dj_fields:身分證背面": {}}
+    c.update(kw)
+    r = m.evaluate_case(c)
+    return {x["company"]: x for x in r["results"]}, [o["company"] for o in r["suggested_order"]]
+def _sub(res, co, key):
+    for c in res[co]["checks"]:
+        for sb in c.get("sub") or []:
+            if key in sb["label"]:
+                return sb
+    for c in res[co]["checks"]:
+        if key in c["label"]:
+            return c
+_lab = lambda n, **kw: {"目前投保": [dict({"單位": "米泉公司", "類型": "公司保", "加保滿幾個月": n, "備註部分工時": False}, **kw)]}
+_r84, _ = _ev84(_dj_labor=_lab(5))
+_s = _sub(_r84, "願望小車25萬", "勞保滿 3 個月")
+check("勞保明細保 5 個月 → 願望「勞保滿 3 個月」直接 ✅（不再要人工確認）", _s and _s["status"] == "pass" and "5 個月" in _s["actual"], _s)
+check("勞保那項過了 → 自營商那項不再跳 ⚠️", _sub(_r84, "願望小車25萬", "自營商") is None)
+_r84, _ = _ev84(_dj_labor=_lab(2), company_role="技工")
+_s = _sub(_r84, "願望小車25萬", "勞保滿 3 個月")
+check("勞保明細只保 2 個月 → ❌（寫出保幾個月）", _s and _s["status"] == "fail" and "2 個月" in _s["actual"], _s)
+_s2 = _sub(_r84, "願望小車25萬", "自營商")
+check("職稱是技工 → 自營商那項 ❌，不是 ⚠️", _s2 and _s2["status"] == "fail" and "技工" in _s2["actual"], _s2)
+_r84, _ = _ev84(_dj_labor=_lab(2), company_role="負責人")
+_s2 = _sub(_r84, "願望小車25萬", "自營商")
+check("職稱是負責人 → 自營商那項 ⚠️ 要附 401", _s2 and _s2["status"] == "manual" and "負責人" in _s2["actual"], _s2)
+_r84, _ = _ev84(_dj_labor=dict(_lab(2), 接續=True, 間隔天數=10))
+check("新轉、跟上一份接著 → 願望勞保那項 ✅", _sub(_r84, "願望小車25萬", "勞保滿 3 個月")["status"] == "pass")
+_r84, _ = _ev84(_dj_labor=_lab(8, 備註部分工時=True))
+_s = _sub(_r84, "亞太機車25萬", "勞保")
+check("勞保明細註記部分工時 → 亞太（不可部分工時）❌", _s and _s["status"] == "fail" and "部分工時" in _s["actual"], _s)
+_r84, _ = _ev84()
+check("沒有勞保明細 → 照舊人工確認", _sub(_r84, "願望小車25萬", "勞保滿 3 個月")["status"] == "manual")
+# 東豐：本島、新住民
+_r84, _ = _ev84(live_city="澎湖縣")
+check("東豐：住澎湖 → ❌", _r84["東豐小額信貸"]["eligible"] is False)
+_r84, _ = _ev84(**{"_dj_fields:身分證背面": {"欄位": {"出生地": "越南"}}})
+_s = _sub(_r84, "東豐小額信貸", "新住民")
+check("東豐：出生地越南 → 新住民要附台籍正職保人（⚠️）", _s["status"] == "manual" and "越南" in _s["actual"], _s)
+_r84, _ = _ev84(**{"_dj_fields:身分證背面": {"欄位": {"出生地": "臺灣省臺中縣"}}})
+check("東豐：出生地台灣 → 不是新住民 ✅", _sub(_r84, "東豐小額信貸", "新住民")["status"] == "pass")
+# 機車前貸：陳秋蘭 和潤機車剩 14,040
+_dl = json.dumps([{"co": "和潤機車", "dy": "動保", "sp": "有", "yr": "2020", "re": "$14,040", "pa": "19"}], ensure_ascii=False)
+_r84, _o84 = _ev84(debt_list=_dl, unloan_vehicles="[]")
+check("機車方案寫清掉前貸後實拿（15 萬 − 14,040 ≈ 13.6 萬）", "13.6" in _r84["亞太機車15萬"]["amount_text"], _r84["亞太機車15萬"]["amount_text"])
+check("亞太只排一個", sum(1 for x in _o84 if x.startswith("亞太")) == 1, _o84)
+_pick = m.suggest_send_order([
+    {"company": "亞太機車15萬", "max_amount": 15, "net_amount": 10.5, "priority": 70, "eligible": True},
+    {"company": "亞太商品", "max_amount": 12, "net_amount": 12, "priority": 60, "eligible": True}], {})[0]
+check("清掉前貸比商品少 → 送亞太商品", [x["company"] for x in _pick] == ["亞太商品"], _pick)
+_pick = m.suggest_send_order([
+    {"company": "亞太機車15萬", "max_amount": 15, "net_amount": 13.6, "priority": 70, "eligible": True},
+    {"company": "亞太商品", "max_amount": 12, "net_amount": 12, "priority": 60, "eligible": True}], {})[0]
+check("清掉前貸還比商品多 → 送亞太機車", [x["company"] for x in _pick] == ["亞太機車15萬"], _pick)
 _ro2 = _old(_yo - 15)
 check(f"{_yo - 15} 就是老車", _ro2["和潤汽車"]["eligible"] is False)
 _r9, _o9, _b9 = _so(eval_property="1汽", unloan_vehicles='[{"type": "汽車"}]', debt_list="[]")

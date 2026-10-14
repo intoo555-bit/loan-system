@@ -2107,7 +2107,10 @@ PLAN_ELIGIBILITY_RULES = [
         "priority": 74,
         "rules": [
             {"type": "simple", "label": "年齡 20~55", "field": "age", "op": "between", "value": [20, 55]},
-            {"type": "manual", "label": "限本島；新住民進件須附台籍正職保人"},
+            # 使用者 2026-10-14：「地區也可以判斷啊，限本島；新住民身分證背面也會寫他來自哪裡」
+            {"type": "simple", "label": "現居限台灣本島（澎湖／金門／連江／馬祖不做）",
+             "field": "live_city", "op": "not_contains", "value": ["澎湖", "金門", "連江", "馬祖"]},
+            {"type": "simple", "label": "新住民進件須附台籍正職保人", "op": "new_resident_guarantor"},
             {"type": "oneof", "label": "必備條件（擇一）", "options": [
                 {"type": "simple", "label": "同業繳息半年以上（附繳息資料）", "op": "debt_paid_ge", "value": 6,
                  "manual_check": "需附繳息資料"},
@@ -2896,6 +2899,84 @@ def _ensure_4tuple(fn):
     return wrapper
 
 
+def _customer_doc_judge(customer, kind: str) -> dict:
+    """這位客人最新一張「kind」判讀（勞保明細 labor／身分證背面 fields:身分證背面）；沒有回 {}。
+    放在客戶 dict 上快取，同一次 evaluate_case 只查一次"""
+    key = "_dj_" + kind
+    if isinstance(customer, dict) and key in customer:
+        return customer[key]
+    best, bid = {}, -1
+    idv = (customer.get("id_no") or "").strip() if customer else ""
+    if idv:
+        try:
+            for r in _docs_rows(idv):
+                j = _doc_judge(r)
+                if j.get("_kind") == kind and not j.get("error") and j.get("is_labor", True) and int(r.get("id") or 0) > bid:
+                    best, bid = j, int(r.get("id") or 0)
+        except Exception:
+            best = {}
+    if isinstance(customer, dict):
+        customer[key] = best
+    return best
+
+
+_LABOR_EXTRA_CHECK = ("薪轉", "紙本", "PDF", "軍公教", "營登", "401", "健保明細")
+
+
+def _labor_rule_verdict(rule, label, customer):
+    """勞保「滿幾個月」改看勞保明細判（使用者 2026-10-14：「勞保不是可以判斷了嗎」）。
+    回 (status, label, actual) 或 None（沒有明細／規則沒寫月數 → 照舊人工確認）。
+    ⛔ 明細是 AI 讀的：actual 一定寫「勞保明細」讓人知道從哪來；除了月數還有別的要確認（薪轉、紙本…）就仍是 ⚠️"""
+    L = _customer_doc_judge(customer, "labor")
+    cur = [c for c in (L.get("目前投保") or []) if isinstance(c, dict) and isinstance(c.get("加保滿幾個月"), int)]
+    if not cur:
+        return None
+    text = label + " " + str(rule.get("manual_check") or "")
+    want = (customer.get("eval_labor_ins") or "").strip()
+    main_ = ([c for c in cur if want and c.get("類型") == want] or sorted(cur, key=lambda c: -c["加保滿幾個月"]))[0]
+    months, unit = main_["加保滿幾個月"], main_.get("單位") or ""
+    need = None
+    if "工會" in str(main_.get("類型") or ""):
+        m_ = re.search(r"工會保[須滿要]*\s*(\d+)\s*年", text)
+        need = int(m_.group(1)) * 12 if m_ else None
+    if need is None:
+        m_ = re.search(r"滿\s*(\d+)\s*個月", text) or re.search(r"滿\s*(半)\s*年", text) or re.search(r"滿\s*([一1-9])\s*年", text)
+        if m_:
+            g = m_.group(1)
+            need = int(g) if "個月" in m_.group(0) else 6 if g == "半" else 12 * (1 if g == "一" else int(g))
+    if need is None:
+        return None
+    src = f"勞保明細：{unit} 保 {months} 個月"
+    if "部分工時" in text and main_.get("備註部分工時"):
+        return ("fail", label, f"勞保明細註記部分工時（{unit}）")
+    ok = months >= need
+    if not ok and "新轉" in text and L.get("接續"):
+        ok, src = True, src + f"，新轉、跟上一份接著（間隔 {L.get('間隔天數', '?')} 天）"
+    if not ok:
+        return ("fail", label, f"{src}（要滿 {need} 個月）")
+    extra = [k for k in _LABOR_EXTRA_CHECK if k in str(rule.get("manual_check") or "")]
+    if extra:
+        return ("manual", label + f"（勞保 ✓、還要確認：{rule['manual_check']}）", src)
+    return ("pass", label, src)
+
+
+_BOSS_WORDS = ("老闆", "老板", "負責人", "自營", "頭家", "董事長")
+
+
+def _self_employed_opt(opt, customer):
+    """擇一裡的「自營商／負責人」選項：看資料表職稱（使用者：自營商會寫在公司那邊，職稱是老闆或負責人）"""
+    role = (customer.get("company_role") or "").strip()
+    if not role:
+        return None
+    if any(w in role for w in _BOSS_WORDS):
+        return ("manual", opt.get("label", "") + (f" — {opt['hint']}" if opt.get("hint") else ""), f"職稱：{role}")
+    return ("fail", opt.get("label", ""), f"職稱「{role}」不是老闆／負責人")
+
+
+_TW_PLACES = ("臺", "台", "北", "新北", "桃", "中", "南", "高", "基", "竹", "苗", "彰", "投", "雲", "嘉", "屏", "宜", "花",
+              "東", "澎", "金門", "連江", "馬祖")
+
+
 @_ensure_4tuple
 def _check_rule(rule, customer):
     """單條規則比對、回 (status, label, actual_str, sub) 4-tuple
@@ -2913,8 +2994,15 @@ def _check_rule(rule, customer):
         any_pass = False
         any_manual = False  # 真實「auto ✓ + manual_check」才算
         any_unknown = False  # 沒填資料 → 升級成 manual（業務沒填 ≠ 客戶沒有）
+        auto_hit = False   # 有一項是「資料對上了、只差確認」（例：資料表寫公司保）
         for opt in rule.get("options", []):
-            s, l, a, _ = _check_rule(opt, customer)
+            v = (_self_employed_opt(opt, customer) if opt.get("type") == "manual"
+                 and any(w in opt.get("label", "") for w in ("自營商", "負責人")) else None)
+            s, l, a, _ = (*v, []) if v else _check_rule(opt, customer)
+            if opt.get("type") == "manual" and s == "manual" and auto_hit and not v:
+                continue      # 使用者 2026-10-14：資料表都寫勞保了，自營商那項不用再跳 ⚠️
+            if opt.get("type", "simple") == "simple" and s == "manual":
+                auto_hit = True
             sub_results.append({"status": s, "label": l, "actual": a})
             if s == "pass":
                 any_pass = True
@@ -2964,6 +3052,15 @@ def _check_rule(rule, customer):
             ok = _customer_has_car_any(customer)
             return ("pass" if ok else "fail", label, "有汽車" if ok else "沒有汽車")
         # 特殊 op：汽車不是老車（老車＝沒有天書，只有裕融信福貸能送，見 _OLD_CAR_AGE）
+        # 特殊 op：新住民（身分證背面「出生地」不是台灣）→ 要附台籍正職保人
+        if op == "new_resident_guarantor":
+            j = _customer_doc_judge(customer, "fields:身分證背面")
+            bp = str((j.get("欄位") or {}).get("出生地") or "").strip() if j else ""
+            if not bp:
+                return ("manual", label, "看身分證背面「出生地」")
+            if bp.startswith(_TW_PLACES):
+                return ("pass", label, f"出生地 {bp}，不是新住民")
+            return ("manual", label + "（新住民 → 要附台籍正職保人）", f"出生地 {bp}")
         if op in ("car_not_old", "car_only_old"):
             st = _customer_car_old_status(customer)
             price, _nf = _customer_car_book(customer)
@@ -3275,6 +3372,10 @@ def _check_rule(rule, customer):
                     return ("pass", label, actual_str)
             except (TypeError, ValueError):
                 pass
+        if ok and field == "eval_labor_ins" and rule.get("manual_check"):
+            v = _labor_rule_verdict(rule, label, customer)
+            if v:
+                return v
         if ok and rule.get("manual_check"):
             return ("manual", label + f"（自動 ✓、{rule['manual_check']}）", actual_str)
         return ("pass" if ok else "fail", label, actual_str)
@@ -3422,13 +3523,19 @@ def evaluate_case(customer):
             summary = "✅ 全部達標"
         _max = plan["max_amount"]
         _book_txt = ""
+        # 使用者 2026-10-14（陳秋蘭：和潤機車剩 14,040）：機車方案要先清前貸 → 實拿＝最高 − 前貸剩餘；
+        #   清完比亞太商品少就送商品、比較多就送機車（同一家挑實拿多的）
+        _net, _net_txt = plan["max_amount"], ""
+        if moto_remain > 0 and "機車" in plan["company"]:
+            _net = round(plan["max_amount"] - moto_remain / 10000, 1)
+            _net_txt = f"最高 {plan['max_amount']:g} 萬，清掉機車前貸 {moto_remain:,} 元後約 {_net:g} 萬"
         if plan.get("book_multiplier"):
             _bp, _ = _customer_car_book(customer)
             if _bp:
                 _amt = round(_bp * plan["book_multiplier"], 1)
                 if plan.get("book_cap"):
                     _amt = min(_amt, plan["max_amount"])
-                _max = _amt
+                _max = _net = _amt
                 _mul = plan["book_multiplier"]
                 _book_txt = (f"約 {_amt:g} 萬（車價 {_bp:g} 萬" + (f" × {_mul:g}" if _mul != 1 else "")
                              + "，前貸還沒扣）")
@@ -3436,7 +3543,7 @@ def evaluate_case(customer):
             # 使用者：勞保＋兩張信用卡（各兩期帳單）→ 40 萬；沒有 → 10 萬（memory required_docs_rules；原本寫死 14）
             _lab = (customer.get("eval_labor_ins") or "").strip() in ("公司保", "軍保", "公保")
             _card = _check_creditcard_status(customer)[0] == "good"
-            _max = 40 if (_lab and _card) else 10
+            _max = _net = 40 if (_lab and _card) else 10
             checks.append({"status": "manual" if _max == 40 else "pass",
                            "label": ("💰 有勞保＋信用卡 → 最高 40 萬（要兩張卡、各兩期帳單，請確認）" if _max == 40
                                      else "💰 沒有勞保＋兩張信用卡 → 最高 10 萬"), "actual": f"{_max} 萬"})
@@ -3445,7 +3552,10 @@ def evaluate_case(customer):
             "max_amount": _max,
             "amount_by_review": plan.get("amount_by_review", False),  # True＝max_amount 只是排序用、畫面不顯示金額
             # 沒有固定上限的方案：畫面寫這段（看天書／看鑑價／月薪 22 倍內／看客戶申請多少），⛔ 不寫「最高 X 萬」
-            "amount_text": _book_txt or plan.get("amount_text") or ("看審核" if plan.get("amount_by_review") else ""),
+            "amount_text": _book_txt or plan.get("amount_text") or ("看審核" if plan.get("amount_by_review") else "")
+                           or _net_txt,
+            # 清掉機車前貸後實拿（同一家挑方案用這個比，見 suggest_send_order）
+            "net_amount": _net,
             "priority": plan.get("priority", 0),
             "eligible": eligible,
             "checks": checks,
@@ -3534,7 +3644,8 @@ def suggest_send_order(results, customer):
     # ⚠️ 欄位值是「無勞保」不是「無」，不能用「有沒有填」判斷
     has_labor = labor in ("公司保", "軍保", "公保")
     # 同家族只排金額最大那個（SOP 1；實際 21機車25萬 跟 21商品 同排 0/122）
-    cand.sort(key=lambda r: (-r["max_amount"], -r["priority"]))
+    # 同一家挑「實拿」最多的：機車方案要扣掉清前貸的錢（net_amount，見 evaluate_case；使用者 2026-10-14）
+    cand.sort(key=lambda r: (-(r.get("net_amount") if r.get("net_amount") is not None else r["max_amount"]), -r["priority"]))
     picked, backup, seen_fam = [], [], set()
     for r in cand:
         co = r["company"]
@@ -19131,8 +19242,9 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
       var isCarOrBike = (fam === '21汽車' || fam === '裕融' || fam === '和潤' || r.company === '和潤汽車' || r.company === '和潤重機' || r.company.indexOf('21汽車') === 0);
       var detail = '';
       // 汽車/重機特別註記
-      if (isCarOrBike) {{
-        detail += '<div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:4px;padding:6px 8px;margin-bottom:6px;font-size:11px;color:#9a3412">💰 實際可貸金額依<b>天書/權威/鑑價</b>申請（鑑價 × 1.3）、無固定上限</div>';
+      // 金額說明照後端給的（看天書／約 24.7 萬…）；⛔ 不要再寫死「無固定上限」—— 信福貸是老車 10 萬（使用者 2026-10-14）
+      if (r.amount_text) {{
+        detail += '<div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:4px;padding:6px 8px;margin-bottom:6px;font-size:11px;color:#9a3412">💰 金額' + r.amount_text + '</div>';
       }}
       if (r.checks && r.checks.length) {{
         detail += '<ul style="margin:4px 0 0;padding-left:22px;font-size:12px;color:#374151">';
@@ -19162,9 +19274,8 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
       html += '<summary style="font-size:13px;font-weight:600;cursor:pointer;list-style:none">';
       html += icon + ' ' + r.company;
       // 同家族不重複顯示金額（汽車/銀行類略過）
-      if (!isCarOrBike && fam !== '銀行' && fam !== '民間') {{
-        html += ' — ' + (r.amount_text ? '金額' + r.amount_text : r.max_amount + '萬');
-      }}
+      if (r.amount_text) html += ' — 金額' + r.amount_text;
+      else if (!r.amount_by_review) html += ' — 最高 ' + r.max_amount + '萬';
       if (r.eligible === 'manual') html += ' <span style="color:#92400e;font-size:11px;font-weight:400">(需確認)</span>';
       if (r.eligible === false && r.private_blocked) html += ' <span style="color:#dc2626;font-size:11px;font-weight:400">(私設不可送)</span>';
       html += '</summary>';
