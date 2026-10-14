@@ -1881,6 +1881,37 @@ _r87, _ = _ev84(eval_property="1汽1機", unloan_vehicles='[{"type": "汽車", "
 _fb = [x for x in _r87.values() if x["company"].startswith("分貝") and x["eligible"] in (True, "manual")]
 check("分貝可送的只有一個是要送的（金額最高）", sum(1 for x in _fb if x.get("family_pick")) == 1
       and max(_fb, key=lambda x: x["max_amount"]).get("family_pick"), [(x["company"], x.get("family_pick")) for x in _fb])
+# ========== 使用者 2026-10-14：「自我盤點所有漏掉可以判斷的，照片、客戶資料表有打的基本上都可以判斷，除非沒給的資料」 ==========
+_car87 = dict(eval_property="1汽1機", unloan_vehicles='[{"type": "汽車", "year": "2020", "tp": "19"}, {"type": "機車", "year": "2020"}]')
+check("21汽車「車輛須在天書／權威」：行政填了車價 → ✅", _sub(_ev84(**_car87)[0], "21汽車C", "天書")["status"] == "pass")
+check("21汽車「車輛須在天書／權威」：查不到 → ❌", _sub(_ev84(eval_property="1汽", unloan_vehicles='[{"type": "汽車", "year": "2020", "tp": "查不到"}]')[0],
+                                              "21汽車C", "天書")["status"] == "fail")
+check("和潤「警示戶撥款撥二等親」：不是警示戶 → ✅（不適用）", _sub(_ev84(**_car87)[0], "和潤汽車", "警示戶撥款")["status"] == "pass")
+check("和潤「警示戶撥款撥二等親」：警示戶寫現金或朋友 → ❌",
+      _sub(_ev84(eval_alert_warning="是", eval_alert_warning_method="現金或朋友", **_car87)[0], "和潤汽車", "警示戶撥款")["status"] == "fail")
+_ph = dict(live_phone="037123456", contact1_phone="0912000001", contact2_phone="0912000002")
+check("東豐「電話合計 3 支」：資料表有 3 支 → ✅", _sub(_ev84(**_ph)[0], "東豐小額信貸", "3 支")["status"] == "pass")
+check("東豐「電話合計 3 支」：只有 1 支 → ⚠️ 要補", _sub(_ev84(contact1_phone="0912000001")[0], "東豐小額信貸", "3 支")["status"] == "manual")
+check("喬美「商品 2 選 1」：有機車 → ✅ 用機車", _sub(_ev84()[0], "喬美", "商品 2 選 1")["status"] == "pass")
+_s = _sub(_ev84(debt_list='[{"co": "21汽車", "dy": "動保", "sp": "有", "pa": "3"}]', eval_property="1汽1機")[0], "麻吉手機", "21 汽車核准")
+check("麻吉「近半年 21 汽車核准」：負債表 21汽車 繳 3 期 → ✅", _s["status"] == "pass", _s)
+check("麻吉「近半年 21 汽車核准」：負債表沒有 → ❌", _sub(_ev84()[0], "麻吉手機", "21 汽車核准")["status"] == "fail")
+check("融易「正職滿 2 年」：勞保明細 30 個月 → ✅", _sub(_ev84(_dj_labor=_lab(30))[0], "融易機車資優專案", "正職滿")["status"] == "pass")
+check("融易「正職滿 2 年（負責人不認定）」：職稱老闆 → ❌", _sub(_ev84(company_role="老闆")[0], "融易機車資優專案", "正職滿")["status"] == "fail")
+_r88, _ = _ev84(birth_date=f"{_y-19:03d}/01/01", marriage="未婚", contact1_relation="母", contact1_known="可知情")
+check("麻吉「未滿 20 歲須法代知情」：19 歲、媽媽可知情 → ✅", _sub(_r88, "麻吉機車", "法代")["status"] == "pass")
+_r88, _ = _ev84(birth_date=f"{_y-19:03d}/01/01", marriage="已婚")
+check("麻吉「未滿 20 歲須法代知情」：19 歲已婚 → ✅（已婚視同成年）", _sub(_r88, "麻吉機車", "法代")["status"] == "pass")
+check("和裕「45~55 歲必須勞保滿 1 年」：50 歲、勞保 20 個月 → ✅",
+      _sub(_ev84(birth_date=f"{_y-50:03d}/01/01", _dj_labor=_lab(20))[0], "和裕機車", "45~55")["status"] == "pass")
+check("和裕「45~55 歲必須勞保滿 1 年」：50 歲、勞保 5 個月 → ❌",
+      _sub(_ev84(birth_date=f"{_y-50:03d}/01/01", _dj_labor=_lab(5))[0], "和裕機車", "45~55")["status"] == "fail")
+check("鄉民「勞保明細」：證件有收到 → ✅", _sub(_ev84(_dj_cats={"勞保明細": 1})[0], "鄉民", "勞保明細")["status"] == "pass")
+check("鄉民「先問信用報告」：收到信用報告 → ✅", _sub(_ev84(_dj_cats={"信用報告": 1})[0], "鄉民", "信用報告")["status"] == "pass")
+check("鄉民「先問信用報告」：沒收到 → 照舊 ⚠️", _sub(_ev84(_dj_cats={})[0], "鄉民", "信用報告")["status"] == "manual")
+_s = _sub(_ev84(eval_property="不動產", _dj_cats={"權狀或謄本": 1})[0], "和裕機車", "不動產")
+check("「有不動產、須提供權狀」：權狀收到了 → ✅", _s is None or _s["status"] in ("pass",), _s)
+check("中租「老車專案不做」改成說明（老車那條已經自動判）", _sub(_ev84(**_car87)[0], "中租汽車", "老車專案不做")["status"] == "info")
 # 使用者 2026-10-14：「戶籍地也可以判別她住哪裡」
 _r84, _ = _ev84(live_city="", reg_city="澎湖縣")
 check("現居沒填、戶籍澎湖 → 東豐 ❌（看戶籍）", _r84["東豐小額信貸"]["eligible"] is False)

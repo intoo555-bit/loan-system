@@ -1922,7 +1922,7 @@ PLAN_ELIGIBILITY_RULES = [
             {"type": "simple", "label": "現居須在台灣本島（澎湖/金門/連江/馬祖皆不做、戶籍在外島可、看現居）",
              "field": "live_city", "op": "not_contains", "value": ["澎湖", "金門", "連江", "馬祖"]},
             {"type": "simple", "label": "至少 2 位聯絡人、其中 1 位為二等親", "op": "any_contact_2nd_kin"},
-            {"type": "manual", "label": "⚠️ 會設定機車（私設）"},
+            {"type": "info", "label": "⚠️ 會設定機車（私設）"},
             {"type": "manual", "label": "正職滿 2 年（負責人不認定）", "hint": "要附勞保明細"},
             {"type": "info", "label": "💡 額度：符 1 項→10萬/18期、2 項→20萬/24期、3 項→30萬/36期、4 項→40萬/36期（必備的「正職滿 2 年」也算 1 項，使用者 2026-10-14）"},
             {"type": "manual", "label": "符項條件（3 選 N）",
@@ -1942,7 +1942,7 @@ PLAN_ELIGIBILITY_RULES = [
             {"type": "simple", "label": "現居須在台灣本島（澎湖/金門/連江/馬祖皆不做、戶籍在外島可、看現居）",
              "field": "live_city", "op": "not_contains", "value": ["澎湖", "金門", "連江", "馬祖"]},
             {"type": "simple", "label": "至少 2 位聯絡人、其中 1 位為二等親", "op": "any_contact_2nd_kin"},
-            {"type": "manual", "label": "⚠️ 會設定機車（私設）"},
+            {"type": "info", "label": "⚠️ 會設定機車（私設）"},
             {"type": "manual", "label": "申請人若無薪轉/勞保/軍保/公保 → 須附工作現勘照 + 往存或薪資條/袋"},
             {"type": "info", "label": "💡 額度：符 1 項→5萬/18期、2 項→10萬/24期、3 項→15萬/36期"},
             {"type": "manual", "label": "符項條件（12 選 N）",
@@ -2057,7 +2057,7 @@ PLAN_ELIGIBILITY_RULES = [
             # 2026-10-14 使用者：19 萬 × 1.4 = 26.6 萬（10-13 原本寫成「天書要有想貸金額的 1.4 倍」，是反過來的）
             {"type": "info", "label": "💡 可貸 ≈ 天書／權威車價 × 1.4（例 19 萬 × 1.4 = 26.6 萬）",
              "hint": "例：想貸 50 萬 → 天書要 70 萬以上；可貸多少要看天書跟汽車前貸"},
-            {"type": "manual", "label": "🚫 老車專案不做"},
+            {"type": "info", "label": "🚫 老車專案不做（已由「汽車不是老車」那條自動判）"},
         ],
         "required_docs": ["記事本申請表", "身分證正反", "第二證件（健保卡/駕照）", "存摺封面", "勞保（一週內）",
                           "汽車行照", "汽車截圖", "天書截圖", "加分項目（信用卡、證照、公司上市櫃截圖）"],
@@ -2957,9 +2957,12 @@ def _labor_rule_verdict(rule, label, customer):
     days = L.get("明細幾天前印的")
     if isinstance(days, int) and days > 7:
         return ("manual", label + f"（勞保 ✓，但明細 {days} 天前印的，超過一週要重拉）", src)
-    extra = [k for k in _LABOR_EXTRA_CHECK if k in str(rule.get("manual_check") or "")]
+    mc = re.sub(r"[、，]?\s*或[^、，+＋]*", "", str(rule.get("manual_check") or ""))   # 「或薪轉滿 3 個月」＝另一條路
+    if want not in ("軍保", "公保"):
+        mc = re.sub(r"（軍公教[^）]*）", "", mc)
+    extra = [k for k in _LABOR_EXTRA_CHECK if k in mc]
     if extra:
-        return ("manual", label + f"（勞保 ✓、還要確認：{rule['manual_check']}）", src)
+        return ("manual", label + f"（勞保 ✓、還要確認：{'、'.join(extra)}）", src)
     return ("pass", label, src)
 
 
@@ -3020,6 +3023,141 @@ def _hold_rule_verdict(label, customer):
     return ("manual", label.replace("（業務需確認）", "") + f"（未滿 → {ask}）", src)
 
 
+def _customer_doc_cats(customer) -> dict:
+    """這位客人已經收到的證件分類 → 張數（行政改過的分類優先，見 _doc_label）"""
+    key = "_dj_cats"
+    if isinstance(customer, dict) and key in customer:
+        return customer[key]
+    out = {}
+    idv = (customer.get("id_no") or "").strip() if customer else ""
+    if idv:
+        try:
+            for r in _docs_rows(idv):
+                if not _doc_is_contract(r):
+                    out[r["show_label"]] = out.get(r["show_label"], 0) + 1
+        except Exception:
+            out = {}
+    if isinstance(customer, dict):
+        customer[key] = out
+    return out
+
+
+def _labor_months(customer):
+    """勞保明細目前那份保幾個月（沒有明細回 None）"""
+    L = _customer_doc_judge(customer, "labor")
+    cur = [c for c in (L.get("目前投保") or []) if isinstance(c, dict) and isinstance(c.get("加保滿幾個月"), int)]
+    if not cur:
+        return None
+    want = (customer.get("eval_labor_ins") or "").strip()
+    main_ = ([c for c in cur if want and c.get("類型") == want] or sorted(cur, key=lambda c: -c["加保滿幾個月"]))[0]
+    return main_["加保滿幾個月"], main_.get("單位") or ""
+
+
+# 人工確認的條件裡「要附 X 文件」→ 看證件存檔有沒有收到（使用者 2026-10-14：照片、客戶資料表有的全部都要判斷，除非沒給）
+#   (關鍵字們, 要的分類們, all／any)
+_MANUAL_DOC_RULES = [
+    (("權狀",), ("權狀或謄本",), "any"),
+    (("勞保明細",), ("勞保明細",), "any"),
+    (("信用報告", "聯徵"), ("信用報告",), "any"),
+    (("信用卡帳單", "近 2 期帳單", "近 2 期完整帳單"), ("信用卡帳單",), "any"),
+    (("存摺內頁", "存摺明細", "薪轉或存摺", "薪資條"), ("存摺內頁明細", "薪資證明"), "any"),
+    (("營登", "401"), ("401報表或營登",), "any"),
+    (("店面照", "工作照", "現勘照"), ("店面／工作照",), "any"),
+    (("繳款收據", "繳息聯徵"), ("汽車繳息", "貸款證明", "信用報告"), "any"),
+]
+
+
+def _manual_doc_verdict(label, customer):
+    for keys, cats, mode in _MANUAL_DOC_RULES:
+        if any(k in label for k in keys):
+            have = _customer_doc_cats(customer)
+            got = [c for c in cats if have.get(c)]
+            if (mode == "any" and got) or (mode == "all" and len(got) == len(cats)):
+                return ("pass", label, "已收到：" + "、".join(f"{c} {have[c]} 張" for c in got))
+            return ("manual", label, "還沒收到：" + "／".join(cats))
+    return None
+
+
+def _auto_manual(label, customer):
+    """「需人工確認」的條件：資料表或照片判斷得出來的就直接判（使用者 2026-10-14 自我盤點）。
+    ⛔ 判不出來（資料沒給、規則表那種『N 項選 2』）回 None，照舊人工確認"""
+    c = customer or {}
+    # 汽車有沒有在天書／權威：行政查的車價（見 _customer_car_book）
+    if "天書" in label and "權威" in label:
+        price, nf = _customer_car_book(c)
+        if price:
+            return ("pass", label, f"天書／權威 {price:g} 萬")
+        if nf:
+            return ("fail", label, "行政查過，天書權威都查不到")
+        return None
+    # 警示戶撥款要撥二等親（和潤）
+    if "警示戶撥款" in label and "二等親" in label:
+        aw = (c.get("eval_alert_warning") or "").strip()
+        if aw == "否":
+            return ("pass", label, "不是警示戶，不適用")
+        if aw == "是" and "二等親" in (c.get("eval_alert_warning_method") or ""):
+            return ("pass", label, "撥款方式：撥二等親")
+        if aw == "是" and c.get("eval_alert_warning_method"):
+            return ("fail", label, f"撥款方式寫「{c['eval_alert_warning_method']}」，和潤要撥二等親")
+        return None
+    # 住家電話＋聯絡人電話合計 3 支（東豐）—— 只能算有幾支，能不能接通還是要打
+    if "電話" in label and "3 支" in label:
+        n = sum(1 for k in ("live_phone", "reg_phone", "contact1_phone", "contact2_phone", "contact3_phone")
+                if str(c.get(k) or "").strip())
+        return (("pass", label, f"資料表有 {n} 支電話（能不能接通要打打看）") if n >= 3
+                else ("manual", label, f"資料表只有 {n} 支電話，要補到 3 支"))
+    # 負債表要填完整（東豐）
+    if "負債表要填完整" in label:
+        if _json_list(c.get("debt_list")) or str(c.get("eval_property") or "").strip():
+            return ("pass", label, "負債表／動產有填")
+        return None
+    # 喬美商品 2 選 1：有機車就用機車
+    if "商品 2 選 1" in label:
+        has_moto = "機" in str(c.get("eval_property") or "") or any(
+            isinstance(v, dict) and v.get("type") == "機車" for v in _json_list(c.get("unloan_vehicles"))) or any(
+            isinstance(d, dict) and "機車" in str(d.get("co") or "") for d in _json_list(c.get("debt_list")))
+        return ("pass", label, "名下有機車 → 用機車（行照＋前後合照）") if has_moto else None
+    # 近半年有 21 汽車核准紀錄（麻吉）→ 看負債表有沒有 21 汽車、繳不到 6 期
+    if "21 汽車核准" in label:
+        rows = [d for d in _json_list(c.get("debt_list")) if isinstance(d, dict)
+                and str(d.get("co") or "").startswith(("21", "二十一")) and "汽" in str(d.get("co") or "")]
+        for d in rows:
+            try:
+                if int(str(d.get("pa") or "99")) <= 6:
+                    return ("pass", label, f"負債表 {d.get('co')} 已繳 {d.get('pa')} 期")
+            except ValueError:
+                pass
+        return ("fail", label, "負債表沒有半年內的 21 汽車") if _json_list(c.get("debt_list")) or c.get("eval_property") else None
+    # 正職滿 2 年（負責人不認定）（融易）→ 勞保明細＋職稱
+    if "正職滿" in label and "負責人不認定" in label:
+        role = (c.get("company_role") or "").strip()
+        if role and any(w in role for w in _BOSS_WORDS):
+            return ("fail", label, f"職稱「{role}」是負責人，不認定")
+        lm = _labor_months(c)
+        if lm:
+            m_ = re.search(r"滿\s*(\d+)\s*年", label)
+            need = int(m_.group(1)) * 12 if m_ else 24
+            return (("pass" if lm[0] >= need else "fail"), label, f"勞保明細：{lm[1]} 保 {lm[0]} 個月")
+        return None
+    # 未滿 20 歲須法代知情（已婚視同成年）（麻吉）
+    if "法代知情" in label:
+        age = _calc_age_from_birth(c.get("birth_date") or "")
+        if age is None:
+            return None
+        if age >= 20 or "已婚" in str(c.get("marriage") or ""):
+            return ("pass", label, f"{age} 歲" + ("、已婚" if age < 20 else ""))
+        for i in ("1", "2"):
+            if str(c.get(f"contact{i}_relation") or "") in ("父", "母", "父親", "母親") and \
+                    "可知情" in str(c.get(f"contact{i}_known") or ""):
+                return ("pass", label, f"{age} 歲，聯絡人{i}（{c.get(f'contact{i}_relation')}）可知情")
+        return ("manual", label, f"{age} 歲，聯絡人沒有可知情的父或母")
+    # 營登／自營商（不在擇一裡的）：職稱不是老闆就不適用
+    if ("營登" in label or "自營商" in label) and (c.get("company_role") or "").strip() and \
+            not any(w in c["company_role"] for w in _BOSS_WORDS):
+        return ("fail", label, f"職稱「{c['company_role']}」不是老闆／負責人")
+    return _manual_doc_verdict(label, c)
+
+
 _BOSS_WORDS = ("老闆", "老板", "負責人", "自營", "頭家", "董事長")
 
 
@@ -3044,7 +3182,7 @@ def _check_rule(rule, customer):
     if rt == "info":
         return ("info", label + (f" — {rule['hint']}" if rule.get("hint") else ""), "")
     if rt == "manual":
-        v = _hold_rule_verdict(label, customer)
+        v = _hold_rule_verdict(label, customer) or _auto_manual(label, customer)
         if v:
             return v
         return ("manual", label + (f" — {rule['hint']}" if rule.get("hint") else ""), "需人工確認")
@@ -3444,11 +3582,24 @@ def _check_rule(rule, customer):
                     return ("pass", label, actual_str)
             except (TypeError, ValueError):
                 pass
+        if ok and field == "age" and "法代知情" in label:      # 麻吉：年齡條件掛的人工確認 → 看婚姻／聯絡人
+            v = _auto_manual(label, customer)
+            if v:
+                return v
+        if ok and field == "age" and "勞保滿" in label:
+            lm = _labor_months(customer)
+            m_ = re.search(r"勞保滿\s*(\d+)\s*年", label)
+            if lm and m_:
+                need = int(m_.group(1)) * 12
+                return (("pass" if lm[0] >= need else "fail"), label, f"{actual} 歲；勞保明細：{lm[1]} 保 {lm[0]} 個月")
         if ok and field == "eval_labor_ins" and rule.get("manual_check"):
             v = _labor_rule_verdict(rule, label, customer)
             if v:
                 return v
         if ok and rule.get("manual_check"):
+            dv = _manual_doc_verdict(rule["manual_check"], customer)     # 「須提供權狀」這種：收到了就不用再確認
+            if dv and dv[0] == "pass":
+                return ("pass", label, f"{actual_str}；{dv[2]}")
             return ("manual", label + f"（自動 ✓、{rule['manual_check']}）", actual_str)
         return ("pass" if ok else "fail", label, actual_str)
     return ("unknown", label, "未知規則類型")
