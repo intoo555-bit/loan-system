@@ -3438,6 +3438,20 @@ def _order_missing_info(customer) -> list:
     return miss
 
 
+# 新住民（拿居留證、沒有中華民國身分證）只能送：汽車、銀行、零卡、民間（使用者 2026-10-14）
+_ARC_OK_PLANS = ("銀行", "零卡(C)", "商品貸", "代書", "當舖", "南亞")
+
+
+def _is_arc_customer(customer) -> bool:
+    idv = (customer.get("id_no") or "").strip().upper()
+    return bool(idv) and not re.fullmatch(r"[A-Z][12]\d{8}", idv)
+
+
+def _arc_plan_ok(company: str) -> bool:
+    return (company in _ARC_OK_PLANS or "汽車" in company or company.startswith("裕融")
+            or company in ("汽機車二胎", "興達汽機車二胎"))
+
+
 def evaluate_case(customer):
     """跑所有規則、回排序好的方案清單 + 私設狀態
 
@@ -3456,13 +3470,17 @@ def evaluate_case(customer):
     moto_remain = _customer_motorcycle_loan_remaining(customer)
 
     results = []
+    _arc = _is_arc_customer(customer)
     for plan in PLAN_ELIGIBILITY_RULES:
+        _arc_ok = _arc_plan_ok(plan["company"])
         checks = []
         has_simple_fail = False  # 硬條件失敗（年齡/身分證/有汽車 等）
         has_oneof_fail = False   # 擇一條件失敗
         manual_count = 0
         for rule in plan["rules"]:
             status, label, actual, sub = _check_rule(rule, customer)
+            if _arc and _arc_ok and rule.get("op") == "tw_id" and status == "fail":
+                status, actual = "pass", "居留證（新住民可以送這家）"
             checks.append({"status": status, "label": label, "actual": actual, "sub": sub})
             if status == "fail":
                 rt = rule.get("type", "")
@@ -3475,6 +3493,10 @@ def evaluate_case(customer):
             elif status in ("manual", "unknown"):
                 manual_count += 1
 
+        # 新住民只能送汽車／銀行／零卡／民間（使用者 2026-10-14）
+        if _arc and not _arc_ok:
+            checks.append({"status": "fail", "label": "🚫 新住民（居留證）只能送汽車、銀行、零卡、民間", "actual": "居留證"})
+            has_simple_fail = True
         # 私設處理：確認私設 + 不在 PRIVATE_OK_PLANS → 強制標 fail
         private_blocked = False
         if has_private and plan["company"] not in PRIVATE_OK_PLANS:
