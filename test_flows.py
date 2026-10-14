@@ -1713,11 +1713,14 @@ _r, _o, _b = _so(unloan_vehicles="[]", eval_property="")
 check("負債／車輛都沒填、動產也沒寫 → 不排", not _o and any("負債明細／車輛" in x for x in _r["missing_info"]), _r["missing_info"])
 _r, _o, _b = _so(unloan_vehicles="[]", eval_property="無")
 check("沒有車、動產寫「無」→ 算填了，照排", not _r["missing_info"] and _o, _r["missing_info"])
-# 21機車25萬：機車有貸款就不做（只有亞太機車做；使用者 2026-10-14）
+# 21機車25萬：機車貸款有設動保就不做（只有亞太機車做）；沒設動保可以排（使用者 2026-10-14）
+_r, _o, _b = _so(unloan_vehicles="[]", debt_list=json.dumps([{"co": "和裕機車", "dy": "動保", "sp": "有", "yr": "2020"}], ensure_ascii=False))
+_res = {x["company"]: x for x in _r["results"]}
+check("機車貸款有設動保 → 21機車25萬 不排", _res["21機車25萬"]["eligible"] is False and "21機車25萬" not in _o,
+      (_res["21機車25萬"]["eligible"], _o))
 _r, _o, _b = _so(unloan_vehicles="[]", debt_list=json.dumps([{"co": "和裕機車", "dy": "無", "sp": "有", "yr": "2020"}], ensure_ascii=False))
 _res = {x["company"]: x for x in _r["results"]}
-check("機車有貸款（就算沒設動保）→ 21機車25萬 不排", _res["21機車25萬"]["eligible"] is False and "21機車25萬" not in _o,
-      (_res["21機車25萬"]["eligible"], _o))
+check("機車貸款沒設動保 → 21機車25萬 可以排", _res["21機車25萬"]["eligible"] is not False, _res["21機車25萬"])
 check("有勞保 → 排代書、不排當鋪", "代書" in _o and "當舖" not in _o, _o)
 check("南亞在代書前面", _o.index("南亞") < _o.index("代書"), _o)
 check("融易是少送方案 → 放備選、不進順序", not any(x.startswith("融易") for x in _o) and any(x.startswith("融易") for x in _b), (_o, _b))

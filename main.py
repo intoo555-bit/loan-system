@@ -1217,9 +1217,9 @@ PLAN_ELIGIBILITY_RULES = [
             {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
             {"type": "simple", "label": "至少 2 位聯絡人、其中 1 位為二等親屬", "op": "any_contact_2nd_kin"},
             {"type": "simple", "label": "車齡 ≤ 15 年", "field": "vehicle_year", "op": "year_age_le", "value": 15},
-            # ⛔ 使用者 2026-10-14：機車有貸款 21機車25萬就不做（只有亞太機車有做），除非客戶自己清前貸 —— 客人通常沒錢清
-            #    原本用 not_has_dynbao（只看動保）→ 沒設動保的機車貸款會被當成沒貸款排進來
-            {"type": "simple", "label": "機車沒有貸款（有貸款不做，除非客戶自己清前貸）", "op": "no_motorcycle_loan",
+            # 使用者 2026-10-14：機車貸款「有設動保」21機車25萬不做（只有亞太機車做，除非客戶自己清前貸，客人通常沒錢清）；
+            #   ⭐ 沒設動保可以排（銀行查不到）→ 用 not_has_dynbao，⛔ 不要改成「有任何機車貸款就不行」
+            {"type": "simple", "label": "原融（機車無貸款）", "op": "not_has_dynbao",
              "manual_check": "確認要貸的機車本身沒貸款"},
             {"type": "simple", "label": "警示戶需補保人（自動偵測）", "op": "alert_warning_need_guarantor"},
             {"type": "oneof", "label": "財務能力（擇一）", "options": [
@@ -2876,15 +2876,6 @@ def _check_rule(rule, customer):
                 return ("pass", label, f"有近月從 {'/'.join(cos)} 撥款")
             return ("fail", label, f"無近月從 {'/'.join(cos)} 撥款")
         # 機車有空間（debt_list 機車 sp=有 or 無動保 / unloan_vehicles 有機車）
-        if op == "no_motorcycle_loan":   # 負債表有任何一筆機車貸款（不管有沒有動保）→ 不行
-            try:
-                debts = json.loads(customer.get("debt_list") or "[]") or []
-            except Exception:
-                debts = []
-            moto = [d.get("co") or "?" for d in debts if isinstance(d, dict) and "機車" in (d.get("co") or "")]
-            if moto:
-                return ("fail", label, f"機車有貸款（{'、'.join(moto)}）")
-            return ("pass", label, "負債表沒有機車貸款")
         if op == "motorcycle_has_space":
             if _customer_has_motorcycle_with_space(customer):
                 return ("pass", label, "名下有可用機車")
