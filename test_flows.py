@@ -3076,13 +3076,27 @@ _dr, _dj = m._docs_rows, m._doc_judge
 m._docs_rows = lambda idv: [{"show_label": "行照", "id": 1}, {"show_label": "行照", "id": 2}]
 m._doc_judge = lambda r: {"欄位": {"車牌": "NTV-9226", "排氣量": "124", "顏色": "藍灰"}} if r["id"] == 1 else     {"欄位": {"車牌": "6555-TW", "排氣量": "1998", "顏色": "白"}}
 _lic_html = m._adminb_license_html({"id_no": "X"}, "admin")
-check("機車額外資料：只帶機車行照（124cc），汽車行照（1998cc）不帶", "機車行照 NTV-9226（124cc）" in _lic_html
-      and "6555-TW" not in _lic_html, _lic_html[:300])
+# 使用者 2026-10-14：「亞太也是有汽車行照」→ 兩張都能選；送機車方案機車排前面、送汽車方案汽車排前面
+check("車輛額外資料：機車、汽車行照都能選，標明車種", "機車行照 NTV-9226（124cc）" in _lic_html and "汽車行照 6555-TW（1998cc）" in _lic_html, _lic_html[:300])
+check("送機車方案 → 機車行照排第一個", _lic_html.index("NTV-9226") < _lic_html.index("6555-TW"))
+_lic_html = m._adminb_license_html({"id_no": "X", "current_company": "亞太汽車25萬"}, "admin")
+check("送亞太汽車 → 汽車行照排第一個（預設帶汽車）", _lic_html.index("6555-TW") < _lic_html.index("NTV-9226"), _lic_html[:300])
 m._doc_judge = lambda r: {"欄位": {"車牌": "6555-TW", "排氣量": "1998"}}
 m._docs_rows = lambda idv: [{"show_label": "行照", "id": 2}]
 _lic_html = m._adminb_license_html({"id_no": "X"}, "admin")
-check("只有汽車行照 → 寫「這區是機車的資料」，不帶", "這區是" in _lic_html and "licFill" not in _lic_html, _lic_html[:300])
+check("只有汽車行照 → 照樣可以帶（亞太汽車要用）", "汽車行照 6555-TW" in _lic_html and "licFill" in _lic_html, _lic_html[:300])
 m._docs_rows, m._doc_judge = _dr, _dj
+# 使用者 2026-10-14：「行業類別那些沒有自動判斷喔」→ 依公司名／職稱推（關鍵字，推不出就不選）
+for _cn, _want in (("嘉合小吃店", "餐飲與服務業"), ("台積電科技股份有限公司", "科技與資訊"), ("新竹貨運", "運輸與物流"),
+                   ("大同營造", "建築與營造"), ("國軍", "軍警與公教"), ("長庚醫院", "醫療與教育"), ("永豐實業", "製造業"), ("XYZ", "")):
+    check(f"行業類別：{_cn} → {_want or '推不出來（不選）'}", m._guess_kw(_cn, m._AT_INDUSTRY_KW) == _want, m._guess_kw(_cn, m._AT_INDUSTRY_KW))
+for _rl, _want in (("老闆", "自營與自由"), ("店長", "管理與經營"), ("作業員", "勞力與現場"), ("業務", "銷售與業務"),
+                   ("護理師", "教學與醫護"), ("行政助理", "行政與內勤"), ("工程師", "技術與工程")):
+    check(f"職務：{_rl} → {_want}", m._guess_kw(_rl, m._AT_ROLE_KW) == _want, m._guess_kw(_rl, m._AT_ROLE_KW))
+_gh = m._adminb_guess_html({"company_name": "嘉合小吃店", "company_role": "老闆"})
+check("行政B：還沒選的先選好（黃色、要按儲存）", "餐飲與服務業" in _gh and "自營與自由" in _gh)
+check("行政B：已經選過的不蓋", m._adminb_guess_html({"company_name": "嘉合小吃店", "company_role": "老闆",
+                                                   "adminb_industry": "其他", "adminb_role": "其他"}) == "")
 _r = _tc93.get("/archive/accounts")
 check("對照頁有一格可以自己打官方賴名稱", "自己打官方賴名稱" in _r.text)
 _r = _tc93.post("/archive/accounts", data={"a0": "自己打的官方賴", "g0": "TEST_B"}, follow_redirects=False)

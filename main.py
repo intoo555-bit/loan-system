@@ -19312,6 +19312,56 @@ _LICENSE_TO_ADMINB = [("廠牌", "at_brand"), ("車牌", "at_plate"), ("車輛�
                       ("排氣量", "at_disp"), ("顏色", "at_color"), ("車身號碼", "at_body"), ("出廠年月", "at_mfg")]
 
 
+# 亞太申請書的「行業類別」「職務」下拉 ← 資料表的公司名／行業／職稱（關鍵字推，⛔ 推不出來就留空，不亂選）
+_AT_INDUSTRY_KW = [
+    ("軍警與公教", ("軍", "警", "國軍", "公所", "公務", "區公所", "市政府", "縣政府", "消防")),
+    ("醫療與教育", ("醫院", "診所", "藥局", "護理", "長照", "學校", "國小", "國中", "高中", "大學", "補習", "幼兒園", "托嬰", "教育")),
+    ("金融與保險業", ("銀行", "保險", "證券", "金控", "壽險", "產險")),
+    ("科技與資訊", ("科技", "資訊", "電腦", "軟體", "網路", "電子", "半導體", "通訊")),
+    ("運輸與物流", ("物流", "貨運", "運輸", "快遞", "客運", "計程車", "交通", "倉儲", "搬家", "外送")),
+    ("建築與營造", ("營造", "建設", "建築", "工程行", "水電", "裝潢", "土木", "鐵工", "油漆", "鋁門窗", "冷氣")),
+    ("餐飲與服務業", ("餐", "飲", "小吃", "麵", "咖啡", "早餐", "便當", "火鍋", "燒烤", "美容", "美髮", "美甲", "按摩", "旅館",
+                     "飯店", "洗車", "清潔", "保全", "服務")),
+    ("製造業", ("工業", "製造", "工廠", "加工", "機械", "實業", "塑膠", "紡織", "鋼鐵", "食品廠", "金屬", "化工", "廠")),
+    ("批發與零售業", ("商行", "企業社", "百貨", "超商", "便利", "全聯", "家樂福", "零售", "批發", "量販", "門市", "賣場", "商店")),
+    ("農林漁牧業", ("農", "漁", "牧", "果園", "茶園", "養殖")),
+]
+_AT_ROLE_KW = [
+    ("自營與自由", ("老闆", "老板", "負責人", "自營", "頭家", "攤販", "外送", "自由")),
+    ("管理與經營", ("經理", "主任", "店長", "主管", "課長", "廠長", "副理", "協理", "組長", "董事")),
+    ("教學與醫護", ("老師", "教師", "講師", "護理", "護士", "醫師", "藥師", "照服", "看護")),
+    ("技術與工程", ("工程師", "技術員", "維修", "技師", "設計")),
+    ("財務與專業", ("會計", "財務", "專員", "法務", "代書", "保險業務員")),
+    ("銷售與業務", ("業務", "銷售", "門市", "店員", "銷售員", "收銀")),
+    ("行政與內勤", ("行政", "助理", "文書", "客服", "內勤", "秘書", "櫃台", "櫃檯")),
+    ("勞力與現場", ("作業員", "技工", "司機", "工人", "師傅", "搬運", "廚師", "學徒", "操作員", "包裝", "工讀", "店員", "臨時工",
+                   "清潔", "保全", "外場", "內場")),
+]
+
+
+def _guess_kw(text: str, table) -> str:
+    t = str(text or "")
+    for opt, kws in table:
+        if any(k in t for k in kws):
+            return opt
+    return ""
+
+
+def _adminb_guess_html(customer) -> str:
+    """行業類別／職務：還沒選的，依資料表推一個先選上（黃色），行政核對後按儲存才算（同行照帶入）"""
+    if not customer:
+        return ""
+    ind = "" if customer.get("adminb_industry") else _guess_kw(
+        " ".join(str(customer.get(k) or "") for k in ("company_industry", "company_name_detail", "company_name")), _AT_INDUSTRY_KW)
+    rol = "" if customer.get("adminb_role") else _guess_kw(customer.get("company_role"), _AT_ROLE_KW)
+    if not ind and not rol:
+        return ""
+    return ('<script>(function(){var g=' + json.dumps({"at_industry": ind, "at_role": rol}, ensure_ascii=False) + ',n=[];'
+            'for(var k in g){var v=g[k],el=document.querySelector("[name="+k+"]");if(!el||!v||el.value)continue;'
+            'el.value=v;if(el.value===v){el.style.background="#fff7d6";n.push(v);}}'
+            'var m=document.getElementById("guessMsg");if(m&&n.length)m.textContent="已依資料表的公司名／職稱先選好："+n.join("、")+"（黃色，請核對後按儲存）";})();</script>')
+
+
 def _adminb_license_html(customer, role) -> str:
     """「📋 從行照帶入」按鈕（使用者 2026-10-14：補充資料的顏色、車身號碼要自動填；選「按鈕帶入」）。
     ⛔ 只填進畫面上的空格，行政核對後自己按「儲存」才寫進去 —— 不另開寫入的路（AI 讀的是待確認）
@@ -19334,13 +19384,11 @@ def _adminb_license_html(customer, role) -> str:
                 cc = 0
             kind = "機車" if 50 <= cc < 600 else "汽車" if cc >= 1000 else "車種分不出來"
             lic.append({"name": f'{kind}行照 {vals["at_plate"]}' + (f"（{cc}cc）" if cc else ""), "kind": kind, "vals": vals})
-    # 這區是「機車額外資料」（亞太機車／商品／工會的申請書要的）→ 汽車行照不帶進來
-    cars = [x for x in lic if x["kind"] == "汽車"]
-    lic = [x for x in lic if x["kind"] != "汽車"]
+    # 使用者 2026-10-14：「亞太也是有汽車行照」→ 汽車、機車都可以選；送的是汽車方案就汽車排第一個（預設帶它）
+    want = "汽車" if ("汽車" in str(customer.get("adminb_selected_plans") or "") + str(customer.get("current_company") or "")
+                     or "老車" in str(customer.get("current_company") or "") and _customer_has_car_any(customer)) else "機車"
+    lic.sort(key=lambda x: 0 if x["kind"] == want else 1)
     if not lic:
-        if cars:
-            return ('<div style="font-size:12px;color:#8a7e70;margin-bottom:8px">📋 這區是<b>機車</b>的資料；客戶存檔裡的行照是'
-                    + "、".join(h(x["name"]) for x in cars) + '，不帶進來</div>')
         return ('<div style="font-size:12px;color:#8a7e70;margin-bottom:8px">📋 證件存檔裡還沒有讀好的行照'
                 f'（<a href="/archive/{h(customer["id_no"])}" target="_blank">打開證件存檔</a>會自動讀）</div>')
     opts = "".join(f'<option value="{i}">{h(x["name"])}</option>' for i, x in enumerate(lic))
@@ -19544,7 +19592,8 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
           <div><div class="ab-lbl">行業類別</div><select name="at_industry" class="ab-sel"><option value="">請選擇</option>{"".join(f'<option {"selected" if customer.get("adminb_industry","")==o else ""}>{o}</option>' for o in ["餐飲與服務業","製造業","建築與營造","軍警與公教","科技與資訊","運輸與物流","金融與保險業","批發與零售業","醫療與教育","農林漁牧業","自由職業","其他"])}</select></div>
           <div><div class="ab-lbl">職務</div><select name="at_role" class="ab-sel"><option value="">請選擇</option>{"".join(f'<option {"selected" if customer.get("adminb_role","")==o else ""}>{o}</option>' for o in ["行政與內勤","勞力與現場","銷售與業務","財務與專業","技術與工程","教學與醫護","管理與經營","自營與自由"])}</select></div>
         </div>
-        <div style="font-size:11px;font-weight:700;color:#0369a1;margin-bottom:8px;">機車額外資料</div>
+        <div id="guessMsg" style="font-size:12px;color:#6a5e4e;margin:-4px 0 8px"></div>{_adminb_guess_html(customer)}
+        <div style="font-size:11px;font-weight:700;color:#0369a1;margin-bottom:8px;">車輛額外資料（亞太機車送機車、亞太汽車送汽車）</div>
         {_adminb_license_html(customer, role)}
         <div class="ab-g3">
           <div><div class="ab-lbl">廠牌</div><input name="at_brand" class="ab-inp" placeholder="光陽機車" value="{h(customer.get('adminb_brand','') or '')}"></div>
