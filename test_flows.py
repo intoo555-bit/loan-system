@@ -1892,6 +1892,26 @@ check("和潤「警示戶撥款撥二等親」：警示戶寫現金或朋友 →
 _ph = dict(live_phone="037123456", contact1_phone="0912000001", contact2_phone="0912000002")
 check("東豐「電話合計 3 支」：資料表有 3 支 → ✅", _sub(_ev84(**_ph)[0], "東豐小額信貸", "3 支")["status"] == "pass")
 check("東豐「電話合計 3 支」：只有 1 支 → ⚠️ 要補", _sub(_ev84(contact1_phone="0912000001")[0], "東豐小額信貸", "3 支")["status"] == "manual")
+# 使用者 2026-10-14：「通常補電話都是群組補上」（範例格式照使用者截圖，名字電話換假的）
+_s = _sub(_ev84(contact1_phone="0912000001", contact2_phone="0912000002", phone="0911111111",
+                **{"_dj_group_phones:東豐": [("10/14", "0980000003")]})[0], "東豐小額信貸", "3 支")
+check("東豐「電話 3 支」：資料表 2 支＋群組補給東豐 1 支 → ✅，寫出群組補的", _s["status"] == "pass" and "群組補給東豐 1 支" in _s["actual"], _s)
+_s = _sub(_ev84(contact1_phone="0912000001", **{"_dj_group_phones:東豐": [("10/14", "0912000001")]})[0], "東豐小額信貸", "3 支")
+check("群組補的跟資料表同一支 → 不重複算", _s["status"] == "manual" and "1 支" in _s["actual"], _s)
+_m = [m.__dict__["_phone_digits"](x.group(1)) for x in m._PHONE_IN_TEXT_RE.finditer("王小明 分貝商 已補聯絡人\n朋友 李大華 0980-000-003 (知情) 1550-1650 @AI")]
+check("群組訊息抓電話：0980-000-003 抓到、時段 1550-1650 不算電話", _m == ["0980000003"], _m)
+_m = [m._phone_digits(x.group(1)) for x in m._PHONE_IN_TEXT_RE.finditer("補住家電話 037-123456")]
+check("群組訊息抓電話：市話 037-123456 也算", _m == ["037123456"], _m)
+# 只算補給東豐的：訊息寫「分貝商 已補聯絡人」→ 那是分貝的申請書，不算東豐
+_cid89 = m.create_customer_record("電話測", "", "", "TEST_B", "t")
+_c = sqlite3.connect(TEST_DB)
+for _txt in ("電話測 分貝商 已補聯絡人\n朋友 李大華 0980000003 (知情) 1550-1650 @AI",
+             "電話測 東豐 已補聯絡人\n舅舅 王小華 0980000004 (知情) @AI"):
+    _c.execute("INSERT INTO case_logs (case_id,customer_name,id_no,company,message_text,from_group_id,created_at) VALUES (?,?,?,?,?,?,?)",
+               (_cid89, "電話測", "", "", _txt, "TEST_B", "2026-10-14T10:00:00"))
+_c.commit(); _c.close()
+_gp = m._group_added_phones({"case_id": _cid89, "phone": ""}, ("東豐",))
+check("群組補聯絡人：只算有寫東豐的那則（分貝商那則不算）", [p for _, p in _gp] == ["0980000004"], _gp)
 check("喬美「商品 2 選 1」：有機車 → ✅ 用機車", _sub(_ev84()[0], "喬美", "商品 2 選 1")["status"] == "pass")
 _s = _sub(_ev84(debt_list='[{"co": "21汽車", "dy": "動保", "sp": "有", "pa": "3"}]', eval_property="1汽1機")[0], "麻吉手機", "21 汽車核准")
 check("麻吉「近半年 21 汽車核准」：負債表 21汽車 繳 3 期 → ✅", _s["status"] == "pass", _s)

@@ -3078,6 +3078,49 @@ def _manual_doc_verdict(label, customer):
     return None
 
 
+def _phone_digits(x) -> str:
+    d = re.sub(r"\D", "", str(x or ""))
+    return d if re.fullmatch(r"0\d{8,9}", d) else ""
+
+
+# 群組補聯絡人的訊息（例：「王小明 分貝商 已補聯絡人／朋友 李大華 0912345678 (知情) 1550-1650 @AI」）
+#   電話：手機 09 開頭 10 碼、市話 0 開頭（可有 - ）；⛔ 「1550-1650」是可以打的時段，不是電話（不是 0 開頭）
+_PHONE_IN_TEXT_RE = re.compile(r"(?<!\d)(09\d{2}[-\s]?\d{3}[-\s]?\d{3}|0\d{1,3}[-\s]?\d{6,8})(?!\d)")
+
+
+def _group_added_phones(customer, companies=()) -> list:
+    """群組補的聯絡人／住家電話 → [(日期 MM/DD, 號碼)]，去重複、不含客人自己的手機。
+    只看有寫「聯絡人／電話／住家／市話」的訊息（避免把別的數字當電話）。
+    ⛔ 要是補給「這一家」的（使用者 2026-10-14：「要看他是補哪一家，假設打東豐，就是申請書再加上這位聯絡人」）
+       → companies 有給就只算訊息裡有寫那幾家的（例：「王小明 分貝商 已補聯絡人」不算東豐的）"""
+    key = "_dj_group_phones:" + "/".join(companies)
+    if isinstance(customer, dict) and key in customer:
+        return customer[key]
+    out, seen = [], {_phone_digits(customer.get("phone"))}
+    cid = (customer.get("case_id") or "").strip() if customer else ""
+    if cid:
+        try:
+            with db_conn() as conn:
+                logs = conn.execute("SELECT message_text, created_at FROM case_logs WHERE case_id=? ORDER BY id",
+                                    (cid,)).fetchall()
+            for lg in logs:
+                t = str(lg["message_text"] or "")
+                if not any(k in t for k in ("聯絡人", "電話", "住家", "市話")):
+                    continue
+                if companies and not any(co in t for co in companies):
+                    continue
+                for m_ in _PHONE_IN_TEXT_RE.finditer(t):
+                    p = _phone_digits(m_.group(1))
+                    if p and p not in seen:
+                        seen.add(p)
+                        out.append((str(lg["created_at"] or "")[5:10].replace("-", "/"), p))
+        except Exception:
+            out = []
+    if isinstance(customer, dict):
+        customer[key] = out
+    return out
+
+
 def _auto_manual(label, customer):
     """「需人工確認」的條件：資料表或照片判斷得出來的就直接判（使用者 2026-10-14 自我盤點）。
     ⛔ 判不出來（資料沒給、規則表那種『N 項選 2』）回 None，照舊人工確認"""
@@ -3101,11 +3144,15 @@ def _auto_manual(label, customer):
             return ("fail", label, f"撥款方式寫「{c['eval_alert_warning_method']}」，和潤要撥二等親")
         return None
     # 住家電話＋聯絡人電話合計 3 支（東豐）—— 只能算有幾支，能不能接通還是要打
+    #   使用者 2026-10-14：「通常補電話都是群組補上」→ 資料表＋群組補的（去重複）一起算
     if "電話" in label and "3 支" in label:
-        n = sum(1 for k in ("live_phone", "reg_phone", "contact1_phone", "contact2_phone", "contact3_phone")
-                if str(c.get(k) or "").strip())
-        return (("pass", label, f"資料表有 {n} 支電話（能不能接通要打打看）") if n >= 3
-                else ("manual", label, f"資料表只有 {n} 支電話，要補到 3 支"))
+        sheet = {_phone_digits(c.get(k)) for k in ("live_phone", "reg_phone", "contact1_phone", "contact2_phone", "contact3_phone")}
+        sheet.discard("")
+        grp = [(d, p) for d, p in _group_added_phones(c, ("東豐",)) if p not in sheet]   # 這條只有東豐有
+        n = len(sheet) + len(grp)
+        src = f"資料表 {len(sheet)} 支" + (f"、群組補給東豐 {len(grp)} 支（" + "、".join(f"{d} {p[:4]}-{p[4:7]}-{p[7:]}" if len(p) == 10 else f"{d} {p}" for d, p in grp) + "）" if grp else "")
+        return (("pass", label, f"電話 {n} 支：{src}（能不能接通要打打看）") if n >= 3
+                else ("manual", label, f"電話只有 {n} 支：{src}，要補到 3 支"))
     # 負債表要填完整（東豐）
     if "負債表要填完整" in label:
         if _json_list(c.get("debt_list")) or str(c.get("eval_property") or "").strip():
