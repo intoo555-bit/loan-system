@@ -2960,6 +2960,63 @@ def _labor_rule_verdict(rule, label, customer):
     return ("pass", label, src)
 
 
+def _customer_licenses(customer) -> list:
+    """這位客人每張行照的 (車種, 持有幾個月, 從哪個日期算)。車種看排氣量（行照名稱只寫「行照」分不出來）：
+    50～599cc 機車、1000cc 以上汽車、中間的分不出來（同業務 AI 的判法）。持有看換補照日期，沒有才看發照日期。"""
+    key = "_dj_licenses"
+    if isinstance(customer, dict) and key in customer:
+        return customer[key]
+    out = []
+    idv = (customer.get("id_no") or "").strip() if customer else ""
+    if idv:
+        try:
+            t = now_tw()
+            for r in _docs_rows(idv):
+                if r.get("show_label") != "行照":
+                    continue
+                j = _doc_judge(r)
+                f = j.get("欄位") or {} if j and not j.get("error") else {}
+                d, src = _roc_ymd(f.get("換補照日期_民國") or f.get("換補照日期")), "換補照"
+                if not d:
+                    d, src = _roc_ymd(f.get("發照日期_民國") or f.get("發照日期")), "發照"
+                if not d:
+                    continue
+                try:
+                    cc = int(re.sub(r"[^\d]", "", str(f.get("排氣量") or "")) or 0)
+                except ValueError:
+                    cc = 0
+                kind = "機車" if 50 <= cc < 600 else "汽車" if cc >= 1000 else ""
+                mon = (t.year - d[0]) * 12 + t.month - d[1] - (t.day < d[2])
+                out.append((kind, mon, f"{src} {d[0] - 1911:03d}/{d[1]:02d}/{d[2]:02d}"))
+        except Exception:
+            out = []
+    if isinstance(customer, dict):
+        customer[key] = out
+    return out
+
+
+def _hold_rule_verdict(label, customer):
+    """「持有滿 N」的人工確認條件 → 看行照判（使用者 2026-10-14：「上面不是可以看持有多久時間嗎」）。
+    滿了 ✅；沒滿 ⚠️ 請客戶補證明（遺失補發、剛買／過戶都可能，不直接打 ❌，見 _doc_fields_check）；沒行照回 None 照舊"""
+    if "持有滿" not in label or "不動產" in label or "信用卡" in label:
+        return None
+    m_ = re.search(r"持有滿\s*(半年|(\d+)\s*(年|個月))", label)
+    if not m_:
+        return None
+    need = 6 if m_.group(1) == "半年" else int(m_.group(2)) * (12 if m_.group(3) == "年" else 1)
+    pre = label.split("持有滿")[0]
+    want = "機車" if ("機車" in pre and "汽車" not in pre) else "汽車" if ("汽車" in pre and "機車" not in pre) else ""
+    lic = [x for x in _customer_licenses(customer) if not want or x[0] in (want, "")]
+    if not lic:
+        return None
+    best = max(lic, key=lambda x: x[1])
+    src = f"行照：持有 {best[1]} 個月（{best[2]}）"
+    if best[1] >= need:
+        return ("pass", label.replace("（業務需確認）", ""), src)
+    ask = "請客戶補證明換補照原因（遺失補發就沒問題）" if best[2].startswith("換補照") else "請客戶補證明（剛買／剛過戶）"
+    return ("manual", label.replace("（業務需確認）", "") + f"（未滿 → {ask}）", src)
+
+
 _BOSS_WORDS = ("老闆", "老板", "負責人", "自營", "頭家", "董事長")
 
 
@@ -2984,6 +3041,9 @@ def _check_rule(rule, customer):
     if rt == "info":
         return ("info", label + (f" — {rule['hint']}" if rule.get("hint") else ""), "")
     if rt == "manual":
+        v = _hold_rule_verdict(label, customer)
+        if v:
+            return v
         return ("manual", label + (f" — {rule['hint']}" if rule.get("hint") else ""), "需人工確認")
     if rt == "oneof":
         sub_results = []
