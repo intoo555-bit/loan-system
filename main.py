@@ -1874,6 +1874,8 @@ PLAN_ELIGIBILITY_RULES = [
             {"type": "simple", "label": "現居須在台灣本島（澎湖/金門/連江/馬祖皆不做、戶籍在外島可、看現居）",
              "field": "live_city", "op": "not_contains", "value": ["澎湖", "金門", "連江", "馬祖"]},
             {"type": "simple", "label": "至少 2 位聯絡人、其中 1 位為二等親", "op": "any_contact_2nd_kin"},
+            # 使用者 2026-10-14：「融易頭家貸為何要跳提醒，他不能送喔，他又不是老闆」
+            {"type": "simple", "label": "要是老闆／負責人（頭家貸）", "op": "is_boss"},
             {"type": "manual", "label": "需有實體店面（流動攤販不承作）"},
             {"type": "manual", "label": "對保須在工作地"},
             {"type": "manual", "label": "進件需附店面照（招牌/門牌/外觀）+ 工作照 + 財產清單"},
@@ -3121,10 +3123,57 @@ def _group_added_phones(customer, companies=()) -> list:
     return out
 
 
+def _yulon_conditions(customer) -> list:
+    """裕融條件表裡，資料表／照片判斷得出來「有符合」的項目（判斷不出的不列，不算不符合）。
+    來源：使用者 2026-10-14 貼的裕融條件表（左：車況／工作；右：車主或保人）"""
+    c, hit = customer or {}, []
+    ages = _customer_car_ages(c)
+    if ages and min(ages) <= 7:
+        hit.append(f"車齡 7 年內（{now_tw().year - min(ages)} 年出廠）")
+    L = _customer_doc_judge(c, "labor")
+    cur = [x for x in (L.get("目前投保") or []) if isinstance(x, dict) and isinstance(x.get("加保滿幾個月"), int)]
+    if cur:
+        top = max(cur, key=lambda x: x["加保滿幾個月"])
+        sal = top.get("投保薪資") if isinstance(top.get("投保薪資"), int) else 0
+        if top["加保滿幾個月"] >= 9:
+            hit.append(f"現職滿 9 個月（勞保 {top.get('單位') or ''} {top['加保滿幾個月']} 個月）")
+        elif top["加保滿幾個月"] >= 6 and sal >= 33000:
+            hit.append(f"勞保滿 6 個月、投保 {sal:,}")
+        if str(top.get("類型") or "") in ("軍保", "公保"):
+            hit.append("軍公教")
+    elif (c.get("eval_labor_ins") or "") in ("軍保", "公保"):
+        hit.append("軍公教")
+    if _check_creditcard_status(c)[0] == "good":
+        hit.append("有信用卡、沒遲繳（持卡滿一年要確認）")
+    if str(c.get("eval_license") or "").strip() == "有":
+        hit.append("有證照")
+    late_ok = (c.get("eval_late") or "").strip() == "無" or str(c.get("eval_late_days") or "0").strip() in ("", "0")
+    for d in _json_list(c.get("debt_list")):
+        try:
+            if isinstance(d, dict) and int(str(d.get("pa") or 0)) >= 9 and late_ok:
+                hit.append(f"他行繳 9 期以上（{d.get('co')} 已繳 {d.get('pa')} 期）")
+                break
+        except ValueError:
+            pass
+    if "不動產" in str(c.get("eval_property") or ""):
+        hit.append("持有不動產")
+    if _customer_doc_cats(c).get("信用報告"):
+        hit.append("有附 JCIC（15 天內要確認）")
+    return hit
+
+
 def _auto_manual(label, customer):
     """「需人工確認」的條件：資料表或照片判斷得出來的就直接判（使用者 2026-10-14 自我盤點）。
     ⛔ 判不出來（資料沒給、規則表那種『N 項選 2』）回 None，照舊人工確認"""
     c = customer or {}
+    # 裕融「需符合 N 項條件以上」
+    m_ = re.fullmatch(r"需符合\s*(\d+)\s*項條件以上", label.strip())
+    if m_:
+        need, hit = int(m_.group(1)), _yulon_conditions(c)
+        if len(hit) >= need:
+            return ("pass", label, f"符合 {len(hit)} 項：" + "、".join(hit))
+        return ("manual", label, (f"資料看得出符合 {len(hit)} 項：" + "、".join(hit) if hit else "資料看不出符合哪項")
+                + f"；還差 {need - len(hit)} 項（成數、保人、存款、PDC 這些要人工看）")
     # 汽車有沒有在天書／權威：行政查的車價（見 _customer_car_book）
     if "天書" in label and "權威" in label:
         price, nf = _customer_car_book(c)
@@ -3295,6 +3344,13 @@ def _check_rule(rule, customer):
         if op == "has_car_any":
             ok = _customer_has_car_any(customer)
             return ("pass" if ok else "fail", label, "有汽車" if ok else "沒有汽車")
+        # 特殊 op：職稱是老闆／負責人
+        if op == "is_boss":
+            role = (customer.get("company_role") or "").strip()
+            if not role:
+                return ("unknown", label, "職稱沒填")
+            return (("pass", label, f"職稱：{role}") if any(w in role for w in _BOSS_WORDS)
+                    else ("fail", label, f"職稱「{role}」不是老闆／負責人"))
         # 特殊 op：新住民＝沒有中華民國身分證（拿居留證）→ 要附台籍正職保人
         #   使用者 2026-10-14：「新住民是指他沒有身分證；有身分證（背面有寫）基本上就沒關係」
         #   ⛔ 不看出生地：外國出生、已經拿到身分證的不算新住民

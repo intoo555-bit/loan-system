@@ -1932,6 +1932,17 @@ check("鄉民「先問信用報告」：沒收到 → 照舊 ⚠️", _sub(_ev84
 _s = _sub(_ev84(eval_property="不動產", _dj_cats={"權狀或謄本": 1})[0], "和裕機車", "不動產")
 check("「有不動產、須提供權狀」：權狀收到了 → ✅", _s is None or _s["status"] in ("pass",), _s)
 check("中租「老車專案不做」改成說明（老車那條已經自動判）", _sub(_ev84(**_car87)[0], "中租汽車", "老車專案不做")["status"] == "info")
+# 使用者 2026-10-14：「融易頭家貸為何要跳提醒，他不能送喔，他又不是老闆」
+check("融易頭家貸：職稱技工 → ❌", _ev84(company_role="技工")[0]["融易頭家貸"]["eligible"] is False)
+check("融易頭家貸：職稱老闆 → 那條 ✅", _sub(_ev84(company_role="老闆")[0], "融易頭家貸", "老闆")["status"] == "pass")
+# 裕融條件表（使用者貼的截圖）：陳秋蘭「可以勾勞保那條，有符合一條」
+_s = _sub(_ev84(_dj_labor=_lab(19), **_car87)[0], "裕融福克來", "需符合 1 項")
+check("裕融福克來（要 1 項）：勞保 19 個月 → 符合「現職滿 9 個月」→ ✅", _s["status"] == "pass" and "現職滿 9 個月" in _s["actual"], _s)
+_s = _sub(_ev84(_dj_labor=_lab(19), **_car87)[0], "裕融新優加", "需符合 3 項")
+check("裕融新優加（要 3 項）：只看得出 1、2 項 → ⚠️ 寫還差幾項", _s["status"] == "manual" and "還差" in _s["actual"], _s)
+_s = _sub(_ev84(_dj_labor=_lab(19), eval_license="有", eval_property="1汽1機 不動產",
+                unloan_vehicles='[{"type": "汽車", "year": "2022"}]', eval_credit_card="正常繳款")[0], "裕融新優加", "需符合 3 項")
+check("裕融新優加：車齡 7 年內＋現職 9 個月＋信用卡＋證照＋不動產 → ✅", _s["status"] == "pass", _s)
 # 使用者 2026-10-14：「戶籍地也可以判別她住哪裡」
 _r84, _ = _ev84(live_city="", reg_city="澎湖縣")
 check("現居沒填、戶籍澎湖 → 東豐 ❌（看戶籍）", _r84["東豐小額信貸"]["eligible"] is False)
