@@ -1845,6 +1845,12 @@ for _co in ("裕融優質", "和潤汽車", "中租汽車", "銀行", "零卡(C)
     check(f"新住民 → {_co} 可以送（居留證不擋）", not any("新住民" in c["label"] or (c["status"] == "fail" and "身分證" in c["label"])
                                                 for c in _r84[_co]["checks"]), _r84[_co]["checks"])
 check("新住民的建議順序只有汽車／銀行／零卡／民間", _o84 and all(m._arc_plan_ok(x) for x in _o84), _o84)
+# 使用者 2026-10-14：「這種客戶只能提供護照跟居留證二證」
+_rd = _r84["和潤汽車"]["required_docs"]
+check("新住民的文件：居留證＋護照，不要身分證／健保卡", "居留證（正反）" in _rd and "護照" in _rd
+      and not any(x.startswith(("身分證正反", "第二證件")) for x in _rd), _rd)
+_r85, _ = _ev84()
+check("一般客人照舊要身分證正反＋第二證件", any(x.startswith("身分證正反") for x in _r85["和潤汽車"]["required_docs"]))
 # 使用者 2026-10-14：「戶籍地也可以判別她住哪裡」
 _r84, _ = _ev84(live_city="", reg_city="澎湖縣")
 check("現居沒填、戶籍澎湖 → 東豐 ❌（看戶籍）", _r84["東豐小額信貸"]["eligible"] is False)

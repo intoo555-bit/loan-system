@@ -3452,6 +3452,21 @@ def _arc_plan_ok(company: str) -> bool:
             or company in ("汽機車二胎", "興達汽機車二胎"))
 
 
+def _docs_for_customer(docs, customer) -> list:
+    """新住民（居留證）的二證是「居留證＋護照」，不是身分證＋健保卡／駕照（使用者 2026-10-14）"""
+    if not _is_arc_customer(customer or {}):
+        return list(docs or [])
+    out = []
+    for d in docs or []:
+        if d.startswith("身分證正反"):
+            out.append("居留證（正反）")
+        elif d.startswith("第二證件"):
+            out.append("護照")
+        else:
+            out.append(d)
+    return out
+
+
 def evaluate_case(customer):
     """跑所有規則、回排序好的方案清單 + 私設狀態
 
@@ -3589,7 +3604,7 @@ def evaluate_case(customer):
             "eligible": eligible,
             "checks": checks,
             "summary": summary,
-            "required_docs": plan.get("required_docs", []),
+            "required_docs": _docs_for_customer(plan.get("required_docs", []), customer),
             "bonus_items": plan.get("bonus_items", COMMON_BONUS_ITEMS),
             "private_blocked": private_blocked,
         })
@@ -28978,7 +28993,7 @@ def _docs_missing_line(cust, rows) -> str:
     plan = _plan_for_company(co)
     if not plan:
         return (f'<div class="ms-line">📦 {lb} <b>{h(co)}</b>：<span class="ms-na">規則表沒有這家，沒辦法檢查缺件</span></div>')
-    res = docs_missing_for_plan(rows, plan.get("required_docs"))
+    res = docs_missing_for_plan(rows, _docs_for_customer(plan.get("required_docs"), cust))
     miss = [(req.split("（")[0].split("｜")[0] + (f"（{note}）" if note else "")) for req, st, note in res if st == "missing"]
     wait = [(req.split("（")[0].split("｜")[0] + (f"（{note}）" if note else "")) for req, st, note in res if st == "check"]
     parts = []
