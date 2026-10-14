@@ -2419,6 +2419,10 @@ check("看大圖右邊：列出讀到的原樣欄位（空的不列、不重複�
       and "引擎號碼" not in _d79["行照"]["judgeDetail"], _d79["行照"]["judgeDetail"])
 _h79 = TestClient(m.app).get("/archive/J300000001").text
 check("證件頁上方彙總：行照車主不是本人", "證件跟客戶資料對不上" in _h79 and "行照：車主不是本人" in _h79)
+# 持有時間看換補照日期（使用者 2026-10-14）
+_ix, _wx = m._doc_fields_check({"欄位": {"發照日期_民國": "110/10/25", "換補照日期_民國": "114/10/01"}}, "行照", {"customer_name": "欄位乙"})
+check("行照有換補照日期 → 持有時間從換補照算（114/10/01 → 12 個月）",
+      any("持有 12 個月（換補照 114/10/01）" in x for x in _ix), _ix)
 # 生日打錯
 _c = sqlite3.connect(TEST_DB); _c.execute("UPDATE customers SET birth_date='0750313' WHERE id_no='J300000001'"); _c.commit(); _c.close()
 _d79 = {d["category"]: d for d in TestClient(m.app).get("/archive/J300000001/data").json()["documents"]}

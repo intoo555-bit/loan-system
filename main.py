@@ -27978,10 +27978,14 @@ def _doc_fields_check(j: dict, label: str, cust) -> tuple:
             warn.append(f"⚠️ 車主不是本人（車主：{nm}）")
         if f.get("車牌"):
             info.append(f"車牌 {f['車牌']}")
-        d = _roc_ymd(f.get("發照日期_民國") or f.get("發照日期"))
+        # ⛔ 持有時間看「換補照日期」（使用者 2026-10-14）；沒有換補照才用發照日期
+        d = _roc_ymd(f.get("換補照日期_民國") or f.get("換補照日期"))
+        src = "換補照"
+        if not d:
+            d, src = _roc_ymd(f.get("發照日期_民國") or f.get("發照日期")), "發照"
         if d:
             mon = (t.year - d[0]) * 12 + t.month - d[1] - (t.day < d[2])
-            info.append(f"持有 {mon} 個月（發照 {d[0] - 1911:03d}/{d[1]:02d}/{d[2]:02d}）")
+            info.append(f"持有 {mon} 個月（{src} {d[0] - 1911:03d}/{d[1]:02d}/{d[2]:02d}）")
         # ⛔ 出廠年月是西元（2021.10），業務 AI 刻意不轉 → 不可以拿去當民國
         y = re.match(r"\s*(\d{4})", f.get("出廠年月") or "")
         if y:
