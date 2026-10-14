@@ -1,0 +1,482 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<meta name="referrer" content="same-origin">
+<title>證件存檔</title>
+<!-- 2026-10-14 使用者給的新版排版（Downloads/證件存檔_排版完整版.html）；資料由 main.py docs_list_page 塞進 ARCHIVE_PAGE_CONFIG -->
+<!--
+  證件存檔｜單檔前端版面
+  --------------------------------------------------------
+  所有樣式、圖示及程式已內嵌；不需要 CDN、字型或圖片檔。
+  畫面資料依提供的截圖示範，並非即時後端資料。
+  「已設定業務 AI 連線」為示範狀態，不是實際連線檢查結果。
+
+  串接方式（在本頁最下方的初始化程式前設定）：
+  window.ARCHIVE_PAGE_CONFIG = {
+    rows: [
+      {
+        recordId: '由後端提供的案件 ID',
+        receivedDate: '2026-10-14',
+        name: '姓名', identityNumber: '身分證', phone: '電話',
+        group: '群組', route: [], documentCount: 14,
+        documentsUrl: '/由原系統提供的證件頁網址'
+      }
+    ],
+    storage: { documentsUsed: '3.1 MB', diskUsed: '0.21 GB', diskTotal: '29.5 GB', percent: 0 },
+    aiConnected: true,
+    groupMappingUrl: '/由原系統提供的群組設定網址'
+  };
+
+  也能在資料載入後呼叫：
+  DocumentArchive.setRows(yourRows);
+  DocumentArchive.setStatus({ aiConnected: true, storage: yourStorage });
+  DocumentArchive.setLinks({ groupMappingUrl: yourUrl, documentsUrlBuilder: record => yourUrl });
+
+  SPA 串接可監聽 archive:open-documents / archive:open-group-mapping，
+  呼叫 event.preventDefault() 後由原系統接手。
+  本頁不連 LINE、不下載附件、不進行 AI 判讀，也不把客戶資料存到 localStorage。
+  正式環境仍需由後端驗證使用者的群組與附件存取權限；前端篩選不是權限控制。
+-->
+<style>
+:root {
+  --page: #f1f5f8;
+  --surface: #fff;
+  --ink: #213747;
+  --muted: #637887;
+  --line: #dfe8ee;
+  --line-soft: #eaf0f4;
+  --brand: #126f78;
+  --brand-soft: #eaf5f5;
+  --button: #215e85;
+  --button-hover: #174c70;
+  --radius: 14px;
+  --shadow: 0 3px 14px rgb(28 60 78 / 3%);
+}
+* { box-sizing: border-box; }
+html { min-height: 100%; background: var(--page); }
+body {
+  margin: 0; min-width: 300px; color: var(--ink);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft JhengHei", "PingFang TC", "Noto Sans CJK TC", sans-serif;
+  font-size: 14px; line-height: 1.6; -webkit-font-smoothing: antialiased;
+}
+button, input, select { font: inherit; }
+button, a, input, select { -webkit-tap-highlight-color: transparent; }
+button { cursor: pointer; }
+a { color: inherit; }
+button { -webkit-appearance: none; appearance: none; }
+button:disabled { cursor: default; opacity: .48; }
+button:focus-visible, a:focus-visible, select:focus-visible, input:focus-visible, .table-scroll:focus-visible {
+  outline: 3px solid #75bdc6; outline-offset: 3px;
+}
+[hidden] { display: none !important; }
+.icon { display: inline-block; width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; flex: 0 0 auto; vertical-align: middle; }
+.symbols { position: absolute; width: 0; height: 0; overflow: hidden; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; clip-path: inset(50%); }
+.page { width: min(1100px, calc(100% - 64px)); margin: 36px auto 60px; }
+.page-heading { display: flex; align-items: center; gap: 12px; margin: 0 0 18px 2px; }
+.heading-icon { display: grid; place-items: center; width: 40px; height: 40px; border: 1px solid #cfe2e7; border-radius: 12px; background: #e3f0f3; color: var(--brand); }
+.heading-icon .icon { width: 23px; height: 23px; }
+h1 { margin: 0; font-size: 24px; line-height: 1.35; font-weight: 750; letter-spacing: .045em; color: #183749; }
+.panel { border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow); }
+.search-panel { margin-bottom: 16px; overflow: hidden; }
+.search-form { display: grid; grid-template-columns: minmax(0, 1fr) 186px 96px; align-items: center; gap: 10px; padding: 18px 18px 16px; }
+.search-field { display: flex; align-items: center; height: 44px; min-width: 0; gap: 9px; padding: 0 12px; border: 1px solid #cbdbe5; border-radius: 9px; background: #fff; transition: border-color .15s, box-shadow .15s; }
+.search-field:focus-within { border-color: #509aab; box-shadow: 0 0 0 3px rgb(80 154 171 / 11%); }
+.search-field > .icon { color: #6c8495; }
+.search-field input { width: 100%; min-width: 0; border: 0; border-radius: 0; outline: none; background: transparent; color: var(--ink); padding: 0; height: 100%; font-size: 14px; }
+.search-field input:focus-visible { outline: none; }
+.search-field input::placeholder { color: #718595; opacity: 1; }
+.search-field input::-webkit-search-cancel-button { display: none; }
+.clear-search { display: grid; place-items: center; width: 26px; height: 28px; border: 0; border-radius: 5px; padding: 0; color: #6a8290; background: #f2f6f8; }
+.clear-search .icon { width: 14px; height: 14px; }
+.select-wrap { position: relative; }
+.select-wrap > .icon:first-child { position: absolute; left: 12px; top: 13px; color: #677f8f; pointer-events: none; width: 18px; height: 18px; }
+.select-wrap > .chevron { position: absolute; right: 12px; top: 15px; width: 14px; height: 14px; pointer-events: none; color: #69808c; }
+.select-wrap select { width: 100%; height: 44px; appearance: none; -webkit-appearance: none; border: 1px solid #cbdbe5; border-radius: 9px; padding: 0 34px 0 39px; color: #365364; background: #fafcfd; cursor: pointer; }
+.search-button { display: flex; align-items: center; justify-content: center; gap: 7px; height: 44px; padding: 0 18px; background: var(--button); color: #fff; border: 1px solid transparent; border-radius: 9px; font-weight: 650; letter-spacing: .05em; transition: background .15s; }
+.search-button:hover { background: var(--button-hover); }
+.search-button .icon { width: 16px; height: 16px; }
+.status-bar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px 16px; min-height: 48px; padding: 10px 18px; border-top: 1px solid #edf2f5; background: #fcfdfe; }
+.storage-info, .connections { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 15px; }
+.status-item { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--muted); white-space: nowrap; }
+.status-item .icon { width: 15px; height: 15px; color: #8196a3; }
+.status-item strong { font-weight: 650; color: #405e70; font-variant-numeric: tabular-nums; }
+.status-divider { width: 1px; height: 12px; background: #dae5eb; }
+.connection { color: #38747b; }
+.connection .icon { color: #1c8783; }
+.connection.offline { color: #916328; }
+.connection.offline .icon { color: #a8752c; }
+.mapping-button { display: inline-flex; align-items: center; gap: 6px; padding: 0; border: 0; background: transparent; color: #2b607e; font-size: 12px; text-decoration: none; }
+.mapping-button:hover .link-label { text-decoration: underline; text-underline-offset: 3px; }
+.mapping-button .icon { width: 15px; height: 15px; }
+.mapping-button .arrow { width: 12px; height: 12px; color: #748e9e; }
+.table-panel { overflow: hidden; }
+.table-scroll { position: relative; width: 100%; overflow-x: auto; scrollbar-width: thin; scrollbar-color: #c2d1da #f4f7f9; }
+table { width: 100%; min-width: 780px; table-layout: fixed; border-collapse: collapse; text-align: left; }
+col.date-col { width: 16%; } col.name-col { width: 14%; } col.id-col { width: 19%; }
+col.group-col { width: 16%; } col.route-col { width: 15%; } col.count-col { width: 9%; } col.action-col { width: 11%; }
+thead { background: #edf4f7; }
+th { height: 47px; padding: 0 14px; color: #4d6677; font-size: 13px; font-weight: 650; border-bottom: 1px solid #dde8ef; }
+th:first-child, td:first-child { padding-left: 23px; }
+th:last-child, td:last-child { padding-right: 23px; }
+th.number-heading { text-align: center; }
+.sort-button { display: inline-flex; align-items: center; gap: 5px; border: 0; padding: 0; background: transparent; color: inherit; font-size: inherit; font-weight: inherit; line-height: 2; }
+.sort-button .icon { width: 12px; height: 12px; color: #9aadb9; }
+th[aria-sort="ascending"] .sort-button .icon, th[aria-sort="descending"] .sort-button .icon { color: #327789; }
+th[aria-sort="ascending"] .sort-button .icon { transform: rotate(180deg); }
+.sort-button:hover { color: #135f7b; }
+tbody td { height: 68px; padding: 10px 14px; border-bottom: 1px solid var(--line-soft); font-size: 14px; vertical-align: middle; }
+tbody tr:last-child td { border-bottom: 0; }
+tbody tr { transition: background .12s; }
+tbody tr:hover { background: #f6fafc; }
+.date { color: #5a7282; font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.name { font-weight: 650; font-size: 15px; color: #253e4e; overflow-wrap: anywhere; }
+.identity { font-family: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", monospace; font-size: 14px; color: #365566; letter-spacing: .015em; white-space: nowrap; }
+.group-tag { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 3px 9px; border: 1px solid #d5e9e9; border-radius: 6px; background: #f0f8f8; color: #366d75; font-size: 12px; line-height: 1.65; }
+.group-dot { display: inline-block; width: 5px; height: 5px; border-radius: 50%; background: #70a5ad; flex: 0 0 auto; }
+.group-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.route { color: #59717f; font-size: 13px; overflow-wrap: anywhere; }
+.route-empty { color: #b1bec7; }
+.number { text-align: center; font-variant-numeric: tabular-nums; }
+.count-pill { display: inline-grid; place-items: center; min-width: 32px; height: 28px; padding: 0 7px; border-radius: 6px; background: #f0f5f8; color: #365a72; font-size: 14px; font-weight: 650; }
+.action { text-align: right; }
+.view-button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-width: 64px; height: 35px; padding: 0 12px; border: 1px solid #cee0ec; border-radius: 8px; background: #edf5fb; color: #215e85; font-size: 13px; font-weight: 650; transition: background .15s, border-color .15s; }
+.view-button .icon { width: 16px; height: 16px; }
+.view-button:hover { border-color: var(--button); background: var(--button); color: #fff; }
+.no-results { min-height: 155px; padding: 34px 20px; display: grid; justify-items: center; align-content: center; gap: 9px; color: #6f8594; }
+.no-results .icon { width: 28px; height: 28px; color: #8ba6b5; }
+.no-results p { margin: 0; font-size: 14px; }
+.pagination { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 20px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; }
+.pagination-controls { display: flex; align-items: center; gap: 10px; }
+.page-btn { display: grid; place-items: center; width: 30px; height: 30px; border: 1px solid var(--line); border-radius: 7px; background: #fff; color: var(--ink); }
+.page-btn .icon { width: 14px; height: 14px; }
+.notice { width: min(400px, calc(100% - 32px)); padding: 24px; color: var(--ink); border: 1px solid var(--line); border-radius: 16px; box-shadow: 0 18px 70px rgb(17 45 64 / 18%); }
+.notice::backdrop { background: rgb(26 49 64 / 25%); backdrop-filter: blur(2px); }
+.notice h2 { margin: 0 0 9px; font-size: 17px; font-weight: 700; }
+.notice p { color: var(--muted); margin: 0 0 22px; font-size: 14px; }
+.notice-actions { display: flex; justify-content: flex-end; }
+.notice-actions button { border: 0; border-radius: 8px; padding: 8px 22px; background: var(--button); color: #fff; }
+@media (min-width: 1500px) { .page { margin-top: 42px; } }
+@media (max-width: 900px) {
+  .page { width: calc(100% - 40px); margin-top: 26px; }
+  .search-form { grid-template-columns: minmax(0,1fr) 160px 84px; padding: 16px; }
+  .status-bar { padding: 10px 16px; }
+  .connections { flex: 1 0 auto; }
+  .mapping-button { margin-left: auto; }
+}
+@media (max-width: 620px) {
+  .page { width: calc(100% - 24px); margin: 22px auto 36px; }
+  .page-heading { margin: 0 0 14px 2px; gap: 10px; }
+  h1 { font-size: 22px; }
+  .heading-icon { width: 36px; height: 36px; border-radius: 10px; }
+  .search-form { grid-template-columns: minmax(0,1fr) 90px; gap: 9px; padding: 14px; }
+  .search-field { grid-column: 1 / -1; }
+  .search-button { padding: 0 12px; }
+  .status-bar { align-items: flex-start; padding: 11px 14px; gap: 9px; }
+  .storage-info { gap: 5px 9px; }
+  .connections { width: 100%; gap: 9px; }
+  .status-item, .mapping-button { font-size: 11px; }
+  .status-item { gap: 5px; }
+  .status-item .icon, .mapping-button .icon { width: 13px; height: 13px; }
+  .mapping-button .arrow { display: none; }
+  .table-panel { border-radius: 12px; }
+  .search-panel { margin-bottom: 12px; }
+  tbody td { height: 64px; }
+}
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; scroll-behavior: auto !important; } }
+@media print {
+  html, body { background: #fff; }
+  .page { width: 100%; margin: 0; }
+  .panel { box-shadow: none; }
+  .search-form, .mapping-button, .pagination, .action, .action-heading, .notice { display: none; }
+  table { min-width: 0; }
+  .table-scroll { overflow: visible; }
+  tr { break-inside: avoid; }
+}
+</style>
+</head>
+<body>
+<!--__TOPNAV__-->
+<svg class="symbols" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+  <symbol id="i-clip" viewBox="0 0 24 24"><path d="m8 12 6.9-6.9a3 3 0 0 1 4.2 4.2L10 18.4a5 5 0 0 1-7.1-7.1L12 2.2"/><path d="m7.3 12.7 7.1-7.1a1.5 1.5 0 1 1 2.1 2.1l-7 7a2 2 0 0 1-2.8-2.8"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.8" cy="10.8" r="6.8"/><path d="m16 16 4.5 4.5"/></symbol>
+  <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+  <symbol id="i-users" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><path d="M3 20v-2a6 6 0 0 1 12 0v2M16 5a3 3 0 0 1 0 6M18 14a5 5 0 0 1 3 4v2"/></symbol>
+  <symbol id="i-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+  <symbol id="i-sort" viewBox="0 0 24 24"><path d="M12 4v15m-4-4 4 4 4-4"/></symbol>
+  <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 13h8M8 17h5"/></symbol>
+  <symbol id="i-disk" viewBox="0 0 24 24"><path d="m4 5-2 10v4a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-4L20 5a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2Z"/><path d="M2 15h20M6 18h.01M10 18h.01"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8 12 2.7 2.7L16 9"/></symbol>
+  <symbol id="i-link" viewBox="0 0 24 24"><path d="m10 13 4-4M8.5 16.5 7 18a3.5 3.5 0 0 1-5-5l5-5a3.5 3.5 0 0 1 5 0M15.5 7.5 17 6a3.5 3.5 0 0 1 5 5l-5 5a3.5 3.5 0 0 1-5 0"/></symbol>
+  <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14m-6-6 6 6-6 6"/></symbol>
+  <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></symbol>
+  <symbol id="i-left" viewBox="0 0 24 24"><path d="m14 6-6 6 6 6"/></symbol>
+  <symbol id="i-right" viewBox="0 0 24 24"><path d="m10 6 6 6-6 6"/></symbol>
+</svg>
+<main class="page">
+  <header class="page-heading">
+    <span class="heading-icon" aria-hidden="true"><svg class="icon"><use href="#i-clip"/></svg></span>
+    <h1>證件存檔</h1>
+  </header>
+
+  <section class="panel search-panel" aria-label="搜尋證件存檔">
+    <form class="search-form" id="searchForm" role="search" autocomplete="off">
+      <label class="search-field" for="keyword">
+        <svg class="icon" aria-hidden="true"><use href="#i-search"/></svg>
+        <span class="sr-only">搜尋姓名、身分證或電話</span>
+        <input id="keyword" name="keyword" type="search" placeholder="姓名／身分證／電話" maxlength="120" spellcheck="false" autocomplete="off" autocapitalize="off">
+        <button class="clear-search" id="clearSearch" type="button" aria-label="清除搜尋" hidden><svg class="icon" aria-hidden="true"><use href="#i-close"/></svg></button>
+      </label>
+      <div class="select-wrap">
+        <svg class="icon" aria-hidden="true"><use href="#i-users"/></svg>
+        <label class="sr-only" for="groupFilter">群組</label>
+        <select id="groupFilter" name="group"><option value="">全部群組</option></select>
+        <svg class="icon chevron" aria-hidden="true"><use href="#i-down"/></svg>
+      </div>
+      <button type="submit" class="search-button"><svg class="icon" aria-hidden="true"><use href="#i-search"/></svg>搜尋</button>
+    </form>
+    <div class="status-bar">
+      <div class="storage-info">
+        <span class="status-item"><svg class="icon" aria-hidden="true"><use href="#i-file"/></svg><span>證件已用 <strong id="documentsUsed">3.1 MB</strong></span></span>
+        <span class="status-divider" aria-hidden="true"></span>
+        <span class="status-item"><svg class="icon" aria-hidden="true"><use href="#i-disk"/></svg><span>硬碟 <strong id="diskUsage">0.21 / 29.5 GB</strong><span id="diskPercent">（0%）</span></span></span>
+      </div>
+      <div class="connections">
+        <span class="status-item connection" id="connectionStatus"><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg><span id="connectionLabel">已設定業務 AI 連線</span></span>
+        <span class="status-divider" aria-hidden="true"></span>
+        <button type="button" class="mapping-button" id="groupMapping"><svg class="icon" aria-hidden="true"><use href="#i-link"/></svg><span class="link-label">官方賴對群組</span><svg class="icon arrow" aria-hidden="true"><use href="#i-arrow"/></svg></button>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel table-panel" aria-label="證件存檔清單">
+    <div class="table-scroll" tabindex="0" role="region" aria-label="證件清單，窄螢幕可左右捲動">
+      <table>
+        <caption class="sr-only">證件存檔清單</caption>
+        <colgroup><col class="date-col"><col class="name-col"><col class="id-col"><col class="group-col"><col class="route-col"><col class="count-col"><col class="action-col"></colgroup>
+        <thead><tr>
+          <th scope="col" data-key="receivedDate" aria-sort="descending"><button type="button" class="sort-button" data-sort="receivedDate">收件日期<svg class="icon" aria-hidden="true"><use href="#i-sort"/></svg></button></th>
+          <th scope="col" data-key="name" aria-sort="none"><button type="button" class="sort-button" data-sort="name">姓名<svg class="icon" aria-hidden="true"><use href="#i-sort"/></svg></button></th>
+          <th scope="col" data-key="identityNumber" aria-sort="none"><button type="button" class="sort-button" data-sort="identityNumber">身分證<svg class="icon" aria-hidden="true"><use href="#i-sort"/></svg></button></th>
+          <th scope="col" data-key="group" aria-sort="none"><button type="button" class="sort-button" data-sort="group">群組<svg class="icon" aria-hidden="true"><use href="#i-sort"/></svg></button></th>
+          <th scope="col">送件順序</th>
+          <th scope="col" class="number-heading" data-key="documentCount" aria-sort="none"><button type="button" class="sort-button" data-sort="documentCount">張數<svg class="icon" aria-hidden="true"><use href="#i-sort"/></svg></button></th>
+          <th scope="col" class="action-heading"><span class="sr-only">查看證件</span></th>
+        </tr></thead>
+        <tbody id="recordsBody"></tbody>
+      </table>
+    </div>
+    <div class="no-results" id="noResults" hidden><svg class="icon" aria-hidden="true"><use href="#i-search"/></svg><p>沒有符合條件的資料</p></div>
+    <footer class="pagination" id="pagination" hidden>
+      <span id="recordRange"></span>
+      <div class="pagination-controls"><button class="page-btn" id="prevPage" type="button" aria-label="上一頁"><svg class="icon" aria-hidden="true"><use href="#i-left"/></svg></button><span id="pageNumber"></span><button class="page-btn" id="nextPage" type="button" aria-label="下一頁"><svg class="icon" aria-hidden="true"><use href="#i-right"/></svg></button></div>
+    </footer>
+    <p id="resultsAnnouncement" class="sr-only" aria-live="polite" aria-atomic="true"></p>
+  </section>
+  <noscript><p>啟用 JavaScript 後即可使用搜尋、群組篩選與排序。</p></noscript>
+</main>
+
+<dialog class="notice" id="notice" aria-labelledby="noticeTitle" aria-describedby="noticeText">
+  <h2 id="noticeTitle"></h2><p id="noticeText"></p>
+  <form method="dialog" class="notice-actions"><button type="submit">關閉</button></form>
+</dialog>
+
+<script>window.ARCHIVE_PAGE_CONFIG = __CONFIG__;</script>
+<script>
+'use strict';
+(() => {
+  /* ===== 原系統的資料與網址由此置換，勿把示範資料當作真實後端狀態 ===== */
+  const DEMO_ROWS = [
+    { recordId: 'demo-1', receivedDate: '2026-10-14', name: '王小明', identityNumber: 'A123456789', phone: '', group: '測試群', route: [], documentCount: 3, documentsUrl: '' }
+  ];
+  const userConfig = window.ARCHIVE_PAGE_CONFIG || {};
+  const config = {
+    rows: Array.isArray(userConfig.rows) ? userConfig.rows : DEMO_ROWS,
+    storage: { documentsUsed: '3.1 MB', diskUsed: '0.21 GB', diskTotal: '29.5 GB', percent: 0, ...(userConfig.storage || {}) },
+    aiConnected: typeof userConfig.aiConnected === 'boolean' ? userConfig.aiConnected : true,
+    groupMappingUrl: userConfig.groupMappingUrl || '',
+    documentsUrlBuilder: typeof userConfig.documentsUrlBuilder === 'function' ? userConfig.documentsUrlBuilder : null,
+    pageSize: Math.max(1, Math.min(100, Number(userConfig.pageSize) || 10))
+  };
+  const $ = id => document.getElementById(id);
+  const dom = { body: $('recordsBody'), keyword: $('keyword'), group: $('groupFilter'), clear: $('clearSearch'), empty: $('noResults'), notice: $('notice') };
+  const collator = new Intl.Collator('zh-Hant', { numeric: true, sensitivity: 'base' });
+  const state = { rows: [], query: '', group: '', sortBy: 'receivedDate', sortDirection: 'descending', page: 1 };
+  const SVG_NS = 'http://www.w3.org/2000/svg';
+  const asText = value => value == null ? '' : String(value);
+  const normalizeText = value => asText(value).normalize('NFKC').trim().toLocaleLowerCase();
+  const compactText = value => normalizeText(value).replace(/[\s()+\-]/g, '');
+
+  function makeIcon(name) {
+    const svg = document.createElementNS(SVG_NS, 'svg');
+    svg.setAttribute('class', 'icon'); svg.setAttribute('aria-hidden', 'true');
+    const use = document.createElementNS(SVG_NS, 'use');
+    use.setAttribute('href', '#i-' + name); svg.append(use); return svg;
+  }
+  function element(tag, className, text) {
+    const el = document.createElement(tag);
+    if (className) el.className = className;
+    if (text !== undefined) el.textContent = asText(text);
+    return el;
+  }
+  function normalizeRows(rows) {
+    if (!Array.isArray(rows)) throw new TypeError('rows 必須是陣列。');
+    const used = new Set();
+    return rows.map((item, index) => {
+      if (!item || typeof item !== 'object') throw new TypeError('每筆資料必須是物件。');
+      const recordId = asText(item.recordId || 'row-' + index);
+      if (used.has(recordId)) throw new TypeError('recordId 不可重複。');
+      used.add(recordId);
+      return {
+        recordId, receivedDate: asText(item.receivedDate), name: asText(item.name),
+        identityNumber: asText(item.identityNumber), phone: asText(item.phone), group: asText(item.group),
+        route: Array.isArray(item.route) ? item.route.map(asText).filter(Boolean).join(' → ') : asText(item.route),
+        documentCount: Number.isFinite(Number(item.documentCount)) ? Math.max(0, Math.floor(Number(item.documentCount))) : 0,
+        documentsUrl: asText(item.documentsUrl)
+      };
+    });
+  }
+  function populateGroups() {
+    const names = [...new Set(state.rows.map(row => row.group).filter(Boolean))].sort(collator.compare);
+    dom.group.replaceChildren(new Option('全部群組', ''));
+    names.forEach(name => dom.group.add(new Option(name, name)));
+    if (!names.includes(state.group)) state.group = '';
+    dom.group.value = state.group;
+  }
+  function filteredRows() {
+    const query = normalizeText(state.query);
+    const compactQuery = compactText(query);
+    return state.rows.filter(row => {
+      if (state.group && row.group !== state.group) return false;
+      if (!query) return true;
+      const nameMatch = normalizeText(row.name).includes(query);
+      const exactFieldMatch = [row.identityNumber, row.phone].some(value => normalizeText(value).includes(query));
+      const compactMatch = compactQuery && [row.identityNumber, row.phone].some(value => compactText(value).includes(compactQuery));
+      return Boolean(nameMatch || exactFieldMatch || compactMatch);
+    }).sort((a, b) => {
+      const result = state.sortBy === 'documentCount' ? a.documentCount - b.documentCount : collator.compare(a[state.sortBy], b[state.sortBy]);
+      return state.sortDirection === 'ascending' ? result : -result;
+    });
+  }
+  function buildRow(row) {
+    const tr = document.createElement('tr');
+    tr.append(element('td', 'date', row.receivedDate || '—'), element('td', 'name', row.name || '—'), element('td', 'identity', row.identityNumber || '—'));
+    const groupCell = document.createElement('td');
+    if (row.group) {
+      const tag = element('span', 'group-tag'); tag.title = row.group;
+      const dot = element('i', 'group-dot'); dot.setAttribute('aria-hidden', 'true');
+      tag.append(dot, element('span', 'group-label', row.group)); groupCell.append(tag);
+    } else groupCell.append(element('span', 'route-empty', '—'));
+    const route = element('td', row.route ? 'route' : 'route route-empty', row.route || '—');
+    route.title = row.route;
+    const number = element('td', 'number'); number.append(element('span', 'count-pill', row.documentCount));
+    const action = element('td', 'action');
+    const button = element('button', 'view-button'); button.type = 'button'; button.dataset.record = row.recordId;
+    button.setAttribute('aria-label', '查看' + (row.name || '客戶') + '的證件');
+    button.append(makeIcon('eye'), document.createTextNode('看')); action.append(button);
+    tr.append(groupCell, route, number, action); return tr;
+  }
+  function render() {
+    const all = filteredRows();
+    const totalPages = Math.max(1, Math.ceil(all.length / config.pageSize));
+    state.page = Math.min(state.page, totalPages);
+    const offset = (state.page - 1) * config.pageSize;
+    const visible = all.slice(offset, offset + config.pageSize);
+    dom.body.replaceChildren(...visible.map(buildRow));
+    dom.empty.hidden = all.length > 0;
+    dom.clear.hidden = !dom.keyword.value;
+    $('pagination').hidden = all.length <= config.pageSize;
+    $('recordRange').textContent = `第 ${all.length ? offset + 1 : 0}–${offset + visible.length} 筆，共 ${all.length} 筆`;
+    $('pageNumber').textContent = `${state.page} / ${totalPages}`;
+    $('prevPage').disabled = state.page <= 1;
+    $('nextPage').disabled = state.page >= totalPages;
+    $('resultsAnnouncement').textContent = `符合條件的資料共 ${all.length} 筆。`;
+    document.querySelectorAll('th[data-key]').forEach(th => th.setAttribute('aria-sort', th.dataset.key === state.sortBy ? state.sortDirection : 'none'));
+  }
+  function applySearch() { state.query = dom.keyword.value; state.group = dom.group.value; state.page = 1; render(); }
+  function updateStatus() {
+    $('documentsUsed').textContent = asText(config.storage.documentsUsed);
+    const used = asText(config.storage.diskUsed), total = asText(config.storage.diskTotal);
+    // 若單位相同，顯示「0.21 / 29.5 GB」，但不自行推算或改寫後端回報的使用比例。
+    const unit = total.match(/\s([A-Za-z]+)$/)?.[1];
+    const trimmed = unit ? used.replace(new RegExp('\\s' + unit + '$'), '') : used;
+    $('diskUsage').textContent = trimmed + ' / ' + total;
+    $('diskPercent').textContent = config.storage.percent == null ? '' : `（${asText(config.storage.percent)}%）`;
+    $('connectionLabel').textContent = config.aiConnected ? '已設定業務 AI 連線' : '尚未設定業務 AI 連線';
+    $('connectionStatus').classList.toggle('offline', !config.aiConnected);
+  }
+  function notify(title, message) {
+    $('noticeTitle').textContent = title; $('noticeText').textContent = message;
+    if (typeof dom.notice.showModal === 'function') {
+      if (!dom.notice.open) dom.notice.showModal();
+    } else window.alert(title + '\n' + message);
+  }
+  function navigate(url, missingTitle, missingMessage) {
+    if (!url) { notify(missingTitle, missingMessage); return; }
+    try {
+      const target = new URL(asText(url), location.href);
+      if (!['https:', 'http:'].includes(target.protocol)) throw new Error('invalid protocol');
+      if (target.username || target.password) throw new Error('credentials not allowed');
+      // 不接受 javascript: / data: 等網址。真實權限由目的頁與後端驗證。
+      location.assign(target.href);
+    } catch (error) { notify('網址設定無法使用', '請在原系統設定有效的證件頁或群組設定網址。'); }
+  }
+  function openDocuments(recordId) {
+    const row = state.rows.find(item => item.recordId === recordId);
+    if (!row) return;
+    const event = new CustomEvent('archive:open-documents', { detail: { ...row }, cancelable: true });
+    if (!window.dispatchEvent(event)) return;
+    let url = row.documentsUrl;
+    try { if (!url && config.documentsUrlBuilder) url = config.documentsUrlBuilder({ ...row }); }
+    catch (error) { notify('無法取得證件頁網址', '請檢查原系統的證件網址設定。'); return; }
+    navigate(url, '尚未連接證件頁', '這份是前端排版預覽。設定這筆資料的 documentsUrl 後，「看」就會開啟原系統的證件頁。');
+  }
+
+  $('searchForm').addEventListener('submit', event => { event.preventDefault(); applySearch(); });
+  dom.keyword.addEventListener('input', applySearch);
+  dom.group.addEventListener('change', applySearch);
+  dom.clear.addEventListener('click', () => { dom.keyword.value = ''; applySearch(); dom.keyword.focus(); });
+  dom.keyword.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && !event.isComposing) { event.preventDefault(); dom.keyword.value = ''; applySearch(); }
+  });
+  document.querySelectorAll('[data-sort]').forEach(button => button.addEventListener('click', () => {
+    const key = button.dataset.sort;
+    if (state.sortBy === key) state.sortDirection = state.sortDirection === 'ascending' ? 'descending' : 'ascending';
+    else { state.sortBy = key; state.sortDirection = 'ascending'; }
+    state.page = 1; render();
+  }));
+  dom.body.addEventListener('click', event => { const button = event.target.closest('button[data-record]'); if (button) openDocuments(button.dataset.record); });
+  $('groupMapping').addEventListener('click', () => {
+    const event = new CustomEvent('archive:open-group-mapping', { cancelable: true });
+    if (!window.dispatchEvent(event)) return;
+    navigate(config.groupMappingUrl, '尚未連接群組設定', '設定 groupMappingUrl 後，即可開啟你原系統的「官方賴對群組」頁面。');
+  });
+  $('prevPage').addEventListener('click', () => { if (state.page > 1) { state.page--; render(); } });
+  $('nextPage').addEventListener('click', () => { state.page++; render(); });
+  dom.notice.addEventListener('click', event => {
+    if (event.target !== dom.notice) return;
+    const box = dom.notice.getBoundingClientRect();
+    if (event.clientX < box.left || event.clientX > box.right || event.clientY < box.top || event.clientY > box.bottom) dom.notice.close();
+  });
+  window.DocumentArchive = Object.freeze({
+    setRows(rows) { const normalized = normalizeRows(rows); state.rows = normalized; state.page = 1; populateGroups(); render(); },
+    setStatus(status = {}) {
+      if (status.storage) config.storage = { ...config.storage, ...status.storage };
+      if (typeof status.aiConnected === 'boolean') config.aiConnected = status.aiConnected;
+      updateStatus();
+    },
+    setLinks(links = {}) {
+      if ('groupMappingUrl' in links) config.groupMappingUrl = asText(links.groupMappingUrl);
+      if ('documentsUrlBuilder' in links) config.documentsUrlBuilder = typeof links.documentsUrlBuilder === 'function' ? links.documentsUrlBuilder : null;
+    },
+    resetSearch() { dom.keyword.value = ''; dom.group.value = ''; applySearch(); }
+  });
+  try { state.rows = normalizeRows(config.rows); populateGroups(); updateStatus(); render(); }
+  catch (error) { notify('資料格式需要確認', error.message); }
+})();
+</script>
+</body>
+</html>

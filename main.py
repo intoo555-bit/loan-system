@@ -29833,7 +29833,7 @@ def docs_list_page(request: Request, q: str = "", g: str = ""):
                     for x in sorted({r["gid"] for r in rows if r["gid"]}, key=lambda x: gnames.get(x) or x))
     gopts = (f'<option value="">全部群組</option>{gopts}'
              f'<option value="_none"{" selected" if gg == "_none" else ""}>還沒有群組</option>')
-    trs = []
+    trs, recs = [], []
     for r in rows:
         if qq and not any(qq.upper() in (str(r[k] or "")).upper() for k in ("id_no", "name", "phone")):
             continue
@@ -29843,11 +29843,37 @@ def docs_list_page(request: Request, q: str = "", g: str = ""):
             c = conn.execute("SELECT * FROM customers WHERE id_no=? AND status!='DELETED' ORDER BY created_at DESC LIMIT 1",
                              (r["id_no"],)).fetchone()
         ro = _route_order_text(dict(c)) if c else ""
+        recs.append({"recordId": r["id_no"], "receivedDate": (r["first_at"] or "")[:10], "name": r["name"] or "",
+                     "identityNumber": r["id_no"], "phone": r["phone"] or "",
+                     "group": (gnames.get(r["gid"]) or r["gid"]) if r["gid"] else "還沒有群組",
+                     "route": ro, "documentCount": r["n"], "documentsUrl": "/archive/" + r["id_no"]})
         trs.append(f'<tr><td>{h((r["first_at"] or "")[:10])}</td><td>{h(r["name"] or "")}</td><td>{h(r["id_no"])}</td>'
                    f'<td>{h(gnames.get(r["gid"]) or r["gid"] if r["gid"] else "")}</td>'
                    f'<td style="font-size:13px">{h(ro)}</td><td>{r["n"]}</td>'
                    f'<td><a class="btn" href="/archive/{h(r["id_no"])}">看</a></td></tr>')
     url, sec = _bizai_conf()
+    if _ARCHIVE_LIST_UI:
+        # 使用者 2026-10-14 給的新版排版（ui/archive_list.html）：資料照舊由這裡算好塞進去
+        total = 0
+        try:
+            for root, _d, files in os.walk(_docs_dir()):
+                total += sum(os.path.getsize(os.path.join(root, f)) for f in files)
+        except Exception:
+            pass
+        storage = {"documentsUsed": f"{total / 1048576:.1f} MB", "diskUsed": "", "diskTotal": "", "percent": None}
+        try:
+            import shutil as _sh
+            du = _sh.disk_usage(os.path.dirname(os.path.abspath(DB_PATH)))
+            storage.update(diskUsed=f"{du.used / 1073741824:.2f} GB", diskTotal=f"{du.total / 1073741824:.1f} GB",
+                           percent=du.used * 100 // max(du.total, 1))
+        except Exception:
+            pass
+        cfg = {"rows": recs, "storage": storage, "aiConnected": bool(url and sec),
+               "groupMappingUrl": "/archive/accounts", "pageSize": 20}
+        # ⛔ JSON 塞進 <script>：「</」要跳脫，不然客人資料裡有 </script> 會把頁面弄壞
+        js = json.dumps(cfg, ensure_ascii=False).replace("</", "<\\/")
+        return HTMLResponse(_ARCHIVE_LIST_UI.replace("<!--__TOPNAV__-->", _page_topnav(role, "docs"))
+                            .replace("__CONFIG__", js))
     conf = "✅ 已設定業務 AI 連線" if (url and sec) else "⚠️ 還沒設定 BUSINESS_AI_URL／BUSINESS_AI_SECRET，拉不到照片"
     body = f"""<h2>📎 證件存檔</h2>
 <div class="card"><form method="get"><input type="text" name="q" value="{h(qq)}" placeholder="姓名／身分證／電話">
@@ -30326,6 +30352,13 @@ try:
 except Exception as _e:
     _ARCHIVE_UI = ""
     print(f"[證件] 讀不到 ui/archive_gallery.html：{_e}")
+# 證件存檔清單頁（使用者 2026-10-14 給的新版排版）；讀不到就用舊的簡單表格，不會開不了
+try:
+    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "ui", "archive_list.html"), encoding="utf-8") as _fp:
+        _ARCHIVE_LIST_UI = _fp.read()
+except Exception as _e:
+    _ARCHIVE_LIST_UI = ""
+    print(f"[證件] 讀不到 ui/archive_list.html：{_e}")
 
 _ARCHIVE_ADAPTER = """<script>
 (function(){
