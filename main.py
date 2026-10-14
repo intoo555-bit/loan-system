@@ -27742,7 +27742,10 @@ def _bizai_judge(kind: str, doc_id, id_no: str) -> dict:
     if not url or not sec:
         return {"ok": False, "error": "未設定業務 AI 連線"}
     try:
-        r = req_lib.get(f"{url}/api/loan/docs/{doc_id}/{kind}", params={"id_no": id_no},
+        path, params = kind, {"id_no": id_no}
+        if kind.startswith("fields:"):      # 第 8 段：身分證／行照／存摺讀到的欄位；kind 帶我們的分類（行政改過的以行政為準）
+            path, params["kind"] = "fields", kind[len("fields:"):]
+        r = req_lib.get(f"{url}/api/loan/docs/{doc_id}/{path}", params=params,
                         headers={"X-Loan-Secret": sec}, timeout=90)
         if r.status_code == 429:
             return {"ok": False, "error": "業務 AI 限流中"}
@@ -27831,6 +27834,12 @@ def _doc_label(r) -> str:
 
 
 _JUDGE_KIND = {"勞保明細": "labor", "人車合照": "stamp", "人與手機合照": "stamp"}
+# 業務 AI 第 8 段（2026-10-14 接上）：只讀「上面印了什麼」，是不是本人／幾歲／持有多久 在這邊比
+#   值＝業務 AI 認得的 kind 寫法（⚠️ 我們叫「身分證反面」、業務 AI 叫「身分證背面」）
+#   ⚠️ _kind 連分類一起存（fields:行照）→ 行政改分類後會重拿，不會拿行照的答案當身分證
+_FIELDS_KIND = {"身分證正面": "身分證正面", "身分證反面": "身分證背面", "健保卡": "健保卡", "行照": "行照",
+                "存摺封面": "存摺封面", "信用卡正面": "信用卡", "信用卡帳單": "信用卡帳單"}
+_JUDGE_KIND.update({k: "fields:" + v for k, v in _FIELDS_KIND.items()})
 
 
 def judge_customer_docs(id_no: str, force: bool = False) -> int:
@@ -27901,6 +27910,8 @@ def _doc_judge_detail(r) -> str:
     j = _doc_judge(r)
     if not j or j.get("error") or j.get("_transient"):
         return ""
+    if str(j.get("_kind", "")).startswith("fields:"):
+        return "\n".join(f"{k}：{v}" for k, v in (j.get("欄位") or {}).items() if v and not k.endswith("_民國"))
     lines = [str(x).replace("**", "") for x in (j.get("提示") or [])]
     if j.get("看不清楚"):
         lines.append("看不清楚：" + "、".join(str(x) for x in j["看不清楚"]))
@@ -27916,7 +27927,88 @@ def _doc_judge(r) -> dict:
     return j if j.get("_kind") == _JUDGE_KIND.get(r.get("show_label") or _doc_label(r)) else {}
 
 
-def _doc_judge_text(r) -> str:
+def _roc_ymd(x):
+    """各種日期寫法 → (西元年, 月, 日)；認不出來回 None"""
+    m = re.fullmatch(r"(\d{3})/(\d{2})/(\d{2})", _normalize_roc_date(str(x or "")))
+    return (int(m.group(1)) + 1911, int(m.group(2)), int(m.group(3))) if m else None
+
+
+def _name_norm(x) -> str:
+    return re.sub(r"[\s\u3000·・.]", "", str(x or ""))
+
+
+def _doc_fields_check(j: dict, label: str, cust) -> tuple:
+    """業務 AI 讀到的欄位 跟 客戶資料 比 → (資訊[], 提醒[])。
+    使用者 2026-10-14：「行照持有時間也要讀取；證件、存摺、財力都要確認是不是客戶本人的；年紀也可以從身分證看」
+    ⛔ 存摺／信用卡／財力名字不是本人 → 只提醒、不擋（警示戶可以用二等親／朋友的存摺、撥款可以撥太太戶頭）
+    ⛔ 讀不到的欄位是空字串 → 不比、不當成不一樣（電動機車沒有引擎號碼是正常的）"""
+    f = j.get("欄位") or {}
+    cust = cust or {}
+    cname = _name_norm(cust.get("customer_name"))
+    info, warn = [], []
+    t = now_tw()
+
+    def other(nm):      # 讀得到、系統也有、而且不一樣
+        return bool(nm) and bool(cname) and _name_norm(nm) != cname
+
+    if label in ("身分證正面", "健保卡"):
+        nm, idn = f.get("姓名") or "", re.sub(r"\s", "", f.get("身分證號") or "").upper()
+        if other(nm):
+            warn.append(f"⚠️ 姓名跟系統不一樣（證件：{nm}／系統：{cust.get('customer_name')}）")
+        if idn and cust.get("id_no") and idn != normalize_id_no(cust.get("id_no")):
+            warn.append(f"⚠️ 身分證號跟系統不一樣（證件：{idn}）")
+        b = _roc_ymd(f.get("出生日期_民國") or f.get("出生日期"))
+        if b:
+            info.append(f"{t.year - b[0] - ((t.month, t.day) < b[1:])} 歲（{b[0] - 1911:03d}/{b[1]:02d}/{b[2]:02d} 生）")
+            sb = _roc_ymd(cust.get("birth_date"))
+            if sb and sb != b:
+                warn.append(f"⚠️ 生日跟系統不一樣（系統：{_normalize_roc_date(cust.get('birth_date'))}）")
+            elif cust and not sb:
+                info.append("系統還沒填生日，可以照這個補")
+    elif label == "身分證反面":
+        d = _roc_ymd(f.get("發證日期_民國") or f.get("發證日期"))
+        if d:
+            info.append(f"{d[0] - 1911:03d}/{d[1]:02d}/{d[2]:02d} {f.get('發證地') or ''}{f.get('換補發') or ''}".strip())
+            sd = _roc_ymd(cust.get("id_issue_date"))
+            if sd and sd != d:
+                warn.append(f"⚠️ 發證日期跟系統不一樣（系統：{_normalize_roc_date(cust.get('id_issue_date'))}）")
+    elif label == "行照":
+        nm = f.get("車主姓名") or ""
+        if other(nm):
+            warn.append(f"⚠️ 車主不是本人（車主：{nm}）")
+        if f.get("車牌"):
+            info.append(f"車牌 {f['車牌']}")
+        d = _roc_ymd(f.get("發照日期_民國") or f.get("發照日期"))
+        if d:
+            mon = (t.year - d[0]) * 12 + t.month - d[1] - (t.day < d[2])
+            info.append(f"持有 {mon} 個月（發照 {d[0] - 1911:03d}/{d[1]:02d}/{d[2]:02d}）")
+        # ⛔ 出廠年月是西元（2021.10），業務 AI 刻意不轉 → 不可以拿去當民國
+        y = re.match(r"\s*(\d{4})", f.get("出廠年月") or "")
+        if y:
+            info.append(f"車齡 {t.year - int(y.group(1))} 年（出廠 {f['出廠年月']}）")
+    elif label == "存摺封面":
+        nm = f.get("戶名") or ""
+        if other(nm):
+            warn.append(f"⚠️ 戶名不是本人（{nm}）")
+        acct = re.sub(r"\D", "", f.get("帳號") or "")[-4:]
+        info.append(" ".join(x for x in (f.get("銀行"), f.get("分行"), f"帳號末4碼 {acct}" if acct else "") if x))
+    elif label in ("信用卡正面", "信用卡帳單"):
+        nm = f.get("持卡人姓名") or f.get("姓名") or ""
+        if other(nm):
+            warn.append(f"⚠️ 名字不是本人（{nm}）")
+        info.append(" ".join(x for x in (f.get("發卡銀行"), f"有效到 {f['有效日期']}" if f.get("有效日期") else "") if x))
+    return [x for x in info if x], warn
+
+
+def _doc_field_warnings(r, cust) -> list:
+    """這張證件跟客戶資料對不上的提醒（證件頁上方彙總用）"""
+    j = _doc_judge(r)
+    if not j or not str(j.get("_kind", "")).startswith("fields:") or j.get("error") or j.get("_transient"):
+        return []
+    return _doc_fields_check(j, r.get("show_label") or _doc_label(r), cust)[1]
+
+
+def _doc_judge_text(r, cust=None) -> str:
     """證件卡片上的一行判讀摘要"""
     j = _doc_judge(r)
     if not j:
@@ -27946,6 +28038,11 @@ def _doc_judge_text(r) -> str:
             return f'🤖 有時間浮水印 {j.get("datetime", "")} {j.get("address", "")}'.strip()
         if j.get("has_stamp") is False:
             return "🤖 沒有時間相機浮水印"
+    if j["_kind"].startswith("fields:"):
+        info, warn = _doc_fields_check(j, r.get("show_label") or _doc_label(r), cust)
+        if not (j.get("欄位") or {}) or not any((j.get("欄位") or {}).values()):
+            return "🤖 讀不到上面的字"
+        return "🤖 " + "；".join(warn + info) if (warn or info) else "🤖 已讀到（看大圖右邊）"
     return ""
 
 
@@ -28079,6 +28176,13 @@ def _docs_missing_html(cust, rows) -> str:
     核准了後面可能不會送、客戶中途不要結案也不會到後面」→ ⛔ 只看目前這一家，不列後面幾家"""
     if not cust:
         return ""
+    warns = [f"{r['show_label']}：{w.replace('⚠️ ', '')}" for r in rows for w in _doc_field_warnings(r, cust)]
+    wline = (f'<div class="ms-line"><span class="ms-check">⚠️ 證件跟客戶資料對不上（AI 讀的，請看照片確認）：'
+             f'{h("、".join(warns))}</span></div>') if warns else ""
+    return wline + _docs_missing_line(cust, rows)
+
+
+def _docs_missing_line(cust, rows) -> str:
     co = _docs_current_company(cust)
     if not co:
         return ""
@@ -29079,8 +29183,10 @@ _DOC_GROUP = {"身分證正面": "identity", "身分證反面": "identity", "健
               "人與手機合照": "vehicle", "委任合約": "other", "電子簽名": "other", "其他": "other"}   # 合約分頁拿掉（使用者 2026-10-14）
 
 
-def _doc_payload(r, order: int) -> dict:
-    """給介面的一筆資料（介面規格：證件管理_串接說明.txt）"""
+def _doc_payload(r, order: int, cust=False) -> dict:
+    """給介面的一筆資料（介面規格：證件管理_串接說明.txt）。cust＝客戶資料（比對證件是不是本人用；沒給就自己查）"""
+    if cust is False:
+        cust = _docs_latest_customer(r["id_no"])
     failed = (r.get("ai_note") or "").startswith("判讀失敗") and not r.get("ai_label") and not r.get("manual_label")
     lb = r.get("manual_label") or r.get("ai_label") or ""
     if not lb:   # 還沒判讀：業務 AI 的原標籤對得到清單就先用，對不到放「其他」並標「未判讀」
@@ -29098,12 +29204,13 @@ def _doc_payload(r, order: int) -> dict:
             "previewUrl": preview, "fileUrl": f"/archive/file/{r['id']}",
             "isManual": bool(r.get("manual_label")), "order": order,
             "error": (r.get("ai_note") or "") if failed else "",
-            "judge": _doc_judge_text(r), "judgeDetail": _doc_judge_detail(r),
+            "judge": _doc_judge_text(r, cust), "judgeDetail": _doc_judge_detail(r),
             "unclassified": not (r.get("manual_label") or r.get("ai_label")) and not failed}
 
 
 def _docs_payload(idv: str) -> list:
-    return [_doc_payload(r, n) for n, r in enumerate(_docs_rows(idv), 1)]
+    cust = _docs_latest_customer(idv)
+    return [_doc_payload(r, n, cust) for n, r in enumerate(_docs_rows(idv), 1)]
 
 
 try:

@@ -2243,7 +2243,8 @@ _JUDGE = {"labor": {"ok": True, "is_labor": True, "查詢日": "115/10/11", "明
           "stamp": {"ok": True, "has_stamp": True, "datetime": "2026-10-13 15:20", "address": "台中市西屯區台灣大道三段1號"}}
 _judge_calls = []
 def _fake_judge(kind, doc_id, idv):
-    _judge_calls.append((kind, str(doc_id), idv)); return dict(_JUDGE[kind])
+    _judge_calls.append((kind, str(doc_id), idv))
+    return dict(_JUDGE[kind]) if kind in _JUDGE else {"ok": True, "欄位": {}}
 m._bizai_judge = _fake_judge
 os.environ["BUSINESS_AI_URL"] = "https://fake-bizai.test"; os.environ["BUSINESS_AI_SECRET"] = "x"
 bc("10/14-缺件甲 G300000001", gid="TEST_B")
@@ -2255,7 +2256,7 @@ m.pull_customer_docs("G300000001")
 _c = sqlite3.connect(TEST_DB); _c.execute("UPDATE customer_docs SET ai_label=label WHERE id_no='G300000001'"); _c.commit(); _c.close()
 m.judge_customer_docs("G300000001")
 check("勞保明細拿勞保判讀、人車合照拿浮水印（各一次、帶身分證）",
-      sorted(k for k, d, i in _judge_calls) == ["labor", "stamp"] and all(i == "G300000001" for k, d, i in _judge_calls), _judge_calls)
+      sorted(k for k, d, i in _judge_calls if not k.startswith("fields:")) == ["labor", "stamp"] and all(i == "G300000001" for k, d, i in _judge_calls), _judge_calls)
 _judge_calls.clear(); m.judge_customer_docs("G300000001")
 check("已經拿過的不再拿（業務 AI 判一次就好）", not _judge_calls, _judge_calls)
 _rows = m._docs_rows("G300000001")
@@ -2374,6 +2375,75 @@ os.environ.pop("BUSINESS_AI_URL", None); os.environ.pop("BUSINESS_AI_SECRET", No
 import inspect as _insp78
 check("會下載／轉 PDF 的網頁不是 async（不卡住整個網站）",
       not any(_insp78.iscoroutinefunction(getattr(m, n)) for n in ("docs_customer_page", "docs_album_page", "docs_pdf", "docs_zip", "docs_file_preview", "docs_data")))
+
+# ========== 79. 業務 AI 第 8 段：身分證／行照／存摺讀到的欄位 → 這邊比是不是本人、幾歲、持有多久（2026-10-14）==========
+print("\n=== 79. 證件欄位比對 ===")
+bc("10/14-欄位乙 J300000001", gid="TEST_B")
+_c = sqlite3.connect(TEST_DB)
+_c.execute("UPDATE customers SET birth_date='075/03/12', id_issue_date='105/07/01' WHERE id_no='J300000001'")
+_c.commit(); _c.close()
+_LB79 = {"81": "身分證正面", "82": "身分證反面", "83": "行照", "84": "存摺封面"}
+# 回傳格式照交接文件第 8 段（業務 AI 2026-10-14 正式站的範例）
+_F79 = {"身分證正面": {"姓名": "欄位乙", "身分證號": "J300000001", "出生日期": "民國75年3月12日", "出生日期_民國": "075/03/12"},
+        "身分證背面": {"發證日期": "民國105年7月1日", "發證日期_民國": "105/07/01", "發證地": "北市", "換補發": "換發", "配偶": ""},
+        "行照": {"車主姓名": "王大明", "車牌": "EQD-0097", "發照日期": "110.10.25", "發照日期_民國": "110/10/25",
+                 "出廠年月": "2021.10", "廠牌": "睿能", "引擎號碼": ""},
+        "存摺封面": {"戶名": "欄 位乙", "銀行": "", "分行": "台中分行", "帳號": "1234"}}
+_calls79 = []
+def _fj79(kind, d, idv):
+    _calls79.append((kind, str(d)))
+    return {"ok": True, "AI判讀待確認": True, "種類": kind, "欄位": dict(_F79.get(kind.split(":", 1)[-1], {}))}
+_o79 = (m._bizai_list, m._bizai_fetch, m._bizai_judge)
+m._bizai_list = lambda idv: ([{"doc_id": int(k), "created_at": "2026-10-14T09:00:00", "content_type": "image/png",
+                               "source": "LINE聊天", "label": v} for k, v in _LB79.items()], "") if idv == "J300000001" else ([], "")
+m._bizai_fetch = lambda d, idv: (_png77((int(d), 7, 7)), "image/png", "")
+m._bizai_judge = _fj79
+os.environ["BUSINESS_AI_URL"] = "https://fake-bizai.test"; os.environ["BUSINESS_AI_SECRET"] = "x"
+m.pull_customer_docs("J300000001")
+_c = sqlite3.connect(TEST_DB); _c.execute("UPDATE customer_docs SET ai_label=label WHERE id_no='J300000001'"); _c.commit(); _c.close()
+m.judge_customer_docs("J300000001")
+check("身分證反面問業務 AI 時用它認得的寫法「身分證背面」，四張都有帶分類",
+      sorted(k for k, d in _calls79) == ["fields:存摺封面", "fields:行照", "fields:身分證正面", "fields:身分證背面"], _calls79)
+_d79 = {d["category"]: d for d in TestClient(m.app).get("/archive/J300000001/data").json()["documents"]} if (setattr(m, "check_auth", lambda req: "admin") or True) else {}
+check("身分證：算出幾歲（2026-10-14 時 40 歲）、生日跟系統一樣不提醒",
+      "40 歲" in _d79["身分證正面"]["judge"] and "⚠️" not in _d79["身分證正面"]["judge"], _d79["身分證正面"]["judge"])
+check("行照：車主不是本人 → 提醒", "車主不是本人（車主：王大明）" in _d79["行照"]["judge"], _d79["行照"]["judge"])
+check("行照：持有幾個月（110/10/25 發照 → 59 個月）、車齡用西元出廠年算（⛔ 不可以當民國）",
+      "持有 59 個月" in _d79["行照"]["judge"] and "車齡 5 年" in _d79["行照"]["judge"], _d79["行照"]["judge"])
+check("存摺：戶名中間有空白也算本人，不提醒", "⚠️" not in _d79["存摺封面"]["judge"] and "末4碼 1234" in _d79["存摺封面"]["judge"],
+      _d79["存摺封面"]["judge"])
+check("身分證反面：發證日期跟系統一樣不提醒", "⚠️" not in _d79["身分證反面"]["judge"] and "105/07/01" in _d79["身分證反面"]["judge"],
+      _d79["身分證反面"]["judge"])
+check("看大圖右邊：列出讀到的原樣欄位（空的不列、不重複列 _民國）",
+      "發照日期：110.10.25" in _d79["行照"]["judgeDetail"] and "_民國" not in _d79["行照"]["judgeDetail"]
+      and "引擎號碼" not in _d79["行照"]["judgeDetail"], _d79["行照"]["judgeDetail"])
+_h79 = TestClient(m.app).get("/archive/J300000001").text
+check("證件頁上方彙總：行照車主不是本人", "證件跟客戶資料對不上" in _h79 and "行照：車主不是本人" in _h79)
+# 生日打錯
+_c = sqlite3.connect(TEST_DB); _c.execute("UPDATE customers SET birth_date='0750313' WHERE id_no='J300000001'"); _c.commit(); _c.close()
+_d79 = {d["category"]: d for d in TestClient(m.app).get("/archive/J300000001/data").json()["documents"]}
+check("系統生日跟身分證不一樣 → 提醒（系統的寫法 0750313 也認得）",
+      "生日跟系統不一樣" in _d79["身分證正面"]["judge"], _d79["身分證正面"]["judge"])
+# 行政把行照改成身分證正面 → 要用新分類重拿（⛔ 不可以拿行照的答案當身分證）
+_c = sqlite3.connect(TEST_DB); _c.execute("UPDATE customer_docs SET manual_label='身分證正面' WHERE id_no='J300000001' AND remote_doc_id='83'"); _c.commit(); _c.close()
+_calls79.clear(); m.judge_customer_docs("J300000001")
+check("改分類 → 用新分類重拿，其他張不重拿", _calls79 == [("fields:身分證正面", "83")], _calls79)
+# 窗口網址
+_got = {}
+class _R79:
+    status_code = 200
+    def json(self): return {"ok": True, "欄位": {}}
+_oget = m.req_lib.get
+m.req_lib.get = lambda url, params=None, headers=None, timeout=None: (_got.update(url=url, params=params, headers=headers) or _R79())
+_o79j = m._bizai_judge; m._bizai_judge = _o79[2]
+m._bizai_judge("fields:身分證背面", 82, "J300000001")
+m.req_lib.get = _oget
+check("打業務 AI：/fields?kind=身分證背面、身分證放參數、密碼放標頭",
+      _got["url"].endswith("/api/loan/docs/82/fields") and _got["params"] == {"id_no": "J300000001", "kind": "身分證背面"}
+      and _got["headers"] == {"X-Loan-Secret": "x"}, _got)
+m._bizai_list, m._bizai_fetch, m._bizai_judge = _o79
+m.check_auth = _old_auth75
+os.environ.pop("BUSINESS_AI_URL", None); os.environ.pop("BUSINESS_AI_SECRET", None)
 
 # ========== 總結 ==========
 print(f"\n{'='*50}")
