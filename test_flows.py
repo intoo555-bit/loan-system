@@ -3118,6 +3118,18 @@ for _k, _v in (("hr_industry", "餐飲業"), ("hr_fund", "3.購買3C產品"), ("
     check(f"補充資料自動帶：{_k} = {_v}", _sg.get(_k) == _v, _sg.get(_k))
 _gh4 = m._adminb_guess_html({"company_name": "嘉合小吃店", "company_role": "老闆",
                              "adminb_industry": "其他", "adminb_role": "其他", "adminb_fund_use": "I-1教育費"})
+# 使用者 2026-10-15：「機車行照跟汽車行照顏色也不一樣」→ 先看印的車種字、再看底色（藍機車、綠汽車）、再看排氣量
+for _f, _want in (({"車種欄": "普通重型機車"}, "機車"), ({"車種欄": "自用小客車"}, "汽車"), ({"底色": "藍"}, "機車"),
+                  ({"底色": "綠"}, "汽車"), ({"車種欄": "自用小客車", "底色": "藍"}, ""), ({"排氣量": "124"}, "機車"),
+                  ({"排氣量": "800"}, ""), ({"底色": "淺綠", "排氣量": "124"}, "汽車")):
+    check(f"行照車種：{_f} → {_want or '分不出來'}", m._lic_kind(_f) == _want, m._lic_kind(_f))
+# 使用者 2026-10-15：貸救補「商品名稱、型號」＝手機型號跟 IMEI；麻吉也是；喬美 IMEI
+_sg2 = m._adminb_supp_guess({"id_no": "", "current_company": "麻吉手機",
+                             "_dj_fields:手機型號": {"欄位": {"廠牌": "Apple", "型號": "iPhone 15"}},
+                             "_dj_fields:IMEI": {"欄位": {"IMEI 1": "35 123456 789012 3"}}, "_dj_labor": {}})
+for _k, _v in (("lj_pname", "Apple iPhone 15"), ("lj_pmodel", "351234567890123"), ("qm_imei", "351234567890123"),
+               ("mj_brand", "Apple"), ("mj_model", "iPhone 15")):
+    check(f"手機補充資料：{_k} = {_v}", _sg2.get(_k) == _v, _sg2.get(_k))
 check("行政B：已經選過的不蓋（亞太三格不再給建議）", '"at_industry"' not in _gh4 and '"at_role"' not in _gh4 and '"at_fund"' not in _gh4, _gh4[:300])
 _r = _tc93.get("/archive/accounts")
 check("對照頁有一格可以自己打官方賴名稱", "自己打官方賴名稱" in _r.text)

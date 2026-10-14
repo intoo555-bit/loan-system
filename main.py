@@ -2976,6 +2976,34 @@ def _labor_rule_verdict(rule, label, customer):
     return ("pass", label, src)
 
 
+def _lic_kind(f: dict, ai_kind: str = "") -> str:
+    """行照是機車還是汽車（使用者 2026-10-15：「機車行照跟汽車行照顏色也不一樣」）。順序：
+      ① 行照最上面印的車種字（業務 AI 抄的「車種欄」：普通重型／輕型＝機車、自用小客車／小貨車＝汽車）
+      ② 紙的底色（業務 AI 抄的「底色」：藍＝機車、綠＝汽車；業務 AI 用 20 張真行照對過）
+      ③ 業務 AI 判的種類（機車行照／汽車行照）
+      ④ 排氣量（50～599 機車、1000 以上汽車）
+    ⛔ 字跟顏色對不上 → 回空（分不出來，讓人看），不硬判"""
+    f = f or {}
+    t = str(f.get("車種欄") or "")
+    by_txt = "機車" if any(k in t for k in ("重型", "輕型", "機車")) else \
+        "汽車" if any(k in t for k in ("小客", "小貨", "大客", "大貨", "汽車", "自小")) else ""
+    c_ = str(f.get("底色") or "")
+    by_col = "機車" if "藍" in c_ and "綠" not in c_ else "汽車" if "綠" in c_ and "藍" not in c_ else ""
+    if by_txt and by_col and by_txt != by_col:
+        return ""
+    if by_txt or by_col:
+        return by_txt or by_col
+    if "機車" in str(ai_kind or ""):
+        return "機車"
+    if "汽車" in str(ai_kind or ""):
+        return "汽車"
+    try:
+        cc = int(re.sub(r"[^\d]", "", str(f.get("排氣量") or "")) or 0)
+    except ValueError:
+        cc = 0
+    return "機車" if 50 <= cc < 600 else "汽車" if cc >= 1000 else ""
+
+
 def _customer_licenses(customer) -> list:
     """這位客人每張行照的 (車種, 持有幾個月, 從哪個日期算)。車種看排氣量（行照名稱只寫「行照」分不出來）：
     50～599cc 機車、1000cc 以上汽車、中間的分不出來（同業務 AI 的判法）。持有看換補照日期，沒有才看發照日期。"""
@@ -2997,11 +3025,7 @@ def _customer_licenses(customer) -> list:
                     d, src = _roc_ymd(f.get("發照日期_民國") or f.get("發照日期")), "發照"
                 if not d:
                     continue
-                try:
-                    cc = int(re.sub(r"[^\d]", "", str(f.get("排氣量") or "")) or 0)
-                except ValueError:
-                    cc = 0
-                kind = "機車" if 50 <= cc < 600 else "汽車" if cc >= 1000 else ""
+                kind = _lic_kind(f, j.get("種類"))
                 mon = (t.year - d[0]) * 12 + t.month - d[1] - (t.day < d[2])
                 out.append((kind, mon, f"{src} {d[0] - 1911:03d}/{d[1]:02d}/{d[2]:02d}"))
         except Exception:
@@ -3025,11 +3049,7 @@ def _customer_license_plates(customer) -> dict:
                     continue
                 j = _doc_judge(r)
                 f = (j.get("欄位") or {}) if j and not j.get("error") else {}
-                try:
-                    cc = int(re.sub(r"[^\d]", "", str(f.get("排氣量") or "")) or 0)
-                except ValueError:
-                    cc = 0
-                kind = "機車" if 50 <= cc < 600 else "汽車" if cc >= 1000 else ""
+                kind = _lic_kind(f, j.get("種類"))
                 plate = re.sub(r"[^A-Z0-9]", "", str(f.get("車牌") or "").upper())
                 if kind and plate:
                     out[kind].add(plate)
@@ -19392,6 +19412,20 @@ def _adminb_supp_guess(customer) -> dict:
         g["hr_mfg"] = str(moto.get("出廠年月") or "").replace(".", "/")
         g["mj_brand"], g["mj_model"] = brand, vtype
         g["qm_model"] = " ".join(x for x in (brand, vtype, str(moto.get("引擎號碼") or "")) if x)
+    # 手機 ← 手機型號／IMEI 照片判讀（使用者 2026-10-15：貸救補「商品名稱、型號」就是填手機型號跟 IMEI，麻吉也是）
+    ph = _customer_doc_judge(c, "fields:手機型號")
+    pf = (ph.get("欄位") or {}) if ph else {}
+    im = _customer_doc_judge(c, "fields:IMEI")
+    imf = (im.get("欄位") or {}) if im else {}
+    imei = re.sub(r"\D", "", str(imf.get("IMEI 1") or imf.get("IMEI1") or imf.get("IMEI") or pf.get("IMEI 1") or ""))
+    phone_name = " ".join(x for x in (str(pf.get("廠牌") or ""), str(pf.get("型號") or "")) if x)
+    if phone_name:
+        g["lj_pname"] = phone_name
+    if imei:
+        g["lj_pmodel"] = g["qm_imei"] = imei
+    want_phone = "手機" in str(c.get("adminb_selected_plans") or "") + str(c.get("current_company") or "") or not moto
+    if want_phone and (pf.get("廠牌") or pf.get("型號")):
+        g["mj_brand"], g["mj_model"] = str(pf.get("廠牌") or ""), str(pf.get("型號") or "")
     # 照會時間 ← 群組補的時段（例：「朋友 李○○ 09xx (知情) 1550-1650 @AI」）
     slot = ""
     cid = (c.get("case_id") or "").strip()
@@ -19466,7 +19500,7 @@ def _adminb_license_html(customer, role) -> str:
                 cc = int(re.sub(r"[^\d]", "", vals["at_disp"]) or 0)
             except ValueError:
                 cc = 0
-            kind = "機車" if 50 <= cc < 600 else "汽車" if cc >= 1000 else "車種分不出來"
+            kind = _lic_kind(f, j.get("種類")) or "車種分不出來"
             lic.append({"name": f'{kind}行照 {vals["at_plate"]}' + (f"（{cc}cc）" if cc else ""), "kind": kind, "vals": vals})
     # 使用者 2026-10-14：「亞太也是有汽車行照」→ 汽車、機車都可以選；送的是汽車方案就汽車排第一個（預設帶它）
     want = "汽車" if ("汽車" in str(customer.get("adminb_selected_plans") or "") + str(customer.get("current_company") or "")
@@ -29044,11 +29078,12 @@ _JUDGE_KIND = {"勞保明細": "labor", "人車合照": "stamp", "人與手機�
 #   值＝業務 AI 認得的 kind 寫法（⚠️ 我們叫「身分證反面」、業務 AI 叫「身分證背面」）
 #   ⚠️ _kind 連分類一起存（fields:行照）→ 行政改分類後會重拿，不會拿行照的答案當身分證
 _FIELDS_KIND = {"身分證正面": "身分證正面", "身分證反面": "身分證背面", "健保卡": "健保卡", "行照": "行照",
-                "存摺封面": "存摺封面", "信用卡正面": "信用卡", "信用卡帳單": "信用卡帳單"}
+                "存摺封面": "存摺封面", "信用卡正面": "信用卡", "信用卡帳單": "信用卡帳單",
+                "IMEI": "IMEI", "手機型號": "手機型號"}
 _JUDGE_KIND.update({k: "fields:" + v for k, v in _FIELDS_KIND.items()})
 # 業務 AI 讀的欄位改版了 → 版本 +1，舊答案會自動重拿一次（兩邊都存了舊答案，不重拿永遠是舊的）
 #   2：發證日期／發證地／換補發改從身分證「正面」讀（2026-10-14 交接第 8 段更正）
-_FIELDS_VER = 2
+_FIELDS_VER = 3   # 3：2026-10-15 行照多讀車種欄／底色（分機車汽車）；IMEI、手機型號
 
 
 def judge_customer_docs(id_no: str, force: bool = False) -> int:
@@ -29073,6 +29108,8 @@ def judge_customer_docs(id_no: str, force: bool = False) -> int:
             res["_v"] = _FIELDS_VER
         if not res.get("ok"):          # 連線／限流問題：下次再試（業務 AI 判讀失敗會回 ok:true＋error，那個要存）
             res["_transient"] = True
+        elif "不知道這張是什麼證件" in str(res.get("error") or ""):
+            res["_transient"] = True       # 業務 AI 還不會讀這種（例：IMEI 剛開）→ 下次再試，不要存成永遠失敗
         with db_conn(commit=True) as conn:
             conn.execute("UPDATE customer_docs SET judge_json=?, judge_at=? WHERE id=?",
                          (json.dumps(res, ensure_ascii=False), now_iso(), r["id"]))
@@ -30368,16 +30405,7 @@ _PACK_TEMPLATE_ALIAS = {"分貝機車改裝": "分貝機車", "分貝汽車改�
 def _doc_vehicle_kind(r) -> str:
     """這張行照是機車還是汽車：業務 AI 判的種類優先，沒有才看排氣量（50～599 機車、1000 以上汽車）；分不出來回 """""
     j = _doc_judge(r) or {}
-    k = str(j.get("種類") or "")
-    if "機車" in k:
-        return "機車"
-    if "汽車" in k:
-        return "汽車"
-    try:
-        cc = int(re.sub(r"[^\d]", "", str((j.get("欄位") or {}).get("排氣量") or "")) or 0)
-    except ValueError:
-        cc = 0
-    return "機車" if 50 <= cc < 600 else "汽車" if cc >= 1000 else ""
+    return _lic_kind(j.get("欄位") or {}, j.get("種類"))
 
 
 @app.get("/archive/{id_no}/pack")
