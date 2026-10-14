@@ -1679,6 +1679,7 @@ PLAN_ELIGIBILITY_RULES = [
         "max_amount": 200,
         "priority": 88,
         "rules": [
+            {"type": "simple", "label": "汽車不是老車（2011 以前沒天書 → 只有裕融信福貸）", "op": "car_not_old"},
             {"type": "simple", "label": "年齡 18~65", "field": "age", "op": "between", "value": [18, 65]},
             {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
             {"type": "simple", "label": "客戶必須有汽車（看 eval_property 含「汽」）", "op": "has_car"},
@@ -1704,6 +1705,7 @@ PLAN_ELIGIBILITY_RULES = [
         "max_amount": 100,
         "priority": 84,
         "rules": [
+            {"type": "simple", "label": "汽車不是老車（2011 以前沒天書 → 只有裕融信福貸）", "op": "car_not_old"},
             {"type": "simple", "label": "年齡 18~65", "field": "age", "op": "between", "value": [18, 65]},
             {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
             {"type": "simple", "label": "客戶必須有汽車（看 eval_property 含「汽」）", "op": "has_car"},
@@ -1727,6 +1729,7 @@ PLAN_ELIGIBILITY_RULES = [
         "max_amount": 50,
         "priority": 80,
         "rules": [
+            {"type": "simple", "label": "汽車不是老車（2011 以前沒天書 → 只有裕融信福貸）", "op": "car_not_old"},
             {"type": "simple", "label": "年齡 18~65", "field": "age", "op": "between", "value": [18, 65]},
             {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
             {"type": "simple", "label": "客戶必須有汽車（看 eval_property 含「汽」）", "op": "has_car"},
@@ -1747,6 +1750,7 @@ PLAN_ELIGIBILITY_RULES = [
         "max_amount": 30,
         "priority": 77,
         "rules": [
+            {"type": "simple", "label": "汽車不是老車（2011 以前沒天書 → 只有裕融信福貸）", "op": "car_not_old"},
             {"type": "simple", "label": "年齡 20~65", "field": "age", "op": "between", "value": [20, 65]},
             {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
             {"type": "simple", "label": "客戶必須有汽車貸款（沒車貸不能送）", "op": "has_car_loan",
@@ -1958,6 +1962,7 @@ PLAN_ELIGIBILITY_RULES = [
         "max_amount": 150,
         "priority": 87,
         "rules": [
+            {"type": "simple", "label": "汽車不是老車（2011 以前沒天書 → 只有裕融信福貸）", "op": "car_not_old"},
             {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
             {"type": "simple", "label": "客戶必須有汽車", "op": "has_car"},
             {"type": "simple", "label": "車齡 ≤ 15 年", "field": "vehicle_year", "op": "year_age_le", "value": 15},
@@ -1975,6 +1980,7 @@ PLAN_ELIGIBILITY_RULES = [
         "max_amount": 150,
         "priority": 85,
         "rules": [
+            {"type": "simple", "label": "汽車不是老車（2011 以前沒天書 → 只有裕融信福貸）", "op": "car_not_old"},
             {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
             {"type": "simple", "label": "客戶必須有汽車", "op": "has_car"},
             {"type": "simple", "label": "車齡 ≤ 18 年", "field": "vehicle_year", "op": "year_age_le", "value": 18},
@@ -1992,6 +1998,7 @@ PLAN_ELIGIBILITY_RULES = [
         "max_amount": 150,
         "priority": 82,
         "rules": [
+            {"type": "simple", "label": "汽車不是老車（2011 以前沒天書 → 只有裕融信福貸）", "op": "car_not_old"},
             {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
             {"type": "simple", "label": "客戶必須有汽車", "op": "has_car"},
             {"type": "simple", "label": "車齡 ≤ 18 年", "field": "vehicle_year", "op": "year_age_le", "value": 18},
@@ -2028,6 +2035,7 @@ PLAN_ELIGIBILITY_RULES = [
         "max_amount": 150,
         "priority": 73,
         "rules": [
+            {"type": "simple", "label": "汽車不是老車（2011 以前沒天書 → 只有裕融信福貸）", "op": "car_not_old"},
             {"type": "simple", "label": "客戶必須有汽車", "op": "has_car"},
             # 夠不夠貸由業務判斷後標在負債表「空間」欄（使用者 2026-10-13）
             {"type": "simple", "label": "汽車夠貸（看業務在負債表標的空間）", "op": "car_has_space"},
@@ -2044,6 +2052,7 @@ PLAN_ELIGIBILITY_RULES = [
         "max_amount": 150,
         "priority": 73,
         "rules": [
+            {"type": "simple", "label": "汽車不是老車（2011 以前沒天書 → 只有裕融信福貸）", "op": "car_not_old"},
             {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
             {"type": "simple", "label": "客戶必須有汽車", "op": "has_car"},
             {"type": "info", "label": "需有汽車（無貸款或可加貸都可送）"},
@@ -2212,6 +2221,47 @@ def _customer_best_vehicle_age(customer):
     except Exception:
         pass
     return min(candidates) if candidates else None
+
+
+# 老車＝天書沒有的年份（使用者 2026-10-14：天書最舊到 2012，2011 以前就是老車；跟著年份走）
+#   天書收 15 個年份（26～12）→ 車齡 > 14 年＝老車。老車只有裕融信福貸（老車專案最高 10 萬）可以送
+_OLD_CAR_AGE = 14
+
+
+def _customer_car_ages(customer) -> list:
+    """名下「汽車」的車齡（不含機車）：負債表公司名有「汽」的那幾筆、無貸款車輛的汽車；
+    完全沒有機車的客人，資料表的出廠年份也算汽車的"""
+    ages = []
+    for d in _json_list(customer.get("debt_list")):
+        if isinstance(d, dict) and "汽" in str(d.get("co") or ""):
+            a = _calc_vehicle_age(d.get("yr") or "")
+            if a is not None:
+                ages.append(a)
+    uv = _json_list(customer.get("unloan_vehicles"))
+    for v in uv:
+        if isinstance(v, dict) and v.get("type") == "汽車":
+            a = _calc_vehicle_age(v.get("year") or "")
+            if a is not None:
+                ages.append(a)
+    has_moto = "機" in str(customer.get("eval_property") or "") or any(
+        isinstance(v, dict) and v.get("type") == "機車" for v in uv) or any(
+        isinstance(d, dict) and "機" in str(d.get("co") or "") for d in _json_list(customer.get("debt_list")))
+    if not has_moto:
+        a = _calc_vehicle_age(customer.get("vehicle_year") or "")
+        if a is not None:
+            ages.append(a)
+    return ages
+
+
+def _customer_has_car_any(customer) -> bool:
+    return _customer_has_car(customer) or _customer_has_car_loan(customer) or any(
+        isinstance(v, dict) and v.get("type") == "汽車" for v in _json_list(customer.get("unloan_vehicles")))
+
+
+def _customer_only_old_cars(customer) -> bool:
+    """有汽車、年份都知道、而且每一台都是老車（最年輕那台也沒有天書）"""
+    ages = _customer_car_ages(customer)
+    return bool(ages) and min(ages) > _OLD_CAR_AGE
 
 
 def _customer_has_dynbao(customer):
@@ -2854,9 +2904,17 @@ def _check_rule(rule, customer):
             return ("pass" if ok else "fail", label, "有銀行貸款" if ok else "無銀行貸款紀錄")
         # 特殊 op：名下有汽車，不管有沒有貸款（動產寫了汽、無貸款車輛有汽車、或負債有汽車貸款）
         if op == "has_car_any":
-            ok = _customer_has_car(customer) or _customer_has_car_loan(customer) or any(
-                isinstance(v, dict) and v.get("type") == "汽車" for v in (_json_list(customer.get("unloan_vehicles"))))
+            ok = _customer_has_car_any(customer)
             return ("pass" if ok else "fail", label, "有汽車" if ok else "沒有汽車")
+        # 特殊 op：汽車不是老車（老車＝沒有天書，只有裕融信福貸能送，見 _OLD_CAR_AGE）
+        if op == "car_not_old":
+            ages = _customer_car_ages(customer)
+            if not ages:
+                return ("unknown", label, "汽車出廠年沒填")
+            y = now_tw().year - min(ages)
+            if min(ages) > _OLD_CAR_AGE:
+                return ("fail", label, f"最新那台 {y} 年，沒有天書（老車只能送裕融信福貸）")
+            return ("pass", label, f"{y} 年，有天書")
         # 特殊 op：客戶有汽車
         if op == "has_car":
             ok = _customer_has_car(customer)
@@ -3189,6 +3247,9 @@ def _order_missing_info(customer) -> list:
         if not has(k):
             miss.append(lb)
     debts, cars = lst("debt_list"), lst("unloan_vehicles")
+    # 有汽車卻沒有出廠年 → 分不出是不是老車（老車只能送裕融信福貸）→ 先補（使用者 2026-10-14 選的）
+    if _customer_has_car_any(c) and not _customer_car_ages(c):
+        miss.append("汽車出廠年（看是不是老車）")
     # 業務 AI 帶進來的車貸，動保／公路問不到 → 行政要查（⛔ 空的不能當「無」，見 _apply_clean_debts）
     for d in debts:
         if isinstance(d, dict) and d.get("src") == "業務AI" and not str(d.get("dy") or "").strip():
@@ -3297,9 +3358,13 @@ def evaluate_case(customer):
         else:
             eligible = True
             summary = "✅ 全部達標"
+        _max = plan["max_amount"]
+        if plan["company"] == "裕融信福貸" and _customer_only_old_cars(customer):
+            _max = 10        # 老車專案（沒有天書）最高 10 萬（使用者 2026-10-14）
+            checks.append({"status": "pass", "label": "🚗 老車（沒有天書）→ 走老車專案，最高 10 萬", "actual": "老車"})
         results.append({
             "company": plan["company"],
-            "max_amount": plan["max_amount"],
+            "max_amount": _max,
             "amount_by_review": plan.get("amount_by_review", False),  # True＝max_amount 只是排序用、畫面不顯示金額
             "priority": plan.get("priority", 0),
             "eligible": eligible,

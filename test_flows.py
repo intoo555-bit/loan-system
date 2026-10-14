@@ -1736,6 +1736,24 @@ check("分貝汽車：動產只寫「1汽」也算有車", not any(c["status"] =
 check("分貝汽車：汽車有貸款 → 也過", not any(c["status"] == "fail" and "汽車" in c["label"] for c in
       _fb(eval_property="", unloan_vehicles="[]", debt_list='[{"co": "和潤汽車", "dy": "動保", "sp": "有"}]')["checks"]))
 check("分貝汽車：完全沒汽車 → 不過", _fb(eval_property="1機", unloan_vehicles='[{"type": "機車"}]', debt_list="[]")["eligible"] is False)
+# 使用者 2026-10-14：老車（天書最舊到 2012，2011 以前就是老車）只有裕融信福貸可以送，老車專案最高 10 萬
+_yo = _y + 1911 if _y < 1000 else _y
+_old = lambda yr: {x["company"]: x for x in _so(eval_property="1汽", unloan_vehicles=json.dumps([{"type": "汽車", "year": str(yr)}]),
+                                                 debt_list="[]")[0]["results"]}
+_rold = _old(_yo - 18)     # 例：今年 2026 → 2008 的車
+for _co in ("中租汽車", "和潤汽車", "21汽車A", "第一汽車", "裕融優質"):
+    check(f"老車（{_yo - 18}）→ {_co} 不排", _rold[_co]["eligible"] is False and any(
+        c["status"] == "fail" and "老車" in c["label"] for c in _rold[_co]["checks"]), _rold[_co]["checks"])
+check("老車 → 裕融信福貸 可以送、最高 10 萬", _rold["裕融信福貸"]["eligible"] is not False and _rold["裕融信福貸"]["max_amount"] == 10,
+      (_rold["裕融信福貸"]["eligible"], _rold["裕融信福貸"]["max_amount"]))
+check("老車規則不套亞太（亞太看 15 年，不看天書）", not any("老車" in c["label"] for c in _rold["亞太汽車25萬"]["checks"]))
+_rnew = _old(_yo - 14)     # 天書最舊那年（今年 2026 → 2012）
+check(f"{_yo - 14} 的車有天書 → 不算老車，和潤汽車那條過、信福貸照 50 萬",
+      not any(c["status"] == "fail" and "老車" in c["label"] for c in _rnew["和潤汽車"]["checks"]) and _rnew["裕融信福貸"]["max_amount"] == 50)
+_ro2 = _old(_yo - 15)
+check(f"{_yo - 15} 就是老車", _ro2["和潤汽車"]["eligible"] is False)
+_r9, _o9, _b9 = _so(eval_property="1汽", unloan_vehicles='[{"type": "汽車"}]', debt_list="[]")
+check("有汽車但沒填出廠年 → 不排順序、寫缺汽車出廠年", not _o9 and any("汽車出廠年" in x for x in _r9["missing_info"]), _r9["missing_info"])
 check("有勞保 → 排代書、不排當鋪", "代書" in _o and "當舖" not in _o, _o)
 check("南亞在代書前面", _o.index("南亞") < _o.index("代書"), _o)
 check("融易是少送方案 → 放備選、不進順序", not any(x.startswith("融易") for x in _o) and any(x.startswith("融易") for x in _b), (_o, _b))
