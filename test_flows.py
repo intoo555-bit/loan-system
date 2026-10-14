@@ -2466,12 +2466,12 @@ check("亞太機車25萬、換補照 2 個月 → ⚠️ 請客戶補證明換�
 _ix, _wx = m._doc_fields_check({"種類": "機車行照", "欄位": {"發照日期_民國": "115/08/01"}}, "行照", _cu79)
 check("沒換補照、發照很近 → ⚠️ 請客戶補證明（剛買／剛過戶）", any("請客戶補證明（剛買／剛過戶）" in w for w in _wx), _wx)
 _ix, _wx = m._doc_fields_check({"種類": "機車行照", "欄位": {"發照日期_民國": "110/10/25", "換補照日期_民國": "114/08/01"}}, "行照", _cu79)
-check("持有滿 1 年 → 不提醒", not _wx, _wx)
+check("持有滿 1 年 → 不提醒", not [w for w in _wx if "重拍" not in w], _wx)
 _ix, _wx = m._doc_fields_check({"種類": "汽車行照", "欄位": {"發照日期_民國": "115/08/01"}}, "行照", _cu79)
-check("亞太機車要的是機車持有 → 汽車行照不套用", not _wx, _wx)
+check("亞太機車要的是機車持有 → 汽車行照不套用", not [w for w in _wx if "重拍" not in w], _wx)
 _ix, _wx = m._doc_fields_check({"種類": "機車行照", "欄位": {"發照日期_民國": "115/08/01"}}, "行照",
                                 {"customer_name": "欄位乙", "current_company": "願望小車25萬"})
-check("願望（持有時間不限）→ 不提醒", not _wx, _wx)
+check("願望（持有時間不限）→ 不提醒", not [w for w in _wx if "重拍" not in w], _wx)
 _ix, _wx = m._doc_fields_check({"種類": "汽車行照", "欄位": {"發照日期_民國": "115/08/01"}}, "行照",
                                 {"customer_name": "欄位乙", "current_company": "21汽車A"})
 check("21汽車：要滿半年，新車一手／親屬過戶可送也寫出來", any("滿半年（新車一手車主、親屬過戶可送）" in w for w in _wx), _wx)
@@ -2555,7 +2555,11 @@ _c = sqlite3.connect(TEST_DB); _c.execute("UPDATE customers SET created_at='2026
 _fn80, _ = m._docs_folder_name("J300000001", m._docs_rows("J300000001"))
 check("相簿名稱日期用建檔那天（115-10-10），不是照片日期（10-14）", _fn80.startswith("115-10-10-"), _fn80)
 _ix, _wx = m._doc_fields_check({"欄位": {"發照日期_民國": "110/10/25", "換補照日期_民國": "110/10/25"}}, "行照", {})
-check("發照、換補照讀成同一天 → 寫「請對照照片」（業務 AI 實測 3 份都一樣，可能抄錯格）", any("讀成同一天" in x for x in _ix), _ix)
+check("發照＝換補照是正常的 → 不提醒（業務 AI 10 張有 5 張沒換過照）", not any("同一天" in x for x in _ix + _wx), (_ix, _wx))
+_ix, _wx = m._doc_fields_check({"欄位": {"車牌": "", "車主姓名": "欄位乙", "發照日期_民國": "110/10/25", "廠牌": "三陽"}}, "行照", {"customer_name": "欄位乙"})
+check("行照關鍵欄（車牌）讀不到 → 請客戶重拍", any("讀不到車牌" in w and "重拍" in w for w in _wx), _wx)
+_ix, _wx = m._doc_fields_check({"欄位": {"戶名": "", "銀行": "", "分行": "台中", "帳號": "1234"}}, "存摺封面", {"customer_name": "欄位乙"})
+check("存摺讀不到戶名 → 請客戶重拍；銀行讀不到不算（有的封面只有 logo）", any("讀不到戶名" in w and "銀行" not in w for w in _wx), _wx)
 _mi = m._order_missing_info({"id_no": "J300000001", "eval_labor_ins": "公司保", "company_salary": "3", "company_years": "2",
                              "eval_salary_transfer": "有薪轉", "eval_alert_warning": "否", "eval_alert": "無", "eval_late": "無",
                              "birth_date": "075/03/12", "eval_property": "無", "debt_list": "[]", "unloan_vehicles": "[]"})

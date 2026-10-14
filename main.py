@@ -28194,9 +28194,7 @@ def _doc_fields_check(j: dict, label: str, cust) -> tuple:
         d0 = _roc_ymd(f.get("發照日期_民國") or f.get("發照日期"))
         if not d:
             d, src = d0, "發照"
-        elif d == d0:
-            # ⚠️ 業務 AI 2026-10-14 實測：3 份真行照的發照／換補照都讀成同一天 —— 可能真的一樣，也可能 AI 抄錯格
-            info.append("發照、換補照讀成同一天，請對照照片")
+        # （發照＝換補照是正常的：業務 AI 10 張真行照有 5 張沒換過照 → 不提醒）
         if d:
             mon = (t.year - d[0]) * 12 + t.month - d[1] - (t.day < d[2])
             info.append(f"持有 {mon} 個月（{src} {d[0] - 1911:03d}/{d[1]:02d}/{d[2]:02d}）")
@@ -28224,6 +28222,14 @@ def _doc_fields_check(j: dict, label: str, cust) -> tuple:
         if other(nm):
             warn.append(f"⚠️ 名字不是本人（{nm}）")
         info.append(" ".join(x for x in (f.get("發卡銀行"), f"有效到 {f['有效日期']}" if f.get("有效日期") else "") if x))
+    # 關鍵欄讀不到＝照片太黑／太糊 → 送件也不會過，要請客戶重拍（業務 AI 交接 2026-10-14，使用者連講三次）
+    #   ⛔ 只在「有讀到別的欄、關鍵欄卻空」時講：整張都空另外寫「讀不到上面的字」
+    key = {"身分證正面": ("姓名", "身分證號", "出生日期"), "行照": ("車牌", "車主姓名", "發照日期"),
+           "存摺封面": ("戶名", "帳號")}.get(label, ())
+    # ⚠️ 存摺「銀行」不算：有的封面只印 logo 沒印行名（業務 AI 實測），讀不到不代表糊
+    lost = [k for k in key if not str(f.get(k) or f.get(k + "_民國") or "").strip()]
+    if lost and any(str(v or "").strip() for v in f.values()):
+        warn.append(f"⚠️ 讀不到{'、'.join(lost)}（照片可能太黑／太糊）→ 請客戶重拍，⛔ 不要勉強送件")
     return [x for x in info if x], warn
 
 
