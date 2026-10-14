@@ -2490,6 +2490,33 @@ m._bizai_list, m._bizai_fetch, m._bizai_judge = _o79
 m.check_auth = _old_auth75
 os.environ.pop("BUSINESS_AI_URL", None); os.environ.pop("BUSINESS_AI_SECRET", None)
 
+# ========== 80. 線上申請書送來 → 背景去業務 AI 拉照片（2026-10-14 真客戶：「證件那邊沒有照片」）==========
+print("\n=== 80. 申請書送來就拉照片 ===")
+m.set_setting("vba_secret", m.hash_pw("t80secret"))
+_started = []
+class _FakeThread80:
+    def __init__(self, target=None, args=(), daemon=None): self.t = target
+    def start(self): _started.append(self.t)
+_oT80, _oP80 = m._threading.Thread, m.pull_customer_docs
+m._threading.Thread = _FakeThread80
+os.environ["BUSINESS_AI_URL"] = "https://fake-bizai.test"; os.environ["BUSINESS_AI_SECRET"] = "x"
+_r80 = TestClient(m.app).post("/api/customer-upsert", headers={"X-Loan-Secret": "t80secret"},
+                              json={"id_no": "K300000001", "customer_name": "申請乙", "fields": {"phone": "0912345678"}}).json()
+_pulled = []
+m.pull_customer_docs = lambda idv: _pulled.append(idv)
+m._threading.Thread = _oT80
+import time as _t80; _o_sleep = _t80.sleep; _t80.sleep = lambda x: None
+for _f in _started: _f()
+_t80.sleep = _o_sleep
+check("線上申請書建成待確認 → 背景去拉這位客人的照片", _r80.get("action") == "created" and _pulled == ["K300000001"], (_r80, _pulled))
+_started.clear(); _pulled.clear(); m._threading.Thread = _FakeThread80
+_r80 = TestClient(m.app).post("/api/customer-upsert", headers={"X-Loan-Secret": "t80secret"},
+                              json={"id_no": "K300000001", "customer_name": "申請乙", "fields": {"email": "a@b.com"}}).json()
+m._threading.Thread = _oT80
+check("再送一次（更新）也會去拉（客人後來補傳的）", _r80.get("action") == "updated" and len(_started) == 1, _r80)
+m.pull_customer_docs = _oP80
+os.environ.pop("BUSINESS_AI_URL", None); os.environ.pop("BUSINESS_AI_SECRET", None)
+
 # ========== 總結 ==========
 print(f"\n{'='*50}")
 print(f"結果：{PASS} 通過、{FAIL} 失敗")

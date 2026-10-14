@@ -22977,6 +22977,7 @@ async def customer_upsert(request: Request):
                         "VALUES (?,?,?,?,?,?,?,?)",
                         (case_id, name, idv, "", f"線上申請書建檔（待確認）：客戶填 {len(fields)} 項"
                          + (f"、從舊案帶入 {copied} 項" if copied else ""), "BUSINESS_AI", now, ""))
+            _docs_pull_bg(idv)      # 交易結束後背景去拉照片（見 _docs_pull_bg）
             return JSONResponse({"ok": True, "action": "created", "case_id": case_id,
                                  "filled": [APPLY_FIELD_LABELS[k] for k in fields],
                                  "copied_from_old_case": copied, "conflicts": [], "ignored": ignored})
@@ -23031,6 +23032,7 @@ async def customer_upsert(request: Request):
             pushed = bool(ok)
         except Exception as e:
             print(f"[customer-upsert] 推播提醒失敗 {gid}: {e}")
+    _docs_pull_bg(idv)
     return JSONResponse({"ok": True, "action": "updated", "case_id": case_id,
                          "filled": [APPLY_FIELD_LABELS[k] for k in fill],
                          "conflicts": conflicts, "reminder_pushed": pushed, "ignored": ignored})
@@ -27853,6 +27855,25 @@ def pull_customer_docs(id_no: str) -> dict:
     if new:
         _auto_classify_bg(idv)
     return {"ok": not err, "new": new, "total": total, "error": err or ""}
+
+
+def _docs_pull_bg(idv: str):
+    """背景去業務 AI 拉這位客人的照片。
+    2026-10-14 使用者（真客戶陳秋蘭）：業務 AI 把線上申請書送過來了，「證件那邊沒有照片」——
+    原本只在 LINE 建檔、或有人打開證件頁時才拉；線上申請書建成「待確認」時沒人去拉。
+    ⛔ 一定要開執行緒、等一下再拉：呼叫的地方可能還開著寫入交易，同步拉會卡住自己"""
+    url, sec = _bizai_conf()
+    if not idv or not url or not sec:
+        return
+
+    def _run():
+        import time as _t
+        _t.sleep(2)
+        try:
+            pull_customer_docs(idv)
+        except Exception as e:
+            print(f"[證件] 線上申請書送來後拉照片失敗 {idv}：{e}")
+    _threading.Thread(target=_run, daemon=True).start()
 
 
 def _auto_classify_bg(idv: str):
