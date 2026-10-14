@@ -2882,7 +2882,7 @@ def _check_creditcard_status(customer):
         if kw in text:
             return ("bad", f"有「{kw}」狀況：{text}")
     # 「無」「沒有」表示沒卡
-    if text in ("無", "沒有", "0", "無卡"):
+    if re.fullmatch(r"(無|沒有?|0|否)\s*(卡|信用卡)?", text) or text in ("無卡", "沒卡", "無信用卡", "沒有信用卡"):
         return ("none", "沒信用卡")
     # 其他文字（銀行名等）→ 視為有卡且無問題
     return ("good", text)
@@ -2920,7 +2920,7 @@ def _customer_doc_judge(customer, kind: str) -> dict:
     return best
 
 
-_LABOR_EXTRA_CHECK = ("薪轉", "紙本", "PDF", "軍公教", "營登", "401", "健保明細")
+_LABOR_EXTRA_CHECK = ("薪轉", "軍公教", "營登", "401", "健保明細")   # 紙本／PDF／一週內：勞保明細本身就證明了
 
 
 def _labor_rule_verdict(rule, label, customer):
@@ -2954,6 +2954,9 @@ def _labor_rule_verdict(rule, label, customer):
         ok, src = True, src + f"，新轉、跟上一份接著（間隔 {L.get('間隔天數', '?')} 天）"
     if not ok:
         return ("fail", label, f"{src}（要滿 {need} 個月）")
+    days = L.get("明細幾天前印的")
+    if isinstance(days, int) and days > 7:
+        return ("manual", label + f"（勞保 ✓，但明細 {days} 天前印的，超過一週要重拉）", src)
     extra = [k for k in _LABOR_EXTRA_CHECK if k in str(rule.get("manual_check") or "")]
     if extra:
         return ("manual", label + f"（勞保 ✓、還要確認：{rule['manual_check']}）", src)
@@ -3331,8 +3334,10 @@ def _check_rule(rule, customer):
                 return ("pass", label, detail)
             elif status == "bad":
                 return ("fail", label, detail)
+            elif detail == "沒信用卡":
+                return ("fail", label, "資料表寫沒有信用卡")     # 使用者 2026-10-14：「這個也有說沒有信用卡啊」
             else:
-                return ("unknown", label, "未填或無卡")
+                return ("unknown", label, "信用卡欄沒填")
         if op == "creditcard_no_bad":
             # 只要無紅線（卡循/遲繳/停卡/協商）就 pass、可以無卡
             status, detail = _check_creditcard_status(customer)
@@ -3685,6 +3690,20 @@ def evaluate_case(customer):
         eligible_score = {True: 0, "manual": 1, "demoted": 2, False: 3}[r["eligible"]]
         return (eligible_score, -r["max_amount"], -r["priority"])
     results.sort(key=sort_key)
+    # 使用者 2026-10-14：「各家貸款不管哪一家選比較高的金額送，不是兩格都可以」
+    #   同一家（_suggest_rank 的家族）可送的方案裡，實拿最多的才是要送的那個
+    _best = {}
+    for r in results:
+        if r["eligible"] in (True, "manual"):
+            fam = _suggest_rank(r["company"])[1]
+            amt = r.get("net_amount") if r.get("net_amount") is not None else r["max_amount"]
+            if fam not in _best or (amt, r["priority"]) > _best[fam][0]:
+                _best[fam] = ((amt, r["priority"]), r["company"])
+    for r in results:
+        if r["eligible"] in (True, "manual"):
+            pick = _best[_suggest_rank(r["company"])[1]][1]
+            r["family_pick"] = pick == r["company"]
+            r["family_pick_name"] = pick
     suggested, backup = suggest_send_order(results, customer)
     missing_info = _order_missing_info(customer)
     if missing_info:          # 資料沒填齊 → 不排順序（見 _order_missing_info）
@@ -19370,6 +19389,9 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
       // 單一方案的折疊行
       var icon = r.eligible === true ? '✅' : (r.eligible === 'manual' ? '⚠️' : '❌');
       var bgColor = r.eligible === true ? '#f0fdf4' : (r.eligible === 'manual' ? '#fef3c7' : '#fef2f2');
+      // 同一家只送金額高的那個：其他可送的灰掉（使用者 2026-10-14）
+      var notPick = (r.eligible === true || r.eligible === 'manual') && r.family_pick === false;
+      if (notPick) {{ icon = '➖'; bgColor = '#f3f4f6'; }}
       var fam = getCompanyFamily(r.company);
       var isCarOrBike = (fam === '21汽車' || fam === '裕融' || fam === '和潤' || r.company === '和潤汽車' || r.company === '和潤重機' || r.company.indexOf('21汽車') === 0);
       var detail = '';
@@ -19405,6 +19427,7 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
       var html = '<details style="margin-bottom:4px;background:' + bgColor + ';border-radius:5px;padding:6px 10px">';
       html += '<summary style="font-size:13px;font-weight:600;cursor:pointer;list-style:none">';
       html += icon + ' ' + r.company;
+      if (notPick) html += ' <span style="color:#6b7280;font-size:11px;font-weight:400">（同一家送 ' + r.family_pick_name + '，金額較高）</span>';
       // 同家族不重複顯示金額（汽車/銀行類略過）
       if (r.amount_text) html += ' — 金額' + r.amount_text;
       else if (!r.amount_by_review) html += ' — 最高 ' + r.max_amount + '萬';
@@ -19541,8 +19564,8 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
 
           familyOrder.forEach(function(fam) {{
             var familyPlans = grouped[fam];
-            var passNum = familyPlans.filter(function(r){{return r.eligible === true || r.eligible === 'manual';}}).length;
-            html += '<div style="margin-top:10px;padding:6px 10px;background:#3a3530;color:#fff;border-radius:5px;font-weight:600;font-size:12px">' + fam + '（' + passNum + '/' + familyPlans.length + ' 可送）</div>';
+            var picks = familyPlans.filter(function(r){{return (r.eligible === true || r.eligible === 'manual') && r.family_pick !== false;}});
+            html += '<div style="margin-top:10px;padding:6px 10px;background:#3a3530;color:#fff;border-radius:5px;font-weight:600;font-size:12px">' + fam + (picks.length ? '（送：' + picks.map(function(r){{return r.company;}}).join('、') + '）' : '（都不能送）') + '</div>';
             familyPlans.forEach(function(r) {{
               html += _planRowHtml(r);
             }});

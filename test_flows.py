@@ -1865,6 +1865,22 @@ check("只有汽車行照 → 機車那條看不到，照舊人工確認", _sub(
 check("汽車行照 30 個月 → 亞太汽車「汽車持有滿 1 年」✅", _sub(_r86, "亞太汽車25萬", "持有滿")["status"] == "pass")
 _r86 = _hr([])
 check("沒有行照 → 照舊人工確認", _sub(_r86, "亞太機車25萬", "持有滿")["actual"] == "需人工確認")
+# 使用者 2026-10-14：「這個也有說沒有信用卡啊」
+for _cc in ("無", "無卡", "沒有信用卡"):
+    _s = _sub(_ev84(eval_credit_card=_cc)[0], "和裕機車", "信用卡")
+    check(f"信用卡欄寫「{_cc}」→ 信用卡那項 ❌（不是 ⚠️ 未填）", _s["status"] == "fail", _s)
+check("信用卡欄空白 → 才是未填", _sub(_ev84(eval_credit_card="")[0], "和裕機車", "信用卡")["status"] == "unknown")
+# 「勞保也可以判別不是嗎」：明細本身就是紙本／PDF 證明；一週內看明細幾天前印的
+_r87, _ = _ev84(_dj_labor=dict(_lab(19), 明細幾天前印的=2))
+_s = _sub(_r87, "和裕機車", "勞保")
+check("勞保明細 19 個月、2 天前印 → 和裕勞保那項 ✅（不再要確認紙本／PDF）", _s["status"] == "pass", _s)
+_r87, _ = _ev84(_dj_labor=dict(_lab(19), 明細幾天前印的=30))
+check("明細 30 天前印的 → ⚠️ 要重拉", "重拉" in _sub(_r87, "和裕機車", "勞保")["label"])
+# 「各家貸款不管哪一家選比較高的金額送，不是兩格都可以」
+_r87, _ = _ev84(eval_property="1汽1機", unloan_vehicles='[{"type": "汽車", "year": "2020"}, {"type": "機車", "year": "2020"}]')
+_fb = [x for x in _r87.values() if x["company"].startswith("分貝") and x["eligible"] in (True, "manual")]
+check("分貝可送的只有一個是要送的（金額最高）", sum(1 for x in _fb if x.get("family_pick")) == 1
+      and max(_fb, key=lambda x: x["max_amount"]).get("family_pick"), [(x["company"], x.get("family_pick")) for x in _fb])
 # 使用者 2026-10-14：「戶籍地也可以判別她住哪裡」
 _r84, _ = _ev84(live_city="", reg_city="澎湖縣")
 check("現居沒填、戶籍澎湖 → 東豐 ❌（看戶籍）", _r84["東豐小額信貸"]["eligible"] is False)
