@@ -1835,6 +1835,17 @@ _s = _sub(_r84, "東豐小額信貸", "新住民")
 check("東豐：出生地越南 → 新住民要附台籍正職保人（⚠️）", _s["status"] == "manual" and "越南" in _s["actual"], _s)
 _r84, _ = _ev84(**{"_dj_fields:身分證背面": {"欄位": {"出生地": "臺灣省臺中縣"}}})
 check("東豐：出生地台灣 → 不是新住民 ✅", _sub(_r84, "東豐小額信貸", "新住民")["status"] == "pass")
+# 使用者 2026-10-14：「戶籍地也可以判別她住哪裡」
+_r84, _ = _ev84(live_city="", reg_city="澎湖縣")
+check("現居沒填、戶籍澎湖 → 東豐 ❌（看戶籍）", _r84["東豐小額信貸"]["eligible"] is False)
+_r84, _ = _ev84(live_city="", reg_city="", **{"_dj_fields:身分證背面": {"欄位": {"住址": "金門縣金城鎮民權路1號"}}})
+check("現居、資料表戶籍都沒填 → 看身分證背面住址（金門）→ ❌", _r84["東豐小額信貸"]["eligible"] is False)
+_r84, _ = _ev84(live_city="", reg_city="")
+_s = _sub(_r84, "東豐小額信貸", "本島")
+check("現居、戶籍都沒有 → 不可以直接當成本島（要確認）", _s["status"] != "pass", _s)
+for _bp, _tw in (("高雄市", True), ("臺北市", True), ("中國大陸", False), ("南韓", False), ("越南", False), ("福建省金門縣", True)):
+    _r84, _ = _ev84(**{"_dj_fields:身分證背面": {"欄位": {"出生地": _bp}}})
+    check(f"出生地「{_bp}」→ {'台灣' if _tw else '新住民'}", (_sub(_r84, "東豐小額信貸", "新住民")["status"] == "pass") == _tw)
 # 機車前貸：陳秋蘭 和潤機車剩 14,040
 _dl = json.dumps([{"co": "和潤機車", "dy": "動保", "sp": "有", "yr": "2020", "re": "$14,040", "pa": "19"}], ensure_ascii=False)
 _r84, _o84 = _ev84(debt_list=_dl, unloan_vehicles="[]")

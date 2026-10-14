@@ -2973,8 +2973,11 @@ def _self_employed_opt(opt, customer):
     return ("fail", opt.get("label", ""), f"職稱「{role}」不是老闆／負責人")
 
 
-_TW_PLACES = ("臺", "台", "北", "新北", "桃", "中", "南", "高", "基", "竹", "苗", "彰", "投", "雲", "嘉", "屏", "宜", "花",
-              "東", "澎", "金門", "連江", "馬祖")
+# 身分證背面「出生地」是台灣的寫法（例「高雄市」「臺灣省臺中縣」）。⛔ 不可以只比第一個字：
+#   「中國大陸」「南韓」「北韓」「東帝汶」第一個字都跟台灣縣市一樣 → 要比完整縣市名
+_TW_PLACES = ("臺灣", "台灣", "福建省", "臺北", "台北", "新北", "桃園", "臺中", "台中", "臺南", "台南", "高雄", "基隆",
+              "新竹", "苗栗", "彰化", "南投", "雲林", "嘉義", "屏東", "宜蘭", "花蓮", "臺東", "台東", "澎湖", "金門",
+              "連江", "馬祖")
 
 
 @_ensure_4tuple
@@ -3288,6 +3291,16 @@ def _check_rule(rule, customer):
         elif field == "vehicle_year":
             # 優先用 customer.vehicle_year、否則 fallback 到 debt_list / unloan_vehicles 取最年輕車
             actual = _customer_best_vehicle_age(customer)
+        elif field == "live_city":
+            # 使用者 2026-10-14：「戶籍地也可以判別她住哪裡」→ 現居沒填就看戶籍（資料表 → 身分證背面住址）
+            actual = (customer.get("live_city") or "").strip()
+            if not actual:
+                j = _customer_doc_judge(customer, "fields:身分證背面")
+                reg = (customer.get("reg_city") or "").strip() or str((j.get("欄位") or {}).get("住址") or "").strip()[:6]
+                if not reg:
+                    return ("unknown", label, "現居、戶籍都沒填")
+                actual = reg
+                label = label + "（現居沒填，看戶籍）"
         else:
             actual = (customer.get(field, "") or "").strip()
         # 空值處理：數字類比對（<= / >=）視為 0、not_contains 空白 = 沒送過 = pass、其他類型視為「資料不齊」
