@@ -25994,7 +25994,8 @@ def _fill_excel_inner(orig_zip, original_bytes, cell_map, _re):
     return output_buf.getvalue()
 
 
-def _do_download_excel(request: Request, case_id: str):
+def _do_download_excel(request: Request, case_id: str, only_plans=None, raw: bool = False):
+    """申請書下載。only_plans＝只產這幾個方案（不看行政B 勾的）；raw＝回 [(檔名, bytes)]（送件包用）"""
     from fastapi.responses import StreamingResponse
     role = check_auth(request)
     if not role or role not in ("admin", "adminB", "ops_admin"):
@@ -26011,8 +26012,12 @@ def _do_download_excel(request: Request, case_id: str):
     r = dict(row)
     plans = (r.get("adminb_selected_plans", "") or "").split(",")
     plans = [p.strip() for p in plans if p.strip()]
+    if only_plans is not None:
+        plans = list(only_plans)
 
     if not plans:
+        if raw:
+            return []
         return JSONResponse({"error": "尚未勾選任何方案，請先勾選並儲存"}, status_code=400)
 
     _base = os.path.dirname(os.path.abspath(__file__))
@@ -27307,6 +27312,8 @@ def _do_download_excel(request: Request, case_id: str):
             import traceback; traceback.print_exc()
             continue
 
+    if raw:
+        return files_to_zip
     if not files_to_zip:
         return JSONResponse({"error": "沒有可下載的範本檔案，請確認已勾選方案並儲存"}, status_code=400)
 
@@ -29965,6 +29972,11 @@ def bizai_accounts_page(request: Request, saved: str = ""):
             for g in groups)
         trs.append(f'<tr><td>{h(acct)}<input type="hidden" name="a{i}" value="{h(acct)}"></td>'
                    f'<td><select name="g{i}">{opts}</select></td></tr>')
+    # 新增一列：官方賴名稱自己打（業務 AI 還沒送過資料也能先設好）
+    i = len(trs)
+    opts = '<option value="">（選群組）</option>' + "".join(f'<option value="{h(g["group_id"])}">{h(g["group_name"])}</option>' for g in groups)
+    trs.append(f'<tr><td><input name="a{i}" placeholder="自己打官方賴名稱（跟業務 AI 後台一模一樣）" style="width:100%"></td>'
+               f'<td><select name="g{i}">{opts}</select></td></tr>')
     msg = f'<div class="muted" style="color:#166534">✅ 已存，補上群組的待確認客戶：{h(saved)} 位</div>' if saved else ""
     body = f"""<h2>📱 官方賴 → 群組</h2>
 <div class="card">線上申請書從哪個官方賴來，就掛到對應的群組；業務在群組打「日期-姓名-順序」時才接得到同一筆資料。<br>
@@ -30194,6 +30206,65 @@ def docs_zip(request: Request, id_no: str, ids: str = ""):
             p = r["file_path"]
             if p and os.path.isfile(p):
                 z.write(p, f"{folder}/{i:02d} {r['show_label']}{_doc_ext(r['real_type']) if r['real_type'] else os.path.splitext(p)[1]}")
+    from urllib.parse import quote as _q
+    return StreamingResponse(io.BytesIO(buf.getvalue()), media_type="application/zip",
+                             headers={"Content-Disposition": f"attachment; filename*=UTF-8''{_q(folder + '.zip')}"})
+
+
+# 規則表方案名 → 申請書範本的名字（範本表用的是公司層的名字：第一、分貝機車、21汽車…）
+_PACK_TEMPLATE_ALIAS = {"分貝機車改裝": "分貝機車", "分貝汽車改裝1+1": "分貝汽車", "麻吉U質手機": "麻吉手機",
+                        "第一汽車": "第一", "第一信貸": "第一", "21汽車A": "21汽車", "21汽車B": "21汽車", "21汽車C": "21汽車"}
+
+
+@app.get("/archive/{id_no}/pack")
+def docs_send_pack(request: Request, id_no: str, co: str = ""):
+    """送件包（使用者 2026-10-14：「客戶的所需送件資料＋申請書」）：
+    目前送的那家（或 ?co=）要的證件 ＋ 那家的申請書 ＋ 行政上傳的申請書／填寫表，打成一包；缺的寫在「還缺.txt」"""
+    role = _docs_auth(request)
+    if not role:
+        return JSONResponse({"error": "無權限"}, status_code=403)
+    import zipfile as _zf
+    idv = normalize_id_no(id_no)
+    cust = _docs_latest_customer(idv)
+    rows = [r for r in _docs_rows(idv) if not _doc_is_contract(r)]
+    co = (co or (_docs_current_company(cust) if cust else "")).strip()
+    plan = _plan_for_company(co) if co else None
+    if not plan:
+        return JSONResponse({"error": f"不知道要送哪一家（{co or '還沒排順序'}），規則表找不到"}, status_code=400)
+    reqs = _docs_for_customer(plan.get("required_docs"), cust)
+    want, missing = set(), []
+    for req, st, note in docs_missing_for_plan(rows, reqs):
+        rule = _req_doc_rule(req)
+        if rule:
+            want.update(rule[1])
+        if st == "missing":
+            missing.append(req.split("（")[0] + (f"（{note}）" if note else ""))
+    want.add("申請書／填寫表")
+    pick = [r for r in rows if r["show_label"] in want]
+    folder, _name = _docs_folder_name(idv, rows)
+    folder = f"{folder}_{plan['company']}送件"
+    apps = []
+    if cust:
+        tkey = _PACK_TEMPLATE_ALIAS.get(plan["company"], plan["company"])
+        try:
+            apps = _do_download_excel(request, cust["case_id"], only_plans=[tkey], raw=True) or []
+        except Exception as e:
+            print(f"[送件包] 申請書產生失敗 {plan['company']}: {e}")
+            apps = []
+    buf = io.BytesIO()
+    with _zf.ZipFile(buf, "w", _zf.ZIP_DEFLATED) as z:
+        for fname, data in apps if isinstance(apps, list) else []:
+            z.writestr(f"{folder}/00 申請書_{fname}", data)
+        for i, r in enumerate(pick, 1):
+            p = r["file_path"]
+            if p and os.path.isfile(p):
+                z.write(p, f"{folder}/{i:02d} {r['show_label']}{_doc_ext(r['real_type']) if r['real_type'] else os.path.splitext(p)[1]}")
+        if missing or not apps:
+            lines = [f"{plan['company']} 送件包"]
+            if not apps:
+                lines.append("・申請書：系統沒有這家的範本，要另外填")
+            lines += [f"・還缺：{x}" for x in missing]
+            z.writestr(f"{folder}/還缺.txt", "\n".join(lines).encode("utf-8"))
     from urllib.parse import quote as _q
     return StreamingResponse(io.BytesIO(buf.getvalue()), media_type="application/zip",
                              headers={"Content-Disposition": f"attachment; filename*=UTF-8''{_q(folder + '.zip')}"})
@@ -30441,6 +30512,10 @@ def docs_customer_page(request: Request, id_no: str, refresh: str = ""):
         return HTMLResponse("⚠️ 證件介面檔（ui/archive_gallery.html）沒有部署上來，請通知管理員", status_code=500)
     btn = ('<a class="action" style="text-decoration:none" href="/customer-pdf?case_id=' + h(cust["case_id"]) +
            '" target="_blank"><span>📋 客戶資料表</span></a>') if cust else ""
+    _pk_co = _docs_current_company(cust) if cust else ""
+    if _pk_co:   # 送件包：目前送的那家要的證件＋申請書（使用者 2026-10-14）
+        btn += (f'<a class="action" style="text-decoration:none" href="/archive/{h(idv)}/pack">'
+                f'<span>📦 {h(_pk_co)} 送件包</span></a>')
     btn += ('<button type="button" class="action quiet" onclick="cardPreview(this,\'card-preview\')"><span>📨 收件卡片預覽</span></button>'
             '<button type="button" class="action quiet" onclick="cardPreview(this,\'supp-preview\')"><span>📨 補件卡片預覽</span></button>'
             '<button type="button" class="action quiet" onclick="cardPreview(this,\'card-send\')"><span>📨 傳卡片到客人的群組</span></button>'

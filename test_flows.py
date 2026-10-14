@@ -3024,6 +3024,33 @@ check("群組先建、申請書後到 → 補進群組那一筆（身分證、�
 _up83("M300000004", "帳號丁", "沒設過的官方賴")
 check("沒對照的官方賴 → 不亂掛群組", not get_cust("M300000004")["source_group_id"])
 
+# ========== 93. 送件包＋官方賴自己打（使用者 2026-10-14：「客戶的所需送件資料＋申請書」「名字可以自己打」）==========
+print("\n=== 93. 送件包 ===")
+import zipfile as _zf93, io as _io93
+_c = sqlite3.connect(TEST_DB)
+_cid93 = _c.execute("SELECT case_id FROM customers WHERE id_no='E300000001' AND status!='DELETED' ORDER BY created_at DESC").fetchone()[0]
+_c.execute("UPDATE customers SET route_plan=?, current_company='亞太商品' WHERE case_id=?",
+           (m.make_route_json(["亞太商品", "和裕"]), _cid93))
+_c.commit(); _c.close()
+m.check_auth = lambda req: "admin"
+_tc93 = TestClient(m.app)
+_r = _tc93.get("/archive/E300000001/pack")
+check("送件包下載得到（zip）", _r.status_code == 200 and _r.headers.get("content-type", "").startswith("application/zip"), _r.text[:200])
+_names93 = _zf93.ZipFile(_io93.BytesIO(_r.content)).namelist() if _r.status_code == 200 else []
+check("送件包：有亞太商品的申請書", any("申請書" in n and n.endswith(".xlsx") for n in _names93), _names93)
+_lb93 = {r["show_label"] for r in m._docs_rows("E300000001")}
+check("送件包：那家要的、存檔裡有的證件都放進去（勞保明細）", "勞保明細" not in _lb93 or any("勞保明細" in n for n in _names93), (_lb93, _names93))
+check("送件包：那家不要的不放（行照：亞太商品不用）", not any("行照" in n for n in _names93), (_lb93, _names93))
+check("送件包：缺的寫在「還缺.txt」", any(n.endswith("還缺.txt") for n in _names93), _names93)
+check("證件頁有「📦 亞太商品 送件包」按鈕", "送件包" in _tc93.get("/archive/E300000001").text)
+check("指定別家：?co=和裕", _tc93.get("/archive/E300000001/pack", params={"co": "和裕"}).status_code == 200)
+# 官方賴名稱自己打
+_r = _tc93.get("/archive/accounts")
+check("對照頁有一格可以自己打官方賴名稱", "自己打官方賴名稱" in _r.text)
+_r = _tc93.post("/archive/accounts", data={"a0": "自己打的官方賴", "g0": "TEST_B"}, follow_redirects=False)
+check("自己打的官方賴存得進去", m._bizai_account_group("自己打的官方賴") == "TEST_B")
+m.check_auth = _old_auth
+
 # ========== 總結 ==========
 print(f"\n{'='*50}")
 print(f"結果：{PASS} 通過、{FAIL} 失敗")
