@@ -1721,6 +1721,21 @@ check("機車貸款有設動保 → 21機車25萬 不排", _res["21機車25萬"]
 _r, _o, _b = _so(unloan_vehicles="[]", debt_list=json.dumps([{"co": "和裕機車", "dy": "無", "sp": "有", "yr": "2020"}], ensure_ascii=False))
 _res = {x["company"]: x for x in _r["results"]}
 check("機車貸款沒設動保 → 21機車25萬 可以排", _res["21機車25萬"]["eligible"] is not False, _res["21機車25萬"])
+check("機車貸款沒設動保 → 和裕機車 可以排", _res["和裕機車"]["eligible"] is not False, _res["和裕機車"])
+_r2, _o2, _b2 = _so(unloan_vehicles="[]", debt_list=json.dumps([{"co": "和裕機車", "dy": "動保", "sp": "有", "yr": "2020"}], ensure_ascii=False))
+_res2 = {x["company"]: x for x in _r2["results"]}
+# 使用者 2026-10-14：「和裕機車也不做代償案件」
+check("機車貸款有設動保（要代償）→ 和裕機車 不排", _res2["和裕機車"]["eligible"] is False and "和裕機車" not in _o2,
+      (_res2["和裕機車"]["eligible"], _o2))
+# 使用者 2026-10-14：「分貝汽車判斷錯誤，不管有沒有貸款都可以送」
+_fb = lambda **kw: {x["company"]: x for x in _so(**kw)[0]["results"]}["分貝汽車改裝1+1"]
+check("分貝汽車：汽車沒貸款（無貸款車輛有汽車）→ 汽車那條過", not any(c["status"] == "fail" and "汽車" in c["label"] for c in
+      _fb(eval_property="1汽", unloan_vehicles='[{"type": "汽車", "year": "2018"}]', debt_list="[]")["checks"]))
+check("分貝汽車：動產只寫「1汽」也算有車", not any(c["status"] == "fail" and "汽車" in c["label"] for c in
+      _fb(eval_property="1汽", unloan_vehicles="[]", debt_list="[]")["checks"]))
+check("分貝汽車：汽車有貸款 → 也過", not any(c["status"] == "fail" and "汽車" in c["label"] for c in
+      _fb(eval_property="", unloan_vehicles="[]", debt_list='[{"co": "和潤汽車", "dy": "動保", "sp": "有"}]')["checks"]))
+check("分貝汽車：完全沒汽車 → 不過", _fb(eval_property="1機", unloan_vehicles='[{"type": "機車"}]', debt_list="[]")["eligible"] is False)
 check("有勞保 → 排代書、不排當鋪", "代書" in _o and "當舖" not in _o, _o)
 check("南亞在代書前面", _o.index("南亞") < _o.index("代書"), _o)
 check("融易是少送方案 → 放備選、不進順序", not any(x.startswith("融易") for x in _o) and any(x.startswith("融易") for x in _b), (_o, _b))

@@ -1612,6 +1612,9 @@ PLAN_ELIGIBILITY_RULES = [
                  "exclude_field": "eval_alert", "exclude_value": "有",
                  "manual_check": "須提供權狀"},
             ]},
+            # 使用者 2026-10-14：「和裕機車也不做代償案件」→ 跟 21機車25萬 同一條（有設動保＝要代償前貸 → 不排；沒設動保可以排）
+            {"type": "simple", "label": "原融（機車無貸款）", "op": "not_has_dynbao",
+             "manual_check": "確認要貸的機車本身沒貸款（和裕機車不做代償）"},
             {"type": "simple", "label": "亞太沒婉拒過（婉拒過就跳過和裕，自動看送件紀錄）", "op": "not_rejected_by", "value": "亞太"},
             {"type": "simple", "label": "名下有可用機車（不能機車滿貸）", "op": "motorcycle_has_space"},
             {"type": "simple", "label": "🚫 警示戶不做（自動偵測）", "op": "no_warning_account"},
@@ -1627,8 +1630,9 @@ PLAN_ELIGIBILITY_RULES = [
         "rules": [
             {"type": "simple", "label": "年齡 20~65", "field": "age", "op": "between", "value": [20, 65]},
             {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
-            {"type": "simple", "label": "客戶有汽車貸款（送件條件）", "op": "has_car_loan",
-             "manual_check": "汽車貸款需繳息至少 1 期、確認動保資訊"},
+            # 使用者 2026-10-14：「分貝汽車判斷錯誤，不管有沒有貸款都可以送」（原本要有汽車貸款才過）—— 比照分貝機車改裝
+            {"type": "simple", "label": "名下有汽車（有／無貸款都可送，有貸款要附繳息）", "op": "has_car_any",
+             "manual_check": "汽車有貸款的話要繳息至少 1 期、確認動保資訊"},
             {"type": "simple", "label": "21 體系（麻吉/21/分貝/樂分期/分期趣/慢點付）含利息剩餘 < 25 萬",
              "op": "group21_remain_lt", "value": 250000},
             {"type": "simple", "label": "警示戶可送（撥二等親、朋友或現金都可以）", "op": "alert_warning_handler"},
@@ -2445,6 +2449,14 @@ def _customer_motorcycle_loan_remaining(customer):
     return total
 
 
+def _json_list(v) -> list:
+    try:
+        x = json.loads(v or "[]")
+        return x if isinstance(x, list) else []
+    except Exception:
+        return []
+
+
 def _customer_has_car(customer):
     """檢查客戶是否有汽車
     判定：eval_property 含「汽」字（如「1汽」「1機2汽」）
@@ -2840,6 +2852,11 @@ def _check_rule(rule, customer):
         if op == "has_bank_loan":
             ok = _customer_has_bank_loan(customer)
             return ("pass" if ok else "fail", label, "有銀行貸款" if ok else "無銀行貸款紀錄")
+        # 特殊 op：名下有汽車，不管有沒有貸款（動產寫了汽、無貸款車輛有汽車、或負債有汽車貸款）
+        if op == "has_car_any":
+            ok = _customer_has_car(customer) or _customer_has_car_loan(customer) or any(
+                isinstance(v, dict) and v.get("type") == "汽車" for v in (_json_list(customer.get("unloan_vehicles"))))
+            return ("pass" if ok else "fail", label, "有汽車" if ok else "沒有汽車")
         # 特殊 op：客戶有汽車
         if op == "has_car":
             ok = _customer_has_car(customer)
