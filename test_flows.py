@@ -3047,7 +3047,27 @@ check("證件頁有送件包，選單寫公司名（亞太、和裕），不寫�
       and ">和裕</option>" in _p93 and ">亞太商品</option>" not in _p93, _p93[:0])
 check("指定別家：?co=和裕", _tc93.get("/archive/E300000001/pack", params={"co": "和裕"}).status_code == 200)
 # 官方賴名稱自己打
-_r = _tc93.get("/archive/accounts")
+# 使用者 2026-10-14：「只需要出現融資的送件包跟商品貸，其他不用」
+_c = sqlite3.connect(TEST_DB)
+_c.execute("UPDATE customers SET route_plan=?, current_company='亞太商品' WHERE case_id=?",
+           (m.make_route_json(["亞太商品", "和裕", "零卡", "商品貸", "代書", "銀行"]), _cid93))
+_c.commit(); _c.close()
+_p93 = _tc93.get("/archive/E300000001").text
+_opt93 = _re73.findall(r'<option value="[^"]*"(?: selected)?>([^<]+)</option>', _p93.split('id="pkCo"')[1].split("</select>")[0]) if 'id="pkCo"' in _p93 else []
+check("送件包選單：只有融資＋商品貸（亞太、和裕、商品貸），零卡／代書／銀行不列", _opt93 == ["亞太", "和裕", "商品貸"], _opt93)
+# 使用者 2026-10-14：「裕融是汽車送件包，還是把機車塞進去了」
+_dj93 = m._doc_judge
+m._doc_judge = lambda r: ({"欄位": {"排氣量": "124", "車牌": "NTV-9226"}} if r.get("show_label") == "行照" else _dj93(r))
+_r = _tc93.get("/archive/E300000001/pack", params={"co": "裕融信福貸"})
+_names = _zf93.ZipFile(_io93.BytesIO(_r.content)).namelist() if _r.status_code == 200 else []
+_miss = [n for n in _names if n.endswith("還缺.txt")]
+_misstxt = _zf93.ZipFile(_io93.BytesIO(_r.content)).read(_miss[0]).decode("utf-8") if _miss else ""
+check("裕融（汽車）送件包：機車行照不放進去", _r.status_code == 200 and not any("行照" in n and not n.endswith(".txt") for n in _names), _names)
+check("裕融（汽車）送件包：還缺寫「汽車行照（存檔裡的行照不是汽車的）」", "汽車行照" in _misstxt, _misstxt)
+_r = _tc93.get("/archive/E300000001/pack", params={"co": "亞太機車25萬"})
+_names = _zf93.ZipFile(_io93.BytesIO(_r.content)).namelist() if _r.status_code == 200 else []
+check("亞太機車送件包：機車行照有放", any("行照" in n and not n.endswith(".txt") for n in _names), _names)
+m._doc_judge = _dj93
 # 行照帶入：下拉寫機車／汽車；「機車額外資料」不帶汽車行照
 _lic_html = m._adminb_license_html({"id_no": "E300000001"}, "admin")
 check("行照帶入：寫清楚是機車還是汽車（或分不出來）", ("機車行照" in _lic_html or "汽車行照" in _lic_html or "分不出來" in _lic_html
@@ -3063,6 +3083,7 @@ m._docs_rows = lambda idv: [{"show_label": "行照", "id": 2}]
 _lic_html = m._adminb_license_html({"id_no": "X"}, "admin")
 check("只有汽車行照 → 寫「這區是機車的資料」，不帶", "這區是" in _lic_html and "licFill" not in _lic_html, _lic_html[:300])
 m._docs_rows, m._doc_judge = _dr, _dj
+_r = _tc93.get("/archive/accounts")
 check("對照頁有一格可以自己打官方賴名稱", "自己打官方賴名稱" in _r.text)
 _r = _tc93.post("/archive/accounts", data={"a0": "自己打的官方賴", "g0": "TEST_B"}, follow_redirects=False)
 check("自己打的官方賴存得進去", m._bizai_account_group("自己打的官方賴") == "TEST_B")

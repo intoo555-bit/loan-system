@@ -30223,9 +30223,28 @@ def docs_zip(request: Request, id_no: str, ids: str = ""):
                              headers={"Content-Disposition": f"attachment; filename*=UTF-8''{_q(folder + '.zip')}"})
 
 
+# 送件包只給融資＋商品貸（使用者 2026-10-14）；銀行、鄉民、零卡、代書、當舖、南亞、房地不用
+_PACK_SKIP = {"銀行", "鄉民", "零卡", "代書", "當舖", "南亞", "房地", "新鑫"}
+
+
 # 規則表方案名 → 申請書範本的名字（範本表用的是公司層的名字：第一、分貝機車、21汽車…）
 _PACK_TEMPLATE_ALIAS = {"分貝機車改裝": "分貝機車", "分貝汽車改裝1+1": "分貝汽車", "麻吉U質手機": "麻吉手機",
                         "第一汽車": "第一", "第一信貸": "第一", "21汽車A": "21汽車", "21汽車B": "21汽車", "21汽車C": "21汽車"}
+
+
+def _doc_vehicle_kind(r) -> str:
+    """這張行照是機車還是汽車：業務 AI 判的種類優先，沒有才看排氣量（50～599 機車、1000 以上汽車）；分不出來回 """""
+    j = _doc_judge(r) or {}
+    k = str(j.get("種類") or "")
+    if "機車" in k:
+        return "機車"
+    if "汽車" in k:
+        return "汽車"
+    try:
+        cc = int(re.sub(r"[^\d]", "", str((j.get("欄位") or {}).get("排氣量") or "")) or 0)
+    except ValueError:
+        cc = 0
+    return "機車" if 50 <= cc < 600 else "汽車" if cc >= 1000 else ""
 
 
 @app.get("/archive/{id_no}/pack")
@@ -30252,7 +30271,14 @@ def docs_send_pack(request: Request, id_no: str, co: str = ""):
         if st == "missing":
             missing.append(req.split("（")[0] + (f"（{note}）" if note else ""))
     want.add("申請書／填寫表")
-    pick = [r for r in rows if r["show_label"] in want]
+    # 使用者 2026-10-14：「裕融是汽車送件包，還是把機車塞進去了」→ 行照要分車種，汽車方案只放汽車行照
+    txt = plan["company"] + " ".join(reqs)
+    vkind = "汽車" if ("汽車" in txt or plan["company"].startswith(("裕融", "中租", "和潤汽車", "第一汽車"))) else \
+        "機車" if "機車" in txt else ""
+    pick = [r for r in rows if r["show_label"] in want
+            and not (vkind and r["show_label"] == "行照" and _doc_vehicle_kind(r) not in (vkind, ""))]
+    if vkind and "行照" in want and not any(r["show_label"] == "行照" and _doc_vehicle_kind(r) in (vkind, "") for r in rows):
+        missing.append(f"{vkind}行照（存檔裡的行照不是{vkind}的）")
     folder, _name = _docs_folder_name(idv, rows)
     folder = f"{folder}_{normalize_section(plan['company']) or plan['company']}送件"
     apps = []
@@ -30541,11 +30567,13 @@ def docs_customer_page(request: Request, id_no: str, refresh: str = ""):
         _seen, _pk_opts = set(), ""
         for c_ in _pk_list:
             nm = normalize_section(c_) or c_
-            if nm in _seen or not _plan_for_company(c_):
+            # 使用者 2026-10-14：「只需要出現融資的送件包跟商品貸，其他不用」→ 銀行／民間不列
+            if nm in _seen or nm in _PACK_SKIP or not _plan_for_company(c_):
                 continue
             _seen.add(nm)
             _pk_opts += f'<option value="{h(c_)}"{" selected" if c_ == _pk_co else ""}>{h(nm)}</option>'
-        btn += ('<span class="action" style="display:inline-flex;gap:6px;align-items:center"><span>📦 送件包</span>'
+        if _pk_opts:
+          btn += ('<span class="action" style="display:inline-flex;gap:6px;align-items:center"><span>📦 送件包</span>'
                 f'<select id="pkCo" style="border:1px solid #cdd8e0;border-radius:6px;padding:3px 6px">{_pk_opts}</select>'
                 f'<button type="button" onclick="location.href=\'/archive/{h(idv)}/pack?co=\'+encodeURIComponent(document.getElementById(\'pkCo\').value)"'
                 ' style="border:0;background:#127a7d;color:#fff;border-radius:6px;padding:4px 10px;cursor:pointer">下載</button></span>')
