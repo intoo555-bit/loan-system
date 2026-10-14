@@ -19351,12 +19351,19 @@ def _adminb_guess_html(customer) -> str:
     """行業類別／職務：還沒選的，依資料表推一個先選上（黃色），行政核對後按儲存才算（同行照帶入）"""
     if not customer:
         return ""
-    ind = "" if customer.get("adminb_industry") else _guess_kw(
-        " ".join(str(customer.get(k) or "") for k in ("company_industry", "company_name_detail", "company_name")), _AT_INDUSTRY_KW)
+    ind = ""
+    if not customer.get("adminb_industry"):
+        # 資料表公司名／行業 → 推不出來再看勞保明細的投保單位（使用者 2026-10-14：「行業類別沒有選」）
+        L = _customer_doc_judge(customer, "labor")
+        units = " ".join(str(c.get("單位") or "") for c in (L.get("目前投保") or []) if isinstance(c, dict))
+        ind = (_guess_kw(" ".join(str(customer.get(k) or "") for k in ("company_industry", "company_name_detail", "company_name")),
+                         _AT_INDUSTRY_KW) or _guess_kw(units, _AT_INDUSTRY_KW) or "其他")
     rol = "" if customer.get("adminb_role") else _guess_kw(customer.get("company_role"), _AT_ROLE_KW)
-    if not ind and not rol:
+    # 使用者 2026-10-14：「亞太資金用途一律選購買 3C 產品」
+    fund = "" if customer.get("adminb_fund_use") else "II-3購買3C產品"
+    if not ind and not rol and not fund:
         return ""
-    return ('<script>(function(){var g=' + json.dumps({"at_industry": ind, "at_role": rol}, ensure_ascii=False) + ',n=[];'
+    return ('<script>(function(){var g=' + json.dumps({"at_fund": fund, "at_industry": ind, "at_role": rol}, ensure_ascii=False) + ',n=[];'
             'for(var k in g){var v=g[k],el=document.querySelector("[name="+k+"]");if(!el||!v||el.value)continue;'
             'el.value=v;if(el.value===v){el.style.background="#fff7d6";n.push(v);}}'
             'var m=document.getElementById("guessMsg");if(m&&n.length)m.textContent="已依資料表的公司名／職稱先選好："+n.join("、")+"（黃色，請核對後按儲存）";})();</script>')
