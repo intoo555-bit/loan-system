@@ -28085,10 +28085,54 @@ def _plan_hold_need(plan, doc_kind: str = ""):
     return None
 
 
+def _co_core(x) -> str:
+    return re.sub(r"股份有限公司|有限公司|[\s\u3000]", "", str(x or ""))
+
+
+def _doc_labor_check(j: dict, cust) -> list:
+    """勞保判讀 跟 客戶資料 比 → 要問客戶的事。
+    使用者 2026-10-14（看一份真勞保明細）：
+      ① 目前保兩個 → 問是不是同一間公司、同一個負責人
+      ② 客戶填年資 3 年，勞保目前那家只保幾個月（前一家名字很像、剛好接著）→ 可能同一份工作、同一個老闆，要問
+    ⛔ 只提醒「要問」，不判斷能不能送"""
+    cur = [c for c in (j.get("目前投保") or []) if isinstance(c, dict)]
+    warn = []
+    if len(cur) > 1:
+        warn.append(f"⚠️ 目前同時保 {len(cur)} 個（{'、'.join(str(c.get('單位') or '?') for c in cur)}）"
+                    "→ 問客戶是不是同一間公司／同一個負責人")
+    cust = cust or {}
+
+    def num(x):
+        try:
+            return int(float(str(x or 0).strip() or 0))
+        except Exception:
+            return 0
+    declared = num(cust.get("company_years")) * 12 + num(cust.get("company_months"))
+    if declared and cur:
+        # 客戶填的那家：公司名對得到就用那家，對不到用保最久的
+        cn = _co_core(cust.get("company_name_detail") or cust.get("company_name"))
+        hit = [c for c in cur if cn and _co_core(c.get("單位")) and (cn in _co_core(c.get("單位")) or _co_core(c.get("單位")) in cn)]
+        main_ = (hit or sorted(cur, key=lambda c: -num(c.get("加保滿幾個月"))))[0]
+        ins = main_.get("加保滿幾個月")
+        if isinstance(ins, int) and declared - ins > 3:     # 差 3 個月以內當成正常（報到後才加保、填整數年）
+            y, mo = divmod(declared, 12)
+            dtxt = (f"{y} 年" if y else "") + (f" {mo} 個月" if mo else "")
+            prev = j.get("上一份單位")
+            tail = (f"，上一份 {prev}（{j.get('上一份退保日期') or '?'} 退保"
+                    f"{'，跟這份接著' if j.get('接續') else ''}）") if prev else ""
+            warn.append(f"⚠️ 客戶填年資 {dtxt.strip()}，勞保 {main_.get('單位') or ''} 只保 {ins} 個月{tail}"
+                        "→ 問客戶是不是同一份工作／同一個老闆")
+    return warn
+
+
 def _doc_field_warnings(r, cust) -> list:
-    """這張證件跟客戶資料對不上的提醒（證件頁上方彙總用）"""
+    """這張證件跟客戶資料對不上、要問客戶的提醒（證件頁上方彙總用）"""
     j = _doc_judge(r)
-    if not j or not str(j.get("_kind", "")).startswith("fields:") or j.get("error") or j.get("_transient"):
+    if not j or j.get("error") or j.get("_transient"):
+        return []
+    if j.get("_kind") == "labor" and j.get("is_labor", True):
+        return _doc_labor_check(j, cust)
+    if not str(j.get("_kind", "")).startswith("fields:"):
         return []
     return _doc_fields_check(j, r.get("show_label") or _doc_label(r), cust)[1]
 
@@ -28108,8 +28152,7 @@ def _doc_judge_text(r, cust=None) -> str:
         cur = j.get("目前投保") or []
         parts = [f'{c.get("類型", "")} {c.get("單位", "")} {c.get("加保日期", "")} 加保（滿 {c.get("加保滿幾個月", "?")} 個月）' for c in cur]
         # ⚠️ 部分工時／重複投保要顯示（2026-10-14 使用者：陳曉琳有部分工時沒判讀到 —— 業務 AI 有判，是這裡漏顯示）
-        if len(cur) > 1:
-            parts.append("⚠️ 目前重複投保")
+        parts = _doc_labor_check(j, cust) + parts
         for c in cur:
             if c.get("備註部分工時"):
                 parts.append(f'⚠️ 部分工時（投保薪資 {c.get("投保薪資", "?"):,}）' if isinstance(c.get("投保薪資"), int)
@@ -28262,7 +28305,7 @@ def _docs_missing_html(cust, rows) -> str:
     if not cust:
         return ""
     warns = [f"{r['show_label']}：{w.replace('⚠️ ', '')}" for r in rows for w in _doc_field_warnings(r, cust)]
-    wline = (f'<div class="ms-line"><span class="ms-check">⚠️ 證件跟客戶資料對不上（AI 讀的，請看照片確認）：'
+    wline = (f'<div class="ms-line"><span class="ms-check">⚠️ 要跟客戶確認（AI 讀的，請看照片）：'
              f'{h("、".join(warns))}</span></div>') if warns else ""
     return wline + _docs_missing_line(cust, rows)
 

@@ -2418,7 +2418,7 @@ check("看大圖右邊：列出讀到的原樣欄位（空的不列、不重複�
       "發照日期：110.10.25" in _d79["行照"]["judgeDetail"] and "_民國" not in _d79["行照"]["judgeDetail"]
       and "引擎號碼" not in _d79["行照"]["judgeDetail"], _d79["行照"]["judgeDetail"])
 _h79 = TestClient(m.app).get("/archive/J300000001").text
-check("證件頁上方彙總：行照車主不是本人", "證件跟客戶資料對不上" in _h79 and "行照：車主不是本人" in _h79)
+check("證件頁上方彙總：行照車主不是本人", "要跟客戶確認" in _h79 and "行照：車主不是本人" in _h79)
 # 持有時間看換補照日期（使用者 2026-10-14）
 _ix, _wx = m._doc_fields_check({"欄位": {"發照日期_民國": "110/10/25", "換補照日期_民國": "114/10/01"}}, "行照", {"customer_name": "欄位乙"})
 check("行照有換補照日期 → 持有時間從換補照算（114/10/01 → 12 個月）",
@@ -2472,6 +2472,20 @@ check("行政B有「從行照帶入」，帶的是行照讀到的車牌、出廠
       "從行照帶入" in _ab and '"at_plate": "EQD-0097"' in _ab and '"at_mfg": "2021/10"' in _ab and '"at_brand": "睿能"' in _ab, _ab[:0])
 m.check_auth = lambda req: "adminB"
 check("證件存檔還沒開放的角色看不到這顆", "從行照帶入" not in TestClient(m.app).get(f"/adminb?case_id={_cid79}").text)
+# 勞保 × 客戶填的年資（使用者 2026-10-14 拿一份真明細：前一家跟現在這家名字很像、剛好接著，客戶填 3 年；另外同時保兩個）
+#   ⛔ 用假公司名，數字照那份明細的形狀：前一家 112/09 加保、115/04/30 退保；現在這家 115/05/01 加保（5 個月）；另一家部分工時
+_lj = {"_kind": "labor", "ok": True, "is_labor": True, "明細幾天前印的": 1,
+       "目前投保": [{"單位": "大米食品有限公司", "類型": "公司保", "加保日期": "115/05/01", "加保滿幾個月": 5},
+                  {"單位": "小米小吃店", "類型": "公司保", "加保日期": "115/09/17", "加保滿幾個月": 0, "投保薪資": 11100, "備註部分工時": True}],
+       "上一份單位": "大米食品行", "上一份退保日期": "115/04/30", "接續": True}
+_w = m._doc_labor_check(_lj, {"company_name": "大米食品", "company_years": "3", "company_months": ""})
+check("同時保兩個 → 問是不是同一間公司／同一個負責人", any("同時保 2 個" in w and "同一個負責人" in w for w in _w), _w)
+check("客戶填 3 年、勞保這家只保 5 個月 → 問是不是同一個老闆，並寫出上一份跟這份接著",
+      any("客戶填年資 3 年" in w and "大米食品有限公司 只保 5 個月" in w and "大米食品行" in w and "接著" in w and "同一個老闆" in w for w in _w), _w)
+_w = m._doc_labor_check({**_lj, "目前投保": _lj["目前投保"][:1]}, {"company_name": "大米食品", "company_years": "0", "company_months": "6"})
+check("年資跟勞保差 3 個月內 → 不提醒", not _w, _w)
+_jt = m._doc_judge_text({"show_label": "勞保明細", "judge_json": json.dumps(_lj)}, {"company_name": "大米食品", "company_years": "3"})
+check("勞保卡片上也寫要問的事", "同一個老闆" in _jt and "同一個負責人" in _jt, _jt)
 m._bizai_list, m._bizai_fetch, m._bizai_judge = _o79
 m.check_auth = _old_auth75
 os.environ.pop("BUSINESS_AI_URL", None); os.environ.pop("BUSINESS_AI_SECRET", None)
