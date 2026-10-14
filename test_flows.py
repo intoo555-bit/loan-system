@@ -1937,8 +1937,10 @@ check("下載整理好的 PDF：客戶資料表＋4 張證件", _r.status_code =
 _r = _tc73.get("/archive/E300000001/zip")
 import zipfile as _zf73
 _names = _zf73.ZipFile(_io73.BytesIO(_r.content)).namelist() if _r.status_code == 200 else []
-check("下載全部照片：資料夾名跟相簿一樣（收件日期-姓名-身分證）、照順序編號",
-      _names and _names[0].startswith("115-10-13-證件甲-E300000001/01 身分證正面"), _names)
+_d73 = get_cust("E300000001")["created_at"]   # 收件日期＝業務建檔那天（2026-10-14 業務 AI 交接第 8 段），不是照片日期
+_d73 = f"{int(_d73[:4]) - 1911}-{_d73[5:7]}-{_d73[8:10]}"
+check("下載全部照片：資料夾名跟相簿一樣（建檔日期-姓名-身分證）、照順序編號",
+      _names and _names[0].startswith(f"{_d73}-證件甲-E300000001/01 身分證正面"), _names)
 _cid73 = get_cust("E300000001")["case_id"]
 check("行政B 客戶頁有「📎 看證件」按鈕（總管理）", "/archive/E300000001" in _tc73.get("/adminb", params={"case_id": _cid73}).text)
 m.check_auth = lambda req: "group_TEST_B"
@@ -2516,6 +2518,11 @@ m._threading.Thread = _oT80
 check("再送一次（更新）也會去拉（客人後來補傳的）", _r80.get("action") == "updated" and len(_started) == 1, _r80)
 m.pull_customer_docs = _oP80
 # 客戶資料表：沒填的部分不印（2026-10-14 真客戶客戶資料表印成「5年月」「年3月」「天」）
+_c = sqlite3.connect(TEST_DB); _c.execute("UPDATE customers SET created_at='2026-10-10T15:00:00' WHERE id_no='J300000001'"); _c.commit(); _c.close()
+_fn80, _ = m._docs_folder_name("J300000001", m._docs_rows("J300000001"))
+check("相簿名稱日期用建檔那天（115-10-10），不是照片日期（10-14）", _fn80.startswith("115-10-10-"), _fn80)
+_ix, _wx = m._doc_fields_check({"欄位": {"發照日期_民國": "110/10/25", "換補照日期_民國": "110/10/25"}}, "行照", {})
+check("發照、換補照讀成同一天 → 寫「請對照照片」（業務 AI 實測 3 份都一樣，可能抄錯格）", any("讀成同一天" in x for x in _ix), _ix)
 check("年資／居住時間：只填年、只填月、都填",
       (m._ym_txt("5", ""), m._ym_txt("", "3"), m._ym_txt("2", "6"), m._ym_txt("0", "3"), m._ym_txt("", "")) == ("5年", "3個月", "2年6個月", "3個月", ""))
 _c = sqlite3.connect(TEST_DB)

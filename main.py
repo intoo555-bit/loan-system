@@ -28050,8 +28050,12 @@ def _doc_fields_check(j: dict, label: str, cust) -> tuple:
         # ⛔ 持有時間看「換補照日期」（使用者 2026-10-14）；沒有換補照才用發照日期
         d = _roc_ymd(f.get("換補照日期_民國") or f.get("換補照日期"))
         src = "換補照"
+        d0 = _roc_ymd(f.get("發照日期_民國") or f.get("發照日期"))
         if not d:
-            d, src = _roc_ymd(f.get("發照日期_民國") or f.get("發照日期")), "發照"
+            d, src = d0, "發照"
+        elif d == d0:
+            # ⚠️ 業務 AI 2026-10-14 實測：3 份真行照的發照／換補照都讀成同一天 —— 可能真的一樣，也可能 AI 抄錯格
+            info.append("發照、換補照讀成同一天，請對照照片")
         if d:
             mon = (t.year - d[0]) * 12 + t.month - d[1] - (t.day < d[2])
             info.append(f"持有 {mon} 個月（{src} {d[0] - 1911:03d}/{d[1]:02d}/{d[2]:02d}）")
@@ -28888,7 +28892,10 @@ def docs_list_page(request: Request, q: str = ""):
     with db_conn() as conn:
         cur = conn.cursor()
         _docs_ensure_table(cur)
-        rows = cur.execute("""SELECT d.id_no, COUNT(*) n, MIN(d.remote_created_at) first_at, MAX(d.pulled_at) last_at,
+        # 收件日期＝業務建檔那天（同 _docs_folder_name）；沒有客戶資料才用第一張照片的日期
+        rows = cur.execute("""SELECT d.id_no, COUNT(*) n,
+              COALESCE((SELECT created_at FROM customers c WHERE c.id_no=d.id_no AND c.status!='DELETED' ORDER BY created_at DESC LIMIT 1),
+                       MIN(d.remote_created_at)) first_at, MAX(d.pulled_at) last_at,
               (SELECT customer_name FROM customers c WHERE c.id_no=d.id_no AND c.status!='DELETED' ORDER BY created_at DESC LIMIT 1) name,
               (SELECT source_group_id FROM customers c WHERE c.id_no=d.id_no AND c.status!='DELETED' ORDER BY created_at DESC LIMIT 1) gid,
               (SELECT phone FROM customers c WHERE c.id_no=d.id_no AND c.status!='DELETED' ORDER BY created_at DESC LIMIT 1) phone
@@ -28981,10 +28988,12 @@ def docs_file_preview(request: Request, doc_pk: int, page: int = 0):
 def _docs_folder_name(id_no: str, rows):
     """資料夾名稱跟業務建相簿一樣：收件日期-姓名-身分證（日期用民國）"""
     with db_conn() as conn:
-        x = conn.execute("SELECT customer_name FROM customers WHERE id_no=? AND status!='DELETED' ORDER BY created_at DESC LIMIT 1",
+        x = conn.execute("SELECT customer_name, created_at FROM customers WHERE id_no=? AND status!='DELETED' ORDER BY created_at DESC LIMIT 1",
                          (id_no,)).fetchone()
     name = ((x[0] if x else "") or "")
-    first = min(((r["remote_created_at"] or r["pulled_at"] or "") for r in rows), default="")
+    # ⛔ 日期用「業務建檔那天」（customers.created_at，LINE 建檔時會改成當天），⛔ 不是客戶傳照片那天
+    #    （業務 AI 2026-10-14 交接第 8 段：相簿日期＝行政群組建相簿那天）。查不到客戶才退回第一張照片的日期
+    first = (x[1] if x else "") or min(((r["remote_created_at"] or r["pulled_at"] or "") for r in rows), default="")
     try:
         day = f"{int(first[:4]) - 1911}-{int(first[5:7]):02d}-{int(first[8:10]):02d}"
     except Exception:
