@@ -19347,6 +19347,81 @@ def _guess_kw(text: str, table) -> str:
     return ""
 
 
+# 亞太的行業大類 → 和裕申請書的行業下拉（和裕的選項不一樣）
+_HR_INDUSTRY_FROM_AT = {"製造業": "製造業", "建築與營造": "營造業", "科技與資訊": "科技業", "運輸與物流": "運輸業",
+                        "金融與保險業": "金融業", "批發與零售業": "服務業", "醫療與教育": "服務業", "自由職業": "服務業",
+                        "農林漁牧業": "農狩林牧業", "其他": "其它"}
+
+
+def _adminb_supp_guess(customer) -> dict:
+    """補充資料各格的建議值（使用者 2026-10-14：「其他補充資料都要補上」）。
+    ⛔ 只從資料表／證件判讀／群組訊息拿得到的才填；拿不到（貸款金額、期數、商品型號、IMEI…）留空"""
+    c = customer or {}
+    g = {}
+    # 和裕行業：跟亞太同一套推法，再換成和裕的選項
+    co_txt = " ".join(str(c.get(k) or "") for k in ("company_industry", "company_name_detail", "company_name"))
+    L = _customer_doc_judge(c, "labor")
+    units = " ".join(str(x.get("單位") or "") for x in (L.get("目前投保") or []) if isinstance(x, dict))
+    at_ind = _guess_kw(co_txt, _AT_INDUSTRY_KW) or _guess_kw(units, _AT_INDUSTRY_KW) or "其他"
+    hr = _HR_INDUSTRY_FROM_AT.get(at_ind, "")
+    if at_ind == "餐飲與服務業":
+        hr = "餐飲業" if any(k in co_txt + units for k in ("餐", "飲", "小吃", "麵", "咖啡", "早餐", "便當", "火鍋", "燒烤")) else "服務業"
+    elif at_ind == "軍警與公教":
+        hr = "軍人" if "軍" in co_txt + units else "公教人員"
+    elif at_ind == "農林漁牧業" and "漁" in co_txt + units:
+        hr = "漁業"
+    g["hr_industry"] = hr
+    g["hr_fund"] = "3.購買3C產品"          # 同亞太（使用者：資金用途一律 3C）
+    # 撥款資料 ← 存摺封面判讀
+    pb = _customer_doc_judge(c, "fields:存摺封面")
+    f = pb.get("欄位") or {} if pb else {}
+    g["hr_bank"], g["hr_branch"] = str(f.get("銀行") or ""), str(f.get("分行") or "")
+    # 機車資料 ← 機車行照（和裕機車、麻吉機車、喬美的商品）
+    moto = {}
+    try:
+        for r in _docs_rows(c.get("id_no") or "") if c.get("id_no") else []:
+            if r.get("show_label") == "行照" and _doc_vehicle_kind(r) == "機車":
+                moto = (_doc_judge(r).get("欄位") or {})
+                break
+    except Exception:
+        moto = {}
+    if moto:
+        brand, vtype = str(moto.get("廠牌") or ""), str(moto.get("車輛型式") or "")
+        g["hr_product"] = (brand + " 機車").strip() if brand else ""
+        g["hr_model"] = str(moto.get("車牌") or "")
+        g["hr_mfg"] = str(moto.get("出廠年月") or "").replace(".", "/")
+        g["mj_brand"], g["mj_model"] = brand, vtype
+        g["qm_model"] = " ".join(x for x in (brand, vtype, str(moto.get("引擎號碼") or "")) if x)
+    # 照會時間 ← 群組補的時段（例：「朋友 李○○ 09xx (知情) 1550-1650 @AI」）
+    slot = ""
+    cid = (c.get("case_id") or "").strip()
+    if cid:
+        try:
+            with db_conn() as conn:
+                for lg in conn.execute("SELECT message_text FROM case_logs WHERE case_id=? ORDER BY id", (cid,)).fetchall():
+                    for m_ in re.finditer(r"(?<![\d-])([0-2]?\d[0-5]\d)\s*[-~～]\s*([0-2]?\d[0-5]\d)(?![\d-])", str(lg[0] or "")):
+                        a_, b_ = m_.group(1).zfill(4), m_.group(2).zfill(4)
+                        if a_ < b_ <= "2400":
+                            slot = f"{a_[:2]}:{a_[2:]}-{b_[:2]}:{b_[2:]}"
+        except Exception:
+            slot = ""
+    g["hr_contact"] = g["contact_time"] = slot
+    # 21汽車 ← 行政查的天書車價
+    price, _nf = _customer_car_book(c)
+    if price:
+        g["car_price"], g["car_src"] = f"{price:g}", "天書／權威"
+        g["car_amt"] = f"{min(price, 200):g}"
+    st = _check_creditcard_status(c)[0]
+    g["car_hascc"] = "有" if st in ("good", "bad") else ("無" if (c.get("eval_credit_card") or "").strip() else "")
+    # 喬美信用資料 ← 信用卡正面判讀／資料表
+    cc = _customer_doc_judge(c, "fields:信用卡")
+    g["qm_cbank"] = str((cc.get("欄位") or {}).get("發卡銀行") or "") if cc else ""
+    g["qm_clate"] = "有" if st == "bad" else ("無" if st == "good" else "")
+    # 分貝：近 2 個月送件備註 ← 資料表「近三月送過什麼」
+    g["bei_note"] = str(c.get("eval_sent_3m_detail") or "").strip()
+    return {k: v for k, v in g.items() if v}
+
+
 def _adminb_guess_html(customer) -> str:
     """行業類別／職務：還沒選的，依資料表推一個先選上（黃色），行政核對後按儲存才算（同行照帶入）"""
     if not customer:
@@ -19361,12 +19436,14 @@ def _adminb_guess_html(customer) -> str:
     rol = "" if customer.get("adminb_role") else _guess_kw(customer.get("company_role"), _AT_ROLE_KW)
     # 使用者 2026-10-14：「亞太資金用途一律選購買 3C 產品」
     fund = "" if customer.get("adminb_fund_use") else "II-3購買3C產品"
-    if not ind and not rol and not fund:
+    allg = dict(_adminb_supp_guess(customer), at_fund=fund, at_industry=ind, at_role=rol)
+    allg = {k: v for k, v in allg.items() if v}
+    if not allg:
         return ""
-    return ('<script>(function(){var g=' + json.dumps({"at_fund": fund, "at_industry": ind, "at_role": rol}, ensure_ascii=False) + ',n=[];'
+    return ('<script>document.addEventListener("DOMContentLoaded",function(){var g=' + json.dumps(allg, ensure_ascii=False) + ',n=[];'
             'for(var k in g){var v=g[k],el=document.querySelector("[name="+k+"]");if(!el||!v||el.value)continue;'
             'el.value=v;if(el.value===v){el.style.background="#fff7d6";n.push(v);}}'
-            'var m=document.getElementById("guessMsg");if(m&&n.length)m.textContent="已依資料表的公司名／職稱先選好："+n.join("、")+"（黃色，請核對後按儲存）";})();</script>')
+            'var m=document.getElementById("guessMsg");if(m&&n.length)m.textContent="已依資料表／證件先填好 "+n.length+" 格（黃色，請核對後按儲存）";});</script>')
 
 
 def _adminb_license_html(customer, role) -> str:

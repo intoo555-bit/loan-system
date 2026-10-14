@@ -3100,8 +3100,25 @@ _gh2 = m._adminb_guess_html({"company_name_detail": "王小明", "company_role":
 check("行業類別：公司名推不出 → 看勞保投保單位（營造）", "建築與營造" in _gh2, _gh2[:200])
 _gh3 = m._adminb_guess_html({"company_name_detail": "王小明", "_dj_labor": {}})
 check("行業類別：都推不出 → 先選「其他」（黃色要核對）", "其他" in _gh3, _gh3[:200])
-check("行政B：已經選過的不蓋", m._adminb_guess_html({"company_name": "嘉合小吃店", "company_role": "老闆",
-                                                   "adminb_industry": "其他", "adminb_role": "其他", "adminb_fund_use": "I-1教育費"}) == "")
+# 使用者 2026-10-14：「其他補充資料都要補上喔」
+_dr, _dj = m._docs_rows, m._doc_judge
+m._docs_rows = lambda idv: [{"show_label": "行照", "id": 1}]
+m._doc_judge = lambda r: {"欄位": {"車牌": "NTV-9226", "排氣量": "124", "廠牌": "光陽", "車輛型式": "SZ25AG",
+                                   "引擎號碼": "SZ25AG-101457", "出廠年月": "2023.10"}}
+_sg = m._adminb_supp_guess({"id_no": "A123456789", "case_id": _cid89, "company_name_detail": "嘉合小吃店",
+                            "eval_credit_card": "正常繳款", "eval_sent_3m_detail": "喬美、裕融",
+                            "_dj_labor": {}, "_dj_fields:存摺封面": {"欄位": {"銀行": "中華郵政", "分行": "竹北郵局"}},
+                            "_dj_fields:信用卡": {"欄位": {"發卡銀行": "國泰世華"}},
+                            "unloan_vehicles": '[{"type": "汽車", "tp": "19"}]'})
+m._docs_rows, m._doc_judge = _dr, _dj
+for _k, _v in (("hr_industry", "餐飲業"), ("hr_fund", "3.購買3C產品"), ("hr_bank", "中華郵政"), ("hr_branch", "竹北郵局"),
+               ("hr_product", "光陽 機車"), ("hr_model", "NTV-9226"), ("hr_mfg", "2023/10"), ("mj_brand", "光陽"),
+               ("qm_model", "光陽 SZ25AG SZ25AG-101457"), ("hr_contact", "15:50-16:50"), ("car_price", "19"), ("car_amt", "19"),
+               ("car_hascc", "有"), ("qm_cbank", "國泰世華"), ("qm_clate", "無"), ("bei_note", "喬美、裕融")):
+    check(f"補充資料自動帶：{_k} = {_v}", _sg.get(_k) == _v, _sg.get(_k))
+_gh4 = m._adminb_guess_html({"company_name": "嘉合小吃店", "company_role": "老闆",
+                             "adminb_industry": "其他", "adminb_role": "其他", "adminb_fund_use": "I-1教育費"})
+check("行政B：已經選過的不蓋（亞太三格不再給建議）", '"at_industry"' not in _gh4 and '"at_role"' not in _gh4 and '"at_fund"' not in _gh4, _gh4[:300])
 _r = _tc93.get("/archive/accounts")
 check("對照頁有一格可以自己打官方賴名稱", "自己打官方賴名稱" in _r.text)
 _r = _tc93.post("/archive/accounts", data={"a0": "自己打的官方賴", "g0": "TEST_B"}, follow_redirects=False)
