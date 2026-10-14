@@ -1946,6 +1946,17 @@ check("第一信貸：這件 21 核准過 → ✅（不用一定是銀行信貸�
 check("第一信貸：負債表有剛撥款的 → ✅", _sub(_ev84(debt_list='[{"co": "裕融汽車", "dy": "動保", "sp": "有", "pa": "1"}]', eval_property="1汽1機")[0],
                                          "第一信貸", "近期有核准")["status"] == "pass")
 check("第一信貸：近期都沒核准 → ❌", _ev84()[0]["第一信貸"]["eligible"] is False)
+# 使用者 2026-10-14（林琬雪）：亞太婉拒原因「不符進件資格」→ 還可以送和裕（原因照真實 A 群回覆抄）
+_rp91 = json.dumps({"order": ["亞太", "和裕"], "current_index": 1, "history": [{"company": "亞太", "status": "婉拒"}]}, ensure_ascii=False)
+_s = _sub(_ev84(route_plan=_rp91, company_status=json.dumps({"亞太": "王小明 亞太婉拒
+婉拒 前案繳款未滿半年
+(不符進件資格)"}, ensure_ascii=False))[0],
+          "和裕商品", "亞太沒婉拒過")
+check("亞太婉拒寫「不符進件資格」→ 和裕那條 ✅", _s["status"] == "pass", _s)
+_s = _sub(_ev84(route_plan=_rp91, company_status=json.dumps({"亞太": "王小明 亞太婉拒
+繳款不良"}, ensure_ascii=False))[0],
+          "和裕商品", "亞太沒婉拒過")
+check("亞太婉拒寫其他原因 → 和裕照樣跳過", _s["status"] == "fail", _s)
 # 2026-10-14 回測（7 月後 514 件有核准的案子）抓到：聯絡人寫「哥哥」被當成不是二等親
 for _rel, _ok in (("哥哥", True), ("哥", True), ("爺", True), ("阿嬤", True), ("妹妹", True), ("父", True), ("夫", True),
                   ("表弟", False), ("堂哥", False), ("叔叔", False), ("阿姨", False), ("姪子", False), ("外甥女", False),

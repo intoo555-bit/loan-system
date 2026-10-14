@@ -3275,6 +3275,10 @@ def _self_employed_opt(opt, customer):
     return ("fail", opt.get("label", ""), f"職稱「{role}」不是老闆／負責人")
 
 
+# 婉拒原因寫這些 → 不是信用被拒，「X 婉拒過就跳過 Y」那種條件不算（使用者 2026-10-14：林琬雪）
+_REJECT_NOT_COUNT = ("不符進件資格",)
+
+
 @_ensure_4tuple
 def _check_rule(rule, customer):
     """單條規則比對、回 (status, label, actual_str, sub) 4-tuple
@@ -3450,6 +3454,13 @@ def _check_rule(rule, customer):
             except Exception:
                 hist = []
             if any(h.get("status") == "婉拒" and normalize_section(h.get("company", "")) == value for h in hist):
+                # 使用者 2026-10-14（林琬雪）：亞太婉拒寫「不符進件資格」→ 不是信用被拒，還可以送和裕
+                try:
+                    why = str((json.loads(customer.get("company_status") or "{}") or {}).get(value) or "")
+                except Exception:
+                    why = ""
+                if any(k in why for k in _REJECT_NOT_COUNT):
+                    return ("pass", label, f"{value}婉拒是「不符進件資格」，不算")
                 return ("fail", label, f"{value}已婉拒過")
             return ("pass", label, f"{value}沒婉拒過")
         # 負債表已繳期數（pa）相關：負債表沒填 → unknown（沒填 ≠ 沒有貸款）
