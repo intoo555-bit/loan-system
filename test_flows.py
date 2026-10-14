@@ -2462,6 +2462,16 @@ m.req_lib.get = _oget
 check("打業務 AI：/fields?kind=身分證背面、身分證放參數、密碼放標頭",
       _got["url"].endswith("/api/loan/docs/82/fields") and _got["params"] == {"id_no": "J300000001", "kind": "身分證背面"}
       and _got["headers"] == {"X-Loan-Secret": "x"}, _got)
+# 行政B「從行照帶入」（使用者 2026-10-14：補充資料的顏色、車身號碼要自動填；選按鈕帶入）
+_c = sqlite3.connect(TEST_DB); _c.execute("UPDATE customer_docs SET manual_label=NULL WHERE id_no='J300000001' AND remote_doc_id='83'"); _c.commit(); _c.close()
+m._bizai_judge = _fj79; m.judge_customer_docs("J300000001")   # 前面改成身分證正面了，改回行照重拿
+_cid79 = sqlite3.connect(TEST_DB).execute("SELECT case_id FROM customers WHERE id_no='J300000001'").fetchone()[0]
+m.check_auth = lambda req: "admin"
+_ab = TestClient(m.app).get(f"/adminb?case_id={_cid79}").text
+check("行政B有「從行照帶入」，帶的是行照讀到的車牌、出廠年月改成 2021/10 的寫法",
+      "從行照帶入" in _ab and '"at_plate": "EQD-0097"' in _ab and '"at_mfg": "2021/10"' in _ab and '"at_brand": "睿能"' in _ab, _ab[:0])
+m.check_auth = lambda req: "adminB"
+check("證件存檔還沒開放的角色看不到這顆", "從行照帶入" not in TestClient(m.app).get(f"/adminb?case_id={_cid79}").text)
 m._bizai_list, m._bizai_fetch, m._bizai_judge = _o79
 m.check_auth = _old_auth75
 os.environ.pop("BUSINESS_AI_URL", None); os.environ.pop("BUSINESS_AI_SECRET", None)

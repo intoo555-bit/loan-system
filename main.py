@@ -18482,6 +18482,45 @@ def apply_adminb_rules(row: dict) -> dict:
     return result
 
 
+# 行照讀到的欄位 → 行政B「機車額外資料」的輸入框
+_LICENSE_TO_ADMINB = [("廠牌", "at_brand"), ("車牌", "at_plate"), ("車輛型式", "at_vtype"), ("引擎號碼", "at_engine"),
+                      ("排氣量", "at_disp"), ("顏色", "at_color"), ("車身號碼", "at_body"), ("出廠年月", "at_mfg")]
+
+
+def _adminb_license_html(customer, role) -> str:
+    """「📋 從行照帶入」按鈕（使用者 2026-10-14：補充資料的顏色、車身號碼要自動填；選「按鈕帶入」）。
+    ⛔ 只填進畫面上的空格，行政核對後自己按「儲存」才寫進去 —— 不另開寫入的路（AI 讀的是待確認）
+    ⛔ 已經打好的不蓋；兩張行照（汽車＋機車）讓行政選"""
+    if not customer or role not in _DOCS_ROLES or not customer.get("id_no"):
+        return ""
+    lic = []
+    for r in _docs_rows(customer["id_no"]):
+        if r["show_label"] != "行照":
+            continue
+        j = _doc_judge(r)
+        f = (j.get("欄位") or {}) if j and not j.get("error") and not j.get("_transient") else {}
+        vals = {k: str(f.get(src) or "").strip() for src, k in _LICENSE_TO_ADMINB}
+        if vals["at_mfg"]:
+            vals["at_mfg"] = vals["at_mfg"].replace(".", "/")      # 行照印 2021.10，這格的寫法是 2023/08
+        if any(vals.values()):
+            lic.append({"name": f'{j.get("種類") or "行照"} {vals["at_plate"]}'.strip(), "vals": vals})
+    if not lic:
+        return ('<div style="font-size:12px;color:#8a7e70;margin-bottom:8px">📋 證件存檔裡還沒有讀好的行照'
+                f'（<a href="/archive/{h(customer["id_no"])}" target="_blank">打開證件存檔</a>會自動讀）</div>')
+    opts = "".join(f'<option value="{i}">{h(x["name"])}</option>' for i, x in enumerate(lic))
+    pick = f'<select id="licPick" class="ab-sel" style="width:auto">{opts}</select>' if len(lic) > 1 else ""
+    return ('<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">'
+            '<button type="button" onclick="licFill()" style="background:#0369a1;color:#fff;border:0;border-radius:6px;'
+            'padding:6px 12px;font-weight:700;cursor:pointer">📋 從行照帶入</button>' + pick +
+            '<span id="licMsg" style="font-size:12px;color:#6a5e4e">AI 讀的，只填空格，請對照照片再按儲存</span></div>'
+            '<script>var LIC=' + json.dumps(lic, ensure_ascii=False).replace("</", "<\\/") + ';'
+            'function licFill(){var p=document.getElementById("licPick"),x=LIC[p?+p.value:0],n=0,skip=0;'
+            'for(var k in x.vals){var v=x.vals[k],el=document.querySelector("[name="+k+"]");if(!el||!v)continue;'
+            'if(el.value.trim()){if(el.value.trim()!==v)skip++;continue;}el.value=v;el.style.background="#fff7d6";n++;}'
+            'document.getElementById("licMsg").textContent="已帶入 "+n+" 格（黃色）"+(skip?"，"+skip+" 格已經有打、跟行照不一樣，沒有蓋":"")+"，請核對後按儲存";}'
+            '</script>')
+
+
 @app.get("/adminb", response_class=HTMLResponse)
 def adminb_page(request: Request, case_id: str = "", saved: str = ""):
     from fastapi.responses import RedirectResponse
@@ -18669,6 +18708,7 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
           <div><div class="ab-lbl">職務</div><select name="at_role" class="ab-sel"><option value="">請選擇</option>{"".join(f'<option {"selected" if customer.get("adminb_role","")==o else ""}>{o}</option>' for o in ["行政與內勤","勞力與現場","銷售與業務","財務與專業","技術與工程","教學與醫護","管理與經營","自營與自由"])}</select></div>
         </div>
         <div style="font-size:11px;font-weight:700;color:#0369a1;margin-bottom:8px;">機車額外資料</div>
+        {_adminb_license_html(customer, role)}
         <div class="ab-g3">
           <div><div class="ab-lbl">廠牌</div><input name="at_brand" class="ab-inp" placeholder="光陽機車" value="{h(customer.get('adminb_brand','') or '')}"></div>
           <div><div class="ab-lbl">牌照號碼</div><input name="at_plate" class="ab-inp" placeholder="MMX-0286" value="{h(customer.get('vehicle_plate','') or '')}"></div>
