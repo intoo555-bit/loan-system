@@ -2557,11 +2557,11 @@ check("相簿名稱日期用建檔那天（115-10-10），不是照片日期（1
 _ix, _wx = m._doc_fields_check({"欄位": {"發照日期_民國": "110/10/25", "換補照日期_民國": "110/10/25"}}, "行照", {})
 check("發照＝換補照是正常的 → 不提醒（業務 AI 10 張有 5 張沒換過照）", not any("同一天" in x for x in _ix + _wx), (_ix, _wx))
 _ix, _wx = m._doc_fields_check({"欄位": {"車牌": "", "車主姓名": "欄位乙", "發照日期_民國": "110/10/25", "廠牌": "三陽"}}, "行照", {"customer_name": "欄位乙"})
+check("行照關鍵欄（車牌）讀不到 → 請客戶重拍", any("讀不到車牌" in w and "重拍" in w for w in _wx), _wx)
 _ix, _wx = m._doc_fields_check({"欄位": {"姓名": "欄位乙", "身分證號": "J300000001", "出生日期_民國": "075/03/12",
                                  "發證日期_民國": "111/06/10", "發證地": "竹縣", "換補發": "換發"}}, "身分證正面", {"customer_name": "欄位乙", "birth_date": "075/03/12"})
 check("發證資料印在身分證正面 → 正面讀到也顯示（系統沒填就提示可以補）",
       any("發證 111/06/10 竹縣換發" in x for x in _ix) and any("可以照這個補" in x for x in _ix), _ix)
-check("行照關鍵欄（車牌）讀不到 → 請客戶重拍", any("讀不到車牌" in w and "重拍" in w for w in _wx), _wx)
 _ix, _wx = m._doc_fields_check({"欄位": {"戶名": "", "銀行": "", "分行": "台中", "帳號": "1234"}}, "存摺封面", {"customer_name": "欄位乙"})
 check("存摺讀不到戶名 → 請客戶重拍；銀行讀不到不算（有的封面只有 logo）", any("讀不到戶名" in w and "銀行" not in w for w in _wx), _wx)
 _mi = m._order_missing_info({"id_no": "J300000001", "eval_labor_ins": "公司保", "company_salary": "3", "company_years": "2",
