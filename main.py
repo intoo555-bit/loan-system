@@ -28175,13 +28175,6 @@ def _doc_fields_check(j: dict, label: str, cust) -> tuple:
                 warn.append(f"⚠️ 生日跟系統不一樣（系統：{_normalize_roc_date(cust.get('birth_date'))}）")
             elif cust and not sb:
                 info.append("系統還沒填生日，可以照這個補")
-    elif label == "身分證反面":
-        d = _roc_ymd(f.get("發證日期_民國") or f.get("發證日期"))
-        if d:
-            info.append(f"{d[0] - 1911:03d}/{d[1]:02d}/{d[2]:02d} {f.get('發證地') or ''}{f.get('換補發') or ''}".strip())
-            sd = _roc_ymd(cust.get("id_issue_date"))
-            if sd and sd != d:
-                warn.append(f"⚠️ 發證日期跟系統不一樣（系統：{_normalize_roc_date(cust.get('id_issue_date'))}）")
     elif label == "行照":
         nm = f.get("車主姓名") or ""
         if other(nm):
@@ -28222,6 +28215,16 @@ def _doc_fields_check(j: dict, label: str, cust) -> tuple:
         if other(nm):
             warn.append(f"⚠️ 名字不是本人（{nm}）")
         info.append(" ".join(x for x in (f.get("發卡銀行"), f"有效到 {f['有效日期']}" if f.get("有效日期") else "") if x))
+    # 發證日期／發證地／換補發：⛔ 印在身分證「正面」下方（2026-10-14 交接第 8 段原本寫成背面，是我寫錯）→ 正反面都看
+    if label in ("身分證正面", "身分證反面"):
+        d = _roc_ymd(f.get("發證日期_民國") or f.get("發證日期"))
+        if d:
+            info.append(f"發證 {d[0] - 1911:03d}/{d[1]:02d}/{d[2]:02d} {f.get('發證地') or ''}{f.get('換補發') or ''}".strip())
+            sd = _roc_ymd(cust.get("id_issue_date"))
+            if sd and sd != d:
+                warn.append(f"⚠️ 發證日期跟系統不一樣（系統：{_normalize_roc_date(cust.get('id_issue_date'))}）")
+            elif cust and not sd:
+                info.append("系統還沒填發證資料，可以照這個補")
     # 關鍵欄讀不到＝照片太黑／太糊 → 送件也不會過，要請客戶重拍（業務 AI 交接 2026-10-14，使用者連講三次）
     #   ⛔ 只在「有讀到別的欄、關鍵欄卻空」時講：整張都空另外寫「讀不到上面的字」
     key = {"身分證正面": ("姓名", "身分證號", "出生日期"), "行照": ("車牌", "車主姓名", "發照日期"),
