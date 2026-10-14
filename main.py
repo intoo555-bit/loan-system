@@ -3011,6 +3011,35 @@ def _customer_licenses(customer) -> list:
     return out
 
 
+def _customer_license_plates(customer) -> dict:
+    """存檔裡的行照 → {"汽車": {車牌…}, "機車": {車牌…}}（同一台拍兩張只算一台；車種看排氣量，分不出的不算）"""
+    key = "_dj_plates"
+    if isinstance(customer, dict) and key in customer:
+        return customer[key]
+    out = {"汽車": set(), "機車": set()}
+    idv = (customer.get("id_no") or "").strip() if customer else ""
+    if idv:
+        try:
+            for r in _docs_rows(idv):
+                if r.get("show_label") != "行照":
+                    continue
+                j = _doc_judge(r)
+                f = (j.get("欄位") or {}) if j and not j.get("error") else {}
+                try:
+                    cc = int(re.sub(r"[^\d]", "", str(f.get("排氣量") or "")) or 0)
+                except ValueError:
+                    cc = 0
+                kind = "機車" if 50 <= cc < 600 else "汽車" if cc >= 1000 else ""
+                plate = re.sub(r"[^A-Z0-9]", "", str(f.get("車牌") or "").upper())
+                if kind and plate:
+                    out[kind].add(plate)
+        except Exception:
+            pass
+    if isinstance(customer, dict):
+        customer[key] = out
+    return out
+
+
 def _hold_rule_verdict(label, customer):
     """「持有滿 N」的人工確認條件 → 看行照判（使用者 2026-10-14：「上面不是可以看持有多久時間嗎」）。
     滿了 ✅；沒滿 ⚠️ 請客戶補證明（遺失補發、剛買／過戶都可能，不直接打 ❌，見 _doc_fields_check）；沒行照回 None 照舊"""
@@ -3792,6 +3821,22 @@ def _order_missing_info(customer) -> list:
                 miss.append("車輛（客戶有傳行照，資料表沒填車）")
         except Exception:
             pass
+    # 使用者 2026-10-14：「基本很多都是行政漏掉填寫」（回測：沈榕穗、陳韻蓮、鄭心堯、劉邦峻 都是少填一台車；
+    #   周育民、王皓澤 有給天書卻沒填）→ 照片比資料表多就先不排，請行政補
+    car_rows = [d for d in debts if isinstance(d, dict) and "汽" in str(d.get("co") or "")] + \
+               [v for v in cars if isinstance(v, dict) and v.get("type") == "汽車"]
+    moto_n = sum(1 for d in debts if isinstance(d, dict) and "機車" in str(d.get("co") or "")) + \
+        sum(1 for v in cars if isinstance(v, dict) and v.get("type") == "機車")
+    try:
+        plates = _customer_license_plates(c)
+        for kind, have in (("汽車", len(car_rows)), ("機車", moto_n)):
+            if len(plates[kind]) > have and have > 0:      # 一台都沒填的上面已經講了
+                miss.append(f"{kind}（有 {len(plates[kind])} 張{kind}行照，資料表只填 {have} 台）")
+        if _customer_doc_cats(c).get("天書／車價截圖") and car_rows and \
+                not any(str(x.get("tp") or "").strip() for x in car_rows):
+            miss.append("汽車天書／權威車價（有天書截圖，資料表沒填）")
+    except Exception:
+        pass
     return miss
 
 

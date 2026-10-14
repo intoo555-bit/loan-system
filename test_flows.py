@@ -1946,6 +1946,22 @@ check("第一信貸：這件 21 核准過 → ✅（不用一定是銀行信貸�
 check("第一信貸：負債表有剛撥款的 → ✅", _sub(_ev84(debt_list='[{"co": "裕融汽車", "dy": "動保", "sp": "有", "pa": "1"}]', eval_property="1汽1機")[0],
                                          "第一信貸", "近期有核准")["status"] == "pass")
 check("第一信貸：近期都沒核准 → ❌", _ev84()[0]["第一信貸"]["eligible"] is False)
+# 使用者 2026-10-14：「基本很多都是行政漏掉填寫」→ 照片比資料表多就先不排
+_g = dict(eval_property="2汽", debt_list="[]", unloan_vehicles='[{"type": "汽車", "year": "2020", "tp": "19"}]')
+_mi = m._order_missing_info(dict(_g, _dj_plates={"汽車": {"ABC1234", "XYZ5678"}, "機車": set()}, _dj_cats={}))
+check("有 2 張汽車行照、資料表只填 1 台 → 先不排，寫出來", any("2 張汽車行照" in x and "只填 1 台" in x for x in _mi), _mi)
+_mi = m._order_missing_info(dict(_g, _dj_plates={"汽車": {"ABC1234"}, "機車": set()}, _dj_cats={}))
+check("行照跟資料表一樣多 → 不提醒", not any("行照" in x for x in _mi), _mi)
+_g2 = dict(_g, unloan_vehicles='[{"type": "汽車", "year": "2020"}]')
+_mi = m._order_missing_info(dict(_g2, _dj_plates={"汽車": set(), "機車": set()}, _dj_cats={"天書／車價截圖": 1}))
+check("有天書截圖、資料表沒填車價 → 先不排，請行政補", any("天書" in x and "沒填" in x for x in _mi), _mi)
+# 使用者 2026-10-14（胡正恩）：補不出資料不算婉拒 → 用「轉」下一家，亞太記成「轉送」不是「婉拒」，和裕就不會被擋
+_r92 = m.create_customer_record("轉送測", "", "亞太", "TEST_B", "t", route_plan=m.make_route_json(["亞太", "和裕", "喬美"]), current_company="亞太")
+bc("10/14-轉送測-轉和裕", gid="TEST_B")
+_c = sqlite3.connect(TEST_DB); _c.row_factory = sqlite3.Row
+_h92 = json.loads(_c.execute("SELECT route_plan FROM customers WHERE case_id=?", (_r92,)).fetchone()["route_plan"])["history"]; _c.close()
+check("打「日期-姓名-轉和裕」→ 亞太記成轉送（不是婉拒）", any(h.get("company") == "亞太" and h.get("status") != "婉拒" for h in _h92)
+      and not any(h.get("status") == "婉拒" for h in _h92), _h92)
 # 使用者 2026-10-14（林琬雪）：亞太婉拒原因「不符進件資格」→ 還可以送和裕（原因照真實 A 群回覆抄）
 _rp91 = json.dumps({"order": ["亞太", "和裕"], "current_index": 1, "history": [{"company": "亞太", "status": "婉拒"}]}, ensure_ascii=False)
 _s = _sub(_ev84(route_plan=_rp91, company_status=json.dumps({"亞太": "王小明 亞太婉拒\n婉拒 前案繳款未滿半年\n(不符進件資格)"}, ensure_ascii=False))[0],
