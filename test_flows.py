@@ -3196,6 +3196,45 @@ check("行政B 也能下載送件包", _tc94.get("/archive/E300000001/pack").sta
 check("行政B 仍不能開證件頁", _tc94.get("/archive/E300000001", follow_redirects=False).status_code != 200)
 m.check_auth = lambda req: "admin"
 
+# ========== 95. 裕融申請書 PDF 自動填（使用者 2026-10-15 給 TAC申請書／範本）==========
+print(chr(10) + "=== 95. 裕融申請書 ===")
+import pdfplumber as _pp95
+_cf95 = m._yulon_car_fields
+m._yulon_car_fields = lambda c: {"廠牌": "本田", "車輛型式": "CR-V", "車牌": "ZZZ-0001", "出廠年月": "2015/06", "排氣量": "1997", "燃料": "汽油"}
+_r95 = {"customer_name": "測試甲", "id_no": "A100000001", "birth_date": "1983-01-25", "marriage": "未婚", "education": "國中",
+        "reg_city": "屏東縣", "reg_district": "屏東市", "reg_address": "北興里17鄰公裕街242號7樓", "live_same_as_reg": "1",
+        "company_name_detail": "測試有限公司", "company_role": "專櫃銷售", "company_salary": "2.8", "company_years": "0",
+        "bank_name": "測試銀行", "bank_account": "000111222333", "debt_list": "[]"}
+_pdf95 = m._fill_yulon_pdf(_r95, "裕融信福貸")
+m._yulon_car_fields = _cf95
+_doc95 = _pp95.open(_io93.BytesIO(_pdf95)) if _pdf95 else None
+_t1 = "".join((_doc95.pages[0].extract_text() if _doc95 else "").split())   # 抽字會在字中間插空白 → 全拿掉再比
+_t2 = "".join((_doc95.pages[1].extract_text() if _doc95 else "").split())
+check("裕融 PDF：產得出來、6 頁", _doc95 is not None and len(_doc95.pages) == 6)
+check("裕融 PDF：適用專案寫「信福貸」（不寫裕融）", "信福貸" in _t1, _t1[:300])
+check("裕融 PDF：姓名、身分證、車牌、廠牌", all(x in _t1 for x in ("測試甲", "A100000001", "ZZZ-0001", "本田")), _t1[:400])
+check("裕融 PDF：月所得照申請書規則（2.8 萬 → 35000）", "35000" in _t1, _t1[:400])
+check("裕融 PDF：通訊同戶籍寫「同上」", "同上" in _t1)
+check("裕融 PDF：地址拆格（公裕街、242）", "公裕街" in _t1 and "242" in _t1)
+check("裕融 PDF：第 2 頁撥款戶名／帳號", "測試甲" in _t2 and "000111222333" in _t2, _t2[-300:])
+check("裕融 PDF：檔案不要被疊字撐大（< 4MB）", len(_pdf95) < 4_000_000, len(_pdf95))
+check("裕融 PDF：拆地址 和平東路二段100巷5弄3號2樓",
+      m._addr_parts("臺北市", "大安區", "和平東路二段100巷5弄3號2樓") == {"li": "", "lin": "", "road": "和平東路", "seg": "二段",
+      "lane": "100巷", "alley": "5弄", "no": "3號", "fl": "2樓", "rm": "", "city": "臺北市", "dist": "大安區"})
+check("裕融 PDF：拆不乾淨就整串一行", "_all" in m._addr_parts("臺北市", "大安區", "某某社區B棟"))
+# 送件包：裕融放 PDF 申請書
+_c = sqlite3.connect(TEST_DB)
+_c.execute("UPDATE customers SET route_plan=?, current_company='裕融信福貸' WHERE case_id=?", (m.make_route_json(["裕融信福貸"]), _cid93))
+_c.commit(); _c.close()
+m.check_auth = lambda req: "adminB"
+_r = _tc94.get("/archive/E300000001/pack", params={"co": "裕融信福貸"})
+_n95 = _zf93.ZipFile(_io93.BytesIO(_r.content)).namelist() if _r.status_code == 200 else []
+check("送件包（裕融）：有裕融申請書 PDF", any(n.endswith("裕融申請書.pdf") for n in _n95), _n95)
+_r = _tc94.get("/adminb/download-yulon", params={"case_id": _cid93})
+check("行政B 下載裕融申請書", _r.status_code == 200 and _r.content[:4] == b"%PDF", _r.status_code)
+check("行政B 頁有「裕融申請書 PDF」鈕", "download-yulon" in _tc94.get("/adminb", params={"case_id": _cid93}).text)
+m.check_auth = lambda req: "admin"
+
 # ========== 總結 ==========
 print(f"\n{'='*50}")
 print(f"結果：{PASS} 通過、{FAIL} 失敗")

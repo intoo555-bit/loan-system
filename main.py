@@ -19828,6 +19828,7 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
       <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
         <button type="submit" class="btn-save">💾 儲存資料</button>
         <a href="/adminb/download-excel?case_id={h(case_id)}" class="btn-dl" onclick="return confirm('將根據勾選的方案下載 Excel/TXT，確定嗎？')">📥 下載EXCEL/TXT</a>
+        <a href="/adminb/download-yulon?case_id={h(case_id)}" class="btn-dl" style="background:#1d4ed8">📄 裕融申請書 PDF</a>
         {('<span style="display:inline-flex;gap:6px;align-items:center;background:#e8f4f4;border:1px solid #b9dcdc;border-radius:8px;padding:6px 10px">'
           + _pack_picker_html(customer) + '</span>') if _pack_picker_html(customer) else ''}
         {'<button type="button" onclick="checkEligibilityAdminB()" style="background:#fef3c7;color:#854d0e;border:1px solid #fde047;padding:11px 22px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;">📋 對照規則表</button>' if role in ('admin', 'ops_admin') else ''}
@@ -25277,6 +25278,263 @@ async def adminb_save_signature(request: Request):
         return JSONResponse({"ok": False, "error": str(e)})
 
 
+def _addr_parts(city: str, dist: str, rest: str) -> dict:
+    """地址拆成裕融申請書那種一格一格（縣市／鄉鎮區／里／鄰／街路／段／巷／弄／號／樓／室）。
+    拆不乾淨 → 回 {"_all": 剩下整串}，整串寫一行，不硬拆"""
+    rest = re.sub(r"\s+", "", str(rest or ""))
+    for pre in (city, dist):
+        if pre and rest.startswith(pre):
+            rest = rest[len(pre):]
+    m = re.fullmatch(r"(?P<li>[^\d鄰路街段巷弄號樓]{1,4}[里村])?(?P<lin>\d+鄰)?(?P<road>[^\d段巷弄號樓]+?(?:路|街|大道|道))?"
+                     r"(?P<seg>[0-9一二三四五六七八九十]+段)?(?P<lane>[0-9之]+巷)?(?P<alley>[0-9之]+弄)?(?P<no>[0-9之\-]+號)?"
+                     r"(?P<fl>[0-9之\-]+樓(?:之[0-9]+)?)?(?P<rm>[0-9A-Za-z]+室)?", rest)
+    if not m or not (m.group("road") or m.group("no")):
+        return {"city": city or "", "dist": dist or "", "_all": rest}
+    out = {k: (v or "") for k, v in m.groupdict().items()}
+    out.update(city=city or "", dist=dist or "")
+    return out
+
+
+def _yulon_car_fields(cust) -> dict:
+    """汽車行照判讀的欄位（裕融申請書的汽車那幾格）"""
+    try:
+        for r in _docs_rows(cust.get("id_no") or "") if cust.get("id_no") else []:
+            if r.get("show_label") == "行照" and _doc_vehicle_kind(r) == "汽車":
+                return _doc_judge(r).get("欄位") or {}
+    except Exception:
+        pass
+    return {}
+
+
+def _fill_yulon_pdf(r: dict, plan: str = "") -> bytes:
+    """裕融（遠銀車貸）申請書：空白範本疊字（同喬美做法）。
+    範本：申請書/裕融申請書.pdf（使用者 2026-10-15 給的 TAC申請書.pdf，113.07 版）；
+    位置照使用者給的填好範本抄：借款人寫在左下「個人戶」那一塊、通訊同戶籍寫「同上」、勾 AR件＋原車。
+    ⛔ 簽名、簽章、親簽一律不填（要客人自己簽）；申貸金額／期數／期付款系統沒有，留空給行政寫
+    ⚠️ 第 3、5、6 頁是掃描圖（沒有文字可以量），位置是照圖量的，改範本要重量"""
+    from pypdf import PdfReader, PdfWriter
+    from reportlab.pdfgen import canvas
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+    try:
+        pdfmetrics.registerFont(UnicodeCIDFont("STSong-Light"))
+        FONT = "STSong-Light"
+    except Exception:
+        FONT = "Helvetica"
+    tpl = os.path.join(os.path.dirname(os.path.abspath(__file__)), "申請書", "裕融申請書.pdf")
+    if not os.path.exists(tpl):
+        return b""
+
+    def v(k):
+        return str(r.get(k) or "").strip()
+
+    def ymd(d):
+        d = _normalize_roc_date(d) if d else ""
+        p = d.replace("-", "/").split("/")
+        try:
+            y = int(p[0])
+            return (str(y - 1911 if y >= 1911 else y), str(int(p[1])), str(int(p[2])))
+        except Exception:
+            return ("", "", "")
+
+    rules = apply_adminb_rules(r)      # 跟其他家申請書同一套（月薪最低 3.5 萬、年資最低 1 年、學歷…）
+    now = now_tw()
+    today = (str(now.year - 1911), str(now.month), str(now.day))
+    ops = {0: [], 1: [], 2: [], 4: [], 5: []}
+
+    def T(pg, x, top, text, maxw=None, size=9):
+        if str(text or "").strip():
+            ops[pg].append(("t", x, top, str(text).strip(), maxw, size))
+
+    def V(pg, x, top):
+        ops[pg].append(("v", x, top))
+
+    # ---- 第 1 頁：申請書 ----
+    T(0, 42, 28, today[0]); T(0, 85, 28, today[1]); T(0, 124, 28, today[2])
+    T(0, 416, 66, re.sub(r"^裕融", "", plan or ""), 160)
+    car_loan = _customer_has_car_loan(r)
+    if not car_loan:
+        V(0, 208.5, 66)                               # 原車融資（車上有貸款就不勾，讓行政選借新還舊／他行代償）
+    car = _yulon_car_fields(r)
+    T(0, 56, 139, car.get("廠牌"), 62); T(0, 145, 139, car.get("車輛型式"), 60, 8); T(0, 231, 139, car.get("車牌"), 62)
+    T(0, 56, 152, str(car.get("出廠年月") or "").replace("/", "."), 64); T(0, 146, 152, car.get("排氣量"), 44)
+    price, _nf = _customer_car_book(r)
+    T(0, 231, 152, f"{price:g}萬" if price else "", 62)
+    fuel = str(car.get("燃料") or car.get("能源種類") or "")
+    if "油" in fuel and "電" in fuel:
+        V(0, 111.0, 165.6)
+    elif "柴油" in fuel:
+        V(0, 146.6, 165.6)
+    elif "汽油" in fuel:
+        V(0, 55.0, 165.6)
+    elif "電" in fuel:
+        V(0, 82.9, 165.6)
+    # 借款人（左下「個人戶」那塊）
+    mar = v("marriage")
+    if mar:
+        V(0, 186.0 if "已婚" in mar else 225.4 if "未婚" in mar else 264.8, 347.5)
+    T(0, 41, 362, v("customer_name"), 128)
+    by, bm, bd = ymd(v("birth_date"))
+    T(0, 197, 362, by); T(0, 228, 362, bm); T(0, 256, 362, bd)
+    T(0, 79, 377, v("id_no").upper(), 110)
+    iy, im_, idd = ymd(v("id_issue_date"))
+    T(0, 197, 377, iy); T(0, 228, 377, im_); T(0, 256, 377, idd)
+    edu = rules.get("edu_val") or v("education")
+    ex = (62.2 if any(k in edu for k in ("研究", "碩", "博")) else 124.1 if any(k in edu for k in ("大", "專")) else
+          163.5 if "高" in edu else 210.4 if "國" in edu else 264.7 if edu else None)
+    if ex:
+        V(0, ex, 392.5)
+
+    def addr(row_top, ap):
+        T(0, 41, row_top, ap["city"], 43); T(0, 108, row_top, ap["dist"], 43)
+        if "_all" in ap:
+            T(0, 41, row_top + 15, ap["_all"], 250, 8)
+            return
+        T(0, 188, row_top, ap["li"], 43); T(0, 255, row_top, ap["lin"].replace("鄰", ""), 28)
+        y2 = row_top + 15
+        T(0, 41, y2, ap["road"], 43, 8); T(0, 108, y2, ap["seg"].replace("段", ""), 24)
+        T(0, 142, y2, ap["lane"].replace("巷", ""), 22); T(0, 175, y2, ap["alley"].replace("弄", ""), 18)
+        T(0, 203, y2, ap["no"].replace("號", ""), 22); T(0, 236, y2, ap["fl"].replace("樓", ""), 18)
+        T(0, 264, y2, ap["rm"].replace("室", ""), 20)
+
+    def status_years(row_top):
+        ls = rules.get("live_status_val") or v("live_status")
+        if any(k in ls for k in ("自有", "本人")):
+            V(0, 30.2, row_top + 0.3)
+        elif "租" in ls:
+            V(0, 56.6, row_top + 0.3)
+        elif ls and "宿舍" not in ls:
+            V(0, 83.1, row_top + 0.3)
+            T(0, 110, row_top, "父母" if "父母" in ls else "配偶" if "配偶" in ls else "", 32, 8)
+        T(0, 236, row_top, rules.get("live_years_val") or v("live_years"), 18)
+        T(0, 268, row_top, v("live_months"), 16)
+
+    addr(405.6, _addr_parts(v("reg_city"), v("reg_district"), v("reg_address")))
+    T(0, 41, 450.6, v("reg_phone"), 108); T(0, 198, 450.6, v("phone"), 92)
+    reg_full = (v("reg_city") + v("reg_district") + v("reg_address")).replace(" ", "")
+    live_full = (v("live_city") + v("live_district") + v("live_address")).replace(" ", "")
+    if v("live_same_as_reg") == "1" or not live_full or live_full == reg_full:
+        status_years(435.6)
+        T(0, 41, 463.4, "同上", 40)
+    else:
+        addr(463.4, _addr_parts(v("live_city"), v("live_district"), v("live_address")))
+        status_years(493.4)
+        T(0, 41, 508.4, v("live_phone"), 108)
+    T(0, 56, 522.3, v("company_name_detail") or v("company_name"), 130, 8)
+    T(0, 212, 522.3, v("company_role"), 80)
+    T(0, 56, 536.3, v("company_city") + v("company_district") + v("company_address"), 130, 7)
+    area, num = v("company_phone_area"), v("company_phone_num")
+    T(0, 212, 536.3, (f"{area}-{num}" if area and area != "mobile" and num else num), 80)
+    if v("company_role"):
+        V(0, 23.9 if any(w in v("company_role") for w in _BOSS_WORDS) else 50.4, 550.7)
+    try:
+        sal = float(str(rules.get("salary_val") or "0").replace("萬", "").replace(",", ""))
+        T(0, 113, 550.3, str(int(sal * 10000 if sal < 1000 else sal)) if sal else "", 72)
+    except ValueError:
+        pass
+    T(0, 220, 550.3, rules.get("company_years_val") or v("company_years"), 18)
+    T(0, 256, 550.3, rules["company_months_val"] if "company_months_val" in rules else v("company_months"), 16)
+    V(0, 77.3, 564.5)                                 # 繳款通知：簡訊（範本那份勾的）
+    V(0, 77.3, 588.5)                                 # 繳款文件郵寄：戶籍地
+    # ---- 第 2 頁：進件資料確認書 ----
+    if not car_loan:
+        V(1, 283.8, 93.5)                             # AR 件
+        V(1, 341.8, 227.3)                            # 原車
+    right = {"有信用卡": 299.5, "軍公教": 311.7, "有證照": 356.6, "他行繳": 375.6, "持有不動產": 423.9}
+    for h_ in _yulon_conditions(r):
+        if h_.startswith("車齡"):
+            T(1, 44, 311.7, "V", None, 10)
+        elif h_.startswith(("現職滿", "勞保滿")):
+            T(1, 44, 335.1, "V", None, 10)
+        elif h_.startswith("有附 JCIC"):
+            T(1, 44, 434.6, "V", None, 10)
+        else:
+            for k, yy in right.items():
+                if h_.startswith(k):
+                    V(1, 285.6, yy + 1.2)              # 「車主」那格
+    bank, branch, acct = v("bank_name"), v("bank_branch"), v("bank_account")
+    if not (bank and acct):
+        pb = _customer_doc_judge(r, "fields:存摺封面")
+        f_ = (pb.get("欄位") or {}) if pb else {}
+        bank, branch, acct = (bank or str(f_.get("銀行") or ""), branch or str(f_.get("分行") or ""),
+                              acct or str(f_.get("帳號") or ""))
+    T(1, 72, 488, v("customer_name"), 270, 11); T(1, 377, 488, v("id_no").upper(), 170, 11)
+    T(1, 72, 512, bank, 270, 11); T(1, 390, 512, branch, 160, 11); T(1, 72, 536, acct, 270, 11)
+    # ---- 第 3 頁同意書、第 5 頁 Mobile ID：身分證字號＋日期（簽名留給客人）----
+    T(2, 430, 698, v("id_no").upper(), 130, 11)
+    T(2, 232, 795, today[0], None, 11); T(2, 372, 795, today[1], None, 11); T(2, 512, 795, today[2], None, 11)
+    T(4, 420, 804, v("id_no").upper(), 140, 11)
+    # ---- 第 6 頁核駁通知書：日期 ----
+    T(5, 225, 769, today[0], None, 11); T(5, 352, 769, today[1], None, 11); T(5, 466, 769, today[2], None, 11)
+
+    writer = PdfWriter(clone_from=tpl)
+    for i, page in enumerate(writer.pages):
+        H, W = float(page.mediabox.height), float(page.mediabox.width)
+        if ops.get(i):
+            buf = io.BytesIO()
+            c = canvas.Canvas(buf, pagesize=(W, H))
+            for op in ops[i]:
+                if op[0] == "t":
+                    _, x, top, text, maxw, size = op
+                    sz = size
+                    while maxw and sz > 5 and pdfmetrics.stringWidth(text, FONT, sz) > maxw:
+                        sz -= 0.5
+                    c.setFont(FONT, sz)
+                    c.drawString(x, H - top - 7.5, text)
+                else:                                   # 打勾
+                    _, x, top = op
+                    y0 = H - top - 7.5
+                    c.setLineWidth(1.1)
+                    p_ = c.beginPath()
+                    p_.moveTo(x + 1.2, y0 + 3.8); p_.lineTo(x + 3.2, y0 + 1.2); p_.lineTo(x + 7.2, y0 + 8.2)
+                    c.drawPath(p_, stroke=1, fill=0)
+            c.save()
+            buf.seek(0)
+            page.merge_page(PdfReader(buf).pages[0])
+            page.compress_content_streams(level=9)
+    # 疊字會把原本壓縮的內容解開；不壓回去＋清掉舊的那份，檔案從 3MB 變 7～9MB
+    writer.compress_identical_objects(remove_identicals=True, remove_orphans=True)
+    out = io.BytesIO()
+    writer.write(out)
+    return out.getvalue()
+
+
+def _yulon_plans_of(r) -> list:
+    """這位客人送件順序（或系統建議）裡的裕融方案"""
+    try:
+        lst = [str(x.get("company") if isinstance(x, dict) else x)
+               for x in (json.loads(r.get("route_plan") or "{}") or {}).get("order", []) or []]
+    except Exception:
+        lst = []
+    if not any(x.startswith("裕融") for x in lst):
+        try:
+            lst = [x["company"] for x in evaluate_case(r).get("suggested_order", [])]
+        except Exception:
+            pass
+    return [x for x in lst if x.startswith("裕融")]
+
+
+@app.get("/adminb/download-yulon")
+def adminb_download_yulon(request: Request, case_id: str = "", plan: str = ""):
+    """行政B：裕融申請書 PDF（自動填好）"""
+    from fastapi.responses import StreamingResponse
+    if check_auth(request) not in ("admin", "adminB", "ops_admin"):
+        return JSONResponse({"error": "無權限"}, status_code=403)
+    with db_conn() as conn:
+        row = conn.execute("SELECT * FROM customers WHERE case_id=?", (case_id,)).fetchone()
+    if not row:
+        return JSONResponse({"error": "找不到客戶"}, status_code=404)
+    r = dict(row)
+    plan = plan or next((x for x in [r.get("current_company") or ""] + _yulon_plans_of(r) if x.startswith("裕融")), "")
+    data = _fill_yulon_pdf(r, plan)
+    if not data:
+        return JSONResponse({"error": "裕融申請書範本不在（申請書/裕融申請書.pdf）"}, status_code=500)
+    from urllib.parse import quote
+    fname = quote((r.get("customer_name") or "") + "_裕融申請書.pdf")
+    return StreamingResponse(io.BytesIO(data), media_type="application/pdf",
+                             headers={"Content-Disposition": f"attachment; filename*=UTF-8''{fname}"})
+
+
 @app.get("/adminb/download-qiaomei")
 def adminb_download_qiaomei(request: Request, case_id: str = ""):
     from fastapi.responses import StreamingResponse
@@ -30503,6 +30761,10 @@ def docs_send_pack(request: Request, id_no: str, co: str = ""):
         tkey = _PACK_TEMPLATE_ALIAS.get(plan["company"], plan["company"])
         try:
             apps = _do_download_excel(request, cust["case_id"], only_plans=[tkey], raw=True) or []
+            if plan["company"].startswith("裕融"):   # 裕融是 PDF 範本（使用者 2026-10-15 給的 TAC申請書）
+                _y = _fill_yulon_pdf(cust, plan["company"])
+                if _y:
+                    apps = [("裕融申請書.pdf", _y)]
         except Exception as e:
             print(f"[送件包] 申請書產生失敗 {plan['company']}: {e}")
             apps = []
