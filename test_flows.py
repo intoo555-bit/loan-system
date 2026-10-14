@@ -3137,6 +3137,64 @@ _r = _tc93.post("/archive/accounts", data={"a0": "自己打的官方賴", "g0": 
 check("自己打的官方賴存得進去", m._bizai_account_group("自己打的官方賴") == "TEST_B")
 m.check_auth = _old_auth
 
+# ========== 94. 證件頁確定順序→通知群組；行政B 頁有送件包（使用者 2026-10-15）==========
+print("\n=== 94. 確定順序／行政B送件包 ===")
+m.check_auth = lambda req: "admin"
+_tc94 = TestClient(m.app)
+_c = sqlite3.connect(TEST_DB)
+_c.row_factory = sqlite3.Row
+_row94 = dict(_c.execute("SELECT * FROM customers WHERE case_id=?", (_cid93,)).fetchone())
+_c.execute("UPDATE customers SET route_plan='', current_company='', status='ACTIVE' WHERE case_id=?", (_cid93,))
+_c.commit(); _c.close()
+_n94 = _row94["customer_name"]
+_r = _tc94.post("/archive/E300000001/confirm-order", data={"line": "10/15-別人-亞太/和裕"})
+check("確定順序：名字不對 → 擋", not _r.json().get("ok"), _r.json())
+_r = _tc94.post("/archive/E300000001/confirm-order", data={"line": "亂打"})
+check("確定順序：看不懂 → 擋", not _r.json().get("ok"), _r.json())
+_push94, _pt = [], m.push_text
+m.push_text = lambda gid, txt: (_push94.append((gid, txt)) or (True, ""))
+_cp94, m._docs_can_post = m._docs_can_post, (lambda gid: True)
+_r = _tc94.post("/archive/E300000001/confirm-order", data={"line": f"10/15-{_n94}-亞太/和裕"})
+_g94 = get_cust("E300000001")
+check("確定順序：寫進送件順序（第一家亞太、共 2 家）",
+      _r.json().get("ok") and _g94["current_company"] == m.COMPANY_ALIAS.get("亞太", "亞太")
+      and len(json.loads(_g94["route_plan"])["order"]) == 2, (_r.json(), _g94["current_company"], _g94["route_plan"]))
+check("確定順序：放送件區", _g94["report_section"] == "送件", _g94["report_section"])
+check("確定順序：貼到客人的群組，寫法跟群組一樣", _push94 and _push94[0][0] == _row94["source_group_id"]
+      and f"10/15-{_n94}-亞太/和裕" in _push94[0][1], _push94)
+_r = _tc94.post("/archive/E300000001/confirm-order", data={"line": f"10/15-{_n94}-和裕"})
+check("確定順序：已經排過 → 不蓋掉", not _r.json().get("ok") and len(json.loads(get_cust("E300000001")["route_plan"])["order"]) == 2, _r.json())
+# 試用期：不是測試群組 → 寫進系統但不貼
+_c = sqlite3.connect(TEST_DB)
+_c.execute("UPDATE customers SET route_plan='' WHERE case_id=?", (_cid93,))
+_c.commit(); _c.close()
+_push94.clear()
+m._docs_can_post = lambda gid: False
+_r = _tc94.post("/archive/E300000001/confirm-order", data={"line": f"10/15-{_n94}-和裕"})
+check("試用期非測試群：寫進系統、不貼群組、有說請自己貼", _r.json().get("ok") and not _r.json().get("pushed")
+      and not _push94 and "自己貼" in _r.json().get("error", ""), _r.json())
+m.push_text, m._docs_can_post = _pt, _cp94
+_c = sqlite3.connect(TEST_DB)
+_c.execute("UPDATE customers SET route_plan='' , current_company='' WHERE case_id=?", (_cid93,))
+_c.commit(); _c.close()
+# （上面確定過一次，紀錄裡有那行 → 頁面會當成「群組排過」；這裡直接看沒排過的樣子）
+_rot94, m._route_order_text = m._route_order_text, (lambda c: "")
+_ev94, m.evaluate_case = m.evaluate_case, (lambda c: {"suggested_order": [{"company": "亞太商品", "short": "亞太"}, {"company": "和裕商品", "short": "和裕"}]})
+_p94 = m._docs_missing_html(get_cust("E300000001"), [])
+m._route_order_text, m.evaluate_case = _rot94, _ev94
+check("證件頁：群組還沒排 → 有建議順序＋「確定順序，通知群組」", "confirm-order" in _p94 and "確定順序" in _p94, _p94[:300])
+# 群組打的設順序也走同一段（重構沒壞）
+_c = sqlite3.connect(TEST_DB)
+_c.execute("UPDATE customers SET route_plan=?, current_company='亞太商品' WHERE case_id=?",
+           (m.make_route_json(["亞太商品", "和裕"]), _cid93))
+_c.commit(); _c.close()
+m.check_auth = lambda req: "adminB"
+_pb94 = _tc94.get("/adminb", params={"case_id": _cid93}).text
+check("行政B 頁有送件包選單", 'id="pkCo"' in _pb94 and "送件包" in _pb94)
+check("行政B 也能下載送件包", _tc94.get("/archive/E300000001/pack").status_code == 200)
+check("行政B 仍不能開證件頁", _tc94.get("/archive/E300000001", follow_redirects=False).status_code != 200)
+m.check_auth = lambda req: "admin"
+
 # ========== 總結 ==========
 print(f"\n{'='*50}")
 print(f"結果：{PASS} 通過、{FAIL} 失敗")

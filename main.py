@@ -12028,6 +12028,26 @@ def handle_new_case_block(block_text, source_group_id, reply_token) -> Optional[
     return msg
 
 
+def _route_first_is_private(co: str) -> bool:
+    """第一家是民間方案 → 直接放對應區塊，不放送件"""
+    private_keywords = ["銀行", "零卡", "商品貸", "代書", "當舖", "鄉民", "房地", "新鑫", "慢點付", "分期趣", "銀角", "刷卡換現", "鄉"]
+    return any(k in (co or "") for k in private_keywords)
+
+
+def _apply_route_order(row, companies, block_text, from_group_id, **extra):
+    """既有客戶設送件順序（群組打「日期-姓名-A/B/C」和證件頁「確定順序」都走這裡）：
+    民間方案（房地/銀行/零卡）→ 直接放對應區塊；貸款方案 → 留在「送件區」（才剛排好、還沒實際送出去）"""
+    current_co = companies[0]
+    update_kw = {"route_plan": make_route_json(companies), "current_company": current_co,
+                 "text": block_text, "from_group_id": from_group_id}
+    update_kw.update(extra)
+    if _route_first_is_private(current_co):
+        update_kw["report_section"] = ""
+    elif (row["report_section"] or "") != "待撥款":   # 已待撥款不要降級
+        update_kw["report_section"] = "送件"
+    update_customer(row["case_id"], **update_kw)
+
+
 def handle_route_order_block(block_text, source_group_id, reply_token) -> Optional[str]:
     parsed = parse_route_order_line(extract_first_line(block_text))
     if not parsed:
@@ -12036,10 +12056,7 @@ def handle_route_order_block(block_text, source_group_id, reply_token) -> Option
     dupe_count = parsed.get("dupe_count", 0)
     route_json = make_route_json(companies)
     current_co = companies[0]
-    # 判斷第一家是否為民間方案 → 直接放對應區塊，不放送件
-    private_keywords = ["銀行", "零卡", "商品貸", "代書", "當舖", "鄉民", "房地", "新鑫", "慢點付", "分期趣", "銀角", "刷卡換現", "鄉"]
-    is_private = any(k in current_co for k in private_keywords)
-    init_section = "" if is_private else "送件"
+    is_private = _route_first_is_private(current_co)
     # @AI 尾巴的送件金額/期數（非核准金額）
     n_amt, n_per = extract_notify_amount_period(block_text)
     notify_kw = {}
@@ -12050,19 +12067,7 @@ def handle_route_order_block(block_text, source_group_id, reply_token) -> Option
     same = [r for r in rows if r["source_group_id"] == source_group_id]
     dupe_suffix = f"（已去除重複 {dupe_count} 家）" if dupe_count > 0 else ""
     if same:
-        # 更新既有客戶 — 設送件順序時：
-        # 民間方案（房地/銀行/零卡）→ 直接放對應區塊
-        # 貸款方案 → 留在「送件區」（因為才剛排好順序、還沒實際送出去）
-        update_kw = {"route_plan": route_json, "current_company": current_co,
-                     "text": block_text, "from_group_id": source_group_id}
-        update_kw.update(notify_kw)
-        if is_private:
-            update_kw["report_section"] = ""
-        else:
-            # 貸款方案：除非案件已待撥款（不要降級）、否則歸到「送件」區
-            if (same[0]["report_section"] or "") != "待撥款":
-                update_kw["report_section"] = "送件"
-        update_customer(same[0]["case_id"], **update_kw)
+        _apply_route_order(same[0], companies, block_text, source_group_id, **notify_kw)
         return f"📋 已更新 {name} 送件順序：{'/'.join(companies)}{dupe_suffix}"
     other = [r for r in rows if r["source_group_id"] != source_group_id]
     if other:
@@ -19823,9 +19828,11 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
       <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
         <button type="submit" class="btn-save">💾 儲存資料</button>
         <a href="/adminb/download-excel?case_id={h(case_id)}" class="btn-dl" onclick="return confirm('將根據勾選的方案下載 Excel/TXT，確定嗎？')">📥 下載EXCEL/TXT</a>
+        {('<span style="display:inline-flex;gap:6px;align-items:center;background:#e8f4f4;border:1px solid #b9dcdc;border-radius:8px;padding:6px 10px">'
+          + _pack_picker_html(customer) + '</span>') if _pack_picker_html(customer) else ''}
         {'<button type="button" onclick="checkEligibilityAdminB()" style="background:#fef3c7;color:#854d0e;border:1px solid #fde047;padding:11px 22px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;">📋 對照規則表</button>' if role in ('admin', 'ops_admin') else ''}
       </div>
-      <div style="font-size:12px;color:#8a7a68;margin-top:8px;">請先儲存資料再下載；喬美 PDF 請使用「補充資料」區的「簽名並下載」按鈕</div>
+      <div style="font-size:12px;color:#8a7a68;margin-top:8px;">請先儲存資料再下載；送件包＝那家要的證件＋申請書，打成一包；喬美 PDF 請使用「補充資料」區的「簽名並下載」按鈕</div>
       <div id="eligibilityBoxAdminB" style="display:none;margin-top:14px;padding:14px;background:#fff;border:1px solid #e5e7eb;border-radius:8px;font-size:13px"></div>
     </div>
 
@@ -29583,8 +29590,19 @@ def _docs_missing_html(cust, rows) -> str:
         if sug:
             d = (cust.get("created_at") or "")[:10]
             day = f"{int(d[5:7])}/{int(d[8:10])}" if len(d) == 10 and d[4] == "-" else ""
-            rline = (f'<div class="ms-line">📋 建議順序（系統排的，群組還沒排）：'
-                     f'<b>{h(day + "-" + (cust.get("customer_name") or "") + "-" + "/".join(sug))}</b></div>')
+            line = day + "-" + (cust.get("customer_name") or "") + "-" + "/".join(sug)
+            rline = f'<div class="ms-line">📋 建議順序（系統排的，群組還沒排）：<b>{h(line)}</b></div>'
+            if cust.get("status") == "ACTIVE" and cust.get("source_group_id"):
+                # 使用者 2026-10-15：「順序確定好可以直接群組通知嗎」→ 可以改字（跟群組一樣的寫法），確定後寫進系統＋貼到客人的群組
+                rline += ('<div class="ms-line" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">'
+                          f'<input id="roLine" value="{h(line)}" style="flex:1;min-width:260px;padding:6px 8px;border:1px solid #cdd8e0;border-radius:6px">'
+                          '<button type="button" id="roBtn" style="border:0;background:#127a7d;color:#fff;border-radius:6px;padding:6px 12px;font-weight:700;cursor:pointer">'
+                          f'✅ 確定順序，通知{h(get_group_name(cust["source_group_id"]) or "群組")}</button><span id="roMsg" style="font-size:13px"></span></div>'
+                          '<script>document.getElementById("roBtn").onclick=function(){var b=this,m=document.getElementById("roMsg");'
+                          'b.disabled=true;m.textContent="送出中…";var f=new FormData();f.append("line",document.getElementById("roLine").value);'
+                          'fetch(location.pathname+"/confirm-order",{method:"POST",body:f}).then(r=>r.json()).then(d=>{'
+                          'if(d.ok){m.textContent="✅ 已寫進系統"+(d.pushed?"，也貼到"+d.group+"了":"（"+d.error+"）");setTimeout(()=>location.reload(),1500);}'
+                          'else{m.textContent="❌ "+(d.error||"失敗");b.disabled=false;}}).catch(()=>{m.textContent="❌ 網路錯誤";b.disabled=false;});};</script>')
     warns = [f"{r['show_label']}：{w.replace('⚠️ ', '')}" for r in rows for w in _doc_field_warnings(r, cust)]
     wline = (f'<div class="ms-line"><span class="ms-check">⚠️ 要跟客戶確認（AI 讀的，請看照片）：'
              f'{h("、".join(warns))}</span></div>') if warns else ""
@@ -30408,12 +30426,49 @@ def _doc_vehicle_kind(r) -> str:
     return _lic_kind(j.get("欄位") or {}, j.get("種類"))
 
 
+def _pack_picker_html(cust) -> str:
+    """送件包選單＋下載鈕（證件頁、行政B 頁共用）。
+    使用者 2026-10-14：「不用打方案，打哪一家就好」「按鈕只會顯示第一家？」「只需要出現融資的送件包跟商品貸」
+    使用者 2026-10-15：「送件包應該是要接近行政B那邊」"""
+    if not cust or not cust.get("id_no"):
+        return ""
+    co = _docs_current_company(cust)
+    if not co:
+        return ""
+    try:
+        lst = [str(x.get("company") if isinstance(x, dict) else x)
+               for x in (json.loads(cust.get("route_plan") or "{}") or {}).get("order", []) or []]
+    except Exception:
+        lst = []
+    if not lst:
+        try:
+            lst = [x["company"] for x in evaluate_case(cust).get("suggested_order", [])]
+        except Exception:
+            lst = []
+    if co not in lst:
+        lst.insert(0, co)
+    seen, opts = set(), ""
+    for c_ in lst:
+        nm = normalize_section(c_) or c_
+        if nm in seen or nm in _PACK_SKIP or not _plan_for_company(c_):   # 銀行／民間不列
+            continue
+        seen.add(nm)
+        opts += f'<option value="{h(c_)}"{" selected" if c_ == co else ""}>{h(nm)}</option>'
+    if not opts:
+        return ""
+    idv = normalize_id_no(cust["id_no"])
+    return ('<span>📦 送件包</span>'
+            f'<select id="pkCo" style="border:1px solid #cdd8e0;border-radius:6px;padding:3px 6px">{opts}</select>'
+            f'<button type="button" onclick="location.href=\'/archive/{h(idv)}/pack?co=\'+encodeURIComponent(document.getElementById(\'pkCo\').value)"'
+            ' style="border:0;background:#127a7d;color:#fff;border-radius:6px;padding:4px 10px;cursor:pointer">下載</button>')
+
+
 @app.get("/archive/{id_no}/pack")
 def docs_send_pack(request: Request, id_no: str, co: str = ""):
     """送件包（使用者 2026-10-14：「客戶的所需送件資料＋申請書」）：
     目前送的那家（或 ?co=）要的證件 ＋ 那家的申請書 ＋ 行政上傳的申請書／填寫表，打成一包；缺的寫在「還缺.txt」"""
-    role = _docs_auth(request)
-    if not role:
+    role = check_auth(request)
+    if role not in ("admin", "adminB", "ops_admin"):   # 同行政B 頁（行政B 要送件），證件頁本身仍只有管理員
         return JSONResponse({"error": "無權限"}, status_code=403)
     import zipfile as _zf
     idv = normalize_id_no(id_no)
@@ -30661,6 +30716,40 @@ async def docs_card_send(request: Request, id_no: str):
     return JSONResponse({"ok": ok, "error": err, "group": get_group_name(gid)})
 
 
+@app.post("/archive/{id_no}/confirm-order")
+async def docs_confirm_order(request: Request, id_no: str):
+    """證件頁「確定順序」：寫進送件順序（跟群組打「日期-姓名-A/B/C」一樣）＋貼到客人的群組。
+    ⚠️ 機器人自己貼的訊息 LINE 不會再送回來給機器人 → 一定要這裡先寫進系統，不能只貼群組"""
+    if not _docs_auth(request):
+        return JSONResponse({"ok": False, "error": "無權限"}, status_code=403)
+    form = await request.form()
+    line = str(form.get("line") or "").strip()
+    cust = _docs_latest_customer(normalize_id_no(id_no))
+    if not cust or cust.get("status") != "ACTIVE" or not cust.get("source_group_id"):
+        return JSONResponse({"ok": False, "error": "這位客人在群組沒有進行中的案件"})
+    p = parse_route_order_line(line)
+    if not p or not p.get("companies"):
+        return JSONResponse({"ok": False, "error": "看不懂，請照群組的寫法：10/15-姓名-亞太/和裕/21"})
+    if p["name"] != (cust.get("customer_name") or ""):
+        return JSONResponse({"ok": False, "error": f"名字要是「{cust.get('customer_name') or ''}」"})
+    try:
+        has = (json.loads(cust.get("route_plan") or "{}") or {}).get("order")
+    except Exception:
+        has = None
+    if has:   # ⛔ 已經排過就不蓋掉（業務可能已經在送），要改請在群組打「改順序」
+        return JSONResponse({"ok": False, "error": "群組已經排過順序了，要改請在群組打「改順序」"})
+    gid = cust["source_group_id"]
+    with get_name_lock(cust.get("customer_name") or ""):
+        _apply_route_order(cust, p["companies"], line, "WEB")
+    gname = get_group_name(gid) or "群組"
+    if not _docs_can_post(gid):
+        return JSONResponse({"ok": True, "pushed": False, "group": gname,
+                             "error": f"試用期只貼名稱有「測試」的群組，{gname} 沒貼，請自己貼"})
+    ok, err = push_text(gid, f"📋 送件順序排好了\n{line}")
+    return JSONResponse({"ok": True, "pushed": bool(ok), "group": gname,
+                         "error": "" if ok else f"群組沒貼成功（{err}），請自己貼"})
+
+
 @app.post("/archive/{id_no}/supp-preview")
 def docs_supp_preview(request: Request, id_no: str):
     """補件小卡片預覽 → 系統通知群。拿「最後一次拉進來的那批」當作補件內容（沒有就拿最後 2 張示意）"""
@@ -30711,33 +30800,9 @@ def docs_customer_page(request: Request, id_no: str, refresh: str = ""):
         return HTMLResponse("⚠️ 證件介面檔（ui/archive_gallery.html）沒有部署上來，請通知管理員", status_code=500)
     btn = ('<a class="action" style="text-decoration:none" href="/customer-pdf?case_id=' + h(cust["case_id"]) +
            '" target="_blank"><span>📋 客戶資料表</span></a>') if cust else ""
-    _pk_co = _docs_current_company(cust) if cust else ""
-    if _pk_co:   # 送件包：要的證件＋申請書（使用者 2026-10-14：「不用打方案，打哪一家就好」「按鈕只會顯示第一家？」）
-        try:
-            _pk_list = [str(x.get("company") if isinstance(x, dict) else x)
-                        for x in (json.loads(cust.get("route_plan") or "{}") or {}).get("order", []) or []]
-        except Exception:
-            _pk_list = []
-        if not _pk_list:
-            try:
-                _pk_list = [x["company"] for x in evaluate_case(cust).get("suggested_order", [])]
-            except Exception:
-                _pk_list = []
-        if _pk_co not in _pk_list:
-            _pk_list.insert(0, _pk_co)
-        _seen, _pk_opts = set(), ""
-        for c_ in _pk_list:
-            nm = normalize_section(c_) or c_
-            # 使用者 2026-10-14：「只需要出現融資的送件包跟商品貸，其他不用」→ 銀行／民間不列
-            if nm in _seen or nm in _PACK_SKIP or not _plan_for_company(c_):
-                continue
-            _seen.add(nm)
-            _pk_opts += f'<option value="{h(c_)}"{" selected" if c_ == _pk_co else ""}>{h(nm)}</option>'
-        if _pk_opts:
-          btn += ('<span class="action" style="display:inline-flex;gap:6px;align-items:center"><span>📦 送件包</span>'
-                f'<select id="pkCo" style="border:1px solid #cdd8e0;border-radius:6px;padding:3px 6px">{_pk_opts}</select>'
-                f'<button type="button" onclick="location.href=\'/archive/{h(idv)}/pack?co=\'+encodeURIComponent(document.getElementById(\'pkCo\').value)"'
-                ' style="border:0;background:#127a7d;color:#fff;border-radius:6px;padding:4px 10px;cursor:pointer">下載</button></span>')
+    _pk = _pack_picker_html(cust)
+    if _pk:
+        btn += f'<span class="action" style="display:inline-flex;gap:6px;align-items:center">{_pk}</span>'
     btn += ('<button type="button" class="action quiet" onclick="cardPreview(this,\'card-preview\')"><span>📨 收件卡片預覽</span></button>'
             '<button type="button" class="action quiet" onclick="cardPreview(this,\'supp-preview\')"><span>📨 補件卡片預覽</span></button>'
             '<button type="button" class="action quiet" onclick="cardPreview(this,\'card-send\')"><span>📨 傳卡片到客人的群組</span></button>'
