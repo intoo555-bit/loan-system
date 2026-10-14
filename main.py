@@ -28542,8 +28542,7 @@ def _route_order_text(cust) -> str:
     except Exception:
         order = []
     order = [x for x in order if x and x != "None"]
-    if not order:
-        return ""
+    lines = []          # 群組打過的順序原文（新的在前）
     try:
         with db_conn() as conn:
             logs = conn.execute("SELECT message_text FROM case_logs WHERE case_id=? ORDER BY id DESC LIMIT 60",
@@ -28551,10 +28550,22 @@ def _route_order_text(cust) -> str:
         for lg in logs:
             for ln in str(lg["message_text"] or "").splitlines():
                 p = parse_route_order_line(ln) if "-" in ln or "－" in ln else {}
-                if p and p.get("companies") == order:
-                    return ln.strip()
+                if p and p.get("companies"):
+                    lines.append((ln.strip(), p["companies"]))
     except Exception:
         pass
+    for ln, cos in lines:
+        if cos == order:
+            return ln
+    if not order:
+        # 沒有送件順序（2026-10-14 使用者截圖「順序沒有弄下去」：有目前送哪家、卻沒順序）
+        #   → 群組打過的最後一行 → 再不然用「目前送＋同送」組一行
+        if lines:
+            return lines[0][0]
+        order = [x.strip() for x in [cust.get("current_company") or ""] + str(cust.get("concurrent_companies") or "").split(",")
+                 if x.strip()]
+        if not order:
+            return ""
     d = (cust.get("created_at") or "")[:10]
     day = f"{int(d[5:7])}/{int(d[8:10])}" if len(d) == 10 and d[4] == "-" else ""
     return f"{day}-{cust.get('customer_name') or ''}-{'/'.join(order)}"
@@ -28569,6 +28580,17 @@ def _docs_missing_html(cust, rows) -> str:
         return ""
     ro = _route_order_text(cust)
     rline = f'<div class="ms-line">📋 送件順序：<b>{h(ro)}</b></div>' if ro else ""
+    if not ro:
+        # 群組還沒排 → 顯示系統建議的順序，標清楚是建議（下面「目前送」那家也是從這裡來的）
+        try:
+            sug = [x["company"] for x in evaluate_case(cust).get("suggested_order", [])]
+        except Exception:
+            sug = []
+        if sug:
+            d = (cust.get("created_at") or "")[:10]
+            day = f"{int(d[5:7])}/{int(d[8:10])}" if len(d) == 10 and d[4] == "-" else ""
+            rline = (f'<div class="ms-line">📋 建議順序（系統排的，群組還沒排）：'
+                     f'<b>{h(day + "-" + (cust.get("customer_name") or "") + "-" + "/".join(sug))}</b></div>')
     warns = [f"{r['show_label']}：{w.replace('⚠️ ', '')}" for r in rows for w in _doc_field_warnings(r, cust)]
     wline = (f'<div class="ms-line"><span class="ms-check">⚠️ 要跟客戶確認（AI 讀的，請看照片）：'
              f'{h("、".join(warns))}</span></div>') if warns else ""
@@ -28581,9 +28603,11 @@ def _docs_missing_line(cust, rows) -> str:
         miss = _order_missing_info(cust)
         return (f'<div class="ms-line">📦 還沒排送件順序：<span class="ms-check">資料表還缺 {h("、".join(miss))}</span></div>'
                 if miss else "")
+    # 群組還沒排、這家只是系統建議的第一家 → 寫「建議先送」，不要寫成「目前送」
+    lb = "目前送" if ((cust.get("current_company") or "").strip() or get_current_company(cust.get("route_plan") or "")) else "建議先送"
     plan = _plan_for_company(co)
     if not plan:
-        return (f'<div class="ms-line">📦 目前送 <b>{h(co)}</b>：<span class="ms-na">規則表沒有這家，沒辦法檢查缺件</span></div>')
+        return (f'<div class="ms-line">📦 {lb} <b>{h(co)}</b>：<span class="ms-na">規則表沒有這家，沒辦法檢查缺件</span></div>')
     res = docs_missing_for_plan(rows, plan.get("required_docs"))
     miss = [(req.split("（")[0].split("｜")[0] + (f"（{note}）" if note else "")) for req, st, note in res if st == "missing"]
     wait = [(req.split("（")[0].split("｜")[0] + (f"（{note}）" if note else "")) for req, st, note in res if st == "check"]
@@ -28594,7 +28618,7 @@ def _docs_missing_line(cust, rows) -> str:
         parts.append(f'<span class="ms-check">⏳ 待確認：{h("、".join(wait))}</span>')
     if not parts:
         parts.append('<span class="ms-ok">✅ 證件齊全</span>')
-    return f'<div class="ms-line">📦 目前送 <b>{h(plan["company"])}</b>：{"　".join(parts)}</div>'
+    return f'<div class="ms-line">📦 {lb} <b>{h(plan["company"])}</b>：{"　".join(parts)}</div>'
 
 
 def _doc_rank(label: str) -> int:

@@ -2661,6 +2661,19 @@ _c = sqlite3.connect(TEST_DB)
 _c.execute("UPDATE customers SET route_plan=? WHERE case_id=?", (m.make_route_json(["喬美", "和裕"]), _cid82)); _c.commit(); _c.close()
 _ro82 = m._route_order_text(get_cust("E300000001"))
 check("順序改過 → 改用現在的順序組一行（不顯示舊的原文）", _ro82.endswith("-證件甲-喬美/和裕"), _ro82)
+# 2026-10-14 截圖「順序沒有弄下去」：有目前送哪家，卻沒有送件順序
+_c = sqlite3.connect(TEST_DB); _c.execute("UPDATE customers SET route_plan='' WHERE case_id=?", (_cid82,)); _c.commit(); _c.close()
+check("沒有送件順序 → 用群組打過的最後一行", m._route_order_text(get_cust("E300000001")) == _line82)
+_ro82 = m._route_order_text({"case_id": "沒有這筆", "customer_name": "某甲", "created_at": "2026-10-14T10:00:00",
+                             "route_plan": "", "current_company": "中租汽車", "concurrent_companies": "和裕"})
+check("連群組原文都沒有 → 用目前送＋同送組一行", _ro82 == "10/14-某甲-中租汽車/和裕", _ro82)
+_ev82 = m.evaluate_case
+m.evaluate_case = lambda c: {"suggested_order": [{"company": "中租汽車"}, {"company": "和裕"}]}
+_ml82 = m._docs_missing_html({"customer_name": "某乙", "route_plan": "", "current_company": "", "case_id": "沒有這筆",
+                              "created_at": "2026-10-14T10:00:00"}, [])
+m.evaluate_case = _ev82
+check("群組沒排 → 顯示系統建議順序，第一家寫「建議先送」不寫「目前送」",
+      "建議順序（系統排的，群組還沒排）" in _ml82 and "10/14-某乙-中租汽車/和裕" in _ml82 and "建議先送" in _ml82 and "目前送" not in _ml82, _ml82)
 m.check_auth = _old_auth
 
 # ========== 總結 ==========
