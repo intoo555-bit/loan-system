@@ -3171,6 +3171,10 @@ def _order_missing_info(customer) -> list:
         if not has(k):
             miss.append(lb)
     debts, cars = lst("debt_list"), lst("unloan_vehicles")
+    # 業務 AI 帶進來的車貸，動保／公路問不到 → 行政要查（⛔ 空的不能當「無」，見 _apply_clean_debts）
+    for d in debts:
+        if isinstance(d, dict) and d.get("src") == "業務AI" and not str(d.get("dy") or "").strip():
+            miss.append(f"負債明細「{d.get('co') or '?'}」的動保／公路")
     # 負債／車輛：有填任何一筆，或「動產／不動產」有寫（沒有車也要寫「無」）才算填了
     if not debts and not cars and not has("eval_property"):
         miss.append("負債明細／車輛（沒有也要在「動產／不動產」寫無）")
@@ -22875,6 +22879,9 @@ _APPLY_EXTRA_LABELS = {
     "eval_sent_3m": "近三月送件", "eval_sent_3m_detail": "近三月送過什麼",
     "eval_credit_card": "名下信用卡", "eval_property": "有無動產/不動產",
     "eval_late": "貸款遲繳", "eval_late_days": "遲繳天數",
+    # 2026-10-14 開放（業務 AI 交接第 10 段，使用者：負債明細、無貸款車輛都沒帶入）
+    #   ⛔ 只補空白：行政已經有填就不動、也不跳提醒（見 _APPLY_NO_REMIND）；格式由 _apply_clean_debts 把關
+    "debt_list": "負債明細", "unloan_vehicles": "無貸款車輛", "eval_note": "備註",
 }
 _APPLY_PERSONAL_KEYS = [
     "birth_date", "phone", "email", "line_id", "fb", "carrier", "marriage", "education",
@@ -22917,7 +22924,68 @@ def _normalize_roc_date(s: str) -> str:
     return f"{y:03d}/{mo:02d}/{d:02d}"
 
 
+def _apply_clean_debts(val) -> str:
+    """業務 AI 送來的負債明細 → 行政負債表的格式（跟新增客戶表單 collectDebt() 存的一模一樣）。
+    ⛔ 認不出來的格子留空，不猜：
+       ・金額要「元」（7 萬要送 70000）；送 7 這種會留空 —— 猜成萬，錯一次就差一萬倍
+       ・動保／公路 AI 問不到 → 車貸那筆留空 → _order_missing_info 會擋住「不排順序，行政要查」
+         （⛔ 不可以預設「無」：規則表會當成沒動保，21機車25萬 就排進去了）"""
+    try:
+        rows = json.loads(val) if isinstance(val, str) else val
+    except Exception:
+        return ""
+    if not isinstance(rows, list):
+        return ""
+    out = []
+    for d in rows[:10]:
+        if not isinstance(d, dict):
+            continue
+        co = str(d.get("co") or "").strip()[:30]
+        if not co:
+            continue
+        veh = str(d.get("vehicle") or "").strip()
+        car = str(d.get("kind") or "").strip() == "車貸" or veh in ("機車", "汽車") or any(k in co for k in ("機車", "汽車"))
+        if veh in ("機車", "汽車") and veh not in co:
+            co += veh            # 規則表靠公司名裡的「機車／汽車」分車種（和潤 → 和潤機車）
+
+        def num(k):
+            x = re.sub(r"[,\s元$＄]", "", str(d.get(k) or ""))
+            return x if re.fullmatch(r"\d{1,9}", x) else ""
+        lo, pe, pa, mo = num("lo"), num("pe"), num("pa"), num("mo")
+        if lo and int(lo) < 1000:
+            lo = ""
+        rem = f"${int(mo) * (int(pe) - int(pa)):,}" if mo and pe and pa and int(pe) >= int(pa) else ""
+        dy = str(d.get("dy") or "").strip()
+        sp = str(d.get("sp") or "").strip()
+        out.append({"co": co, "lo": lo, "pe": pe, "mo": mo, "pa": pa, "re": rem,
+                    "da": str(d.get("da") or "").strip()[:10] if car else "",
+                    "dy": (dy if dy in ("無", "公路", "動保", "公路+動保") else "") if car else "-",
+                    "sp": (sp if sp in ("有", "無") else "") if car else "-",
+                    "pl": str(d.get("pl") or "").strip()[:12] if car else "",
+                    "yr": str(d.get("yr") or "").strip()[:10] if car else "",
+                    "src": "業務AI"})
+    return json.dumps(out, ensure_ascii=False) if out else ""
+
+
+def _apply_clean_vehicles(val) -> str:
+    """無貸款車輛 → [{"type": 機車/汽車, "plate", "year"}]（同新增客戶表單 collectUL()）"""
+    try:
+        rows = json.loads(val) if isinstance(val, str) else val
+    except Exception:
+        return ""
+    if not isinstance(rows, list):
+        return ""
+    out = [{"type": str(v.get("type")).strip(), "plate": str(v.get("plate") or "").strip()[:12],
+            "year": str(v.get("year") or "").strip()[:10]}
+           for v in rows[:10] if isinstance(v, dict) and str(v.get("type") or "").strip() in ("機車", "汽車")]
+    return json.dumps(out, ensure_ascii=False) if out else ""
+
+
 def _apply_clean_value(key: str, val) -> str:
+    if key == "debt_list":
+        return _apply_clean_debts(val)
+    if key == "unloan_vehicles":
+        return _apply_clean_vehicles(val)
     v = str(val if val is not None else "").strip()[:300]
     if key in ("birth_date", "id_issue_date"):
         v = _normalize_roc_date(v)
@@ -22931,6 +22999,7 @@ def _apply_clean_value(key: str, val) -> str:
 _APPLY_NO_REMIND = {
     "eval_sent_3m", "eval_sent_3m_detail", "eval_credit_card", "eval_property",
     "eval_late", "eval_late_days", "eval_alert", "eval_house_private",
+    "debt_list", "unloan_vehicles", "eval_note",
 }
 # 聯絡人關係：同一個人不同叫法
 _RELATION_SYNONYMS = {

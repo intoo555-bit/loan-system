@@ -2572,6 +2572,29 @@ check("客戶資料表不會印出「5年月」「年3月」「 天」", "5年�
 m.check_auth = _old_auth75
 os.environ.pop("BUSINESS_AI_URL", None); os.environ.pop("BUSINESS_AI_SECRET", None)
 
+# ========== 81. 業務 AI 寫入負債明細／無貸款車輛（2026-10-14 開放，交接第 10 段）==========
+print("\n=== 81. 負債明細寫入 ===")
+m.set_setting("vba_secret", m.hash_pw("t81secret"))
+_body81 = {"id_no": "L300000001", "customer_name": "負債丙", "fields": {
+    "debt_list": [{"co": "和潤", "kind": "車貸", "vehicle": "機車", "lo": "70000", "pe": "24", "pa": "19", "mo": "2808", "sp": "有"},
+                  {"co": "裕融", "kind": "信貸", "lo": "7", "pe": "36", "pa": "10", "mo": "3000"}],
+    "unloan_vehicles": [{"type": "汽車", "year": "2018"}, {"type": "腳踏車"}]}}
+_r81 = TestClient(m.app).post("/api/customer-upsert", headers={"X-Loan-Secret": "t81secret"}, json=_body81).json()
+_c81 = get_cust("L300000001")
+_d81 = json.loads(_c81["debt_list"] or "[]")
+check("負債明細寫進去、格式跟行政表單一樣（和潤 → 和潤機車；剩餘自己算）",
+      _r81.get("ok") and _d81[0]["co"] == "和潤機車" and _d81[0]["re"] == "$14,040" and _d81[0]["sp"] == "有", (_r81, _d81))
+check("車貸動保 AI 問不到 → 留空（⛔ 不可以預設「無」）", _d81[0]["dy"] == "", _d81[0])
+check("金額 7（萬）不猜 → 留空；信貸那筆的動保／空間跟表單一樣寫「-」", _d81[1]["lo"] == "" and _d81[1]["dy"] == "-" and _d81[1]["sp"] == "-", _d81[1])
+check("無貸款車輛只收機車／汽車", json.loads(_c81["unloan_vehicles"]) == [{"type": "汽車", "plate": "", "year": "2018"}], _c81["unloan_vehicles"])
+_mi81 = m._order_missing_info(_c81)
+check("業務 AI 帶進來的車貸沒有動保／公路 → 不排順序，寫行政要查", any("和潤機車" in x and "動保" in x for x in _mi81), _mi81)
+# 行政已經有填 → 不動
+_c = sqlite3.connect(TEST_DB); _c.execute("""UPDATE customers SET debt_list='[{"co": "中租機車", "dy": "動保"}]' WHERE id_no='L300000001'"""); _c.commit(); _c.close()
+_r81 = TestClient(m.app).post("/api/customer-upsert", headers={"X-Loan-Secret": "t81secret"}, json=_body81).json()
+check("行政的負債表已經有填 → 不覆蓋、不跳提醒", json.loads(get_cust("L300000001")["debt_list"])[0]["co"] == "中租機車"
+      and not any(c["field"] == "debt_list" for c in _r81.get("conflicts", [])), _r81)
+
 # ========== 總結 ==========
 print(f"\n{'='*50}")
 print(f"結果：{PASS} 通過、{FAIL} 失敗")
