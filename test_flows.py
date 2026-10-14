@@ -1624,7 +1624,7 @@ check("和裕：50 歲 → 45~55 那條 ⚠️", _st({"birth_date": f"{_ny-50:03
 check("融易：35 歲年齡自動 ✅", _st({"birth_date": f"{_ny-35:03d}/01/01"}, "融易機車專案", "年齡") == "pass")
 check("代書「不看條件」是說明、不是 ⚠️", _st({}, "代書", "不看條件") == "info")
 # 使用者：夠不夠貸業務已經標在空間欄，1.4 倍只是說明
-check("中租 1.4 倍是說明、不打 ⚠️", _st({}, "中租汽車", "1.4 倍") == "info")
+check("中租 1.4 倍是說明、不打 ⚠️", _st({}, "中租汽車", "× 1.4") == "info")
 check("日報歸東豐／願望",m.normalize_section("東豐小額信貸") == "東豐" and m.normalize_section("願望小車25萬") == "願望")
 
 # ========== 65. 業務實際打的寫法要認得（2026-10-13 使用者：願望25萬沒用進去）==========
@@ -1770,6 +1770,24 @@ check("喬美：有勞保＋信用卡正常 → 最高 40 萬（要確認兩張�
       _jm(eval_credit_card="正常繳款")["max_amount"])
 check("喬美：沒信用卡 → 最高 10 萬", _jm(eval_credit_card="")["max_amount"] == 10)
 check("喬美：沒勞保 → 最高 10 萬", _jm(eval_labor_ins="無勞保", eval_credit_card="正常繳款")["max_amount"] == 10)
+# 使用者 2026-10-14：行政建相簿前查天書／權威 → 填車價就算得出金額（例：權威 19 萬）
+#   期望值照使用者原話：19×1.3=24.7 裕融、19×1.4=26.6 中租、21汽車 19 萬就是 19 萬
+_bk = lambda yr, tp: {x["company"]: x for x in _so(eval_property="1汽", debt_list="[]",
+                      unloan_vehicles=json.dumps([{"type": "汽車", "year": str(yr), "tp": tp}], ensure_ascii=False))[0]["results"]}
+_r19 = _bk(_yo - 5, "19")
+check("車價 19 萬 → 裕融 24.7 萬", _r19["裕融優質"]["max_amount"] == 24.7 and "24.7" in _r19["裕融優質"]["amount_text"], _r19["裕融優質"]["amount_text"])
+check("車價 19 萬 → 中租 26.6 萬", _r19["中租汽車"]["max_amount"] == 26.6, _r19["中租汽車"]["amount_text"])
+check("車價 19 萬 → 21汽車 19 萬", _r19["21汽車C"]["max_amount"] == 19 and _r19["21汽車A"]["max_amount"] == 19, _r19["21汽車C"]["amount_text"])
+check("21汽車 不超過專案上限（車價 80 萬 → C 專案還是 50 萬）", _bk(_yo - 5, "80")["21汽車C"]["max_amount"] == 50)
+check("金額說明寫清楚怎麼算", "車價 19 萬 × 1.3" in _r19["裕融優質"]["amount_text"], _r19["裕融優質"]["amount_text"])
+_r11 = _bk(_yo - 15, "19")
+check("2011 的車但權威查得到 19 萬 → 不算老車（看行政查的，不看年份）", _r11["和潤汽車"]["eligible"] is not False
+      and _r11["裕融信福貸"]["eligible"] is False, (_r11["和潤汽車"]["checks"], _r11["裕融信福貸"]["checks"]))
+_rnf = _bk(_yo - 5, "查不到")
+check("行政填「查不到」→ 老車，只送裕融信福貸 10 萬", _rnf["和潤汽車"]["eligible"] is False and _rnf["裕融信福貸"]["eligible"] is not False
+      and _rnf["裕融信福貸"]["max_amount"] == 10)
+_r9b, _o9b, _ = _so(eval_property="1汽", debt_list="[]", unloan_vehicles='[{"type": "汽車", "tp": "19"}]')
+check("沒填出廠年但有車價 → 照排，不擋", not any("汽車出廠年" in x for x in _r9b["missing_info"]), _r9b["missing_info"])
 _ro2 = _old(_yo - 15)
 check(f"{_yo - 15} 就是老車", _ro2["和潤汽車"]["eligible"] is False)
 _r9, _o9, _b9 = _so(eval_property="1汽", unloan_vehicles='[{"type": "汽車"}]', debt_list="[]")

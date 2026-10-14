@@ -1681,6 +1681,7 @@ PLAN_ELIGIBILITY_RULES = [
         "company": "21汽車A",
         "max_amount": 200,
         "priority": 88,
+        "book_multiplier": 1, "book_cap": True,   # 21汽車：天書／權威多少就貸多少（例 19 萬→19 萬），不超過專案上限
         "rules": [
             {"type": "simple", "label": "汽車不是老車（2011 以前沒天書 → 只有裕融信福貸）", "op": "car_not_old"},
             {"type": "simple", "label": "年齡 18~65", "field": "age", "op": "between", "value": [18, 65]},
@@ -1707,6 +1708,7 @@ PLAN_ELIGIBILITY_RULES = [
         "company": "21汽車B",
         "max_amount": 100,
         "priority": 84,
+        "book_multiplier": 1, "book_cap": True,   # 21汽車：天書／權威多少就貸多少（例 19 萬→19 萬），不超過專案上限
         "rules": [
             {"type": "simple", "label": "汽車不是老車（2011 以前沒天書 → 只有裕融信福貸）", "op": "car_not_old"},
             {"type": "simple", "label": "年齡 18~65", "field": "age", "op": "between", "value": [18, 65]},
@@ -1731,6 +1733,7 @@ PLAN_ELIGIBILITY_RULES = [
         "company": "21汽車C",
         "max_amount": 50,
         "priority": 80,
+        "book_multiplier": 1, "book_cap": True,   # 21汽車：天書／權威多少就貸多少（例 19 萬→19 萬），不超過專案上限
         "rules": [
             {"type": "simple", "label": "汽車不是老車（2011 以前沒天書 → 只有裕融信福貸）", "op": "car_not_old"},
             {"type": "simple", "label": "年齡 18~65", "field": "age", "op": "between", "value": [18, 65]},
@@ -1964,6 +1967,7 @@ PLAN_ELIGIBILITY_RULES = [
         "company": "裕融新優加",
         "max_amount": 150,
         "priority": 87,
+        "book_multiplier": 1.3,   # 可貸 ≈ 天書／權威車價 × 1.3
         "amount_text": "看天書",   # 使用者 2026-10-14：看天書，不是最高 150；max_amount 只拿來排先後
         "rules": [
             {"type": "simple", "label": "汽車不是老車（2011 以前沒天書 → 只有裕融信福貸）", "op": "car_not_old"},
@@ -1983,6 +1987,7 @@ PLAN_ELIGIBILITY_RULES = [
         "company": "裕融優質",
         "max_amount": 150,
         "priority": 85,
+        "book_multiplier": 1.3,   # 可貸 ≈ 天書／權威車價 × 1.3
         "amount_text": "看天書",   # 使用者 2026-10-14：看天書，不是最高 150；max_amount 只拿來排先後
         "rules": [
             {"type": "simple", "label": "汽車不是老車（2011 以前沒天書 → 只有裕融信福貸）", "op": "car_not_old"},
@@ -2002,6 +2007,7 @@ PLAN_ELIGIBILITY_RULES = [
         "company": "裕融福克來",
         "max_amount": 150,
         "priority": 82,
+        "book_multiplier": 1.3,   # 可貸 ≈ 天書／權威車價 × 1.3
         "amount_text": "看天書",   # 使用者 2026-10-14：看天書，不是最高 150；max_amount 只拿來排先後
         "rules": [
             {"type": "simple", "label": "汽車不是老車（2011 以前沒天書 → 只有裕融信福貸）", "op": "car_not_old"},
@@ -2041,13 +2047,15 @@ PLAN_ELIGIBILITY_RULES = [
         "company": "中租汽車",
         "max_amount": 150,
         "priority": 73,
+        "book_multiplier": 1.4,   # 可貸 ≈ 天書／權威車價 × 1.4
         "amount_text": "看天書",   # 使用者 2026-10-14：看天書，不是最高 150；max_amount 只拿來排先後
         "rules": [
             {"type": "simple", "label": "汽車不是老車（2011 以前沒天書 → 只有裕融信福貸）", "op": "car_not_old"},
             {"type": "simple", "label": "客戶必須有汽車", "op": "has_car"},
             # 夠不夠貸由業務判斷後標在負債表「空間」欄（使用者 2026-10-13）
             {"type": "simple", "label": "汽車夠貸（看業務在負債表標的空間）", "op": "car_has_space"},
-            {"type": "info", "label": "💡 天書車價要有想貸金額的 1.4 倍以上（業務已在負債表標夠不夠貸）",
+            # 2026-10-14 使用者：19 萬 × 1.4 = 26.6 萬（10-13 原本寫成「天書要有想貸金額的 1.4 倍」，是反過來的）
+            {"type": "info", "label": "💡 可貸 ≈ 天書／權威車價 × 1.4（例 19 萬 × 1.4 = 26.6 萬）",
              "hint": "例：想貸 50 萬 → 天書要 70 萬以上；可貸多少要看天書跟汽車前貸"},
             {"type": "manual", "label": "🚫 老車專案不做"},
         ],
@@ -2059,6 +2067,7 @@ PLAN_ELIGIBILITY_RULES = [
         "company": "和潤汽車",
         "max_amount": 150,
         "priority": 73,
+        "book_multiplier": 1.3,   # 可貸 ≈ 天書／權威車價 × 1.3
         "amount_text": "看天書",   # 使用者 2026-10-14：看天書，不是最高 150；max_amount 只拿來排先後
         "rules": [
             {"type": "simple", "label": "汽車不是老車（2011 以前沒天書 → 只有裕融信福貸）", "op": "car_not_old"},
@@ -2268,10 +2277,43 @@ def _customer_has_car_any(customer) -> bool:
         isinstance(v, dict) and v.get("type") == "汽車" for v in _json_list(customer.get("unloan_vehicles")))
 
 
-def _customer_only_old_cars(customer) -> bool:
-    """有汽車、年份都知道、而且每一台都是老車（最年輕那台也沒有天書）"""
+def _customer_car_book(customer):
+    """行政查的天書／權威車價（使用者 2026-10-14：汽車可以送 → 建相簿前行政先查天書跟權威，有車價就算得出金額）。
+    負債表車貸、無貸款車輛的汽車那列 tp 欄：數字＝車價（萬）、「查不到」＝天書權威都沒有。
+    回 (最高車價 or None, 是否每台都查不到)"""
+    vals, notfound, n = [], 0, 0
+    rows = [d for d in _json_list(customer.get("debt_list")) if isinstance(d, dict) and "汽" in str(d.get("co") or "")]
+    rows += [v for v in _json_list(customer.get("unloan_vehicles")) if isinstance(v, dict) and v.get("type") == "汽車"]
+    for r in rows:
+        tp = str(r.get("tp") or "").strip()
+        if not tp:
+            continue
+        n += 1
+        if "查不到" in tp or tp in ("無", "0"):
+            notfound += 1
+            continue
+        try:
+            vals.append(float(re.sub(r"[^\d.]", "", tp)))
+        except ValueError:
+            pass
+    return (max(vals) if vals else None), (n > 0 and notfound == n and not vals)
+
+
+def _customer_car_old_status(customer) -> str:
+    """"old"＝老車（沒天書）／"book"＝有天書／""＝不知道。先看行政查的車價，沒填才用出廠年推"""
+    price, all_nf = _customer_car_book(customer)
+    if price:
+        return "book"
+    if all_nf:
+        return "old"
     ages = _customer_car_ages(customer)
-    return bool(ages) and min(ages) > _OLD_CAR_AGE
+    if not ages:
+        return ""
+    return "old" if min(ages) > _OLD_CAR_AGE else "book"
+
+
+def _customer_only_old_cars(customer) -> bool:
+    return _customer_car_old_status(customer) == "old"
 
 
 def _customer_has_dynbao(customer):
@@ -2922,22 +2964,19 @@ def _check_rule(rule, customer):
             ok = _customer_has_car_any(customer)
             return ("pass" if ok else "fail", label, "有汽車" if ok else "沒有汽車")
         # 特殊 op：汽車不是老車（老車＝沒有天書，只有裕融信福貸能送，見 _OLD_CAR_AGE）
-        if op == "car_not_old":
+        if op in ("car_not_old", "car_only_old"):
+            st = _customer_car_old_status(customer)
+            price, _nf = _customer_car_book(customer)
             ages = _customer_car_ages(customer)
-            if not ages:
-                return ("unknown", label, "汽車出廠年沒填")
-            y = now_tw().year - min(ages)
-            if min(ages) > _OLD_CAR_AGE:
-                return ("fail", label, f"最新那台 {y} 年，沒有天書（老車只能送裕融信福貸）")
-            return ("pass", label, f"{y} 年，有天書")
-        if op == "car_only_old":
-            ages = _customer_car_ages(customer)
-            if not ages:
-                return ("unknown", label, "汽車出廠年沒填")
-            y = now_tw().year - min(ages)
-            if min(ages) > _OLD_CAR_AGE:
-                return ("pass", label, f"最新那台 {y} 年，沒有天書")
-            return ("fail", label, f"{y} 年有天書 → 送裕融其他方案")
+            why = (f"天書／權威 {price:g} 萬" if price else "行政查過，天書權威都查不到" if _nf
+                   else f"最新那台 {now_tw().year - min(ages)} 年" if ages else "")
+            if not st:
+                return ("unknown", label, "汽車出廠年、天書車價都沒填")
+            if op == "car_not_old":
+                return (("fail", label, why + "，沒有天書（老車只能送裕融信福貸）") if st == "old"
+                        else ("pass", label, why + "，有天書"))
+            return (("pass", label, why + "，沒有天書") if st == "old"
+                    else ("fail", label, why + " → 有天書，送裕融其他方案"))
         # 特殊 op：客戶有汽車
         if op == "has_car":
             ok = _customer_has_car(customer)
@@ -3271,8 +3310,8 @@ def _order_missing_info(customer) -> list:
             miss.append(lb)
     debts, cars = lst("debt_list"), lst("unloan_vehicles")
     # 有汽車卻沒有出廠年 → 分不出是不是老車（老車只能送裕融信福貸）→ 先補（使用者 2026-10-14 選的）
-    if _customer_has_car_any(c) and not _customer_car_ages(c):
-        miss.append("汽車出廠年（看是不是老車）")
+    if _customer_has_car_any(c) and not _customer_car_old_status(c):
+        miss.append("汽車出廠年或天書車價（看是不是老車）")
     # 業務 AI 帶進來的車貸，動保／公路問不到 → 行政要查（⛔ 空的不能當「無」，見 _apply_clean_debts）
     for d in debts:
         if isinstance(d, dict) and d.get("src") == "業務AI" and not str(d.get("dy") or "").strip():
@@ -3382,6 +3421,17 @@ def evaluate_case(customer):
             eligible = True
             summary = "✅ 全部達標"
         _max = plan["max_amount"]
+        _book_txt = ""
+        if plan.get("book_multiplier"):
+            _bp, _ = _customer_car_book(customer)
+            if _bp:
+                _amt = round(_bp * plan["book_multiplier"], 1)
+                if plan.get("book_cap"):
+                    _amt = min(_amt, plan["max_amount"])
+                _max = _amt
+                _mul = plan["book_multiplier"]
+                _book_txt = (f"約 {_amt:g} 萬（車價 {_bp:g} 萬" + (f" × {_mul:g}" if _mul != 1 else "")
+                             + "，前貸還沒扣）")
         if plan["company"] == "喬美":
             # 使用者：勞保＋兩張信用卡（各兩期帳單）→ 40 萬；沒有 → 10 萬（memory required_docs_rules；原本寫死 14）
             _lab = (customer.get("eval_labor_ins") or "").strip() in ("公司保", "軍保", "公保")
@@ -3395,7 +3445,7 @@ def evaluate_case(customer):
             "max_amount": _max,
             "amount_by_review": plan.get("amount_by_review", False),  # True＝max_amount 只是排序用、畫面不顯示金額
             # 沒有固定上限的方案：畫面寫這段（看天書／看鑑價／月薪 22 倍內／看客戶申請多少），⛔ 不寫「最高 X 萬」
-            "amount_text": plan.get("amount_text") or ("看審核" if plan.get("amount_by_review") else ""),
+            "amount_text": _book_txt or plan.get("amount_text") or ("看審核" if plan.get("amount_by_review") else ""),
             "priority": plan.get("priority", 0),
             "eligible": eligible,
             "checks": checks,
@@ -19638,6 +19688,8 @@ function addD(type, preset){
     h+='<div style="'+FS+'"><div style="'+LS+'">車牌</div><input id="dpl'+n+'" value="'+esc(d.pl||'')+'" placeholder="ABC-1234" style="'+IS+'"></div>';
     h+='<div style="'+FS+'"><div style="'+LS+'">出廠年月</div><input id="dyr'+n+'" value="'+esc(d.yr||'')+'" placeholder="2019/05" style="'+IS+'"></div>';
     h+='</div>';
+    // 汽車：行政查的天書／權威車價（萬），查不到填「查不到」→ 老車只送裕融信福貸（2026-10-14）
+    h+='<div style="'+FS+'max-width:260px"><div style="'+LS+'">天書／權威車價（萬，汽車才填）</div><input id="dtp'+n+'" value="'+esc(d.tp||'')+'" placeholder="19　或「查不到」" style="'+IS+'"></div>';
   }else{
     h+='<input id="dd'+n+'" value="" style="display:none;"><input id="dg'+n+'" value="-" style="display:none;"><input id="ds'+n+'" value="-" style="display:none;"><input id="dpl'+n+'" value="" style="display:none;"><input id="dyr'+n+'" value="" style="display:none;">';
   }
@@ -19677,7 +19729,8 @@ function collectDebts(){
       dy:(document.getElementById('dg'+i)||{}).value||'',
       sp:(document.getElementById('ds'+i)||{}).value||'',
       pl:(document.getElementById('dpl'+i)||{}).value||'',
-      yr:(document.getElementById('dyr'+i)||{}).value||''
+      yr:(document.getElementById('dyr'+i)||{}).value||'',
+      tp:(document.getElementById('dtp'+i)||{}).value||''
     });
   }
   return rows;
@@ -19729,6 +19782,7 @@ function addUL(type, preset){
   h+='<div style="'+FS+'"><div style="'+LS+'">車牌</div><input id="ulp'+n+'" value="'+esc(d.plate||'')+'" placeholder="ABC-1234" style="'+IS+'"></div>';
   h+='<div style="'+FS+'"><div style="'+LS+'">出廠年月</div><input id="uly'+n+'" value="'+esc(d.year||'')+'" placeholder="2019/05" style="'+IS+'"></div>';
   h+='</div>';
+  h+='<div style="'+FS+'margin-top:8px;max-width:260px"><div style="'+LS+'">天書／權威車價（萬，汽車才填）</div><input id="ulv'+n+'" value="'+esc(d.tp||'')+'" placeholder="19　或「查不到」" style="'+IS+'"></div>';
   r.innerHTML=h;
   document.getElementById('ep-unloan-list').appendChild(r);
 }
@@ -19739,11 +19793,12 @@ function collectUL(){
     var el=document.getElementById('ul'+i);if(!el)continue;
     var p=(document.getElementById('ulp'+i)||{}).value||'';
     var y=(document.getElementById('uly'+i)||{}).value||'';
-    if(!p&&!y)continue;
+    // ⛔ 車牌、年份都空也要留：業務 AI 帶進來的「汽車」只有車種，原本存檔時被丟掉 → 那台車就消失了
     rows.push({
       type:(document.getElementById('ult'+i)||{}).value||'機車',
       plate:p,
-      year:y
+      year:y,
+      tp:(document.getElementById('ulv'+i)||{}).value||''
     });
   }
   return rows;
