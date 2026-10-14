@@ -1691,7 +1691,9 @@ print("\n=== 67. 建議送件順序 ===")
 def _so(**kw):
     c = {"birth_date": f"{_y-35:03d}/01/01", "id_no": "A123456789", "contact1_relation": "母", "contact2_relation": "父",
          "eval_labor_ins": "公司保", "eval_alert_warning": "否", "eval_late": "無", "eval_property": "1機",
-         "debt_list": "[]", "unloan_vehicles": '[{"type": "機車", "year": "2019"}]'}
+         "debt_list": "[]", "unloan_vehicles": '[{"type": "機車", "year": "2019"}]',
+         # 2026-10-14 起資料表沒填齊不排順序 → 測試客戶要填齊
+         "company_salary": "3.5", "company_years": "3", "eval_salary_transfer": "有薪轉", "eval_alert": "無"}
     c.update(kw)
     r = m.evaluate_case(c)
     return r, [o["company"] for o in r["suggested_order"]], [o["company"] for o in r["backup_plans"]]
@@ -1704,10 +1706,22 @@ check("建議順序沒有麻吉", not any(x.startswith("麻吉") for x in _o), _
 check("同家族只排最大：有 21機車25萬 就不排 21機車12萬／21商品", "21機車25萬" in _o and "21機車12萬" not in _o and "21商品" not in _o, _o)
 check("同家族只排最大：有 亞太機車25萬 就不排 亞太機車15萬／亞太商品", "亞太機車25萬" in _o and "亞太機車15萬" not in _o and "亞太商品" not in _o, _o)
 check("金額大先送：21機車25萬 在 和裕機車 前面", _o.index("21機車25萬") < _o.index("和裕機車"), _o)
+# 資料表沒填齊不排順序（使用者 2026-10-14：客戶有給機車行照，資料表沒寫車就直接判亞太商品）
+_r, _o, _b = _so(company_salary="", eval_alert="")
+check("資料表沒填齊 → 不排順序，列出還缺什麼", not _o and not _b and "月薪" in _r["missing_info"] and "當鋪私設" in _r["missing_info"], _r["missing_info"])
+_r, _o, _b = _so(unloan_vehicles="[]", eval_property="")
+check("負債／車輛都沒填、動產也沒寫 → 不排", not _o and any("負債明細／車輛" in x for x in _r["missing_info"]), _r["missing_info"])
+_r, _o, _b = _so(unloan_vehicles="[]", eval_property="無")
+check("沒有車、動產寫「無」→ 算填了，照排", not _r["missing_info"] and _o, _r["missing_info"])
+# 21機車25萬：機車有貸款就不做（只有亞太機車做；使用者 2026-10-14）
+_r, _o, _b = _so(unloan_vehicles="[]", debt_list=json.dumps([{"co": "和裕機車", "dy": "無", "sp": "有", "yr": "2020"}], ensure_ascii=False))
+_res = {x["company"]: x for x in _r["results"]}
+check("機車有貸款（就算沒設動保）→ 21機車25萬 不排", _res["21機車25萬"]["eligible"] is False and "21機車25萬" not in _o,
+      (_res["21機車25萬"]["eligible"], _o))
 check("有勞保 → 排代書、不排當鋪", "代書" in _o and "當舖" not in _o, _o)
 check("南亞在代書前面", _o.index("南亞") < _o.index("代書"), _o)
 check("融易是少送方案 → 放備選、不進順序", not any(x.startswith("融易") for x in _o) and any(x.startswith("融易") for x in _b), (_o, _b))
-_r, _o, _b = _so(eval_labor_ins="", eval_property="無", unloan_vehicles="[]")
+_r, _o, _b = _so(eval_labor_ins="無勞保", eval_property="無", unloan_vehicles="[]")
 check("沒勞保 → 排當鋪、不排代書", "當舖" in _o and "代書" not in _o, _o)
 check("沒車 → 不排南亞", "南亞" not in _o, _o)
 _r, _o, _b = _so(eval_property="1機1汽", unloan_vehicles='[{"type": "機車", "year": "2019"}, {"type": "汽車", "year": "2018"}]')
@@ -1733,10 +1747,13 @@ _r, _o, _b = _so(eval_property="無", unloan_vehicles="[]")
 check("沒車：亞太商品 → 和裕商品 → 喬美 → 21商品（414/416、626/630）",
       _before(_o, "亞太商品", "和裕商品") and _before(_o, "和裕商品", "喬美") and _before(_o, "喬美", "21商品"), _o)
 check("21商品 提醒「通常跟喬美一起送」", any(o["company"] == "21商品" and "喬美" in o["note"] for o in _r["suggested_order"]))
-for _lab, _want in [("公司保", "代書"), ("軍保", "代書"), ("工會保", "當舖"), ("無勞保", "當舖"), ("漁保", "當舖"), ("", "當舖")]:
+for _lab, _want in [("公司保", "代書"), ("軍保", "代書"), ("工會保", "當舖"), ("無勞保", "當舖"), ("漁保", "當舖")]:
     _r, _o, _b = _so(eval_labor_ins=_lab, eval_property="無", unloan_vehicles="[]")
     _other = "當舖" if _want == "代書" else "代書"
     check(f"勞保欄「{_lab or '空白'}」→ 排{_want}、不排{_other}", _want in _o and _other not in _o, _o)
+# 2026-10-14 起：勞保空白＝還沒填（不是無勞保）→ 不排順序（原本當成無勞保排當舖）
+_r, _o, _b = _so(eval_labor_ins="", eval_property="無", unloan_vehicles="[]")
+check("勞保欄空白 → 不排順序、寫缺勞保（要選「無勞保」才算填了）", not _o and "勞保" in _r["missing_info"], (_o, _r["missing_info"]))
 
 # ========== 69. 鄉民不是固定排（2026-10-13 使用者：要信用報告、440 分以上，呆帳或協商就不用排）==========
 print("\n=== 69. 鄉民條件 ===")
@@ -2523,6 +2540,10 @@ _fn80, _ = m._docs_folder_name("J300000001", m._docs_rows("J300000001"))
 check("相簿名稱日期用建檔那天（115-10-10），不是照片日期（10-14）", _fn80.startswith("115-10-10-"), _fn80)
 _ix, _wx = m._doc_fields_check({"欄位": {"發照日期_民國": "110/10/25", "換補照日期_民國": "110/10/25"}}, "行照", {})
 check("發照、換補照讀成同一天 → 寫「請對照照片」（業務 AI 實測 3 份都一樣，可能抄錯格）", any("讀成同一天" in x for x in _ix), _ix)
+_mi = m._order_missing_info({"id_no": "J300000001", "eval_labor_ins": "公司保", "company_salary": "3", "company_years": "2",
+                             "eval_salary_transfer": "有薪轉", "eval_alert_warning": "否", "eval_alert": "無", "eval_late": "無",
+                             "birth_date": "075/03/12", "eval_property": "無", "debt_list": "[]", "unloan_vehicles": "[]"})
+check("客戶有傳行照、資料表卻沒有車 → 不排，寫「客戶有傳行照，資料表沒填車」", any("有傳行照" in x for x in _mi), _mi)
 check("年資／居住時間：只填年、只填月、都填",
       (m._ym_txt("5", ""), m._ym_txt("", "3"), m._ym_txt("2", "6"), m._ym_txt("0", "3"), m._ym_txt("", "")) == ("5年", "3個月", "2年6個月", "3個月", ""))
 _c = sqlite3.connect(TEST_DB)

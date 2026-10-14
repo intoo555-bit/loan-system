@@ -1217,7 +1217,9 @@ PLAN_ELIGIBILITY_RULES = [
             {"type": "simple", "label": "中華民國身分證", "field": "id_no", "op": "tw_id", "value": True},
             {"type": "simple", "label": "至少 2 位聯絡人、其中 1 位為二等親屬", "op": "any_contact_2nd_kin"},
             {"type": "simple", "label": "車齡 ≤ 15 年", "field": "vehicle_year", "op": "year_age_le", "value": 15},
-            {"type": "simple", "label": "原融（機車無貸款）", "op": "not_has_dynbao",
+            # ⛔ 使用者 2026-10-14：機車有貸款 21機車25萬就不做（只有亞太機車有做），除非客戶自己清前貸 —— 客人通常沒錢清
+            #    原本用 not_has_dynbao（只看動保）→ 沒設動保的機車貸款會被當成沒貸款排進來
+            {"type": "simple", "label": "機車沒有貸款（有貸款不做，除非客戶自己清前貸）", "op": "no_motorcycle_loan",
              "manual_check": "確認要貸的機車本身沒貸款"},
             {"type": "simple", "label": "警示戶需補保人（自動偵測）", "op": "alert_warning_need_guarantor"},
             {"type": "oneof", "label": "財務能力（擇一）", "options": [
@@ -2874,6 +2876,15 @@ def _check_rule(rule, customer):
                 return ("pass", label, f"有近月從 {'/'.join(cos)} 撥款")
             return ("fail", label, f"無近月從 {'/'.join(cos)} 撥款")
         # 機車有空間（debt_list 機車 sp=有 or 無動保 / unloan_vehicles 有機車）
+        if op == "no_motorcycle_loan":   # 負債表有任何一筆機車貸款（不管有沒有動保）→ 不行
+            try:
+                debts = json.loads(customer.get("debt_list") or "[]") or []
+            except Exception:
+                debts = []
+            moto = [d.get("co") or "?" for d in debts if isinstance(d, dict) and "機車" in (d.get("co") or "")]
+            if moto:
+                return ("fail", label, f"機車有貸款（{'、'.join(moto)}）")
+            return ("pass", label, "負債表沒有機車貸款")
         if op == "motorcycle_has_space":
             if _customer_has_motorcycle_with_space(customer):
                 return ("pass", label, "名下有可用機車")
@@ -3141,6 +3152,48 @@ def _check_rule(rule, customer):
     return ("unknown", label, "未知規則類型")
 
 
+def _order_missing_info(customer) -> list:
+    """排建議順序之前，資料表一定要先填的欄位；回「還缺什麼」（中文）。
+    使用者 2026-10-14：「客戶資料表單都還沒填寫完整就直接判斷順序」——
+      例：客戶有給機車行照照片，但資料表沒寫車輛 → 系統直接判他亞太商品（沒車的方案）。
+    使用者勾的必填：勞保／月薪／年資／薪轉、警示戶／當鋪私設／遲繳、負債明細／車輛、生日。
+    ⛔ 沒填齊 → 不排順序（不是當成「沒有」去排）"""
+    c = customer or {}
+
+    def has(k):
+        return str(c.get(k) or "").strip() not in ("", "-", "請選擇")
+
+    def lst(k):
+        try:
+            x = json.loads(c.get(k) or "[]")
+            return x if isinstance(x, list) else []
+        except Exception:
+            return []
+    miss = []
+    for k, lb in (("eval_labor_ins", "勞保"), ("company_salary", "月薪")):
+        if not has(k):
+            miss.append(lb)
+    if not (has("company_years") or has("company_months")):
+        miss.append("年資")
+    for k, lb in (("eval_salary_transfer", "薪轉"), ("eval_alert_warning", "警示戶"), ("eval_alert", "當鋪私設"),
+                  ("eval_late", "遲繳"), ("birth_date", "生日")):
+        if not has(k):
+            miss.append(lb)
+    debts, cars = lst("debt_list"), lst("unloan_vehicles")
+    # 負債／車輛：有填任何一筆，或「動產／不動產」有寫（沒有車也要寫「無」）才算填了
+    if not debts and not cars and not has("eval_property"):
+        miss.append("負債明細／車輛（沒有也要在「動產／不動產」寫無）")
+    elif not cars and not any(str(d.get("yr") or d.get("pl") or "").strip() or str(d.get("dy") or "-").strip() not in ("", "-")
+                              for d in debts if isinstance(d, dict)):   # 車貸那筆會有出廠年(yr)／車牌(pl)／動保公路(dy)
+        # 有傳行照照片，資料表卻沒有任何車 → 一定是漏填
+        try:
+            if c.get("id_no") and any(r["show_label"] == "行照" for r in _docs_rows(c["id_no"])):
+                miss.append("車輛（客戶有傳行照，資料表沒填車）")
+        except Exception:
+            pass
+    return miss
+
+
 def evaluate_case(customer):
     """跑所有規則、回排序好的方案清單 + 私設狀態
 
@@ -3261,8 +3314,12 @@ def evaluate_case(customer):
         return (eligible_score, -r["max_amount"], -r["priority"])
     results.sort(key=sort_key)
     suggested, backup = suggest_send_order(results, customer)
+    missing_info = _order_missing_info(customer)
+    if missing_info:          # 資料沒填齊 → 不排順序（見 _order_missing_info）
+        suggested, backup = [], []
     return {
         "results": results,
+        "missing_info": missing_info,
         "suggested_order": suggested,
         "backup_plans": backup,
         "private_status": "confirmed" if has_private else None,
@@ -18966,6 +19023,10 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
             box.innerHTML = '<span style="color:#dc2626">' + (d.message || '失敗') + '</span>';
             return;
           }}
+          if (d.missing_info && d.missing_info.length) {{
+            box.innerHTML = '<div style="background:#fff7ed;border:1px solid #fdba74;border-radius:6px;padding:10px 12px;color:#9a3412;font-size:13px">⏳ <b>資料表還沒填完整，先不判斷、不排順序</b><br>還缺：' + d.missing_info.join('、') + '</div>';
+            return;
+          }}
           var results = d.results || [];
           if (!results.length) {{
             box.innerHTML = '<span style="color:#6b7280">目前沒有規則表</span>';
@@ -20469,6 +20530,10 @@ function checkEligibility() {{
         box.innerHTML = '<span style="color:#dc2626">' + (d.message || '失敗') + '</span>';
         return;
       }}
+      if (d.missing_info && d.missing_info.length) {{
+        box.innerHTML = '<div style="background:#fff7ed;border:1px solid #fdba74;border-radius:6px;padding:10px 12px;color:#9a3412;font-size:13px">⏳ <b>資料表還沒填完整，先不判斷、不排順序</b><br>還缺：' + d.missing_info.join('、') + '</div>';
+        return;
+      }}
       const results = d.results || [];
       if (!results.length) {{
         box.innerHTML = '<span style="color:#6b7280">目前沒有規則表（待補規則）</span>';
@@ -20574,6 +20639,7 @@ def api_check_eligibility(request: Request, case_id: str = ""):
         "house_private": eval_result["house_private"],
         "suggested_order": eval_result["suggested_order"],
         "backup_plans": eval_result["backup_plans"],
+        "missing_info": eval_result.get("missing_info") or [],
     })
 
 
@@ -28347,7 +28413,9 @@ def _docs_missing_html(cust, rows) -> str:
 def _docs_missing_line(cust, rows) -> str:
     co = _docs_current_company(cust)
     if not co:
-        return ""
+        miss = _order_missing_info(cust)
+        return (f'<div class="ms-line">📦 還沒排送件順序：<span class="ms-check">資料表還缺 {h("、".join(miss))}</span></div>'
+                if miss else "")
     plan = _plan_for_company(co)
     if not plan:
         return (f'<div class="ms-line">📦 目前送 <b>{h(co)}</b>：<span class="ms-na">規則表沒有這家，沒辦法檢查缺件</span></div>')
