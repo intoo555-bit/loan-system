@@ -1874,8 +1874,9 @@ PLAN_ELIGIBILITY_RULES = [
             {"type": "simple", "label": "現居須在台灣本島（澎湖/金門/連江/馬祖皆不做、戶籍在外島可、看現居）",
              "field": "live_city", "op": "not_contains", "value": ["澎湖", "金門", "連江", "馬祖"]},
             {"type": "simple", "label": "至少 2 位聯絡人、其中 1 位為二等親", "op": "any_contact_2nd_kin"},
-            # 使用者 2026-10-14：「融易頭家貸為何要跳提醒，他不能送喔，他又不是老闆」
-            {"type": "simple", "label": "要是老闆／負責人（頭家貸）", "op": "is_boss"},
+            # 使用者 2026-10-14：「他又不是老闆」「這個方案是一定要是自營商，不要亂搞混」
+            #   ⛔ 必要條件（不是財力擇一裡的「負責人有營登」那種）；自營商看職稱（老闆／負責人／自營／頭家）
+            {"type": "simple", "label": "一定要是自營商（頭家貸）", "op": "is_boss"},
             {"type": "manual", "label": "需有實體店面（流動攤販不承作）"},
             {"type": "manual", "label": "對保須在工作地"},
             {"type": "manual", "label": "進件需附店面照（招牌/門牌/外觀）+ 工作照 + 財產清單"},
@@ -3349,8 +3350,8 @@ def _check_rule(rule, customer):
             role = (customer.get("company_role") or "").strip()
             if not role:
                 return ("unknown", label, "職稱沒填")
-            return (("pass", label, f"職稱：{role}") if any(w in role for w in _BOSS_WORDS)
-                    else ("fail", label, f"職稱「{role}」不是老闆／負責人"))
+            return (("pass", label, f"職稱：{role} → 自營商") if any(w in role for w in _BOSS_WORDS)
+                    else ("fail", label, f"職稱「{role}」不是自營商"))
         # 特殊 op：新住民＝沒有中華民國身分證（拿居留證）→ 要附台籍正職保人
         #   使用者 2026-10-14：「新住民是指他沒有身分證；有身分證（背面有寫）基本上就沒關係」
         #   ⛔ 不看出生地：外國出生、已經拿到身分證的不算新住民
