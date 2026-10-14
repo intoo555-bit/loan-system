@@ -1848,6 +1848,26 @@ _pick = m.suggest_send_order([
     {"company": "亞太機車15萬", "max_amount": 15, "net_amount": 13.6, "priority": 70, "eligible": True},
     {"company": "亞太商品", "max_amount": 12, "net_amount": 12, "priority": 60, "eligible": True}], {})[0]
 check("清掉前貸還比商品多 → 送亞太機車", [x["company"] for x in _pick] == ["亞太機車15萬"], _pick)
+# 使用者 2026-10-14：建議順序寫法跟群組一樣（裕融、亞太15、願望25、和裕、和裕機）
+#   期望值＝正式站 7 月後群組實際寫法（不是程式反推）
+for _co, _want in (("裕融優質", "裕融"), ("亞太機車15萬", "亞太15"), ("願望小車25萬", "願望25"), ("和裕商品", "和裕"),
+                   ("和裕機車", "和裕機"), ("零卡(C)", "C"), ("商品貸", "商"), ("代書", "代"), ("貸救補", "貸10"),
+                   ("21商品", "21"), ("21機車25萬", "21機25"), ("分貝商品", "分貝商"), ("銀行", "銀"), ("鄉民", "鄉"), ("當舖", "當")):
+    check(f"群組寫法：{_co} → {_want}", m._plan_short(_co) == _want, m._plan_short(_co))
+check("群組寫法：喬美 40 萬 → 喬美40", m._plan_short("喬美", 40) == "喬美40" and m._plan_short("喬美", 10) == "喬美")
+_known = set(m.COMPANY_LIST) | set(m.REPORT_SECTION_1) | set(m.REPORT_SECTION_2) | set(m.REPORT_SECTION_3)
+_bad = []
+for _p in m.PLAN_ELIGIBILITY_RULES:
+    if _p["company"].startswith(m._SUGGEST_BACKUP):
+        continue      # 備選（預付資融四個專案等）不進建議順序；預付資融日報也沒有這格
+    _sh = m._plan_short(_p["company"], _p["max_amount"])
+    _pp = m.parse_route_order_line("10/14-王小明-" + _sh)
+    _c = (_pp.get("companies") or [""])[0]
+    if not (_c in _known or m.normalize_section(_c) in _known):
+        _bad.append((_p["company"], _sh, _c))
+check("每個方案的群組寫法，貼回群組都認得出是哪家", not _bad, _bad)
+_r, _o, _b = _so()
+check("建議順序帶群組寫法", all(x.get("short") for x in _r["suggested_order"]), _r["suggested_order"][:3])
 _ro2 = _old(_yo - 15)
 check(f"{_yo - 15} 就是老車", _ro2["和潤汽車"]["eligible"] is False)
 _r9, _o9, _b9 = _so(eval_property="1汽", unloan_vehicles='[{"type": "汽車"}]', debt_list="[]")

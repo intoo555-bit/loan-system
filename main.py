@@ -3635,6 +3635,34 @@ def _suggest_rank(company):
     return rank, fam, note
 
 
+# 建議順序用業務在群組的寫法（使用者 2026-10-14：「順序打法跟群組一樣，不用全部名稱」）
+#   對照來源：正式站備份 7 月後群組「日期-姓名-順序」那行的實際寫法統計（C 1704 次、商 1701、代 1179、貸10 1163、
+#   21 1032、和裕 997、喬美 981、銀 818、鄉 697、亞太 534、當 518、分貝機 362、分貝商 325、分貝汽 291、21機 173、
+#   亞太25 163、21機25 152、第一 108、和裕機 78、裕融 77、麻吉機 54、亞太15 33、21汽 25、中租 23、亞太15(工) 8…）
+#   ⛔ 每個寫法都要打回群組認得出來（測試會把整行丟回 parse_route_order_line 驗）
+_PLAN_SHORT = {
+    "亞太商品": "亞太", "亞太機車25萬": "亞太25", "亞太汽車25萬": "亞太25", "亞太機車15萬": "亞太15",
+    "亞太老車15萬": "亞太15", "亞太工會機車": "亞太15(工)",
+    "21商品": "21", "21機車25萬": "21機25", "21機車12萬": "21機", "21汽車A": "21汽", "21汽車B": "21汽", "21汽車C": "21汽",
+    "貸救補": "貸10", "零卡(C)": "C", "商品貸": "商", "代書": "代", "當舖": "當", "銀行": "銀", "鄉民": "鄉",
+    "和裕商品": "和裕", "和裕機車": "和裕機", "分貝機車改裝": "分貝機", "分貝汽車改裝1+1": "分貝汽", "分貝商品": "分貝商",
+    "麻吉機車": "麻吉機", "麻吉U質手機": "麻吉", "麻吉手機": "麻吉", "第一汽車": "第一", "第一信貸": "第一",
+    "裕融新優加": "裕融", "裕融優質": "裕融", "裕融福克來": "裕融", "裕融信福貸": "裕融", "中租汽車": "中租",
+    "和潤汽車": "和潤", "和潤重機": "和潤", "東豐小額信貸": "東豐", "願望小車25萬": "願望25", "願望工會15萬": "願望15",
+}
+
+
+def _plan_short(company: str, amount=None) -> str:
+    if company == "喬美":
+        return "喬美40" if amount == 40 else "喬美"     # 群組 38 次「喬美40」
+    if company in _PLAN_SHORT:
+        return _PLAN_SHORT[company]
+    for p in ("興達", "融易"):
+        if company.startswith(p):
+            return p
+    return company
+
+
 def suggest_send_order(results, customer):
     """回 (建議順序, 備選)：每項 {"company", "note"}"""
     cand = [r for r in results if r["eligible"] in (True, "manual")]
@@ -3661,7 +3689,7 @@ def suggest_send_order(results, customer):
         seen_fam.add(fam)
         if r["eligible"] == "manual":
             note = "要確認" + ("、" + note if note else "")
-        picked.append((rank, -r["max_amount"], {"company": co, "note": note}))
+        picked.append((rank, -r["max_amount"], {"company": co, "note": note, "short": _plan_short(co, r["max_amount"])}))
     picked.sort(key=lambda x: (x[0], x[1]))
     return [x[2] for x in picked], backup
 
@@ -19372,9 +19400,10 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
               html += '<div style="margin-top:10px;padding:8px 10px;background:#fff;border:1px solid #86efac;border-radius:5px;font-size:13px">';
               html += '<div style="font-weight:700;color:#15803d;margin-bottom:4px">📌 建議順序</div><ol style="margin:0;padding-left:22px">';
               d.suggested_order.forEach(function(o) {{
-                html += '<li>' + o.company + (o.note ? ' <span style="color:#92400e;font-size:11px">（' + o.note + '）</span>' : '') + '</li>';
+                html += '<li title="' + o.company + '">' + (o.short || o.company) + (o.short && o.short !== o.company ? ' <span style="color:#9ca3af;font-size:11px">' + o.company + '</span>' : '') + (o.note ? ' <span style="color:#92400e;font-size:11px">（' + o.note + '）</span>' : '') + '</li>';
               }});
               html += '</ol>';
+              html += '<div style="margin-top:6px;font-size:12px;color:#374151">群組寫法：<b>' + d.suggested_order.map(function(o){{return o.short || o.company;}}).join('/') + '</b></div>';
               if (d.backup_plans && d.backup_plans.length) {{
                 html += '<div style="margin-top:6px;font-size:11px;color:#6b7280">備選（少送方案、條件特殊才排）：' + d.backup_plans.map(function(o){{return o.company;}}).join('、') + '</div>';
               }}
@@ -28895,7 +28924,7 @@ def _docs_missing_html(cust, rows) -> str:
     if not ro:
         # 群組還沒排 → 顯示系統建議的順序，標清楚是建議（下面「目前送」那家也是從這裡來的）
         try:
-            sug = [x["company"] for x in evaluate_case(cust).get("suggested_order", [])]
+            sug = [x.get("short") or x["company"] for x in evaluate_case(cust).get("suggested_order", [])]
         except Exception:
             sug = []
         if sug:
