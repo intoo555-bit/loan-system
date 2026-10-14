@@ -2392,6 +2392,17 @@ m._bizai_fetch = _fetch_and_write
 os.environ["BUSINESS_AI_URL"] = "https://fake-bizai.test"; os.environ["BUSINESS_AI_SECRET"] = "x"
 _rr = m.pull_customer_docs("H300000001")
 check("下載照片的同時，其他人（LINE 指令）還寫得進資料庫", _rr["new"] == 2 and not _lock_err, (_rr, _lock_err))
+# 業務 AI 那邊刪掉的照片 → 這邊也藏起來（2026-10-14 使用者：放錯別的客人的照片，業務 AI 刪了，這邊提醒還在）
+m._bizai_list = lambda idv: ([{"doc_id": 91, "created_at": "2026-10-14T10:00:00", "content_type": "image/png", "source": "LINE聊天", "label": "行照"}], "")
+m.pull_customer_docs("H300000001")
+_ids78 = [r["remote_doc_id"] for r in m._docs_rows("H300000001")]
+check("業務 AI 刪掉的（92）這邊也不見，還在的（91）留著", _ids78 == ["91"], _ids78)
+m._bizai_list = lambda idv: ([], "")
+m.pull_customer_docs("H300000001")
+check("業務 AI 回「一張都沒有」→ 不跟著藏（可能是那邊出狀況）", [r["remote_doc_id"] for r in m._docs_rows("H300000001")] == ["91"])
+m._bizai_list = lambda idv: (None, "業務 AI 限流中")
+m.pull_customer_docs("H300000001")
+check("連不到業務 AI → 不跟著藏", [r["remote_doc_id"] for r in m._docs_rows("H300000001")] == ["91"])
 m._bizai_list, m._bizai_fetch = _o2l, _o2f
 os.environ.pop("BUSINESS_AI_URL", None); os.environ.pop("BUSINESS_AI_SECRET", None)
 import inspect as _insp78

@@ -27909,7 +27909,21 @@ def pull_customer_docs(id_no: str) -> dict:
                     (idv, rid, it.get("source") or "", it.get("label") or "", ctype, len(data),
                      path, it.get("created_at") or "", now_iso()))
             new += 1
+    hidden = 0
     with db_conn(commit=True) as conn:
+        # 業務 AI 那邊刪掉的 → 這邊也藏起來（2026-10-14 使用者：不小心把別的客人的照片放進來，業務 AI 刪了，
+        #   這邊還留著，頁面一直寫「健保卡姓名跟系統不一樣」）
+        # ⛔ 只藏不刪檔（藏錯救得回來）；行政上傳的（up-）不動
+        # ⛔ 業務 AI 回「一張都沒有」時不藏：比較可能是那邊身分證改了／出狀況，不是客人的照片全被刪
+        if items:
+            alive = {str(it.get("doc_id") or "") for it in items}
+            for (pk, rid) in conn.execute(
+                    "SELECT id, remote_doc_id FROM customer_docs WHERE id_no=? AND (deleted_at IS NULL OR deleted_at='') "
+                    "AND remote_doc_id NOT LIKE 'up-%'", (idv,)).fetchall():
+                if str(rid) not in alive:
+                    conn.execute("UPDATE customer_docs SET deleted_at=?, deleted_by='業務AI已刪除', judge_json='' WHERE id=?",
+                                 (now_iso(), pk))
+                    hidden += 1
         conn.execute("INSERT OR REPLACE INTO customer_docs_pull (id_no, last_pull_at, last_error) VALUES (?,?,?)",
                      (idv, now_iso(), err or ""))
         # 刪掉的不算（2026-10-14 自查：原本把已刪除的也算進「共幾張」）
