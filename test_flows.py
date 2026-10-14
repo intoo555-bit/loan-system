@@ -1933,6 +1933,11 @@ _s = _sub(_ev84(eval_property="不動產", _dj_cats={"權狀或謄本": 1})[0], 
 check("「有不動產、須提供權狀」：權狀收到了 → ✅", _s is None or _s["status"] in ("pass",), _s)
 check("中租「老車專案不做」改成說明（老車那條已經自動判）", _sub(_ev84(**_car87)[0], "中租汽車", "老車專案不做")["status"] == "info")
 # 使用者 2026-10-14：「融易頭家貸為何要跳提醒，他不能送喔，他又不是老闆」
+# 2026-10-14 回測（7 月後 514 件有核准的案子）抓到：聯絡人寫「哥哥」被當成不是二等親
+for _rel, _ok in (("哥哥", True), ("哥", True), ("爺", True), ("阿嬤", True), ("妹妹", True), ("父", True), ("夫", True),
+                  ("表弟", False), ("堂哥", False), ("叔叔", False), ("阿姨", False), ("姪子", False), ("外甥女", False),
+                  ("朋友", False), ("女朋友", False)):
+    check(f"二等親判斷：「{_rel}」→ {'是' if _ok else '不是'}", m._is_2nd_kin(_rel) == _ok)
 check("融易頭家貸：職稱技工 → ❌", _ev84(company_role="技工")[0]["融易頭家貸"]["eligible"] is False)
 check("融易頭家貸：職稱老闆 → 是自營商 ✅", _sub(_ev84(company_role="老闆")[0], "融易頭家貸", "自營商")["status"] == "pass")
 # 裕融條件表（使用者貼的截圖）：陳秋蘭「可以勾勞保那條，有符合一條」
