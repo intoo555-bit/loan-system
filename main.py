@@ -2885,6 +2885,11 @@ def _check_rule(rule, customer):
         # 特殊 op：has_dynbao / not_has_dynbao（不需要 field、直接檢查 debt_list）
         if op in ("has_dynbao", "not_has_dynbao"):
             has = _customer_has_dynbao(customer)
+            # ⛔ 車貸那筆「動保／公路」空白＝還不知道，不是「沒動保」（業務 AI 帶進來的都是空的）
+            #   2026-10-14 陳秋蘭：和潤機車動保沒填 → 21機車12萬 被判 ✅（使用者：機車有貸款不能送）
+            if not has and any(isinstance(d, dict) and str(d.get("dy") or "").strip() == ""
+                               for d in _json_list(customer.get("debt_list"))):
+                return ("unknown", label, "負債表車貸的動保／公路還沒填")
             ok = has if op == "has_dynbao" else (not has)
             actual_str = "有動保" if has else "無動保"
             return ("pass" if ok else "fail", label, actual_str)

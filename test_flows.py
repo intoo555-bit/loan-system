@@ -1722,6 +1722,12 @@ _r, _o, _b = _so(unloan_vehicles="[]", debt_list=json.dumps([{"co": "和裕機�
 _res = {x["company"]: x for x in _r["results"]}
 check("機車貸款沒設動保 → 21機車25萬 可以排", _res["21機車25萬"]["eligible"] is not False, _res["21機車25萬"])
 check("機車貸款沒設動保 → 和裕機車 可以排", _res["和裕機車"]["eligible"] is not False, _res["和裕機車"])
+# 2026-10-14 陳秋蘭：業務 AI 帶進來的機車貸款動保是空的 → 21機車12萬 被當成沒動保打 ✅
+_r3 = {x["company"]: x for x in _so(unloan_vehicles="[]", debt_list=json.dumps(
+    [{"co": "和潤機車", "dy": "", "sp": "有", "yr": "2020", "src": "業務AI"}], ensure_ascii=False))[0]["results"]}
+for _co in ("21機車12萬", "21機車25萬", "和裕機車"):
+    check(f"機車貸款動保還沒填 → {_co} 不能打 ✅（要確認動保）", _r3[_co]["eligible"] is not True and any(
+        c["status"] == "unknown" and "動保" in str(c.get("actual")) for c in _r3[_co]["checks"]), (_r3[_co]["eligible"], _r3[_co]["checks"]))
 _r2, _o2, _b2 = _so(unloan_vehicles="[]", debt_list=json.dumps([{"co": "和裕機車", "dy": "動保", "sp": "有", "yr": "2020"}], ensure_ascii=False))
 _res2 = {x["company"]: x for x in _r2["results"]}
 # 使用者 2026-10-14：「和裕機車也不做代償案件」
