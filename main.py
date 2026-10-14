@@ -29485,9 +29485,11 @@ _ARCHIVE_ADAPTER = """<script>
   openFile:async p=>{window.open('/archive/file/'+p.ids[0],'_blank');},
   deleteOne:async id=>{if(!confirm('確定刪除這張？刪了就找不回來（業務 AI 那邊不會跟著刪）'))return false;
     const r=await (await fetch('/archive/doc/'+id+'/delete',{method:'POST'})).json(); if(!r.ok){alert(r.error||'失敗');return false;}
-    const d=await load(false); G.setData({customerId:__SHOW__,total:d.documents.length,documents:d.documents,demo:false}); return true;},
+    // ⛔ 上方「要跟客戶確認／缺件」那幾行是伺服器排的 → 要整頁重新整理才會更新（2026-10-14 使用者：刪了照片字沒改掉）
+    location.reload(); return true;},
   saveCategory:async x=>{const r=await (await fetch('/archive/doc/'+x.id+'/label',{method:'POST',
-    headers:{'Content-Type':'application/json'},body:JSON.stringify({label:x.category})})).json(); if(!r.ok)throw new Error(r.error||'失敗');},
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({label:x.category})})).json(); if(!r.ok)throw new Error(r.error||'失敗');
+    setTimeout(()=>location.reload(),600);},   // 改分類也會影響上方的缺件／提醒那幾行
  });
  G.setData({customerId:__SHOW__,total:__TOTAL__,documents:__DOCS__,demo:false});
  // 照片拉進來會自動判讀（背景）：打開時還在判 → 顯示進度，判完自動更新畫面

@@ -2451,6 +2451,8 @@ check("看大圖右邊：列出讀到的原樣欄位（空的不列、不重複�
       "發照日期：110.10.25" in _d79["行照"]["judgeDetail"] and "_民國" not in _d79["行照"]["judgeDetail"]
       and "引擎號碼" not in _d79["行照"]["judgeDetail"], _d79["行照"]["judgeDetail"])
 _h79 = TestClient(m.app).get("/archive/J300000001").text
+_del79 = _h79.split("deleteOne:")[1].split("saveCategory:")[0] if "deleteOne:" in _h79 else ""
+check("刪照片後整頁重新整理（上方提醒是伺服器排的；使用者 2026-10-14：刪了字沒改掉）", "location.reload()" in _del79, _del79[:200])
 check("證件頁上方彙總：行照車主不是本人", "要跟客戶確認" in _h79 and "行照：車主不是本人" in _h79)
 # 持有時間看換補照日期（使用者 2026-10-14）
 _ix, _wx = m._doc_fields_check({"欄位": {"發照日期_民國": "110/10/25", "換補照日期_民國": "114/10/01"}}, "行照", {"customer_name": "欄位乙"})
