@@ -5713,6 +5713,7 @@ def init_db():
         ("adminb_yulon", "TEXT"),          # 行政B 裕融區行政改過的格子（JSON，見 _yulon_overrides）
         ("adminb_heren", "TEXT"),
         ("adminb_dz_amount", "TEXT"),       # 行政B 東豐：分期金額／期數／每期應繳
+        ("adminb_xd_amount", "TEXT"),       # 行政B 興達：核准金額（萬，空白＝10）
         ("adminb_dz_period", "TEXT"),
         ("adminb_dz_payment", "TEXT"),          # 行政B 和潤區行政改過的格子（JSON，見 _heren_overrides）
         ("adminb_ry_amount", "TEXT"),
@@ -19777,7 +19778,7 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
           ("和裕機車","和裕機車","維力機車專 15萬 24期"),("和裕商品","和裕商品","維力商品專 12萬 24期"),
           ("21機車12萬","21機車12萬","12萬 24期"),("21機車25萬","21機車25萬","25萬 48期"),
           ("21商品","21商品","12萬 24期"),("第一","第一","30萬 24期"),("貸救補","貸救補","10萬 24期"),
-          ("東豐","東豐","小額信貸"),
+          ("東豐","東豐","小額信貸"),("興達","興達","二胎／勞保貸 18期"),
         ])}
         <label class="ab-plan" style="background:#4e7055;border-color:#3a5040;"><input type="checkbox" name="plans" value="喬美" style="accent-color:#fff;"><div><div class="ab-plan-name" style="color:#fff;">喬美</div><div class="ab-plan-sub" style="color:#c8e6ca;">PDF電子簽名</div></div></label>
         <label class="ab-plan" style="background:#1d4ed8;border-color:#1e3a8a;"><input type="checkbox" name="plans" value="裕融" style="accent-color:#fff;"><div><div class="ab-plan-name" style="color:#fff;">裕融</div><div class="ab-plan-sub" style="color:#dbeafe;">汽車 PDF</div></div></label>
@@ -19869,6 +19870,13 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
         <div style="font-size:12px;font-weight:700;color:#6d28d9;margin-bottom:6px;">預付資融（基本資料＋負債檢查表 PDF）</div>
         <div style="font-size:11px;color:#475569;margin-bottom:8px;">月付金參考：24 期、每萬 489（例：10 萬 → 4890）；最終金額及月付金依核准為主</div>
         <a href="/adminb/download-prepaid?case_id={h(case_id)}" style="display:inline-block;padding:6px 14px;background:#6d28d9;color:#fff;border-radius:6px;font-size:13px;font-weight:700;text-decoration:none;">📄 預付資融申請書 PDF</a>
+      </div>
+      <div class="ab-block" data-plans="興達" style="background:#fff7ed;">
+        <div style="font-size:12px;font-weight:700;color:#c2410c;margin-bottom:6px;">興達（一律 18 期；格子空著＝10 萬／月付 6967）</div>
+        <div class="ab-g3" style="margin-bottom:6px;">
+          <div><div class="ab-lbl">核准金額（萬，5～10）</div><input name="xd_amount" class="ab-inp" placeholder="10" value="{h(customer.get('adminb_xd_amount','') or '')}"></div>
+        </div>
+        <div style="font-size:11px;color:#475569;">商品：勞保貸填手機型號、汽機車二胎填行照（廠牌／型式／車牌）；月付金照 18 期表</div>
       </div>
       <div class="ab-block" data-plans="東豐" style="background:#ecfdf5;">
         <div style="font-size:12px;font-weight:700;color:#047857;margin-bottom:6px;">東豐（固定 10 萬／18 期／每期 6868，格子空著就用這組；特例才打）</div>
@@ -20366,6 +20374,7 @@ async def adminb_save(request: Request):
         "adminb_mj_model": form.get("mj_model",""),
         "adminb_mj_6w18p": form.get("mj_6w18p",""),
         "adminb_dz_amount": form.get("dz_amount",""),
+        "adminb_xd_amount": form.get("xd_amount",""),
         "adminb_dz_period": form.get("dz_period",""),
         "adminb_dz_payment": form.get("dz_payment",""),
         "product_model": form.get("qm_model",""),
@@ -27551,6 +27560,7 @@ def _do_download_excel(request: Request, case_id: str, only_plans=None, raw: boo
         "和裕商品": os.path.join(_base, "申請書", "和裕維力貸商品範本.xlsx"),
         "第一": os.path.join(_base, "申請書", "第一申請書範本.xlsx"),
         "東豐": os.path.join(_base, "申請書", "東豐小額申請書.xlsx"),   # 2026-10-15 使用者給的 115.09.11 版
+        "興達": os.path.join(_base, "申請書", "興達申請書.xlsx"),       # 2026-10-15 使用者給的 1141201 版
         "貸救補": os.path.join(_base, "申請書", "貸就補範本.xlsx"),
         "21機車12萬": os.path.join(_base, "申請書", "21機車申請書範本xlsx.xlsx"),
         "21機車25萬": os.path.join(_base, "申請書", "21機25萬範本.xlsx"),
@@ -27641,6 +27651,8 @@ def _do_download_excel(request: Request, case_id: str, only_plans=None, raw: boo
 
         if plan_name == "東豐":
             return _dongfeng_cells(r)
+        if plan_name == "興達":
+            return _xingda_cells(r)
 
         if plan_name == "貸救補":
             # F5 發證地下拉
@@ -31901,6 +31913,91 @@ def _phone_dash(p) -> str:
     return f"{d[:4]}-{d[4:]}" if len(d) == 10 and d.startswith("09") else str(p or "").strip()
 
 
+# ===== 興達分期付款申請資料（使用者 2026-10-15 給 興達申請書1141201.xlsx＋興達範本.xlsx）=====
+# 「機車汽車就是填寫行照上的，勞保就是填寫手機」「都是以 18 期送件」
+# 18 期月付金表（使用者給的圖）：5萬 3484、6萬 4180、7萬 4877、8萬 5574、9萬 6270、10萬 6967
+_XINGDA_18 = {5: 3484, 6: 4180, 7: 4877, 8: 5574, 9: 6270, 10: 6967}
+_XINGDA_DISTRICTS = {}
+
+
+def _xingda_district(city: str, dist: str) -> str:
+    """區要寫成下拉選單的樣子「812  小港區」（D7 的選單是 INDIRECT(縣市)，選單在範本的工作表3）"""
+    if not _XINGDA_DISTRICTS:
+        try:
+            import openpyxl as _opx
+            ws = _opx.load_workbook(os.path.join(os.path.dirname(os.path.abspath(__file__)), "申請書", "興達申請書.xlsx"),
+                                    read_only=True)["工作表3"]
+            rows = list(ws.iter_rows(values_only=True))
+            for ci, cname in enumerate(rows[0] or ()):
+                if cname:
+                    _XINGDA_DISTRICTS[str(cname)] = [str(r_[ci]) for r_ in rows[1:] if ci < len(r_) and r_[ci]]
+        except Exception as e:
+            print(f"[興達] 讀區的選單失敗：{e}")
+    d = str(dist or "").strip()
+    for x in _XINGDA_DISTRICTS.get(city, []):
+        if d and x.split()[-1] == d:
+            return x
+    return d
+
+
+def _xingda_cells(r: dict) -> dict:
+    def v(k):
+        return str(r.get(k) or "").strip()
+
+    rules = apply_adminb_rules(r)
+    tw = lambda c: c.replace("台", "臺", 1) if c.startswith("台") else c     # 選單用「臺北市／臺中市／臺南市／臺東縣」
+    live_same = v("live_same_as_reg") == "1" or not v("live_city")
+    reg_c, reg_d, reg_a = tw(v("reg_city")), v("reg_district"), v("reg_address")
+    liv_c, liv_d, liv_a = (reg_c, reg_d, reg_a) if live_same else (tw(v("live_city")), v("live_district"), v("live_address"))
+    for pre in (v("reg_city"), reg_c, reg_d):
+        if pre and reg_a.startswith(pre):
+            reg_a = reg_a[len(pre):]
+    area = v("company_phone_area")
+    sal = rules.get("salary_val") or v("company_salary")
+    try:
+        sal_n = float(str(sal).replace("萬", "").replace(",", ""))
+        sal = str(int(sal_n * 10000 if sal_n < 1000 else sal_n))
+    except ValueError:
+        pass
+    cells = {
+        "C4": v("customer_name"), "E4": v("id_no").upper(), "J4": v("birth_date"),
+        "C5": v("id_issue_date"), "E5": v("id_issue_type"), "J5": v("phone"),
+        "C6": v("id_issue_place"), "E6": v("marriage"),
+        "C7": reg_c, "D7": _xingda_district(reg_c, reg_d), "E7": reg_a, "J7": v("reg_phone"),
+        "C8": liv_c, "D8": _xingda_district(liv_c, liv_d), "E8": liv_a, "J8": v("live_phone") or (v("reg_phone") if live_same else ""),
+        "C9": v("company_name_detail") or v("company"),
+        "G9": re.sub(r"\D", "", ("" if area == "mobile" else area) + v("company_phone_num")), "J9": v("company_phone_ext"),
+        "C10": v("company_city") + v("company_district") + v("company_address"), "C11": v("company_role"), "E11": sal,
+        "G11": rules.get("company_years_val") or v("company_years"),
+        "I11": (lambda mm: "" if mm in ("", "0") else mm)(rules["company_months_val"] if "company_months_val" in rules else v("company_months")),
+    }
+    for row, k in ((14, "contact1"), (15, "contact2")):
+        kn = v(k + "_known")
+        cells.update({f"C{row}": v(k + "_name"), f"E{row}": v(k + "_relation"), f"H{row}": v(k + "_phone"),
+                      f"K{row}": "知情" if "知情" in kn else "保密" if "保密" in kn else ""})
+    # 商品：勞保貸填手機、汽機車二胎填行照（使用者原話）；看送件順序排哪個，都沒排就看有沒有行照
+    order = []
+    try:
+        order = [str(x.get("company") if isinstance(x, dict) else x)
+                 for x in (json.loads(r.get("route_plan") or "{}") or {}).get("order", []) or []]
+    except Exception:
+        pass
+    plans = [x for x in [v("current_company")] + order if x.startswith("興達")]
+    lic = _vehicle_license_fields(r, "機車") or _vehicle_license_fields(r, "汽車")
+    phone_plan = (plans[0] == "興達勞保貸") if plans else not lic
+    if phone_plan:
+        prod = " ".join(x for x in (v("adminb_mj_brand") or v("adminb_product_name"), v("adminb_mj_model") or v("adminb_product_model")) if x)
+    else:
+        prod = " ".join(str(lic.get(k) or "") for k in ("廠牌", "車輛型式", "車牌") if lic.get(k))
+    amt = int(re.sub(r"\D", "", v("adminb_xd_amount")) or 10)          # 行政B 沒打 → 10 萬（規則表最高 10 萬、範本也是 10 萬）
+    amt = amt // 10000 if amt >= 1000 else amt
+    pay = _XINGDA_18.get(amt)
+    cells.update({"C35": prod, "D35": str(amt * 10000), "E35": "1", "H35": "18",
+                  "I35": str(pay) if pay else "", "F35": str(pay * 18) if pay else ""})
+    return cells
+
+
+
 _DONGFENG_DEFAULT = ("10", "18", "6868")    # 東豐分期：萬／期數／每期應繳（固定）
 
 
@@ -32061,7 +32158,8 @@ _FORM_SAME_AS = {"亞太汽車25萬": "亞太機車25萬", "亞太老車15萬": 
 # 規則表方案名 → 申請書範本的名字（範本表用的是公司層的名字：第一、分貝機車、21汽車…）
 _PACK_TEMPLATE_ALIAS = {"分貝機車改裝": "分貝機車", "分貝汽車改裝1+1": "分貝汽車", "麻吉U質手機": "麻吉手機",
                         "第一汽車": "第一", "第一信貸": "第一", "21汽車A": "21汽車", "21汽車B": "21汽車", "21汽車C": "21汽車",
-                        "願望小車25萬": "願望機車", "願望工會15萬": "願望機車", "東豐小額信貸": "東豐"}   # 願望兩個方案用同一張「願望機車進件表單」
+                        "願望小車25萬": "願望機車", "願望工會15萬": "願望機車", "東豐小額信貸": "東豐",
+                        "興達汽機車二胎": "興達", "興達勞保貸": "興達"}   # 興達兩個方案同一張表（勞保貸填手機、二胎填行照）   # 願望兩個方案用同一張「願望機車進件表單」
 
 
 def _doc_vehicle_kind(r) -> str:

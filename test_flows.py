@@ -3585,6 +3585,22 @@ for _x in ("和潤/中租", "30/50", "48/60", "12/8", "8490/10510", "36", "3510"
 _g = m._prepaid_debt_groups({"debt_list": _debt_yf})
 check("預付負債分三段：汽車 2、機車 1、其它 2", [len(x) for x in _g] == [2, 1, 2])
 check("預付月付金參考：24 期每萬 489（表上 10 萬 4890、50 萬 24450）", 10 * m._PREPAID_RATE_24 == 4890 and 50 * m._PREPAID_RATE_24 == 24450)
+# 興達（使用者 2026-10-15：「機車汽車就是填寫行照上的，勞保就是填寫手機」「都是以18期送件」＋18 期月付金表）
+check("興達 18 期表：5～10 萬 → 3484／4180／4877／5574／6270／6967",
+      [m._XINGDA_18[k] for k in (5, 6, 7, 8, 9, 10)] == [3484, 4180, 4877, 5574, 6270, 6967])
+check("興達區要寫成選單的樣子（812  小港區）", m._xingda_district("高雄市", "小港區") == "812  小港區", m._xingda_district("高雄市", "小港區"))
+_c = sqlite3.connect(TEST_DB)
+_c.execute("UPDATE customers SET current_company='興達勞保貸', reg_city='台南市', reg_district='東區', id_issue_place='南市', "
+           "id_issue_type='換發', id_issue_date='114/04/30', adminb_xd_amount='', contact1_known='保密', contact2_known='可知情' WHERE case_id='TXT99'")
+_c.commit(); _c.close()
+_wx = _ox99.load_workbook(_io93.BytesIO(m._do_download_excel(None, "TXT99", only_plans=["興達"], raw=True)[0][1]))["工作表1"]
+_gx = lambda c: str(_wx[c].value if _wx[c].value is not None else "")
+for _cell, _want in (("C4", "測試戊"), ("E5", "換發"), ("C6", "南市"), ("C7", "臺南市"), ("D7", "701  東區"),
+                     ("C9", "測試股份有限公司"), ("G9", "031234567"), ("E11", "60000"), ("G11", "3"), ("I11", "10"),   # TXT99 在東豐那段改成 3 年 10 個月
+                     ("C14", "聯絡甲"), ("K14", "保密"), ("K15", "知情"),
+                     ("C35", "HTC手機 HTC Desire 22 Pro"), ("D35", "100000"), ("E35", "1"), ("H35", "18"), ("I35", "6967"), ("F35", "125406")):
+    check(f"興達 {_cell}＝{_want}", _gx(_cell).strip() == _want, _gx(_cell))
+check("送件包：興達兩個方案都用興達那張", m._PACK_TEMPLATE_ALIAS.get("興達勞保貸") == "興達" and m._PACK_TEMPLATE_ALIAS.get("興達汽機車二胎") == "興達")
 check("申請書資料夾不可以有範本（真客人個資）",not any("範本" in f and ("中租" in f or "願望" in f) for f in os.listdir("申請書")))
 
 # ========== 總結 ==========
