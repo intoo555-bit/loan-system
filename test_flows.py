@@ -2635,8 +2635,10 @@ check("不檢查的不會算缺（例：勞保有就給、身分證查詢截圖�
 m.set_setting("vba_secret", m.hash_pw("t16secret"))
 _md = lambda idv: TestClient(m.app).get("/api/customer-status", params={"id_no": idv, "secret": "t16secret"}).json()
 _m16 = _md("G300000001")
-check("missing_docs：勞保超過一週 → code labor_reprint、for 寫簡稱 21機25",
-      any(d["code"] == "labor_reprint" and d["for"] == "21機25" for d in _m16.get("missing_docs") or []), _m16.get("missing_docs"))
+check("missing_docs：勞保超過一週 → code labor_reprint；兩家都缺只列一筆，for 寫兩家（21機25、亞太25）",
+      [d["for"] for d in _m16.get("missing_docs") or [] if d["code"] == "labor_reprint"] == ["21機25、亞太25"], _m16.get("missing_docs"))
+check("missing_docs：下一家才缺的也列（亞太25 要強制險）",
+      any(d["code"] == "compulsory_insurance" and "亞太25" in d["for"] for d in _m16.get("missing_docs") or []), _m16.get("missing_docs"))
 check("missing_docs：浮水印判讀失敗 → 不算缺（不叫客人重拍）",
       not any(d["code"] == "timecam_moto_photo" for d in _m16.get("missing_docs") or []), _m16.get("missing_docs"))
 _c = sqlite3.connect(TEST_DB)
@@ -2661,8 +2663,9 @@ m.check_auth = lambda req: "admin"
 _html = TestClient(m.app).get("/archive/G300000001").text
 # 使用者 2026-10-14：只要說明目前送的那家缺什麼（後面可能不會送到），不要拉太長
 # 使用者 2026-10-15：「裕融信福貸 → 信福貸不用打」→ 寫群組那種簡稱（21機車25萬 → 21機25）
-check("證件頁只寫目前送的那家缺什麼（寫簡稱 21機25），不列後面幾家",
-      "目前送 <b>21機25</b>" in _html and "亞太機車25萬" not in _html.split("目前送")[1][:300] and "每一家缺什麼" not in _html)
+# 使用者 2026-10-15：「先把兩家缺的用上去，第一家送的時候就知道第二家缺什麼」→ 目前送＋下一家，只到兩家
+check("證件頁寫目前送的那家（簡稱 21機25）＋下一家（亞太25）缺什麼，不列整串",
+      "目前送 <b>21機25</b>" in _html and "下一家 <b>亞太25</b>" in _html and "每一家缺什麼" not in _html, _html.split("目前送")[1][:600])
 check("缺件一行寫完（勞保要重拉、時間相機）", "要重拉" in _html.split("目前送")[1][:400], _html.split("目前送")[1][:400])
 _dd = {d["id"]: d for d in TestClient(m.app).get("/archive/G300000001/data").json()["documents"]}
 _lab = [d for d in _dd.values() if d["category"] == "勞保明細"][0]

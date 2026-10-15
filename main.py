@@ -23924,7 +23924,7 @@ _MISSING_DOC_CODES = [   # (要的文件裡有這些字, code)；照順序比，
 
 
 def _missing_docs_for_api(cust):
-    """目前送的那一家（沒排就系統建議第一家）還缺什麼 → [{"code","label","for"}]；還沒判回 None"""
+    """目前送的那家＋下一家（見 _docs_check_companies）還缺什麼 → [{"code","label","for"}]；還沒判回 None"""
     try:
         if not cust or cust.get("status") != "ACTIVE":
             return None
@@ -23932,18 +23932,26 @@ def _missing_docs_for_api(cust):
         rows = _docs_rows(idv) if idv else []
         if not rows:
             return None                     # 證件還沒拉進行政存檔 → 不知道客人傳了什麼，不能說缺
-        co = _docs_current_company(cust)
-        plan = _plan_for_company(co) if co else None
-        if not plan:
+        cos = _docs_check_companies(cust)
+        plans = [p for p in (_plan_for_company(c) for c in cos) if p]
+        if not cos or not _plan_for_company(cos[0]):
             return None
-        out = []
-        for req, st, note in docs_missing_for_plan(rows, _docs_for_customer(plan.get("required_docs"), cust)):
-            if st != "missing":
-                continue
-            code = "labor_reprint" if "重拉" in note else next(
-                (c for keys, c in _MISSING_DOC_CODES if any(k in req for k in keys)), "other")
-            out.append({"code": code, "label": req.split("（")[0].split("｜")[0] + (f"（{note}）" if note else ""),
-                        "for": _plan_short(plan["company"], plan.get("max_amount")) or plan["company"]})
+        out, by_code = [], {}
+        for plan in plans:                  # 目前送的＋下一家（2026-10-15）；同一個 code 兩家都缺 → 一筆，for 寫兩家
+            short = _plan_short(plan["company"], plan.get("max_amount")) or plan["company"]
+            for req, st, note in docs_missing_for_plan(rows, _docs_for_customer(plan.get("required_docs"), cust)):
+                if st != "missing":
+                    continue
+                code = "labor_reprint" if "重拉" in note else next(
+                    (c for keys, c in _MISSING_DOC_CODES if any(k in req for k in keys)), "other")
+                label = req.split("（")[0].split("｜")[0] + (f"（{note}）" if note else "")
+                key = code if code != "other" else "other:" + label
+                if key in by_code:
+                    if short not in by_code[key]["for"].split("、"):
+                        by_code[key]["for"] += "、" + short
+                    continue
+                by_code[key] = {"code": code, "label": label, "for": short}
+                out.append(by_code[key])
         return out
     except Exception as e:
         print(f"[customer-status] missing_docs 失敗：{e}")
@@ -30499,6 +30507,29 @@ def _docs_current_company(cust) -> str:
     return co
 
 
+def _docs_check_companies(cust) -> list:
+    """要列缺件的公司：目前送的那家＋下一家（使用者 2026-10-15：「先把兩家缺的用上去，第一家送的時候就知道第二家缺什麼」）。
+    下一家：送件順序目前那格的下一格；群組還沒排就用建議順序第二家。⛔ 只到兩家（10/14：後面可能不會送到，不要拉太長）"""
+    first = _docs_current_company(cust)
+    if not first:
+        return []
+    nxt = ""
+    try:
+        rp = json.loads(cust.get("route_plan") or "{}") or {}
+        order = [str(x.get("company") if isinstance(x, dict) else x) for x in rp.get("order", []) or []]
+        if order:
+            i = int(rp.get("current_index") or 0)
+            if first in order:
+                i = order.index(first)
+            nxt = order[i + 1] if i + 1 < len(order) else ""
+        else:
+            sug = [x["company"] for x in evaluate_case(cust).get("suggested_order", [])]
+            nxt = sug[1] if len(sug) > 1 and sug[0] == first else ""
+    except Exception:
+        nxt = ""
+    return [first] + ([nxt] if nxt and nxt != first else [])
+
+
 def _route_order_text(cust) -> str:
     """送件順序寫成群組那一行的樣子（例：10/14-宋薏文-和裕/喬美/21/貸10/分貝商/C/商/南亞/當）。
     使用者 2026-10-14：「順序部分就跟群組一樣這樣出現」。
@@ -30544,7 +30575,8 @@ def _route_order_text(cust) -> str:
 def _docs_missing_html(cust, rows) -> str:
     """證件頁一行：目前送的那家還缺什麼。
     使用者 2026-10-14：「不用打那麼清楚，會拉太長；只要說明客戶目前缺什麼 —— 一家一家往下送，
-    核准了後面可能不會送、客戶中途不要結案也不會到後面」→ ⛔ 只看目前這一家，不列後面幾家
+    核准了後面可能不會送、客戶中途不要結案也不會到後面」→ ⛔ 不列整串
+    2026-10-15 改：目前送的＋下一家（「第一家送的時候就知道第二家缺什麼」），見 _docs_check_companies
     ＋ 最上面一行送件順序（跟群組一樣的寫法，見 _route_order_text）"""
     if not cust:
         return ""
@@ -30580,13 +30612,24 @@ def _docs_missing_html(cust, rows) -> str:
 
 
 def _docs_missing_line(cust, rows) -> str:
-    co = _docs_current_company(cust)
+    cos = _docs_check_companies(cust)
+    if not cos:
+        miss = _order_missing_info(cust)
+        return (f'<div class="ms-line">📦 還沒排送件順序：<span class="ms-check">資料表還缺 {h("、".join(miss))}</span></div>'
+                if miss else "")
+    out = _docs_missing_line_one(cust, rows, cos[0])
+    if len(cos) > 1:
+        out += _docs_missing_line_one(cust, rows, cos[1], "下一家")
+    return out
+
+
+def _docs_missing_line_one(cust, rows, co, lb=None) -> str:
     if not co:
         miss = _order_missing_info(cust)
         return (f'<div class="ms-line">📦 還沒排送件順序：<span class="ms-check">資料表還缺 {h("、".join(miss))}</span></div>'
                 if miss else "")
     # 群組還沒排、這家只是系統建議的第一家 → 寫「建議先送」，不要寫成「目前送」
-    lb = "目前送" if ((cust.get("current_company") or "").strip() or get_current_company(cust.get("route_plan") or "")) else "建議先送"
+    lb = lb or ("目前送" if ((cust.get("current_company") or "").strip() or get_current_company(cust.get("route_plan") or "")) else "建議先送")
     plan = _plan_for_company(co)
     if not plan:
         return (f'<div class="ms-line">📦 {lb} <b>{h(co)}</b>：<span class="ms-na">規則表沒有這家，沒辦法檢查缺件</span></div>')
