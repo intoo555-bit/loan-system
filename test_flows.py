@@ -2637,8 +2637,10 @@ _md = lambda idv: TestClient(m.app).get("/api/customer-status", params={"id_no":
 _m16 = _md("G300000001")
 check("missing_docs：勞保超過一週 → code labor_reprint；兩家都缺只列一筆，for 寫兩家（21機25、亞太25）",
       [d["for"] for d in _m16.get("missing_docs") or [] if d["code"] == "labor_reprint"] == ["21機25、亞太25"], _m16.get("missing_docs"))
-check("missing_docs：下一家才缺的也列（亞太25 要強制險）",
-      any(d["code"] == "compulsory_insurance" and "亞太25" in d["for"] for d in _m16.get("missing_docs") or []), _m16.get("missing_docs"))
+# 使用者 2026-10-15：「強制險不用跟客戶說，行政要自己查的不用送過去」→ 證件頁照列，給業務 AI 的拿掉
+check("missing_docs：強制險是行政自己查的 → 不回給業務 AI",
+      not any("強制險" in d["label"] for d in _m16.get("missing_docs") or []), _m16.get("missing_docs"))
+check("證件頁：強制險照樣列（提醒行政自己查）", "強制險" in TestClient(m.app).get("/archive/G300000001").text.split("目前送")[1][:800])
 check("missing_docs：浮水印判讀失敗 → 不算缺（不叫客人重拍）",
       not any(d["code"] == "timecam_moto_photo" for d in _m16.get("missing_docs") or []), _m16.get("missing_docs"))
 _c = sqlite3.connect(TEST_DB)

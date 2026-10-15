@@ -23914,13 +23914,17 @@ _MISSING_DOC_CODES = [   # (要的文件裡有這些字, code)；照順序比，
     (("存封", "存摺封面"), "passbook_cover"),
     (("勞保", "401", "權狀", "薪轉/勞保"), "labor"),
     (("行照",), "vehicle_license"),
-    (("強制險",), "compulsory_insurance"),
     (("四面照片",), "vehicle_photos"),
     (("信用報告", "聯徵", "收據 或 聯徵"), "credit_report"),
     (("存摺明細", "薪轉", "存摺內頁"), "passbook_detail"),
     (("手機型號", "IMEI", "imei", "手機資料"), "phone_info"),
     (("繳息", "繳款收據", "核准函", "撥款存摺紀錄"), "loan_proof"),
 ]
+
+
+# 行政自己查的，不叫客人補 → 不回給業務 AI（使用者 2026-10-15：「強制險不用跟客戶說，行政要自己查的不用送過去」）
+#   ⛔ 證件頁照樣列（提醒行政自己去查），只有給業務 AI 的這份拿掉
+_MISSING_DOC_ADMIN_SELF = ("強制險",)
 
 
 def _missing_docs_for_api(cust):
@@ -23940,7 +23944,7 @@ def _missing_docs_for_api(cust):
         for plan in plans:                  # 目前送的＋下一家（2026-10-15）；同一個 code 兩家都缺 → 一筆，for 寫兩家
             short = _plan_short(plan["company"], plan.get("max_amount")) or plan["company"]
             for req, st, note in docs_missing_for_plan(rows, _docs_for_customer(plan.get("required_docs"), cust)):
-                if st != "missing":
+                if st != "missing" or any(k in req for k in _MISSING_DOC_ADMIN_SELF):
                     continue
                 code = "labor_reprint" if "重拉" in note else next(
                     (c for keys, c in _MISSING_DOC_CODES if any(k in req for k in keys)), "other")
