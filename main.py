@@ -19879,10 +19879,11 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
         <div style="font-size:12px;font-weight:700;color:#0f766e;margin-bottom:4px;">新鑫（房地）：一律 120 期、14.5%、用途投資理財、專案一般</div>
         <div style="font-size:11px;color:#475569;margin-bottom:6px;">二胎處理（不用還原本的貸款）：先估價，估價說能貸多少就打多少，最高 300 萬；期付款照 120 期試算表 14.5% 自動帶。不動產那幾格看權狀／謄本（每個人都不一樣，不預設）；格子裡灰色的字＝從權狀讀到的，空著下載就用它</div>
         {_xinxin_amount_note(xx_ov.get("amount", ""))}
+        {'<div style="font-size:12px;color:#b45309;font-weight:700;margin-bottom:8px;">⚠️ 權狀讀兩次結果不一樣，沒有自動帶，請看權狀自己打</div>' if (_customer_doc_judge(customer, "fields:權狀") or {}).get("不一致") else ""}
         <div class="ab-g3" style="margin-bottom:8px;">
           {"".join(f'<div><div class="ab-lbl">{lbl}</div><input name="xx_{k}" class="ab-inp" placeholder="{h(ph)}" value="{h(xx_ov.get(k, ""))}"></div>' for k, lbl, ph in [
-            ("amount", "估價後可貸金額（萬，最高 300）", "300"), ("area", "不動產 鄉鎮市區", xx_auto.get("area", "")), ("section", "段", "福安"),
-            ("land_no", "地號", "1208-0014"), ("build_no", "建號", "00200-000"), ("mortgage", "已抵押設定金額（萬）", ""),
+            ("amount", "估價後可貸金額（萬，最高 300）", ""), ("area", "不動產 鄉鎮市區", xx_auto.get("area", "")), ("section", "段", xx_auto.get("section", "")),
+            ("land_no", "地號", xx_auto.get("land_no", "")), ("build_no", "建號", xx_auto.get("build_no", "")), ("mortgage", "已抵押設定金額（萬）", xx_auto.get("mortgage", "")),
             ("door", "門牌", xx_auto.get("door", "")), ("owner", "所有權人", xx_auto.get("owner", "")), ("owner_id", "所有權人身分證", xx_auto.get("owner_id", ""))])}
         </div>
         <a href="/adminb/download-xinxin?case_id={h(case_id)}" style="display:inline-block;padding:6px 14px;background:#0f766e;color:#fff;border-radius:6px;font-size:13px;font-weight:700;text-decoration:none;">📄 新鑫申請書 PDF</a>
@@ -26659,6 +26660,12 @@ _XINXIN_MAX = 300   # 萬（使用者：「最高只能借 300」）
 _XINXIN_KEYS = ("amount", "area", "section", "land_no", "build_no", "mortgage", "door", "owner", "owner_id")
 
 
+def _xinxin_section(x: str) -> str:
+    """「福安段」→「福安」（申請書格子後面印好「段」字）；有小段的「福安段一小段」整串留著（拿掉尾巴會變「福安段一小」）"""
+    x = (x or "").strip()
+    return x if x.endswith("小段") else re.sub(r"段$", "", x)
+
+
 def _xinxin_values(r) -> dict:
     """新鑫不動產那幾格＋金額：行政B 打的優先；沒打的 → 業務 AI 讀權狀／謄本讀到的；都沒有就空著。
     ⛔ 不預設「門牌＝戶籍地址、所有權人＝本人」（使用者 2026-10-15：「每個人都不一樣」——房子不一定是住的那間、
@@ -26668,7 +26675,9 @@ def _xinxin_values(r) -> dict:
     except Exception:
         ov = {}
     ov = {k: str(ov.get(k) or "").strip() for k in _XINXIN_KEYS}
-    f_ = (_customer_doc_judge(r, "fields:權狀") or {}).get("欄位") or {}
+    j_ = _customer_doc_judge(r, "fields:權狀") or {}
+    # 交接第 23 段：權狀讀兩次比對，兩次不一樣回「不一致」→ 整份不帶（地號讀錯一碼就是另一塊地，空著讓行政看權狀打）
+    f_ = {} if j_.get("不一致") else (j_.get("欄位") or {})
 
     def g(*keys):
         for k in keys:
@@ -26676,7 +26685,7 @@ def _xinxin_values(r) -> dict:
             if x:
                 return x
         return ""
-    auto = {"amount": "", "area": re.sub(r"[區鄉鎮市]$", "", g("鄉鎮市區")), "section": re.sub(r"段$", "", g("段", "地段")),
+    auto = {"amount": "", "area": re.sub(r"[區鄉鎮市]$", "", g("鄉鎮市區")), "section": _xinxin_section(g("段", "地段")),
             "land_no": g("地號"), "build_no": g("建號"), "mortgage": g("他項權利設定金額", "設定金額"),
             "door": g("建物門牌", "門牌"), "owner": g("所有權人"), "owner_id": g("所有權人身分證", "統一編號").upper()}
     return {k: ov[k] or auto[k] for k in _XINXIN_KEYS}

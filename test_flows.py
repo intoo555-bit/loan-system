@@ -3642,6 +3642,13 @@ m._customer_doc_judge = _dj21
 check("新鑫：權狀讀到的自動帶（大甲、福安、地號、建號、門牌、所有權人）",
       (_xv21["area"], _xv21["section"], _xv21["land_no"], _xv21["build_no"], _xv21["owner"], _xv21["owner_id"])
       == ("大甲", "福安", "1208-0014", "00200-000", "測試乙", "A100000002"), _xv21)
+# 交接第 23 段：有小段不能砍成「福安段一小」；讀兩次不一致整份不帶
+check("新鑫：段 有小段整串留、沒小段拿掉「段」", (m._xinxin_section("福安段一小段"), m._xinxin_section("福安段")) == ("福安段一小段", "福安"))
+m._customer_doc_judge = lambda c, k: ({"不一致": True, "欄位": {"地號": "1208-0014", "所有權人": "測試乙"}}
+                                     if k == "fields:權狀" else _dj21(c, k))
+_xv23 = m._xinxin_values(dict(_xr, adminb_xinxin="{}"))
+m._customer_doc_judge = _dj21
+check("新鑫：權狀讀兩次不一致 → 不帶（空著讓行政打）", _xv23["land_no"] == "" and _xv23["owner"] == "", _xv23)
 check("新鑫：行政打的優先（門牌）", m._xinxin_values(dict(_xr, adminb_xinxin=json.dumps({"door": "打的門牌"})))["door"] == "打的門牌")
 check("送件包：興達兩個方案都用興達那張",m._PACK_TEMPLATE_ALIAS.get("興達勞保貸") == "興達" and m._PACK_TEMPLATE_ALIAS.get("興達汽機車二胎") == "興達")
 check("申請書資料夾不可以有範本（真客人個資）",not any("範本" in f and ("中租" in f or "願望" in f) for f in os.listdir("申請書")))
