@@ -3269,7 +3269,9 @@ check("適用專案：沒排裕融、符合 3 條 → 新優加", m._yulon_value
 m._yulon_conditions = lambda c: ["a"]
 check("適用專案：符合 1 條 → 福克來", m._yulon_values({"debt_list": _car96("23.1")})["plan"] == "裕融福克來")
 m._yulon_conditions = _cc96
-check("行政改過的格子優先", m._yulon_values({"debt_list": _car96("23.1"), "adminb_yulon": json.dumps({"amount": "25", "plan": "裕融優質"})})["amount"] == "25")
+_yv96 = m._yulon_values({"debt_list": _car96("23.1"), "adminb_yulon": json.dumps({"plan": "裕融優質", "periods": "60"})})
+check("裕融：行政把期數改 60 → 期付款照基數表重算（30萬 × 242）", _yv96["periods"] == "60" and _yv96["payment"] == str(30 * 242), _yv96)
+check("行政改過的格子優先",m._yulon_values({"debt_list": _car96("23.1"), "adminb_yulon": json.dumps({"amount": "25", "plan": "裕融優質"})})["amount"] == "25")
 # PDF：他行代償 → 舊案新案有寫、130%；換發；電子簽名
 import base64 as _b64_96
 _sig96 = "data:image/png;base64," + _b64_96.b64encode(bytes.fromhex(

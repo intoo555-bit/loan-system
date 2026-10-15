@@ -25554,6 +25554,15 @@ def _yulon_values(r, route_plan: str = "", ov=None) -> dict:
     for k in ("amount", "periods", "payment", "paid", "settle", "fund", "ratio"):
         if ov.get(k):
             out[k] = ov[k]
+    # 行政改了金額或期數、沒改期付款 → 期付款照基數表重算（同和潤，使用者 2026-10-15：「裕融也這樣」）
+    if (ov.get("amount") or ov.get("periods")) and not ov.get("payment"):
+        try:
+            a_ = int(float(re.sub(r"[^\d.]", "", out["amount"])))
+            n_ = int(re.sub(r"[^\d]", "", out["periods"]))
+            tbl = _YULON_RATE_XYJ_NOLOAN if ("新優加" in plan and biz == "原車") else _YULON_RATE
+            out["payment"] = f"{a_ * tbl[n_]}" if n_ in tbl else ""
+        except (ValueError, TypeError):
+            pass
     return out
 
 
