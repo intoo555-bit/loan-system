@@ -4025,6 +4025,7 @@ def evaluate_case(customer):
                                      else "💰 沒有勞保＋兩張信用卡 → 最高 10 萬"), "actual": f"{_max} 萬"})
         results.append({
             "company": plan["company"],
+            "family": _plan_family(plan["company"]),   # 同一家（網頁對照規則表照這個分組，⛔ 網頁不可以自己再判斷一份）
             "max_amount": _max,
             "amount_by_review": plan.get("amount_by_review", False),  # True＝max_amount 只是排序用、畫面不顯示金額
             # 沒有固定上限的方案：畫面寫這段（看天書／看鑑價／月薪 22 倍內／看客戶申請多少），⛔ 不寫「最高 X 萬」
@@ -4117,12 +4118,32 @@ def _suggest_rank(company):
         if company.startswith(prefix) and (best is None or len(prefix) > len(best[0])):
             best = (prefix, rank, note)
     if not best:
-        return _SUGGEST_RANK_DEFAULT, company, ""
+        return _SUGGEST_RANK_DEFAULT, _family_fix(company, company), ""
     prefix, rank, note = best
     # 家族＝同一家公司：21汽車／21機車25萬／21商品 都算 21 → 只排金額最高那個
     # （使用者 2026-10-14：「同一間的要挑最高的送件」，21汽車 也一樣；原本 21汽車 另算一家）
     fam = "21" if prefix in ("21機車25萬", "21汽車") else prefix
-    return rank, fam, note
+    return rank, _family_fix(company, fam), note
+
+
+# 同一家公司的不同方案 → 同一個家族（⭐ 唯一一份：排順序「同一家只送金額高的」和行政B「對照規則表」分組都用這個）
+#   2026-10-15 使用者：「同一家的對照規則表要擺在一起，願望你分開擺了」—— 病根是網頁另外寫死一份家族清單（漏了願望），
+#   後端這份又漏了興達／融易／預付（被當成不同家）→ 兩份各錯各的。現在網頁直接用這裡回的 family，不再自己判斷
+_FAMILY_PREPAID = ("手機原融", "機車原融", "汽機車二胎", "手機無卡分期")   # 預付資融：同一家、4 種專案（手機分期是另一家）
+
+
+def _family_fix(company: str, fam: str) -> str:
+    co = str(company or "")
+    if co in _FAMILY_PREPAID:
+        return "預付資融"
+    for p in ("興達", "融易"):
+        if co.startswith(p):
+            return p
+    return fam
+
+
+def _plan_family(company: str) -> str:
+    return _suggest_rank(company)[1]
 
 
 # 建議順序用業務在群組的寫法（使用者 2026-10-14：「順序打法跟群組一樣，不用全部名稱」）
@@ -20049,16 +20070,12 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
     window.addEventListener('DOMContentLoaded', ylInit);
 
     // 對照規則表（adminB 版、摘要+折疊細節）
-    function getCompanyFamily(company) {{
-      var prefixes = ['亞太','21','第一','麻吉','和裕','和潤','興達','融易','裕融','分貝'];
-      for (var i = 0; i < prefixes.length; i++) {{
-        if (company.indexOf(prefixes[i]) === 0) return prefixes[i];
-      }}
-      // 預付資融 = 手機原融 / 機車原融 / 汽機車二胎 / 手機無卡分期（同一家、4 種專案）
-      if (['手機原融','機車原融','汽機車二胎','手機無卡分期'].indexOf(company) >= 0) return '預付資融';
-      // 手機分期 是獨立公司、不歸預付資融
-      if (['零卡(C)','商品貸','代書','當舖','南亞'].indexOf(company) >= 0) return '民間';
-      return company;
+    function getCompanyFamily(r) {{
+      // ⛔ 同一家用後端回的 r.family（main.py _plan_family，唯一一份）；這裡不再寫死前綴清單
+      //   （2026-10-15：這裡原本自己一份、漏了願望 → 願望兩個方案被拆開擺）
+      // 民間那幾家不是同一間公司，只是畫面上擺一起（排順序時各算各的，代書當舖二選一）
+      if (['零卡(C)','商品貸','代書','當舖','南亞'].indexOf(r.company) >= 0) return '民間';
+      return r.family || r.company;
     }}
     function _planRowHtml(r) {{
       // 單一方案的折疊行
@@ -20067,7 +20084,7 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
       // 同一家只送金額高的那個：其他可送的灰掉（使用者 2026-10-14）
       var notPick = (r.eligible === true || r.eligible === 'manual') && r.family_pick === false;
       if (notPick) {{ icon = '➖'; bgColor = '#f3f4f6'; }}
-      var fam = getCompanyFamily(r.company);
+      var fam = getCompanyFamily(r);
       var isCarOrBike = (fam === '21汽車' || fam === '裕融' || fam === '和潤' || r.company === '和潤汽車' || r.company === '和潤重機' || r.company.indexOf('21汽車') === 0);
       var detail = '';
       // 汽車/重機特別註記
@@ -20166,7 +20183,7 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
             var sendGrouped = {{}};
             var sendFamOrder = [];
             canSend.forEach(function(r) {{
-              var fam = getCompanyFamily(r.company);
+              var fam = getCompanyFamily(r);
               if (!sendGrouped[fam]) {{
                 sendGrouped[fam] = [];
                 sendFamOrder.push(fam);
@@ -20223,7 +20240,7 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
           var grouped = {{}};
           var familyOrder = [];
           results.forEach(function(r) {{
-            var fam = getCompanyFamily(r.company);
+            var fam = getCompanyFamily(r);
             if (!grouped[fam]) {{
               grouped[fam] = [];
               familyOrder.push(fam);

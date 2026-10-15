@@ -3554,6 +3554,16 @@ _t21 = (m._do_download_excel(None, "TXT99", only_plans=["21汽車"], raw=True) o
 check("21汽車填寫表：行政沒打 → 專案名稱、金額／期數／月付金照系統算",
       "專案名稱：特優專案" in _t21 and f"貸款金額.期數.月付金：50萬/60/{50 * 294}" in _t21, _t21[:200])
 m._car21_conditions, m._customer_car_ages = _cc21, _ca21
+# 使用者 2026-10-15：「同一家的對照規則表要擺在一起，願望你分開擺了」→ 家族只有一份（_plan_family），網頁照後端回的分組
+for _fam, _cos in (("願望", ("願望小車25萬", "願望工會15萬")), ("興達", ("興達汽機車二胎", "興達勞保貸")),
+                   ("融易", ("融易頭家貸", "融易BOSS微企貸", "融易機車資優專案", "融易機車專案")),
+                   ("預付資融", ("手機原融", "機車原融", "汽機車二胎", "手機無卡分期")),
+                   ("裕融", ("裕融新優加", "裕融信福貸")), ("21", ("21商品", "21汽車A")), ("和潤", ("和潤汽車", "和潤重機"))):
+    check(f"同一家：{'、'.join(_cos)} → {_fam}", {m._plan_family(c) for c in _cos} == {_fam}, [m._plan_family(c) for c in _cos])
+check("手機分期是另一家（不歸預付）", m._plan_family("手機分期") != "預付資融")
+check("每一家都有 family 而且是後端算的（網頁不再自己寫死前綴清單）",
+      all(x.get("family") for x in m.evaluate_case(get_cust("A100000099") or {}).get("results", []) or [{"family": "x"}])
+      and "var prefixes = ['亞太'" not in open("main.py", encoding="utf-8").read())
 check("申請書資料夾不可以有範本（真客人個資）",not any("範本" in f and ("中租" in f or "願望" in f) for f in os.listdir("申請書")))
 
 # ========== 總結 ==========
