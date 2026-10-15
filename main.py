@@ -1677,10 +1677,9 @@ PLAN_ELIGIBILITY_RULES = [
     },
     # ===== 21汽車系列（二十一世紀數位車貸 A/B/C 專案）=====
     # 紅線：警示戶不做、車輛不在天書/權威不做、車價 ≤ 10 萬不做
-    # A 專案（200 萬）需符合 14 項中的 2 項
-    # B 專案（100 萬）需符合 14 項中的 1 項（12/13/14 不適用）
-    # C 專案（50 萬）沒有符合也可送
-    # 項目共 14 項、絕大多數系統無法自動判別、列為 manual
+    # A＝特優（30～200 萬）項目表符合 2 項；B＝優質（10～100 萬）符合 1 項；C＝一般（10～50 萬）無限制
+    #   使用者 2026-10-15 給新版項目表（13 項），系統看得出來的自動判（_car21_conditions），其餘人工
+    # 金額＝天書／權威 100%（使用者：「都要以天書或權威價格100%」），基數表見 _CAR21_RATE
     {
         "company": "21汽車A",
         "max_amount": 200,
@@ -1698,13 +1697,14 @@ PLAN_ELIGIBILITY_RULES = [
             {"type": "manual", "label": "車輛持有滿半年 或 新車一手車主、親屬過戶件可送"},
             {"type": "info", "label": "✅ 接受三種情境：原車（原融）、他行代償、借新還舊",
              "hint": "前貸不限公司、原車無貸款也可、同公司再貸也可"},
-            {"type": "manual", "label": "需符合下列 14 項中『至少 2 項』（A 專案）",
-             "hint": "1.現職滿 9 月  2.不動產（RE 不可持分）  3.公司設立 9 月+  4.申貸成數 ≤ 70%  "
-                     "5.廿一既有客戶繳 6 期+無逾期  6.近 15 天聯徵正常（不可小白）  "
-                     "7.醫師/會計師/律師/建築師  8.保人三等親+正職  9.軍公教/國營/上市櫃  "
-                     "10.甲乙丙丁技術士證照  11.儲蓄/壽/醫療險滿 3 月  "
-                     "12.車齡 7 年內  13.持車滿 2 年無貸 + 車齡 10 年內  "
-                     "14.持有 TOYOTA/NISSAN/中華/福特/HONDA/BMW/BENZ/VOLVO/LEXUS/AUDI/HYUNDAI 滿 6 月+車齡 5 年內"},
+            # 使用者 2026-10-15：專案別看項目表 —— 符合 2 項特優、1 項優質、沒有一般（_car21_conditions 自動判）
+            {"type": "manual", "label": "21汽車項目表需符合 2 項以上（特優）",
+             "hint": "1.現職滿 9 個月  2.不動產（RE 不可持分）  3.自營商設立滿 9 個月  4.車貸成數 ≤ 70%  "
+                     "5.廿一集團既有客戶繳 6 期+無逾期  6.近 30 天聯徵（要有 Z05、不可小白）  "
+                     "7.保人二等親有正職  8.軍公教／國營／上市櫃正職  9.同業汽車既有客戶滿 12 期無逾期  "
+                     "10.甲乙丙丁技術士證照  11.儲蓄／壽／醫療險滿 3 個月  12.車齡 8 年內（一般專案不適用）  "
+                     "13.持卡滿 2 年、近 1 年無遲繳"},
+            {"type": "info", "label": "💡 特優：30～200 萬、18～84 期、車齡＋貸款年限 20 年內"},
         ],
         "required_docs": ["記事本申請表", "身分證正反", "第二證件（健保卡/駕照）", "存摺封面", "勞保（一週內）", "汽車行照", "汽車截圖", "天書截圖", "加分項目（信用卡、證照、公司上市櫃截圖）"],
     },
@@ -1725,11 +1725,13 @@ PLAN_ELIGIBILITY_RULES = [
             {"type": "manual", "label": "車輛持有滿半年 或 新車一手車主、親屬過戶件可送"},
             {"type": "info", "label": "✅ 接受三種情境：原車（原融）、他行代償、借新還舊",
              "hint": "前貸不限公司、原車無貸款也可、同公司再貸也可"},
-            {"type": "manual", "label": "需符合下列 11 項中『至少 1 項』（B 專案、不含車輛條件 12/13/14）",
-             "hint": "1.現職滿 9 月  2.不動產  3.公司設立 9 月+  4.申貸成數 ≤ 70%  "
-                     "5.廿一既有客戶繳 6 期+無逾期  6.近 15 天聯徵正常  "
-                     "7.醫師/會計師/律師/建築師  8.保人三等親+正職  9.軍公教/國營/上市櫃  "
-                     "10.專業證照  11.儲蓄/壽/醫療險滿 3 月（B 專案不看車輛條件）"},
+            {"type": "manual", "label": "21汽車項目表需符合 1 項以上（優質）",
+             "hint": "1.現職滿 9 個月  2.不動產（RE 不可持分）  3.自營商設立滿 9 個月  4.車貸成數 ≤ 70%  "
+                     "5.廿一集團既有客戶繳 6 期+無逾期  6.近 30 天聯徵（要有 Z05、不可小白）  "
+                     "7.保人二等親有正職  8.軍公教／國營／上市櫃正職  9.同業汽車既有客戶滿 12 期無逾期  "
+                     "10.甲乙丙丁技術士證照  11.儲蓄／壽／醫療險滿 3 個月  12.車齡 8 年內（一般專案不適用）  "
+                     "13.持卡滿 2 年、近 1 年無遲繳"},
+            {"type": "info", "label": "💡 優質：10～100 萬、18～84 期、車齡＋貸款年限 20 年內"},
         ],
         "required_docs": ["記事本申請表", "身分證正反", "第二證件（健保卡/駕照）", "存摺封面", "勞保（一週內）", "汽車行照", "汽車截圖", "天書截圖", "加分項目（信用卡、證照、公司上市櫃截圖）"],
     },
@@ -1750,7 +1752,7 @@ PLAN_ELIGIBILITY_RULES = [
             {"type": "manual", "label": "車輛持有滿半年 或 新車一手車主、親屬過戶件可送"},
             {"type": "info", "label": "✅ 接受三種情境：原車（原融）、他行代償、借新還舊",
              "hint": "前貸不限公司、原車無貸款也可、同公司再貸也可"},
-            {"type": "info", "label": "💡 C 專案：14 項都不符合也可送（基本款、最高 50 萬）"},
+            {"type": "info", "label": "💡 一般：項目表都不符合也可送；10～50 萬、18～60 期、車齡＋貸款年限 18 年內"},
         ],
         "required_docs": ["記事本申請表", "身分證正反", "第二證件（健保卡/駕照）", "存摺封面", "勞保（一週內）", "汽車行照", "汽車截圖", "天書截圖", "加分項目（信用卡、證照、公司上市櫃截圖）"],
     },
@@ -3231,6 +3233,14 @@ def _auto_manual(label, customer):
             return ("pass", label, f"符合 {len(hit)} 項：" + "、".join(hit))
         return ("manual", label, (f"資料看得出符合 {len(hit)} 項：" + "、".join(hit) if hit else "資料看不出符合哪項")
                 + f"；還差 {need - len(hit)} 項（成數、保人、存款、PDC 這些要人工看）")
+    # 21汽車項目表「需符合 N 項以上」
+    m_ = re.match(r"21汽車項目表需符合\s*(\d+)\s*項以上", label.strip())
+    if m_:
+        need, hit = int(m_.group(1)), _car21_conditions(c)
+        if len(hit) >= need:
+            return ("pass", label, f"符合 {len(hit)} 項：" + "、".join(hit))
+        return ("manual", label, (f"資料看得出符合 {len(hit)} 項：" + "、".join(hit) if hit else "資料看不出符合哪項")
+                + f"；還差 {need - len(hit)} 項（保人、保險、自營、成數這些要人工看）")
     # 汽車有沒有在天書／權威：行政查的車價（見 _customer_car_book）
     if "天書" in label and "權威" in label:
         price, nf = _customer_car_book(c)
@@ -19814,7 +19824,8 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
         </div>
       </div>
       <div class="ab-block" data-plans="21汽車" style="background:#fef2f2;">
-        <div style="font-size:12px;font-weight:700;color:#991b1b;margin-bottom:10px;">21汽車（利率固定 16%）</div>
+        <div style="font-size:12px;font-weight:700;color:#991b1b;margin-bottom:6px;">21汽車（利率固定 16%）</div>
+        {_car21_hint_html(customer)}
         <div class="ab-g2">
           <div><div class="ab-lbl">專案名稱</div><input name="car_proj" class="ab-inp" value="{h(customer.get('adminb_21car_project','') or '')}"></div>
           <div><div class="ab-lbl">車價（實際售價＝參考車價金額共用）</div><input name="car_price" class="ab-inp" value="{h(customer.get('adminb_21car_price','') or '')}"></div>
@@ -19827,7 +19838,7 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
         </div>
       </div>
       <div class="ab-block" data-plans="東豐" style="background:#ecfdf5;">
-        <div style="font-size:12px;font-weight:700;color:#047857;margin-bottom:6px;">東豐（分期金額，印在申請書；分期總金額會自動算）</div>
+        <div style="font-size:12px;font-weight:700;color:#047857;margin-bottom:6px;">東豐（固定 10 萬／18 期／每期 6868，格子空著就用這組；特例才打）</div>
         <div class="ab-g3" style="margin-bottom:6px;">
           <div><div class="ab-lbl">分期金額（萬）</div><input name="dz_amount" class="ab-inp" placeholder="10" value="{h(customer.get('adminb_dz_amount','') or '')}"></div>
           <div><div class="ab-lbl">期數</div><input name="dz_period" class="ab-inp" placeholder="18" value="{h(customer.get('adminb_dz_period','') or '')}"></div>
@@ -25553,6 +25564,110 @@ _YULON_RATE = {36: 351, 48: 283, 60: 242, 72: 216}
 _YULON_RATE_XYJ_NOLOAN = {36: 350, 48: 281, 60: 241, 72: 215}
 
 
+# ===== 21汽車：專案別、金額、期數、月付金（使用者 2026-10-15）=====
+# 「21汽車專案別 符合兩項特優 一項優質 無符合項目一般」「都要以天書或權威價格100%」
+# 「21汽車基數表36期398 48期332 60期294 72期269」（每萬一期繳多少）
+_CAR21_RATE = {36: 398, 48: 332, 60: 294, 72: 269}
+#   方案 → (專案名, 要符合幾項, 最低萬, 最高萬, 最長期數, 車齡＋貸款年限)
+_CAR21_PROJ = {"21汽車A": ("特優", 2, 30, 200, 84, 20), "21汽車B": ("優質", 1, 10, 100, 84, 20),
+               "21汽車C": ("一般", 0, 10, 50, 60, 18)}
+_CAR21_GROUP = ("麻吉", "21", "二一", "廿一", "分貝", "分唄", "樂分期", "分期趣", "慢點付")
+
+
+def _car21_conditions(c) -> list:
+    """21汽車項目表（13 項）資料看得出來「有符合」的；看不出來的不列（不算不符合）"""
+    c, hit = c or {}, []
+    L = _customer_doc_judge(c, "labor")
+    cur = [x for x in (L.get("目前投保") or []) if isinstance(x, dict) and isinstance(x.get("加保滿幾個月"), int)]
+    top = max(cur, key=lambda x: x["加保滿幾個月"]) if cur else {}
+    mon = top.get("加保滿幾個月") or 0
+    if mon >= 9:
+        hit.append(f"1 現職滿 9 個月（勞保 {mon} 個月）")
+    if "不動產" in str(c.get("eval_property") or ""):
+        hit.append("2 持有不動產（不可持分要確認）")
+    late_ok = (c.get("eval_late") or "").strip() == "無" or str(c.get("eval_late_days") or "0").strip() in ("", "0")
+    for d in _json_list(c.get("debt_list")):
+        if not isinstance(d, dict):
+            continue
+        co = str(d.get("co") or "")
+        try:
+            pa = int(re.sub(r"[^\d]", "", str(d.get("pa") or "")) or 0)
+        except ValueError:
+            pa = 0
+        if late_ok and pa >= 6 and any(k in co for k in _CAR21_GROUP) and not any(x.startswith("5 ") for x in hit):
+            hit.append(f"5 廿一集團既有客戶繳 {pa} 期（{co}）")
+        if (late_ok and pa >= 12 and "汽車" in co and any(k in str(d.get("dy") or "") for k in ("動保", "公路"))
+                and not any(x.startswith("9 ") for x in hit)):
+            hit.append(f"9 同業汽車既有客戶繳 {pa} 期（{co}）")
+    if _customer_doc_cats(c).get("信用報告"):
+        hit.append("6 有附聯徵（30 天內、要有 Z05 頁要確認）")
+    if str(top.get("類型") or "") in ("軍保", "公保") or (c.get("eval_labor_ins") or "") in ("軍保", "公保"):
+        hit.append("8 軍公教")
+    if str(c.get("eval_license") or "").strip() == "有":
+        hit.append("10 有證照")
+    ages = _customer_car_ages(c)
+    if ages and min(ages) <= 8:
+        hit.append(f"12 車齡 8 年內（{now_tw().year - min(ages)} 年出廠）")
+    if _check_creditcard_status(c)[0] == "good":
+        hit.append("13 有信用卡、沒遲繳（持卡滿 2 年要確認）")
+    hit.sort(key=lambda x: int(x.split(" ")[0]))
+    return hit
+
+
+def _car21_values(r, plan: str = "") -> dict:
+    """21汽車申請書：專案名稱、貸款金額、期數、月付金、參考車價（算不出來的留空）。
+    方案：送件順序排的 21汽車A／B／C > 照項目表符合幾項；特優最低 30 萬，車價不到 → 降成優質"""
+    hit = _car21_conditions(r)
+    n_hit = len(hit)
+    if plan not in _CAR21_PROJ:
+        order = []
+        try:
+            order = [str(x.get("company") if isinstance(x, dict) else x)
+                     for x in (json.loads(r.get("route_plan") or "{}") or {}).get("order", []) or []]
+        except Exception:
+            pass
+        plan = next((x for x in [str(r.get("current_company") or "")] + order if x in _CAR21_PROJ), "")
+    if plan not in _CAR21_PROJ:
+        plan = "21汽車A" if n_hit >= 2 else "21汽車B" if n_hit == 1 else "21汽車C"
+    price = _customer_car_book(r)[0]
+    amt = int(price + 1e-9) if price else None
+    name, _need, lo, hi, max_n, limit = _CAR21_PROJ[plan]
+    if amt is not None and amt < lo and plan == "21汽車A":          # 特優最低 30 萬
+        plan = "21汽車B"
+        name, _need, lo, hi, max_n, limit = _CAR21_PROJ[plan]
+    out = {"plan": plan, "proj": name + "專案", "price": f"{price:g}萬" if price else "", "src": "天書" if price else "",
+           "amount": "", "periods": "", "monthly": "", "hit": hit}
+    if amt is None:
+        return out
+    amt = min(amt, hi)
+    n = 36 if amt <= 29 else 48 if amt <= 40 else 60 if amt <= 60 else 72        # 期數照裕融（使用者沒另外說）
+    cap = max_n
+    ages = _customer_car_ages(r)
+    if ages:
+        age = now_tw().year - min(ages)
+        cap = min(cap, max(0, (limit - age) * 12))                                # 車齡＋貸款年限
+    if n > cap:
+        n = max([x for x in (18, 24, 36, 48, 60, 72, 84) if x <= cap] or [0])
+    rate = _CAR21_RATE.get(n)
+    out.update(amount=f"{amt}萬", periods=str(n or ""), monthly=str(amt * rate) if rate else "")
+    return out
+
+
+
+def _car21_hint_html(customer) -> str:
+    """行政B 21汽車區：系統算的專案／金額／期數／月付金（格子空著下載就用這組；要改就直接打）"""
+    try:
+        cv = _car21_values(customer)
+    except Exception as e:
+        print(f"[adminb] 21汽車預算失敗：{e}")
+        return ""
+    parts = [cv["proj"], cv["amount"], (cv["periods"] + "期") if cv["periods"] else "", (f"月付 {cv['monthly']}" if cv["monthly"] else "")]
+    hit = "、".join(cv["hit"]) or "資料看不出符合哪項"
+    return ('<div style="font-size:12px;color:#7f1d1d;margin-bottom:10px;line-height:1.6">'
+            f'系統算的：<b>{h(" ".join(x for x in parts if x))}</b>（下面格子空著，下載就用這組；要改直接打）<br>'
+            f'項目表看得出來的：{h(hit)}</div>')
+
+
 def _account_complete(acct) -> bool:
     """帳號是不是完整的（可以印在申請書上）。
     使用者 2026-10-15：「帳號填寫要完整喔」—— 裕融申請書印成「***9411」。
@@ -28155,6 +28270,11 @@ def _do_download_excel(request: Request, case_id: str, only_plans=None, raw: boo
         law_court = "" if not _lw else ("無" if _lw in ("無", "0", "共0條", "沒有") else f"有（法學{_lw}）")
         # ===== label 關鍵字 → 值 對應 =====
         # 比對時用 startswith / in 容錯，越長 / 越精確的 key 排前面
+        # 21汽車（2026-10-15）：行政B 沒打的 → 照系統算（_car21_values）；行政打的優先
+        _c21 = _car21_values(r) if "21車貸申請書" in open(template_path, encoding="utf-8").read() else {}
+
+        def c21(field, key):
+            return v(field) or _c21.get(key, "")
         LABEL_MAP = [
             # 願望機車（2026-10-15）：⛔ 這幾條要排在「現居地」「戶籍」「勞保」那些短的 key 前面
             ("戶籍跟現居是否相同", "相同" if live_same else reg_addr),
@@ -28164,13 +28284,13 @@ def _do_download_excel(request: Request, case_id: str, only_plans=None, raw: boo
             ("是否有薪轉或勞健保", labor_or_salary),
             ("上過法院", law_court),
             # 21汽車 專屬
-            ("專案名稱", v("adminb_21car_project")),
-            ("貸款金額.期數.月付金", f'{v("adminb_21car_amount")}/{v("adminb_21car_period")}/{v("adminb_21car_monthly")}'.strip("/")),
+            ("專案名稱", c21("adminb_21car_project", "proj")),
+            ("貸款金額.期數.月付金", f'{c21("adminb_21car_amount", "amount")}/{c21("adminb_21car_period", "periods")}/{c21("adminb_21car_monthly", "monthly")}'.strip("/")),
             ("貸款成數", "100%"),
-            ("實際售價", v("adminb_21car_price")),
-            ("車價參考來源", v("adminb_21car_ref_src")),
-            ("天書", v("adminb_21car_ref_src")),
-            ("參考車價金額", v("adminb_21car_ref_price")),
+            ("實際售價", c21("adminb_21car_price", "price")),
+            ("車價參考來源", c21("adminb_21car_ref_src", "src") + (f"（{_c21.get('price')}）" if not v("adminb_21car_ref_src") and _c21.get("price") else "")),
+            ("天書", c21("adminb_21car_ref_src", "src")),
+            ("參考車價金額", c21("adminb_21car_ref_price", "price")),
             ("選擇利率", v("adminb_21car_rate") or "16%"),
             ("是否有信用卡", v("adminb_21car_hascc")),
             # 個人資料
@@ -31564,6 +31684,9 @@ def _phone_dash(p) -> str:
     return f"{d[:4]}-{d[4:]}" if len(d) == 10 and d.startswith("09") else str(p or "").strip()
 
 
+_DONGFENG_DEFAULT = ("10", "18", "6868")    # 東豐分期：萬／期數／每期應繳（固定）
+
+
 def _dongfeng_cells(r: dict) -> dict:
     """東豐小額申請書（使用者 2026-10-15 給的 東豐小額申請書11500911版.xlsx，格子照 東豐範本.xlsx 抄）"""
     def v(k):
@@ -31621,8 +31744,11 @@ def _dongfeng_cells(r: dict) -> dict:
     if extra:
         mobile = extra[0].startswith("09")
         cells["K11" if mobile else "I11"] = _phone_dash(extra[0]) if mobile else extra[0]
-    # 分期：行政B 東豐區打的；分期總金額＝期數 × 每期
-    amt, per, pay = v("adminb_dz_amount"), v("adminb_dz_period"), v("adminb_dz_payment")
+    # 分期：固定 10 萬／18 期／6868（使用者 2026-10-15：「固定」；範本也是這組）；行政B 東豐區有打就用行政打的
+    #   年資寫小數、負債表只列動保 —— 使用者同一天確認「對」
+    amt = v("adminb_dz_amount") or _DONGFENG_DEFAULT[0]
+    per = v("adminb_dz_period") or _DONGFENG_DEFAULT[1]
+    pay = v("adminb_dz_payment") or _DONGFENG_DEFAULT[2]
     cells["E24"] = (amt + ("" if "萬" in amt or not amt else "萬")) if amt else ""
     cells["G24"], cells["I24"] = per, pay
     try:

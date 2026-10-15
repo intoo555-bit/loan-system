@@ -3515,6 +3515,45 @@ for _cell, _want in (("D3", "測試戊"), ("G3", "061/10/23"), ("J3", "A10000009
 check("東豐負債表：只列有動保的（和潤機車、裕融汽車），沒動保的和裕、信貸不列",
       {_g("D29"), _g("D30")} == {"和潤機車", "裕融汽車"} and _g("D31") == "", [_g(f"D{i}") for i in range(29, 33)])
 check("送件包：東豐小額信貸 → 東豐那張", m._PACK_TEMPLATE_ALIAS.get("東豐小額信貸") == "東豐")
+# 使用者 2026-10-15：東豐分期「固定」10 萬／18 期／6868 → 行政B 沒打也會帶
+_c = sqlite3.connect(TEST_DB)
+_c.execute("UPDATE customers SET adminb_dz_amount='', adminb_dz_period='', adminb_dz_payment='' WHERE case_id='TXT99'")
+_c.commit(); _c.close()
+_wsd = _ox99.load_workbook(_io93.BytesIO(m._do_download_excel(None, "TXT99", only_plans=["東豐"], raw=True)[0][1])).active
+check("東豐：行政B 沒打分期 → 固定 10萬／18／6868／123624",
+      [str(_wsd[c].value) for c in ("E24", "G24", "I24", "K24")] == ["10萬", "18", "6868", "123624"],
+      [str(_wsd[c].value) for c in ("E24", "G24", "I24", "K24")])
+# ===== 21汽車專案別／金額（使用者 2026-10-15）=====
+# 原話：「符合兩項特優 一項優質 無符合項目一般」「都要以天書或權威價格100%」「21汽車基數表36期398 48期332 60期294 72期269」
+#       表：特優 30～200 萬、84 期、車齡＋年限 20 年；優質 10～100 萬、84 期、20 年；一般 10～50 萬、60 期、18 年
+_cc21, _ca21 = m._car21_conditions, m._customer_car_ages
+_car21r = lambda tp: {"debt_list": "[]", "unloan_vehicles": json.dumps([{"type": "汽車", "tp": tp}])}
+m._customer_car_ages = lambda c: [m.now_tw().year - 3]          # 車齡 3 年（不卡年限）
+m._car21_conditions = lambda c: ["1 x", "2 y"]
+_v21 = m._car21_values(_car21r("50"))
+check("21汽車：符合 2 項 → 特優；50 萬（天書 100%）60 期 × 294", (_v21["proj"], _v21["amount"], _v21["periods"], _v21["monthly"])
+      == ("特優專案", "50萬", "60", str(50 * 294)), _v21)
+check("21汽車：特優最低 30 萬，車價 20 萬 → 降成優質", m._car21_values(_car21r("20"))["proj"] == "優質專案")
+m._car21_conditions = lambda c: ["1 x"]
+check("21汽車：符合 1 項 → 優質", m._car21_values(_car21r("50"))["proj"] == "優質專案")
+m._car21_conditions = lambda c: []
+_v21c = m._car21_values(_car21r("80"))
+check("21汽車：都不符合 → 一般；最高 50 萬", (_v21c["proj"], _v21c["amount"]) == ("一般專案", "50萬"), _v21c)
+check("21汽車基數表：36／48／60／72 期 → 398／332／294／269", m._CAR21_RATE == {36: 398, 48: 332, 60: 294, 72: 269})
+m._customer_car_ages = lambda c: [m.now_tw().year - 15]         # 車齡 15 年：特優年限 20 → 最多 5 年＝60 期
+m._car21_conditions = lambda c: ["1 x", "2 y"]
+check("21汽車：車齡 15 年＋特優 20 年 → 最長 60 期（80 萬本來 72 期）", m._car21_values(_car21r("80"))["periods"] == "60")
+check("21汽車：項目表需符合 2 項 → 自動判通過",
+      (m._auto_manual("21汽車項目表需符合 2 項以上（特優）", {}) or ("",))[0] == "pass")
+_c = sqlite3.connect(TEST_DB)
+_c.execute("UPDATE customers SET unloan_vehicles=?, adminb_21car_project='', adminb_21car_amount='', adminb_21car_period='', adminb_21car_monthly='' WHERE case_id='TXT99'",
+           (json.dumps([{"type": "汽車", "tp": "50"}]),))
+_c.commit(); _c.close()
+m._customer_car_ages = lambda c: [m.now_tw().year - 3]
+_t21 = (m._do_download_excel(None, "TXT99", only_plans=["21汽車"], raw=True) or [("", b"")])[0][1].decode("utf-8")
+check("21汽車填寫表：行政沒打 → 專案名稱、金額／期數／月付金照系統算",
+      "專案名稱：特優專案" in _t21 and f"貸款金額.期數.月付金：50萬/60/{50 * 294}" in _t21, _t21[:200])
+m._car21_conditions, m._customer_car_ages = _cc21, _ca21
 check("申請書資料夾不可以有範本（真客人個資）",not any("範本" in f and ("中租" in f or "願望" in f) for f in os.listdir("申請書")))
 
 # ========== 總結 ==========
