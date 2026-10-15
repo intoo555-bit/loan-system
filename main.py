@@ -25494,6 +25494,7 @@ def _yulon_values(r, route_plan: str = "", ov=None) -> dict:
         out["paid"] = str(pa_) if pa_ else ""
         out["settle"] = (f"{rem_:,}" if rem_ else "") + (f"（原貸 {lo_:,}）" if lo_ else "")
         out["ratio"] = "" if "信福貸" in plan else "130%"   # 老車專案不用寫
+        out["fund"] = "家用"                                 # 使用者 2026-10-15：資金用途固定家用
     for k in ("amount", "periods", "payment", "paid", "settle", "fund", "ratio"):
         if ov.get(k):
             out[k] = ov[k]
@@ -25506,7 +25507,7 @@ def _fill_yulon_pdf(r: dict, plan: str = "") -> bytes:
     位置照使用者給的填好範本抄：借款人寫在左下「個人戶」那一塊、通訊同戶籍寫「同上」、勾 AR件＋原車。
     2026-10-15 使用者補：申貸金額／期數／期付款照基數表算（_yulon_amount）、適用專案沒排就照符合幾條自動選、
     申請業務別看車貸（_yulon_business）、借新還舊／他行代償要寫舊案新案、發證後面寫換補發、借款人簽章放電子簽名
-    ⛔ 第 3、5、6 頁的簽名還是不填（要客人自己簽）
+    電子簽名（signature_applicant）印在每個要簽的地方：第 1 頁借款人、第 3／5 頁立同意書人、第 6 頁被通知人；沒簽就全部留白
     ⚠️ 第 3、5、6 頁是掃描圖（沒有文字可以量），位置是照圖量的，改範本要重量"""
     from pypdf import PdfReader, PdfWriter
     from reportlab.pdfgen import canvas
@@ -25645,7 +25646,11 @@ def _fill_yulon_pdf(r: dict, plan: str = "") -> bytes:
     # 借款人(簽章)：客人在填單頁簽的電子簽名（沒簽就留白）
     sig = v("signature_applicant")
     if sig.startswith("data:image"):
-        ops[0].append(("img", 82, 770, 120, 40, sig))
+        # 使用者 2026-10-15：「有需要簽章地方都要簽」—— 第 4 頁沒有簽名欄；第 3 頁只簽第一個立同意書人（借款人本人）
+        ops[0].append(("img", 82, 770, 120, 40, sig))     # 第 1 頁 借款人(簽章)
+        ops[2].append(("img", 110, 678, 130, 32, sig))    # 第 3 頁 立同意書人（線在 top≈711）
+        ops[4].append(("img", 95, 783, 130, 30, sig))     # 第 5 頁 立同意書人（線在 top≈814）
+        ops[5].append(("img", 175, 433, 140, 32, sig))    # 第 6 頁 被通知人（親簽）（線在 top≈466）
     # ---- 第 2 頁：進件資料確認書 ----
     if not car_loan:
         V(1, 283.8, 93.5)                             # AR 件

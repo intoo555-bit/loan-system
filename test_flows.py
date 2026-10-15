@@ -3277,6 +3277,12 @@ check("裕融 PDF：申貸金額 30萬、期數 48、期付款 8,490", all(x in 
 check("裕融 PDF：發證後面寫換發", "換發" in _s1)
 check("裕融 PDF：他行代償 → 已繳 12 期、結清 288,000、成數 130%", all(x in _s2 for x in ("12期", "288,000", "130%")), _s2[:600])
 check("裕融 PDF：借款人簽章有電子簽名", len(_d96.pages[0].images) > len(_doc95.pages[0].images))
+check("裕融 PDF：第 3、5、6 頁要簽的地方也有簽名（第 4 頁沒有簽名欄）",
+      all(len(_d96.pages[i].images) > len(_doc95.pages[i].images) for i in (2, 4, 5))
+      and len(_d96.pages[3].images) == len(_doc95.pages[3].images))
+check("裕融 PDF：資金用途固定家用", "家用" in _s2)
+# 使用者 2026-10-15：「19*1.3 = 24.7」→「對的 24萬」（無條件捨去）
+check("裕融金額：19萬×1.3＝24.7 → 24萬", m._yulon_amount({"debt_list": _car96("19")}, "裕融優質")[0] == 24)
 _pdf96b = m._fill_yulon_pdf(dict(_r95), "裕融信福貸")
 _s2b = "".join(_pp95.open(_io93.BytesIO(_pdf96b)).pages[1].extract_text().split())
 check("裕融 PDF：原車不寫成數（下列免填）", "130%" not in _s2b)
