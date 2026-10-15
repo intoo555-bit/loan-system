@@ -5679,6 +5679,7 @@ def init_db():
         ("adminb_mj_brand", "TEXT"),
         ("adminb_mj_model", "TEXT"),
         ("adminb_mj_6w18p", "TEXT"),
+        ("adminb_yulon", "TEXT"),          # 行政B 裕融區行政改過的格子（JSON，見 _yulon_overrides）
         ("adminb_ry_amount", "TEXT"),
         ("adminb_ry_period", "TEXT"),
         ("adminb_bei_note", "TEXT"),
@@ -19632,6 +19633,25 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
     salary = fmt_salary(customer.get("company_salary","")) or "-"
     labor = customer.get("eval_labor_ins","") or "-"
     sel_plans = customer.get("adminb_selected_plans","") or ""
+    # 裕融：送件順序有排裕融就先幫忙勾（行政也可以自己勾／取消）
+    try:
+        if "裕融" not in sel_plans.split(",") and _yulon_plans_of(customer):
+            sel_plans = ",".join([x for x in sel_plans.split(",") if x] + ["裕融"])
+        yv = _yulon_values(customer)
+    except Exception as _e:
+        print(f"[adminb] 裕融預填失敗：{_e}")
+        yv = {k: "" for k in _YULON_KEYS}
+    yl_ov = _yulon_overrides(customer)
+    yl_sig = customer.get("signature_applicant", "") or ""
+
+    def yl_opt(name, opts):
+        return f'<select name="yl_{name}" class="ab-sel">' + "".join(
+            f'<option value="{h(o)}" {"selected" if yv.get(name) == o else ""}>{h(re.sub("^裕融", "", o))}</option>' for o in opts) + "</select>"
+
+    def yl_inp(name, label, ph=""):
+        mark = ' <span style="color:#b45309">（改過）</span>' if yl_ov.get(name) else ""
+        return (f'<div><div class="ab-lbl">{label}{mark}</div><input name="yl_{name}" class="ab-inp" placeholder="{h(ph)}" '
+                f'value="{h(yv.get(name, ""))}"></div>')
 
     def rule_item(label, display, adj):
         cls = "rule-adj" if adj else "rule-ok"
@@ -19695,6 +19715,7 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
           ("21商品","21商品","12萬 24期"),("第一","第一","30萬 24期"),("貸救補","貸救補","10萬 24期"),
         ])}
         <label class="ab-plan" style="background:#4e7055;border-color:#3a5040;"><input type="checkbox" name="plans" value="喬美" style="accent-color:#fff;"><div><div class="ab-plan-name" style="color:#fff;">喬美</div><div class="ab-plan-sub" style="color:#c8e6ca;">PDF電子簽名</div></div></label>
+        <label class="ab-plan" style="background:#1d4ed8;border-color:#1e3a8a;"><input type="checkbox" name="plans" value="裕融" style="accent-color:#fff;"><div><div class="ab-plan-name" style="color:#fff;">裕融</div><div class="ab-plan-sub" style="color:#dbeafe;">汽車 PDF</div></div></label>
       </div>
       <div style="font-size:11px;font-weight:700;color:#6a5e4e;margin-bottom:8px;">填寫表方案</div>
       <div class="ab-plan-grid">
@@ -19773,6 +19794,36 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
           <div><div class="ab-lbl">月付金</div><input name="car_monthly" class="ab-inp" placeholder="9500" value="{h(customer.get('adminb_21car_monthly','') or '')}"></div>
           <div><div class="ab-lbl">資金用途</div><input name="car_fund" class="ab-inp" placeholder="購車" value="{h(customer.get('adminb_21car_fund','') or '')}"></div>
           <div><div class="ab-lbl">是否有信用卡</div><select name="car_hascc" class="ab-sel"><option value="">請選</option><option value="有" {"selected" if (customer.get('adminb_21car_hascc','') or '')=='有' else ''}>有</option><option value="無" {"selected" if (customer.get('adminb_21car_hascc','') or '')=='無' else ''}>無</option></select></div>
+        </div>
+      </div>
+      <div class="ab-block" data-plans="裕融" style="background:#dbeafe;">
+        <div style="font-size:12px;font-weight:700;color:#1d4ed8;margin-bottom:4px;">裕融（汽車申請書 PDF）</div>
+        <div style="font-size:11px;color:#475569;margin-bottom:10px;">系統先算好填進去，有錯直接改；沒改的格子以後資料變了會跟著重算。清空＝回到系統算的</div>
+        <div class="ab-g3" style="margin-bottom:10px;">
+          <div><div class="ab-lbl">適用專案{' <span style="color:#b45309">（改過）</span>' if yl_ov.get("plan") else ""}</div>{yl_opt("plan", ["裕融新優加", "裕融優質", "裕融福克來", "裕融信福貸"])}</div>
+          <div><div class="ab-lbl">申請業務別{' <span style="color:#b45309">（改過）</span>' if yl_ov.get("biz") else ""}</div>{yl_opt("biz", ["原車", "借新還舊", "他行代償"])}</div>
+          <div></div>
+          {yl_inp("amount", "申貸金額（萬）", "10")}
+          {yl_inp("periods", "期數", "36")}
+          {yl_inp("payment", "期付款", "3510")}
+        </div>
+        <div style="font-size:11px;font-weight:700;color:#1d4ed8;margin-bottom:6px;">舊案／新案（借新還舊、他行代償才印；原車不用填）</div>
+        <div class="ab-g4" style="margin-bottom:10px;">
+          {yl_inp("paid", "已繳期數", "12")}
+          {yl_inp("settle", "結清金額預估", "85,000（原貸 150,000）")}
+          {yl_inp("fund", "資金用途", "")}
+          {yl_inp("ratio", "申貸成數", "130%")}
+        </div>
+        <div style="background:#fff;border:1px dashed #1d4ed8;border-radius:8px;padding:12px;margin:10px 0;">
+          <div style="font-size:12px;font-weight:700;color:#1d4ed8;margin-bottom:6px;">📝 借款人電子簽名（印在申請書「借款人(簽章)」）</div>
+          <div style="font-size:11px;color:#475569;margin-bottom:8px;">{"目前已有簽名（下圖）；要重簽就在下面簽完按「存簽名」" if yl_sig.startswith("data:image") else "還沒有簽名：請客人在下面簽，按「存簽名」"}　之後業務 AI 那邊客人簽好的會直接用</div>
+          {f'<img src="{h(yl_sig)}" style="max-width:240px;max-height:70px;border:1px solid #cbd5e1;border-radius:4px;background:#fff;margin-bottom:8px;display:block;">' if yl_sig.startswith("data:image") else ""}
+          <canvas id="ylSignPad" width="500" height="150" style="border:2px solid #1d4ed8;background:#fff;cursor:crosshair;display:block;border-radius:6px;width:100%;max-width:500px;touch-action:none;"></canvas>
+          <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;">
+            <button type="button" onclick="ylClear()" style="padding:6px 14px;background:#888;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:13px;">🗑 清除</button>
+            <button type="button" onclick="ylSaveSign()" style="padding:6px 14px;background:#1d4ed8;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:13px;font-weight:700;">✍️ 存簽名</button>
+            <span id="ylSignMsg" style="font-size:12px;color:#15803d;align-self:center;"></span>
+          </div>
         </div>
       </div>
       <div class="ab-block" data-plans="喬美" style="background:#ede9fe;">
@@ -19896,6 +19947,37 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
         }}).catch(function(e) {{ alert('錯誤：' + e); }});
     }}
     window.addEventListener('DOMContentLoaded', qmInit);
+
+    // 裕融借款人簽名（只存簽名，不下載；下載用下面「📄 裕融申請書 PDF」）
+    var ylCanvas, ylCtx, ylDrawing = false, ylInk = false;
+    function ylInit() {{
+      ylCanvas = document.getElementById('ylSignPad');
+      if (!ylCanvas) return;
+      ylCtx = ylCanvas.getContext('2d');
+      ylCtx.lineWidth = 2.5; ylCtx.lineCap = 'round'; ylCtx.strokeStyle = '#000';
+      function xy(e) {{
+        var r = ylCanvas.getBoundingClientRect(), t = e.touches ? e.touches[0] : e;
+        return [(t.clientX - r.left) * ylCanvas.width / r.width, (t.clientY - r.top) * ylCanvas.height / r.height];
+      }}
+      function down(e) {{ e.preventDefault(); var p = xy(e); ylDrawing = true; ylCtx.beginPath(); ylCtx.moveTo(p[0], p[1]); }}
+      function move(e) {{ if (!ylDrawing) return; e.preventDefault(); var p = xy(e); ylCtx.lineTo(p[0], p[1]); ylCtx.stroke(); ylInk = true; }}
+      function up() {{ ylDrawing = false; }}
+      ylCanvas.onmousedown = down; ylCanvas.onmousemove = move; ylCanvas.onmouseup = up; ylCanvas.onmouseleave = up;
+      ylCanvas.ontouchstart = down; ylCanvas.ontouchmove = move; ylCanvas.ontouchend = up;
+    }}
+    function ylClear() {{ if (ylCtx) {{ ylCtx.clearRect(0, 0, ylCanvas.width, ylCanvas.height); ylInk = false; }} }}
+    function ylSaveSign() {{
+      var msg = document.getElementById('ylSignMsg');
+      if (!ylInk) {{ msg.style.color = '#b91c1c'; msg.textContent = '請先簽名'; return; }}
+      fetch('/adminb/save-signature', {{
+        method: 'POST', headers: {{'Content-Type': 'application/json'}},
+        body: JSON.stringify({{case_id: '{h(case_id)}', type: 'applicant', data: ylCanvas.toDataURL('image/png')}})
+      }}).then(function(r) {{ return r.json(); }}).then(function(d) {{
+        msg.style.color = d.ok ? '#15803d' : '#b91c1c';
+        msg.textContent = d.ok ? '✅ 簽名存好了，下載裕融申請書就會帶' : ('存失敗：' + (d.error || ''));
+      }}).catch(function(e) {{ msg.style.color = '#b91c1c'; msg.textContent = '網路錯誤'; }});
+    }}
+    window.addEventListener('DOMContentLoaded', ylInit);
 
     // 對照規則表（adminB 版、摘要+折疊細節）
     function getCompanyFamily(company) {{
@@ -20211,6 +20293,20 @@ async def adminb_save(request: Request):
     # 套用「確認資料」自動調整規則，回寫到主要欄位
     cur.execute("SELECT * FROM customers WHERE case_id=?", (case_id,))
     row = cur.fetchone()
+    if row and "yl_plan" in form:
+        # 裕融：只存行政「改過」的格子 —— 跟畫面上原本系統算的一樣＝沒動 → 不存，以後資料變了照樣重算
+        #   （之前改過、這次沒動的保留；清空＝回到系統算的）
+        try:
+            old_ov = _yulon_overrides(dict(row))
+            shown = _yulon_values(dict(row), ov=old_ov)
+            new_ov = {}
+            for k in _YULON_KEYS:
+                val = str(form.get("yl_" + k, "") or "").strip()
+                if val and (val != shown.get(k, "") or k in old_ov):
+                    new_ov[k] = val
+            fields["adminb_yulon"] = json.dumps(new_ov, ensure_ascii=False) if new_ov else ""
+        except Exception as e:
+            print(f"[adminb save] 裕融欄位存失敗：{e}")
     if row:
         rules = apply_adminb_rules(dict(row))
         fields["company_years"] = rules.get("company_years_val", "")
@@ -25281,14 +25377,17 @@ async def adminb_save_signature(request: Request):
 def _addr_parts(city: str, dist: str, rest: str) -> dict:
     """地址拆成裕融申請書那種一格一格（縣市／鄉鎮區／里／鄰／街路／段／巷／弄／號／樓／室）。
     拆不乾淨 → 回 {"_all": 剩下整串}，整串寫一行，不硬拆"""
-    rest = re.sub(r"\s+", "", str(rest or ""))
+    rest = re.sub(r"\s+", "", str(rest or "")).translate(str.maketrans("０１２３４５６７８９－", "0123456789-"))
     for pre in (city, dist):
         if pre and rest.startswith(pre):
             rest = rest[len(pre):]
-    m = re.fullmatch(r"(?P<li>[^\d鄰路街段巷弄號樓]{1,4}[里村])?(?P<lin>\d+鄰)?(?P<road>[^\d段巷弄號樓]+?(?:路|街|大道|道))?"
+    # 街路那格：山上／原鄉常常沒有「路／街」，直接寫部落名＋號（例：梅花村6鄰梅花42號）
+    #   → 沒有路街就把號前面那段當街路（2026-10-15 陳秋蘭那份整串掉到第二行，使用者要對格子打）
+    m = re.fullmatch(r"(?P<li>[^\d鄰路街段巷弄號樓]{1,4}[里村])?(?P<lin>\d+鄰)?(?P<road>[^\d段巷弄號樓]+?(?:路|街|大道|道)|[^\d鄰段巷弄號樓]+)?"
                      r"(?P<seg>[0-9一二三四五六七八九十]+段)?(?P<lane>[0-9之]+巷)?(?P<alley>[0-9之]+弄)?(?P<no>[0-9之\-]+號)?"
                      r"(?P<fl>[0-9之\-]+樓(?:之[0-9]+)?)?(?P<rm>[0-9A-Za-z]+室)?", rest)
-    if not m or not (m.group("road") or m.group("no")):
+    if not m or not (m.group("road") or m.group("no")) or (
+            m.group("road") and not re.search(r"(路|街|道)$", m.group("road")) and not m.group("no")):
         return {"city": city or "", "dist": dist or "", "_all": rest}
     out = {k: (v or "") for k, v in m.groupdict().items()}
     out.update(city=city or "", dist=dist or "")
@@ -25306,11 +25405,108 @@ def _yulon_car_fields(cust) -> dict:
     return {}
 
 
+# 裕融期付款基數表（每 1 萬一期繳多少）—— 使用者 2026-10-15 口述：
+#   福克來（符合 1 條，最長 60 期）、優質（2 條）：有貸款沒貸款都 36期351 48期283 60期242 72期216
+#   新優加（3 條）：車上有貸款同上；原車融資（沒貸款）36期350 48期281 60期241 72期215
+#   期數看申貸金額：10～29萬 36期、30～40萬 48期、41～60萬 60期、61萬以上 72期
+#   例：30萬 48期 → 30×283＝8490；範本（信福貸）10萬 36期 3510
+_YULON_RATE = {36: 351, 48: 283, 60: 242, 72: 216}
+_YULON_RATE_XYJ_NOLOAN = {36: 350, 48: 281, 60: 241, 72: 215}
+
+
+def _yulon_car_loan_row(r) -> dict:
+    """車上那筆汽車貸款（co 含汽車＋動保／公路，同 _customer_has_car_loan）"""
+    for d in _json_list(r.get("debt_list")):
+        if isinstance(d, dict) and "汽車" in str(d.get("co") or "") and any(
+                k in str(d.get("dy") or "") for k in ("動保", "公路")):
+            return d
+    return {}
+
+
+def _yulon_business(r) -> str:
+    """申請業務別：沒貸款＝原車；車貸是裕融自己的＝借新還舊；別家（和潤…）＝他行代償"""
+    d = _yulon_car_loan_row(r)
+    if not d:
+        return "原車"
+    return "借新還舊" if "裕融" in str(d.get("co") or "") else "他行代償"
+
+
+def _yulon_auto_plan(r) -> str:
+    """送件順序沒寫裕融哪個方案 → 老車＝信福貸；有天書看符合幾條：3 新優加／2 優質／1 福克來"""
+    if _customer_only_old_cars(r):
+        return "裕融信福貸"
+    n = len(_yulon_conditions(r))
+    return "裕融新優加" if n >= 3 else "裕融優質" if n == 2 else "裕融福克來" if n == 1 else ""
+
+
+def _yulon_amount(r, plan: str, biz: str = ""):
+    """(申貸金額萬, 期數, 期付款) —— 算不出來回 (None, None, None)。
+    信福貸固定 10 萬；其他＝天書車價 × 1.3，無條件捨去到整萬"""
+    plan = plan or ""
+    biz = biz or _yulon_business(r)
+    if "信福貸" in plan:
+        amt = 10
+    else:
+        price, _nf = _customer_car_book(r)
+        if not price or not plan:
+            return None, None, None
+        amt = int(price * 1.3 + 1e-9)
+    n = 36 if amt <= 29 else 48 if amt <= 40 else 60 if amt <= 60 else 72
+    if "福克來" in plan:
+        n = min(n, 60)
+    rate = (_YULON_RATE_XYJ_NOLOAN if ("新優加" in plan and biz == "原車") else _YULON_RATE)[n]
+    return amt, n, amt * rate
+
+
+_YULON_KEYS = ("plan", "biz", "amount", "periods", "payment", "paid", "settle", "fund", "ratio")
+
+
+def _yulon_overrides(r) -> dict:
+    """行政B 裕融區行政改過的格子（adminb_yulon，JSON）；沒改的不存，照系統算"""
+    try:
+        d = json.loads(r.get("adminb_yulon") or "{}")
+        return {k: str(d[k]).strip() for k in _YULON_KEYS if isinstance(d, dict) and str(d.get(k) or "").strip()}
+    except Exception:
+        return {}
+
+
+def _yulon_values(r, route_plan: str = "", ov=None) -> dict:
+    """裕融申請書要填的值：行政改過的 > 系統算的。
+    方案：行政選的 > 送件順序裡的裕融方案 > 照符合幾條自動選"""
+    ov = _yulon_overrides(r) if ov is None else ov
+    plan = ov.get("plan") or route_plan or next(
+        (x for x in [r.get("current_company") or ""] + _yulon_plans_of(r) if x.startswith("裕融")), "") or _yulon_auto_plan(r)
+    biz = ov.get("biz") or _yulon_business(r)
+    amt, n, pay = _yulon_amount(r, plan, biz)
+    out = {"plan": plan, "biz": biz, "amount": f"{amt}" if amt else "", "periods": str(n or ""),
+           "payment": f"{pay}" if pay else "", "paid": "", "settle": "", "fund": "", "ratio": ""}
+    if biz != "原車":                     # 範本寫「原車.中古車下列免填」
+        d_ = _yulon_car_loan_row(r)
+
+        def _n(x):
+            x = re.sub(r"[^\d]", "", str(x or ""))
+            return int(x) if x else 0
+        pe_raw = str(d_.get("pe") or "")
+        pe_ = _n(pe_raw.split("/")[0])
+        pa_ = _n(d_.get("pa")) or (_n(pe_raw.split("/")[1]) if "/" in pe_raw else 0)
+        lo_, mo_ = _n(d_.get("lo")), _n(d_.get("mo"))
+        rem_ = _n(d_.get("re")) or (mo_ * (pe_ - pa_) if mo_ and pe_ >= pa_ else 0)
+        out["paid"] = str(pa_) if pa_ else ""
+        out["settle"] = (f"{rem_:,}" if rem_ else "") + (f"（原貸 {lo_:,}）" if lo_ else "")
+        out["ratio"] = "" if "信福貸" in plan else "130%"   # 老車專案不用寫
+    for k in ("amount", "periods", "payment", "paid", "settle", "fund", "ratio"):
+        if ov.get(k):
+            out[k] = ov[k]
+    return out
+
+
 def _fill_yulon_pdf(r: dict, plan: str = "") -> bytes:
     """裕融（遠銀車貸）申請書：空白範本疊字（同喬美做法）。
     範本：申請書/裕融申請書.pdf（使用者 2026-10-15 給的 TAC申請書.pdf，113.07 版）；
     位置照使用者給的填好範本抄：借款人寫在左下「個人戶」那一塊、通訊同戶籍寫「同上」、勾 AR件＋原車。
-    ⛔ 簽名、簽章、親簽一律不填（要客人自己簽）；申貸金額／期數／期付款系統沒有，留空給行政寫
+    2026-10-15 使用者補：申貸金額／期數／期付款照基數表算（_yulon_amount）、適用專案沒排就照符合幾條自動選、
+    申請業務別看車貸（_yulon_business）、借新還舊／他行代償要寫舊案新案、發證後面寫換補發、借款人簽章放電子簽名
+    ⛔ 第 3、5、6 頁的簽名還是不填（要客人自己簽）
     ⚠️ 第 3、5、6 頁是掃描圖（沒有文字可以量），位置是照圖量的，改範本要重量"""
     from pypdf import PdfReader, PdfWriter
     from reportlab.pdfgen import canvas
@@ -25351,10 +25547,18 @@ def _fill_yulon_pdf(r: dict, plan: str = "") -> bytes:
 
     # ---- 第 1 頁：申請書 ----
     T(0, 42, 28, today[0]); T(0, 85, 28, today[1]); T(0, 124, 28, today[2])
+    yv = _yulon_values(r, plan)
+    plan, biz = yv["plan"], yv["biz"]
     T(0, 416, 66, re.sub(r"^裕融", "", plan or ""), 160)
-    car_loan = _customer_has_car_loan(r)
-    if not car_loan:
-        V(0, 208.5, 66)                               # 原車融資（車上有貸款就不勾，讓行政選借新還舊／他行代償）
+    car_loan = biz != "原車"
+    V(0, {"原車": 208.5, "借新還舊": 257.3, "他行代償": 306.0}.get(biz, 208.5), 66)   # 案件種類：原車融資／借新還舊／他行代償
+    if yv["amount"]:
+        T(0, 56, 124, yv["amount"] + ("" if "萬" in yv["amount"] else "萬"), 62)
+    T(0, 146, 124, yv["periods"], 50)
+    try:
+        T(0, 231, 124, f"{int(str(yv['payment']).replace(',', '')):,}" if yv["payment"] else "", 60)
+    except ValueError:
+        T(0, 231, 124, yv["payment"], 60)
     car = _yulon_car_fields(r)
     T(0, 56, 139, car.get("廠牌"), 62); T(0, 145, 139, car.get("車輛型式"), 60, 8); T(0, 231, 139, car.get("車牌"), 62)
     T(0, 56, 152, str(car.get("出廠年月") or "").replace("/", "."), 64); T(0, 146, 152, car.get("排氣量"), 44)
@@ -25379,7 +25583,9 @@ def _fill_yulon_pdf(r: dict, plan: str = "") -> bytes:
     T(0, 79, 377, v("id_no").upper(), 110)
     iy, im_, idd = ymd(v("id_issue_date"))
     T(0, 197, 377, iy); T(0, 228, 377, im_); T(0, 256, 377, idd)
-    edu = rules.get("edu_val") or v("education")
+    # 換補發：「日發」後面只剩 12pt 塞不下 → 寫在身分證字號跟年份中間的空白
+    T(0, 150, 377, f"（{v('id_issue_type')}）" if v("id_issue_type") else "", 44, 8)
+    edu =rules.get("edu_val") or v("education")
     ex = (62.2 if any(k in edu for k in ("研究", "碩", "博")) else 124.1 if any(k in edu for k in ("大", "專")) else
           163.5 if "高" in edu else 210.4 if "國" in edu else 264.7 if edu else None)
     if ex:
@@ -25436,10 +25642,19 @@ def _fill_yulon_pdf(r: dict, plan: str = "") -> bytes:
     T(0, 256, 550.3, rules["company_months_val"] if "company_months_val" in rules else v("company_months"), 16)
     V(0, 77.3, 564.5)                                 # 繳款通知：簡訊（範本那份勾的）
     V(0, 77.3, 588.5)                                 # 繳款文件郵寄：戶籍地
+    # 借款人(簽章)：客人在填單頁簽的電子簽名（沒簽就留白）
+    sig = v("signature_applicant")
+    if sig.startswith("data:image"):
+        ops[0].append(("img", 82, 770, 120, 40, sig))
     # ---- 第 2 頁：進件資料確認書 ----
     if not car_loan:
         V(1, 283.8, 93.5)                             # AR 件
-        V(1, 341.8, 227.3)                            # 原車
+    V(1, {"原車": 341.8, "借新還舊": 209.8, "他行代償": 275.8}.get(biz, 341.8), 227.3)   # 申請業務別
+    if car_loan:                                       # 範本寫「原車.中古車下列免填」→ 只有借新還舊／他行代償才寫
+        T(1, 193, 244.9, (yv["paid"] + ("" if "期" in yv["paid"] else " 期")) if yv["paid"] else "", 106, 10)
+        T(1, 193, 264.0, yv["settle"], 106, 9)
+        T(1, 445, 244.9, yv["fund"], 110, 9)
+        T(1, 445, 264.0, yv["ratio"], 110, 10)
     right = {"有信用卡": 299.5, "軍公教": 311.7, "有證照": 356.6, "他行繳": 375.6, "持有不動產": 423.9}
     for h_ in _yulon_conditions(r):
         if h_.startswith("車齡"):
@@ -25481,6 +25696,14 @@ def _fill_yulon_pdf(r: dict, plan: str = "") -> bytes:
                         sz -= 0.5
                     c.setFont(FONT, sz)
                     c.drawString(x, H - top - 7.5, text)
+                elif op[0] == "img":                    # 電子簽名
+                    _, x, top, w_, h_, data_ = op
+                    try:
+                        from reportlab.lib.utils import ImageReader
+                        img_ = ImageReader(io.BytesIO(base64.b64decode(data_.split(",", 1)[1])))
+                        c.drawImage(img_, x, H - top - h_, width=w_, height=h_, mask="auto", preserveAspectRatio=True)
+                    except Exception as ex:
+                        print(f"[yulon] 簽名畫不上去：{ex}")
                 else:                                   # 打勾
                     _, x, top = op
                     y0 = H - top - 7.5

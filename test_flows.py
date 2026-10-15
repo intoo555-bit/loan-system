@@ -3235,6 +3235,62 @@ check("行政B 下載裕融申請書", _r.status_code == 200 and _r.content[:4] 
 check("行政B 頁有「裕融申請書 PDF」鈕", "download-yulon" in _tc94.get("/adminb", params={"case_id": _cid93}).text)
 m.check_auth = lambda req: "admin"
 
+# ========== 96. 裕融：申貸金額／期數／期付款、申請業務別、舊案新案、換補發、電子簽名（使用者 2026-10-15）==========
+print(chr(10) + "=== 96. 裕融申請書補強 ===")
+# ⛔ 期望值從單據／使用者原話抄，不是用程式反推：
+#   TAC範本.pdf（真實填好的那份）：適用專案 信福貸、申貸金額 10萬、期數 36、期付款 3510
+#   使用者原話：「客戶可以申請30萬然後有符合兩條那就是 30*283 = 8,490  EX:30萬48期8490」
+check("裕融金額：信福貸＝範本 10萬 36期 3510", m._yulon_amount({"debt_list": "[]"}, "裕融信福貸") == (10, 36, 3510))
+_car96 = lambda tp, co="和潤汽車", dy="動保": json.dumps([{"co": co, "dy": dy, "tp": tp, "lo": "300000", "pe": "60", "pa": "12", "mo": "6000"}], ensure_ascii=False)
+check("裕融金額：優質 30萬 → 48期 8490（使用者舉例）", m._yulon_amount({"debt_list": _car96("23.1")}, "裕融優質") == (30, 48, 8490),
+      m._yulon_amount({"debt_list": _car96("23.1")}, "裕融優質"))
+check("裕融金額：新優加 原車融資用另一張基數表（30萬 48期 281）",
+      m._yulon_amount({"debt_list": "[]", "unloan_vehicles": json.dumps([{"type": "汽車", "tp": "23.1"}])}, "裕融新優加") == (30, 48, 8430))
+check("裕融金額：新優加 車上有貸款用 283", m._yulon_amount({"debt_list": _car96("23.1")}, "裕融新優加") == (30, 48, 8490))
+check("裕融金額：福克來最長 60 期（70萬 → 60期 242）", m._yulon_amount({"debt_list": _car96("54")}, "裕融福克來") == (70, 60, 70 * 242))
+check("裕融金額：10～29萬 36期、41～60萬 60期、61萬以上 72期",
+      [m._yulon_amount({"debt_list": _car96(str(p))}, "裕融優質")[1] for p in (20, 40, 50)] == [36, 60, 72])
+check("申請業務別：沒車貸＝原車", m._yulon_business({"debt_list": "[]"}) == "原車")
+check("申請業務別：和潤的車貸＝他行代償", m._yulon_business({"debt_list": _car96("20")}) == "他行代償")
+check("申請業務別：裕融自己的車貸＝借新還舊", m._yulon_business({"debt_list": _car96("20", co="裕融汽車")}) == "借新還舊")
+check("地址：原鄉沒有路街（梅花村6鄰梅花42號）也要拆格",
+      {k: v for k, v in m._addr_parts("新竹縣", "尖石鄉", "梅花村6鄰梅花42號").items() if v} ==
+      {"li": "梅花村", "lin": "6鄰", "road": "梅花", "no": "42號", "city": "新竹縣", "dist": "尖石鄉"})
+_cc96 = m._yulon_conditions
+m._yulon_conditions = lambda c: ["a", "b", "c"]
+check("適用專案：沒排裕融、符合 3 條 → 新優加", m._yulon_values({"debt_list": _car96("23.1")})["plan"] == "裕融新優加")
+m._yulon_conditions = lambda c: ["a"]
+check("適用專案：符合 1 條 → 福克來", m._yulon_values({"debt_list": _car96("23.1")})["plan"] == "裕融福克來")
+m._yulon_conditions = _cc96
+check("行政改過的格子優先", m._yulon_values({"debt_list": _car96("23.1"), "adminb_yulon": json.dumps({"amount": "25", "plan": "裕融優質"})})["amount"] == "25")
+# PDF：他行代償 → 舊案新案有寫、130%；換發；電子簽名
+import base64 as _b64_96
+_sig96 = "data:image/png;base64," + _b64_96.b64encode(bytes.fromhex(
+    "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d49444154789c6360f8cfc0f01f0005000201e221bc330000000049454e44ae426082")).decode()
+_m96 = m._yulon_car_fields
+m._yulon_car_fields = lambda c: {}
+_pdf96 = m._fill_yulon_pdf(dict(_r95, debt_list=_car96("23.1"), id_issue_type="換發", signature_applicant=_sig96), "裕融優質")
+m._yulon_car_fields = _m96
+_d96 = _pp95.open(_io93.BytesIO(_pdf96))
+_s1 = "".join(_d96.pages[0].extract_text().split()); _s2 = "".join(_d96.pages[1].extract_text().split())
+check("裕融 PDF：申貸金額 30萬、期數 48、期付款 8,490", all(x in _s1 for x in ("30萬", "48", "8,490")), _s1[:300])
+check("裕融 PDF：發證後面寫換發", "換發" in _s1)
+check("裕融 PDF：他行代償 → 已繳 12 期、結清 288,000、成數 130%", all(x in _s2 for x in ("12期", "288,000", "130%")), _s2[:600])
+check("裕融 PDF：借款人簽章有電子簽名", len(_d96.pages[0].images) > len(_doc95.pages[0].images))
+_pdf96b = m._fill_yulon_pdf(dict(_r95), "裕融信福貸")
+_s2b = "".join(_pp95.open(_io93.BytesIO(_pdf96b)).pages[1].extract_text().split())
+check("裕融 PDF：原車不寫成數（下列免填）", "130%" not in _s2b)
+# 行政B：有裕融勾選、送件順序有裕融會先勾；存檔只記行政改過的格子
+m.check_auth = lambda req: "adminB"
+_pb96 = _tc94.get("/adminb", params={"case_id": _cid93}).text
+check("行政B：有裕融勾選＋裕融補充資料＋簽名板", 'value="裕融"' in _pb96 and 'name="yl_amount"' in _pb96 and "ylSignPad" in _pb96)
+check("行政B：送件順序有裕融 → 自動勾", '"裕融' in _pb96.split("var saved = ")[1][:200], _pb96.split("var saved = ")[1][:100])
+_tc94.post("/adminb/save", data={"case_id": _cid93, "plans": "裕融", "yl_plan": "裕融信福貸", "yl_biz": "原車",
+                                  "yl_amount": "8", "yl_periods": "36", "yl_payment": "3510"})
+_ov96 = m._yulon_overrides(get_cust("E300000001"))
+check("行政B 存檔：只記改過的（金額 8），沒動的不記", _ov96 == {"amount": "8"}, _ov96)
+m.check_auth = lambda req: "admin"
+
 # ========== 總結 ==========
 print(f"\n{'='*50}")
 print(f"結果：{PASS} 通過、{FAIL} 失敗")
