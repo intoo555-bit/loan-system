@@ -23901,6 +23901,55 @@ def _case_logs_for_api(case_id: str, limit: int = 30) -> list:
     return out
 
 
+# 業務 AI 查詢窗口的「還缺什麼文件」（交接第 16 段，2026-10-15）
+#   ⛔ 業務 AI 只認 code、不比對中文 → code 一旦給出去就不可以改名（改了業務 AI 會靜靜失效）；要加新的先在交接寫一聲
+#   ⛔ 「還沒判」回 None（JSON null），「判過不缺」回 []，兩個絕不能混（混了業務 AI 會把還沒判當成不缺，該要的永遠不要）
+#   ⛔ 判讀失敗／還在等判讀（check）不算缺 —— 不然會叫客人重拍本來就合格的照片
+_MISSING_DOC_CODES = [   # (要的文件裡有這些字, code)；照順序比，先比到的算
+    (("時間相機",), "timecam_moto_photo"),
+    (("手機合照", "人與手機合照"), "phone_photo"),
+    (("合照",), "timecam_moto_photo"),            # 機車合照一律要時間相機（見 docs_missing_for_plan 的 need_stamp）
+    (("身分證正反",), "id_card"),
+    (("第二證件",), "second_id"),
+    (("存封", "存摺封面"), "passbook_cover"),
+    (("勞保", "401", "權狀", "薪轉/勞保"), "labor"),
+    (("行照",), "vehicle_license"),
+    (("強制險",), "compulsory_insurance"),
+    (("四面照片",), "vehicle_photos"),
+    (("信用報告", "聯徵", "收據 或 聯徵"), "credit_report"),
+    (("存摺明細", "薪轉", "存摺內頁"), "passbook_detail"),
+    (("手機型號", "IMEI", "imei", "手機資料"), "phone_info"),
+    (("繳息", "繳款收據", "核准函", "撥款存摺紀錄"), "loan_proof"),
+]
+
+
+def _missing_docs_for_api(cust):
+    """目前送的那一家（沒排就系統建議第一家）還缺什麼 → [{"code","label","for"}]；還沒判回 None"""
+    try:
+        if not cust or cust.get("status") != "ACTIVE":
+            return None
+        idv = normalize_id_no(cust.get("id_no") or "")
+        rows = _docs_rows(idv) if idv else []
+        if not rows:
+            return None                     # 證件還沒拉進行政存檔 → 不知道客人傳了什麼，不能說缺
+        co = _docs_current_company(cust)
+        plan = _plan_for_company(co) if co else None
+        if not plan:
+            return None
+        out = []
+        for req, st, note in docs_missing_for_plan(rows, _docs_for_customer(plan.get("required_docs"), cust)):
+            if st != "missing":
+                continue
+            code = "labor_reprint" if "重拉" in note else next(
+                (c for keys, c in _MISSING_DOC_CODES if any(k in req for k in keys)), "other")
+            out.append({"code": code, "label": req.split("（")[0].split("｜")[0] + (f"（{note}）" if note else ""),
+                        "for": _plan_short(plan["company"], plan.get("max_amount")) or plan["company"]})
+        return out
+    except Exception as e:
+        print(f"[customer-status] missing_docs 失敗：{e}")
+        return None                         # 算失敗＝還沒判（⛔ 不可以回 []，會被當成不缺）
+
+
 @app.post("/api/customer-status")
 async def customer_status_post(request: Request):
     """新寫法（2026-10-13）：密碼放 header「X-Loan-Secret」、身分證放 body {"id_no": ...}，都不出現在網址上。"""
@@ -23975,6 +24024,8 @@ async def customer_status(request: Request, id_no: str = "", secret: str = ""):
         "case_logs": _case_logs_for_api(ref.get("case_id", "")),
         **{k: g(k) for k in _STATUS_API_PERSONAL_KEYS},
         "eval_total_fee": _fee_total(ref),  # 欠費總額（資料庫沒存，跟網頁一樣當場算）
+        # 交接第 16 段：還缺什麼文件（None＝還沒判、[]＝不缺）；for 只給業務看
+        "missing_docs": _missing_docs_for_api(ref),
     })
 
 

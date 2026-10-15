@@ -2631,6 +2631,32 @@ check("浮水印判讀失敗 → ⏳ 待確認，⛔ 不當成缺（業務 AI：
       any(st == "check" and "浮水印" in n for st, n in _res.values()) and not any("要重拍" in n for st, n in _res.values()), _res)
 check("不檢查的不會算缺（例：勞保有就給、身分證查詢截圖是行政自己查的）",
       all(st == "skip" for r, st, n in m.docs_missing_for_plan(_rows, ["勞保（有就給）", "記事本申請表", "汽車繳息（汽車有貸款才要）", "身分證查詢截圖"])))
+# 業務 AI 交接第 16 段：查詢窗口回 missing_docs（code 固定、還沒判＝null、不缺＝[]、判讀失敗不算缺）
+m.set_setting("vba_secret", m.hash_pw("t16secret"))
+_md = lambda idv: TestClient(m.app).get("/api/customer-status", params={"id_no": idv, "secret": "t16secret"}).json()
+_m16 = _md("G300000001")
+check("missing_docs：勞保超過一週 → code labor_reprint、for 寫簡稱 21機25",
+      any(d["code"] == "labor_reprint" and d["for"] == "21機25" for d in _m16.get("missing_docs") or []), _m16.get("missing_docs"))
+check("missing_docs：浮水印判讀失敗 → 不算缺（不叫客人重拍）",
+      not any(d["code"] == "timecam_moto_photo" for d in _m16.get("missing_docs") or []), _m16.get("missing_docs"))
+_c = sqlite3.connect(TEST_DB)
+_c.execute("""UPDATE customer_docs SET judge_json=? WHERE id_no='G300000001' AND remote_doc_id='47'""",
+           (json.dumps({"_kind": "stamp", "ok": True, "has_stamp": False}),))
+_c.commit(); _c.close()
+check("missing_docs：合照沒浮水印 → code timecam_moto_photo",
+      any(d["code"] == "timecam_moto_photo" for d in _md("G300000001").get("missing_docs") or []))
+_c = sqlite3.connect(TEST_DB)
+_c.execute("""UPDATE customer_docs SET judge_json=? WHERE id_no='G300000001' AND remote_doc_id='47'""",
+           (json.dumps({"_kind": "stamp", "ok": True, "error": "判讀失敗"}),))
+_c.commit(); _c.close()
+_v16 = _md("V100000001")
+check("missing_docs：證件還沒進行政存檔 → null（還沒判），⛔ 不是 []", "missing_docs" in _v16 and _v16["missing_docs"] is None, _v16.get("missing_docs"))
+_dm16 = m.docs_missing_for_plan
+m.docs_missing_for_plan = lambda rows, reqs: [("身分證正反", "ok", ""), ("人與機車合照（時間相機）", "check", "時間浮水印還沒判讀")]
+check("missing_docs：判過、什麼都不缺 → []（跟還沒判分得開）", _md("G300000001")["missing_docs"] == [])
+m.docs_missing_for_plan = lambda rows, reqs: 1 / 0
+check("missing_docs：算的時候出錯 → null（⛔ 不可以回 [] 被當成不缺）", _md("G300000001")["missing_docs"] is None)
+m.docs_missing_for_plan = _dm16
 m.check_auth = lambda req: "admin"
 _html = TestClient(m.app).get("/archive/G300000001").text
 # 使用者 2026-10-14：只要說明目前送的那家缺什麼（後面可能不會送到），不要拉太長
