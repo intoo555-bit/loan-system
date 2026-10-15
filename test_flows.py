@@ -3337,6 +3337,12 @@ _uv98 = lambda tp: {"debt_list": "[]", "unloan_vehicles": json.dumps([{"type": "
 check("和潤金額：參考價 19 萬 → 24 萬（範本）", m._heren_amount(_uv98("19"), "超U")[0] == 24)
 check("和潤期數：U1／U2 最長 60 期（70 萬）", m._heren_amount(_uv98("54"), "U2")[1] == 60 and m._heren_amount(_uv98("54"), "超U")[1] == 72)
 check("和潤基數表有 84 期 198", m._HEREN_RATE[84] == 198 and m._HEREN_RATE[48] == 283)
+# 使用者 2026-10-15：「超u 36期328 48期259 60期218 72期191」；範本那份 24 萬 48 期 期付款 6216
+check("和潤超U 基數表：範本 24 萬 48 期 → 6216", 24 * m._heren_rate("超U", 48) == 6216)
+check("和潤超U：24 萬沒特別要求 → 36 期 × 328（期數照裕融）", m._heren_amount(_uv98("19"), "超U") == (24, 36, 24 * 328))
+check("和潤 U3 用一般基數表（48 期 283）", m._heren_rate("U3", 48) == 283)
+_ov98b = m._heren_values(dict(_uv98("19"), adminb_heren=json.dumps({"tier": "超U", "periods": "48"})))
+check("行政把期數改 48（客人要求）→ 期付款自動重算 6216", _ov98b["periods"] == "48" and _ov98b["payment"] == "6216", _ov98b)
 _hl98 = lambda co: {"debt_list": json.dumps([{"co": co, "dy": "動保", "pa": "10"}], ensure_ascii=False)}
 check("和潤申貸產品：沒車貸原融／和潤自己的借新還舊／別家他行代償",
       [m._heren_business({"debt_list": "[]"}), m._heren_business(_hl98("和潤汽車")), m._heren_business(_hl98("裕融汽車"))]

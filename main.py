@@ -25837,12 +25837,19 @@ def adminb_download_yulon(request: Request, case_id: str = "", plan: str = ""):
 
 # ============ 和潤申請書（使用者 2026-10-15 給 和潤汽機車申請書.pdf／和潤汽車範本.pdf）============
 # 方案（進件首頁）看資格表 NORMAL 那排符合幾條：1 U1、2 U2、3 U3、4 超U（使用者原話）；
-#   ⚠️ 5 超超U、6 以上超超U+ 是照「以此類推」推的，使用者還沒確認
+#   5 超超U、6 以上超超U+（使用者 2026-10-15 確認）；PLUS 只有 1 條或沒有 → 都不勾（確認）
 # PLUS 那排：2 條 Plus 2、3 條以上 Plus 3（使用者：「勾2條這個就是plus2」）
 # 最長期數：U1、U2 60 期；U3、超U、超超U、超超U+ 84 期。重機一律勾圓夢貸
 # 利率固定 15.75%（範本那份）；貸款金額比照裕融（天書 × 1.3 捨去到整萬）
 # 基數表：36期351 48期283 60期242 72期216 84期198
 _HEREN_RATE = {36: 351, 48: 283, 60: 242, 72: 216, 84: 198}
+# 方案自己有基數表的（使用者 2026-10-15：「超u 36期328 48期259 60期218 72期191」；範本 24 萬 48 期 6216 ＝ 24 × 259）
+_HEREN_RATE_BY_TIER = {"超U": {36: 328, 48: 259, 60: 218, 72: 191}}
+# 期數：照裕融（10～29 萬 36 期、30～40 萬 48 期…，使用者確認）；客人要求別的期數 → 行政B 改期數，期付款跟著重算
+
+
+def _heren_rate(tier: str, n: int):
+    return (_HEREN_RATE_BY_TIER.get(tier) or {}).get(n) or _HEREN_RATE.get(n)
 _HEREN_RATE_PCT = "15.75"
 _HEREN_TIERS = ["U1", "U2", "U3", "超U", "超超U", "超超U+", "圓夢貸"]
 _HEREN_KEYS = ("tier", "plus", "biz", "amount", "periods", "payment", "rate")
@@ -25952,7 +25959,7 @@ def _heren_plus(n_plus: int) -> str:
 
 def _heren_amount(r, tier: str, plan: str = ""):
     """(貸款金額萬, 期數, 期付款)。金額比照裕融：天書 × 1.3 捨去；期數照金額（同裕融 10～29 萬 36 期…），再卡方案最長期數
-    ⚠️ 期數規則使用者還沒確認（範本那份 24 萬寫 48 期，照裕融會是 36 期）"""
+    （範本那份 24 萬寫 48 期是客人要求的；沒特別要求就照這裡）"""
     price = _customer_car_book(r)[0] if _heren_kind(plan) == "汽車" else None
     if not price:
         return None, None, None
@@ -25960,7 +25967,7 @@ def _heren_amount(r, tier: str, plan: str = ""):
     n = 36 if amt <= 29 else 48 if amt <= 40 else 60 if amt <= 60 else 72
     if tier in ("U1", "U2"):
         n = min(n, 60)
-    return amt, n, amt * _HEREN_RATE[n]
+    return amt, n, amt * _heren_rate(tier, n)
 
 
 def _heren_overrides(r) -> dict:
@@ -25996,6 +26003,15 @@ def _heren_values(r, plan: str = "", ov=None) -> dict:
     for k in ("plus", "biz", "amount", "periods", "payment", "rate"):
         if ov.get(k):
             out[k] = "" if ov[k] == "無" else ov[k]
+    # 行政改了金額或期數、沒改期付款 → 期付款照基數表重算（客人要 48 期就改期數，不用自己算）
+    if (ov.get("amount") or ov.get("periods")) and not ov.get("payment"):
+        try:
+            a_ = int(float(re.sub(r"[^\d.]", "", out["amount"])))
+            n_ = int(re.sub(r"[^\d]", "", out["periods"]))
+            r_ = _heren_rate(tier, n_)
+            out["payment"] = f"{a_ * r_}" if r_ else ""
+        except (ValueError, TypeError):
+            pass
     return out
 
 
