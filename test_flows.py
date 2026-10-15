@@ -3622,6 +3622,7 @@ check("新鑫：申請書簽章、立同意書人、立書人簽章都有電子�
 _xp4 = _pp95.open(_io93.BytesIO(m._fill_xinxin_pdf(dict(_xr, adminb_xinxin=json.dumps({"amount": "450"})))))
 _x14 = "".join((_xp4.pages[0].extract_text() or "").split())
 check("新鑫：估價 450 萬 → 申請書寫 300 萬（上限）、期付款 47468", "3000000" in _x14 and "47468" in _x14, _x14[:200])
+check("新鑫：業代姓名統一寫黃先生（使用者 2026-10-15）", "黃先生" in _x14, _x14[:200])
 check("新鑫提醒：還沒估價／沒有產值／超過上限",
       "還沒估價" in m._xinxin_amount_note("") and "沒有產值" in m._xinxin_amount_note("0") and "超過上限" in m._xinxin_amount_note("450"))
 check("新鑫：門牌、所有權人沒打 → 戶籍地址、本人", m._xinxin_values(_xr)["door"] == "長壽路72之23號" and m._xinxin_values(_xr)["owner"] == "測試甲")

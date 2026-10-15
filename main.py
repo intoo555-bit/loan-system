@@ -26730,6 +26730,9 @@ def _fill_xinxin_pdf(r: dict) -> bytes:
     pay = _XINXIN_120_145.get(wan)
     T(0, 78, 67.4, str(wan * 10000) if wan else "", 44)
     T(0, 155, 67.4, "120", 26)
+    # 業代姓名：使用者 2026-10-15「統一寫黃先生」（公司照空白表印的「禾阜國際／統編 93636317」）
+    #   ⚠️ 那行「禾阜國際」後面緊接統編、塞不下名字 → 寫在「電話：」後面的空白，自己帶「業代：」免得被當成電話
+    T(0, 508, 68.8, "（業代：黃先生）", 70, 8)
     T(0, 228, 67.4, str(pay) if pay else "", 46)
     T(0, 60, 139.2, v("customer_name"), 68)
     bd = (_normalize_roc_date(v("birth_date")) or "").replace("-", "/").split("/")
