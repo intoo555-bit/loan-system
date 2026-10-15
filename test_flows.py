@@ -3175,6 +3175,10 @@ _sg2 = m._adminb_supp_guess({"id_no": "", "current_company": "麻吉手機",
 for _k, _v in (("lj_pname", "Apple iPhone 15"), ("lj_pmodel", "351234567890123"), ("qm_imei", "351234567890123"),
                ("mj_brand", "Apple"), ("mj_model", "iPhone 15")):
     check(f"手機補充資料：{_k} = {_v}", _sg2.get(_k) == _v, _sg2.get(_k))
+# 業務 AI 交接第 21 段（2026-10-15）：IMEI 照畫面原樣回「350466850173120/08」，使用者要原樣 → 不可以變成 17 碼
+_sg3 = m._adminb_supp_guess({"id_no": "", "current_company": "麻吉手機", "_dj_fields:手機型號": {"欄位": {}},
+                             "_dj_fields:IMEI": {"欄位": {"IMEI 1": "350466850173120/08"}}, "_dj_labor": {}})
+check("IMEI 有「/08」→ 原樣保留（不變成 35046685017312008）", _sg3.get("qm_imei") == "350466850173120/08", _sg3.get("qm_imei"))
 check("行政B：已經選過的不蓋（亞太三格不再給建議）", '"at_industry"' not in _gh4 and '"at_role"' not in _gh4 and '"at_fund"' not in _gh4, _gh4[:300])
 _r = _tc93.get("/archive/accounts")
 check("對照頁有一格可以自己打官方賴名稱", "自己打官方賴名稱" in _r.text)

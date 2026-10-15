@@ -19460,7 +19460,9 @@ def _adminb_supp_guess(customer) -> dict:
     pf = (ph.get("欄位") or {}) if ph else {}
     im = _customer_doc_judge(c, "fields:IMEI")
     imf = (im.get("欄位") or {}) if im else {}
-    imei = re.sub(r"\D", "", str(imf.get("IMEI 1") or imf.get("IMEI1") or imf.get("IMEI") or pf.get("IMEI 1") or ""))
+    # ⛔ 只拿掉空白、保留「/08」：業務 AI 交接第 21 段（2026-10-15）IMEI 照畫面原樣回「350466850173120/08」，使用者要原樣
+    #   （原本整串拿掉非數字 → 變成 17 碼「35046685017312008」，是錯的 IMEI）
+    imei = re.sub(r"[^\d/]", "", str(imf.get("IMEI 1") or imf.get("IMEI1") or imf.get("IMEI") or pf.get("IMEI 1") or ""))
     phone_name = " ".join(x for x in (str(pf.get("廠牌") or ""), str(pf.get("型號") or "")) if x)
     if phone_name:
         g["lj_pname"] = phone_name
@@ -30755,7 +30757,7 @@ _JUDGE_KIND = {"勞保明細": "labor", "人車合照": "stamp", "人與手機�
 _FIELDS_KIND = {"身分證正面": "身分證正面", "身分證反面": "身分證背面", "健保卡": "健保卡", "行照": "行照",
                 "存摺封面": "存摺封面", "信用卡正面": "信用卡", "信用卡帳單": "信用卡帳單",
                 "IMEI": "IMEI", "手機型號": "手機型號",
-                # 2026-10-15：新鑫（房地）申請書要地號、建號…（交接第 21 段請業務 AI 加讀「權狀」，還沒做好前會拿不到，照舊手打）
+                # 2026-10-15：新鑫（房地）申請書要地號、建號…（交接第 22 段請業務 AI 加讀「權狀」，還沒做好前會拿不到，照舊手打）
                 "權狀或謄本": "權狀"}
 _JUDGE_KIND.update({k: "fields:" + v for k, v in _FIELDS_KIND.items()})
 # 業務 AI 讀的欄位改版了 → 版本 +1，舊答案會自動重拿一次（兩邊都存了舊答案，不重拿永遠是舊的）
