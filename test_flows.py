@@ -3605,7 +3605,8 @@ for _cell, _want in (("C4", "測試戊"), ("E5", "換發"), ("C6", "南市"), ("
 check("新鑫 14.5% 試算表：30 萬 4747、100 萬 15823、200 萬 31646、300 萬 47468",
       [m._XINXIN_120_145[k] for k in (30, 100, 200, 300)] == [4747, 15823, 31646, 47468] and len(m._XINXIN_120_145) == 28)
 _xr = dict(_r95, birth_date="074/12/12", company_role="負責人", reg_city="台中市", reg_district="大甲區", reg_address="長壽路72之23號",
-           adminb_xinxin=json.dumps({"amount": "300", "section": "福安", "land_no": "1208-0014", "build_no": "00200-000"}))
+           adminb_xinxin=json.dumps({"amount": "300", "area": "大甲", "section": "福安", "land_no": "1208-0014", "build_no": "00200-000",
+                                     "door": "長壽路72之23號", "owner": "測試甲"}))
 _bz, m._bizai_signature = m._bizai_signature, (lambda idv: "")
 _xp = _pp95.open(_io93.BytesIO(m._fill_xinxin_pdf(dict(_xr, signature_applicant=_sig96))))
 m._bizai_signature = _bz
@@ -3625,7 +3626,19 @@ check("新鑫：估價 450 萬 → 申請書寫 300 萬（上限）、期付款 
 check("新鑫：業代姓名統一寫黃先生（使用者 2026-10-15）", "黃先生" in _x14, _x14[:200])
 check("新鑫提醒：還沒估價／沒有產值／超過上限",
       "還沒估價" in m._xinxin_amount_note("") and "沒有產值" in m._xinxin_amount_note("0") and "超過上限" in m._xinxin_amount_note("450"))
-check("新鑫：門牌、所有權人沒打 → 戶籍地址、本人", m._xinxin_values(_xr)["door"] == "長壽路72之23號" and m._xinxin_values(_xr)["owner"] == "測試甲")
+# 使用者 2026-10-15：「每個人都不一樣」→ 不預設門牌＝戶籍、所有權人＝本人；從權狀讀，讀不到就空著
+check("新鑫：門牌、所有權人沒打也沒權狀 → 空著（不預設戶籍、本人）",
+      m._xinxin_values(dict(_xr, adminb_xinxin="{}"))["door"] == "" and m._xinxin_values(dict(_xr, adminb_xinxin="{}"))["owner"] == "")
+_dj21 = m._customer_doc_judge
+m._customer_doc_judge = lambda c, k: ({"欄位": {"鄉鎮市區": "大甲區", "段": "福安段", "地號": "1208-0014", "建號": "00200-000",
+                                              "建物門牌": "台中市大甲區長壽路72之23號", "所有權人": "測試乙", "所有權人身分證": "a100000002"}}
+                                     if k == "fields:權狀" else _dj21(c, k))
+_xv21 = m._xinxin_values(dict(_xr, adminb_xinxin="{}"))
+m._customer_doc_judge = _dj21
+check("新鑫：權狀讀到的自動帶（大甲、福安、地號、建號、門牌、所有權人）",
+      (_xv21["area"], _xv21["section"], _xv21["land_no"], _xv21["build_no"], _xv21["owner"], _xv21["owner_id"])
+      == ("大甲", "福安", "1208-0014", "00200-000", "測試乙", "A100000002"), _xv21)
+check("新鑫：行政打的優先（門牌）", m._xinxin_values(dict(_xr, adminb_xinxin=json.dumps({"door": "打的門牌"})))["door"] == "打的門牌")
 check("送件包：興達兩個方案都用興達那張",m._PACK_TEMPLATE_ALIAS.get("興達勞保貸") == "興達" and m._PACK_TEMPLATE_ALIAS.get("興達汽機車二胎") == "興達")
 check("申請書資料夾不可以有範本（真客人個資）",not any("範本" in f and ("中租" in f or "願望" in f) for f in os.listdir("申請書")))
 

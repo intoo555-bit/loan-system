@@ -19875,7 +19875,7 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
       </div>
       <div class="ab-block" data-plans="新鑫" style="background:#f0fdfa;">
         <div style="font-size:12px;font-weight:700;color:#0f766e;margin-bottom:4px;">新鑫（房地）：一律 120 期、14.5%、用途投資理財、專案一般</div>
-        <div style="font-size:11px;color:#475569;margin-bottom:6px;">二胎處理（不用還原本的貸款）：先估價，估價說能貸多少就打多少，最高 300 萬；期付款照 120 期試算表 14.5% 自動帶。不動產那幾格看權狀／謄本；門牌、所有權人空著＝戶籍地址、本人</div>
+        <div style="font-size:11px;color:#475569;margin-bottom:6px;">二胎處理（不用還原本的貸款）：先估價，估價說能貸多少就打多少，最高 300 萬；期付款照 120 期試算表 14.5% 自動帶。不動產那幾格看權狀／謄本（每個人都不一樣，不預設）；格子裡灰色的字＝從權狀讀到的，空著下載就用它</div>
         {_xinxin_amount_note(xx_ov.get("amount", ""))}
         <div class="ab-g3" style="margin-bottom:8px;">
           {"".join(f'<div><div class="ab-lbl">{lbl}</div><input name="xx_{k}" class="ab-inp" placeholder="{h(ph)}" value="{h(xx_ov.get(k, ""))}"></div>' for k, lbl, ph in [
@@ -26658,20 +26658,25 @@ _XINXIN_KEYS = ("amount", "area", "section", "land_no", "build_no", "mortgage", 
 
 
 def _xinxin_values(r) -> dict:
-    """新鑫不動產那幾格＋金額：行政B 打的優先；沒打的 → 門牌＝戶籍地址、所有權人＝本人（範本那份就是這樣）"""
+    """新鑫不動產那幾格＋金額：行政B 打的優先；沒打的 → 業務 AI 讀權狀／謄本讀到的；都沒有就空著。
+    ⛔ 不預設「門牌＝戶籍地址、所有權人＝本人」（使用者 2026-10-15：「每個人都不一樣」——房子不一定是住的那間、
+       也不一定在本人名下；預設值看起來像填好了，反而會被漏看）"""
     try:
         ov = json.loads(r.get("adminb_xinxin") or "{}") or {}
     except Exception:
         ov = {}
     ov = {k: str(ov.get(k) or "").strip() for k in _XINXIN_KEYS}
-    dist = str(r.get("reg_district") or "").strip()
-    reg_a = str(r.get("reg_address") or "").strip()
-    for pre in (str(r.get("reg_city") or ""), dist):
-        if pre and reg_a.startswith(pre):
-            reg_a = reg_a[len(pre):]
-    auto = {"amount": "", "area": re.sub(r"[區鄉鎮市]$", "", dist), "section": "", "land_no": "", "build_no": "",
-            "mortgage": "", "door": reg_a, "owner": str(r.get("customer_name") or ""),
-            "owner_id": str(r.get("id_no") or "").upper()}
+    f_ = (_customer_doc_judge(r, "fields:權狀") or {}).get("欄位") or {}
+
+    def g(*keys):
+        for k in keys:
+            x = str(f_.get(k) or "").strip()
+            if x:
+                return x
+        return ""
+    auto = {"amount": "", "area": re.sub(r"[區鄉鎮市]$", "", g("鄉鎮市區")), "section": re.sub(r"段$", "", g("段", "地段")),
+            "land_no": g("地號"), "build_no": g("建號"), "mortgage": g("他項權利設定金額", "設定金額"),
+            "door": g("建物門牌", "門牌"), "owner": g("所有權人"), "owner_id": g("所有權人身分證", "統一編號").upper()}
     return {k: ov[k] or auto[k] for k in _XINXIN_KEYS}
 
 
@@ -30749,7 +30754,9 @@ _JUDGE_KIND = {"勞保明細": "labor", "人車合照": "stamp", "人與手機�
 #   ⚠️ _kind 連分類一起存（fields:行照）→ 行政改分類後會重拿，不會拿行照的答案當身分證
 _FIELDS_KIND = {"身分證正面": "身分證正面", "身分證反面": "身分證背面", "健保卡": "健保卡", "行照": "行照",
                 "存摺封面": "存摺封面", "信用卡正面": "信用卡", "信用卡帳單": "信用卡帳單",
-                "IMEI": "IMEI", "手機型號": "手機型號"}
+                "IMEI": "IMEI", "手機型號": "手機型號",
+                # 2026-10-15：新鑫（房地）申請書要地號、建號…（交接第 21 段請業務 AI 加讀「權狀」，還沒做好前會拿不到，照舊手打）
+                "權狀或謄本": "權狀"}
 _JUDGE_KIND.update({k: "fields:" + v for k, v in _FIELDS_KIND.items()})
 # 業務 AI 讀的欄位改版了 → 版本 +1，舊答案會自動重拿一次（兩邊都存了舊答案，不重拿永遠是舊的）
 #   2：發證日期／發證地／換補發改從身分證「正面」讀（2026-10-14 交接第 8 段更正）
