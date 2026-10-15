@@ -5680,6 +5680,7 @@ def init_db():
         ("adminb_mj_model", "TEXT"),
         ("adminb_mj_6w18p", "TEXT"),
         ("adminb_yulon", "TEXT"),          # 行政B 裕融區行政改過的格子（JSON，見 _yulon_overrides）
+        ("adminb_heren", "TEXT"),          # 行政B 和潤區行政改過的格子（JSON，見 _heren_overrides）
         ("adminb_ry_amount", "TEXT"),
         ("adminb_ry_period", "TEXT"),
         ("adminb_bei_note", "TEXT"),
@@ -19642,6 +19643,28 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
         print(f"[adminb] 裕融預填失敗：{_e}")
         yv = {k: "" for k in _YULON_KEYS}
     yl_ov = _yulon_overrides(customer)
+    # 和潤：送件順序有排和潤就先幫忙勾
+    try:
+        if "和潤" not in sel_plans.split(",") and _heren_plans_of(customer):
+            sel_plans = ",".join([x for x in sel_plans.split(",") if x] + ["和潤"])
+        hv = _heren_values(customer)
+    except Exception as _e:
+        print(f"[adminb] 和潤預填失敗：{_e}")
+        hv = {k: "" for k in _HEREN_KEYS}
+        hv.update(_N={}, _P={})
+    hr_ov = _heren_overrides(customer)
+    hv_n = "、".join(f"{k}（{x}）" if x else str(k) for k, x in sorted(hv["_N"].items())) or "無"
+    hv_p = "、".join(f"{k}（{x}）" if x else str(k) for k, x in sorted(hv["_P"].items())) or "無"
+
+    def hr_opt(name, opts):
+        cur_ = hv.get(name, "") or ("無" if name == "plus" else "")
+        return f'<select name="hr2_{name}" class="ab-sel">' + "".join(
+            f'<option value="{h(o)}" {"selected" if cur_ == o else ""}>{h(o) or "（看不出來）"}</option>' for o in opts) + "</select>"
+
+    def hr_inp(name, label, ph=""):
+        mark = ' <span style="color:#b45309">（改過）</span>' if hr_ov.get(name) else ""
+        return (f'<div><div class="ab-lbl">{label}{mark}</div><input name="hr2_{name}" class="ab-inp" placeholder="{h(ph)}" '
+                f'value="{h(hv.get(name, ""))}"></div>')
     yl_sig = customer.get("signature_applicant", "") or ""
 
     def yl_opt(name, opts):
@@ -19717,6 +19740,7 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
         ])}
         <label class="ab-plan" style="background:#4e7055;border-color:#3a5040;"><input type="checkbox" name="plans" value="喬美" style="accent-color:#fff;"><div><div class="ab-plan-name" style="color:#fff;">喬美</div><div class="ab-plan-sub" style="color:#c8e6ca;">PDF電子簽名</div></div></label>
         <label class="ab-plan" style="background:#1d4ed8;border-color:#1e3a8a;"><input type="checkbox" name="plans" value="裕融" style="accent-color:#fff;"><div><div class="ab-plan-name" style="color:#fff;">裕融</div><div class="ab-plan-sub" style="color:#dbeafe;">汽車 PDF</div></div></label>
+        <label class="ab-plan" style="background:#b45309;border-color:#78350f;"><input type="checkbox" name="plans" value="和潤" style="accent-color:#fff;"><div><div class="ab-plan-name" style="color:#fff;">和潤</div><div class="ab-plan-sub" style="color:#fef3c7;">汽車／重機 PDF</div></div></label>
       </div>
       <div style="font-size:11px;font-weight:700;color:#6a5e4e;margin-bottom:8px;">填寫表方案</div>
       <div class="ab-plan-grid">
@@ -19815,8 +19839,24 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
           {yl_inp("fund", "資金用途", "")}
           {yl_inp("ratio", "申貸成數", "130%")}
         </div>
+      </div>
+      <div class="ab-block" data-plans="和潤" style="background:#fef3c7;">
+        <div style="font-size:12px;font-weight:700;color:#b45309;margin-bottom:4px;">和潤（汽車／重機申請書 PDF）</div>
+        <div style="font-size:11px;color:#475569;margin-bottom:6px;">系統先算好填進去，有錯直接改；沒改的格子以後資料變了會跟著重算。清空＝回到系統算的</div>
+        <div style="font-size:11px;color:#92400e;margin-bottom:10px;">資格表系統看得出來的：NORMAL {hv_n}；PLUS {hv_p}</div>
+        <div class="ab-g4" style="margin-bottom:10px;">
+          <div><div class="ab-lbl">方案{' <span style="color:#b45309">（改過）</span>' if hr_ov.get("tier") else ""}</div>{hr_opt("tier", [""] + _HEREN_TIERS)}</div>
+          <div><div class="ab-lbl">Plus{' <span style="color:#b45309">（改過）</span>' if hr_ov.get("plus") else ""}</div>{hr_opt("plus", ["無", "Plus 2", "Plus 3"])}</div>
+          <div><div class="ab-lbl">申貸產品{' <span style="color:#b45309">（改過）</span>' if hr_ov.get("biz") else ""}</div>{hr_opt("biz", ["原融", "借新還舊", "他行代償"])}</div>
+          {hr_inp("rate", "利率（%）", "15.75")}
+          {hr_inp("amount", "貸款金額（萬）", "24")}
+          {hr_inp("periods", "期數", "48")}
+          {hr_inp("payment", "期付款", "6216")}
+        </div>
+      </div>
+      <div class="ab-block" data-plans="裕融,和潤" style="background:#f1f5f9;">
         <div style="background:#fff;border:1px dashed #1d4ed8;border-radius:8px;padding:12px;margin:10px 0;">
-          <div style="font-size:12px;font-weight:700;color:#1d4ed8;margin-bottom:6px;">📝 借款人電子簽名（印在申請書「借款人(簽章)」）</div>
+          <div style="font-size:12px;font-weight:700;color:#1d4ed8;margin-bottom:6px;">📝 客人電子簽名（裕融、和潤申請書每個要簽的地方都會帶）</div>
           <div style="font-size:11px;color:#475569;margin-bottom:8px;">{"目前已有簽名（下圖）；要重簽就在下面簽完按「存簽名」" if yl_sig.startswith("data:image") else "還沒有簽名：請客人在下面簽，按「存簽名」"}　之後業務 AI 那邊客人簽好的會直接用</div>
           {f'<img src="{h(yl_sig)}" style="max-width:240px;max-height:70px;border:1px solid #cbd5e1;border-radius:4px;background:#fff;margin-bottom:8px;display:block;">' if yl_sig.startswith("data:image") else ""}
           <canvas id="ylSignPad" width="500" height="150" style="border:2px solid #1d4ed8;background:#fff;cursor:crosshair;display:block;border-radius:6px;width:100%;max-width:500px;touch-action:none;"></canvas>
@@ -19881,6 +19921,7 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
         <button type="submit" class="btn-save">💾 儲存資料</button>
         <a href="/adminb/download-excel?case_id={h(case_id)}" class="btn-dl" onclick="return confirm('將根據勾選的方案下載 Excel/TXT，確定嗎？')">📥 下載EXCEL/TXT</a>
         <a href="/adminb/download-yulon?case_id={h(case_id)}" class="btn-dl" style="background:#1d4ed8">📄 裕融申請書 PDF</a>
+        <a href="/adminb/download-heren?case_id={h(case_id)}" class="btn-dl" style="background:#b45309">📄 和潤申請書 PDF</a>
         {('<span style="display:inline-flex;gap:6px;align-items:center;background:#e8f4f4;border:1px solid #b9dcdc;border-radius:8px;padding:6px 10px">'
           + _pack_picker_html(customer) + '</span>') if _pack_picker_html(customer) else ''}
         {'<button type="button" onclick="checkEligibilityAdminB()" style="background:#fef3c7;color:#854d0e;border:1px solid #fde047;padding:11px 22px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;">📋 對照規則表</button>' if role in ('admin', 'ops_admin') else ''}
@@ -20294,6 +20335,20 @@ async def adminb_save(request: Request):
     # 套用「確認資料」自動調整規則，回寫到主要欄位
     cur.execute("SELECT * FROM customers WHERE case_id=?", (case_id,))
     row = cur.fetchone()
+    if row and "hr2_tier" in form:
+        # 和潤：同裕融，只存行政改過的格子
+        try:
+            old_ov = _heren_overrides(dict(row))
+            shown = _heren_values(dict(row), ov=old_ov)
+            shown["plus"] = shown.get("plus") or "無"
+            new_ov = {}
+            for k in _HEREN_KEYS:
+                val = str(form.get("hr2_" + k, "") or "").strip()
+                if val and (val != str(shown.get(k, "")) or k in old_ov):
+                    new_ov[k] = val
+            fields["adminb_heren"] = json.dumps(new_ov, ensure_ascii=False) if new_ov else ""
+        except Exception as e:
+            print(f"[adminb save] 和潤欄位存失敗：{e}")
     if row and "yl_plan" in form:
         # 裕融：只存行政「改過」的格子 —— 跟畫面上原本系統算的一樣＝沒動 → 不存，以後資料變了照樣重算
         #   （之前改過、這次沒動的保留；清空＝回到系統算的）
@@ -25502,6 +25557,60 @@ def _yulon_values(r, route_plan: str = "", ov=None) -> dict:
     return out
 
 
+def _pdf_overlay(tpl: str, ops: dict) -> bytes:
+    """空白 PDF 範本疊字（裕融、和潤共用）。ops＝{頁(0 起): [op…]}
+    op：("t", x, top, 字, 最寬, 字級)／("v", x, top) 打勾／("img", x, top, 寬, 高, data:image 簽名)
+    top 是從頁面上緣往下量的（pdfplumber 的 top），字太長會自動縮小到 maxw 以內"""
+    from pypdf import PdfReader, PdfWriter
+    from reportlab.pdfgen import canvas
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+    try:
+        pdfmetrics.registerFont(UnicodeCIDFont("STSong-Light"))
+        FONT = "STSong-Light"
+    except Exception:
+        FONT = "Helvetica"
+    writer = PdfWriter(clone_from=tpl)
+    for i, page in enumerate(writer.pages):
+        H, W = float(page.mediabox.height), float(page.mediabox.width)
+        if ops.get(i):
+            buf = io.BytesIO()
+            c = canvas.Canvas(buf, pagesize=(W, H))
+            for op in ops[i]:
+                if op[0] == "t":
+                    _, x, top, text, maxw, size = op
+                    sz = size
+                    while maxw and sz > 5 and pdfmetrics.stringWidth(text, FONT, sz) > maxw:
+                        sz -= 0.5
+                    c.setFont(FONT, sz)
+                    c.drawString(x, H - top - 7.5, text)
+                elif op[0] == "img":                    # 電子簽名
+                    _, x, top, w_, h_, data_ = op
+                    try:
+                        from reportlab.lib.utils import ImageReader
+                        img_ = ImageReader(io.BytesIO(base64.b64decode(data_.split(",", 1)[1])))
+                        c.drawImage(img_, x, H - top - h_, width=w_, height=h_, mask="auto", preserveAspectRatio=True)
+                    except Exception as ex:
+                        print(f"[pdf_overlay] 簽名畫不上去：{ex}")
+                else:                                   # 打勾
+                    _, x, top = op
+                    y0 = H - top - 7.5
+                    c.setLineWidth(1.1)
+                    p_ = c.beginPath()
+                    p_.moveTo(x + 1.2, y0 + 3.8); p_.lineTo(x + 3.2, y0 + 1.2); p_.lineTo(x + 7.2, y0 + 8.2)
+                    c.drawPath(p_, stroke=1, fill=0)
+            c.save()
+            buf.seek(0)
+            page.merge_page(PdfReader(buf).pages[0])
+            page.compress_content_streams(level=9)
+    # 疊字會把原本壓縮的內容解開；不壓回去＋清掉舊的那份，檔案從 3MB 變 7～9MB
+    writer.compress_identical_objects(remove_identicals=True, remove_orphans=True)
+    out = io.BytesIO()
+    writer.write(out)
+    return out.getvalue()
+
+
+
 def _fill_yulon_pdf(r: dict, plan: str = "") -> bytes:
     """裕融（遠銀車貸）申請書：空白範本疊字（同喬美做法）。
     範本：申請書/裕融申請書.pdf（使用者 2026-10-15 給的 TAC申請書.pdf，113.07 版）；
@@ -25688,45 +25797,7 @@ def _fill_yulon_pdf(r: dict, plan: str = "") -> bytes:
     # ---- 第 6 頁核駁通知書：日期 ----
     T(5, 225, 769, today[0], None, 11); T(5, 352, 769, today[1], None, 11); T(5, 466, 769, today[2], None, 11)
 
-    writer = PdfWriter(clone_from=tpl)
-    for i, page in enumerate(writer.pages):
-        H, W = float(page.mediabox.height), float(page.mediabox.width)
-        if ops.get(i):
-            buf = io.BytesIO()
-            c = canvas.Canvas(buf, pagesize=(W, H))
-            for op in ops[i]:
-                if op[0] == "t":
-                    _, x, top, text, maxw, size = op
-                    sz = size
-                    while maxw and sz > 5 and pdfmetrics.stringWidth(text, FONT, sz) > maxw:
-                        sz -= 0.5
-                    c.setFont(FONT, sz)
-                    c.drawString(x, H - top - 7.5, text)
-                elif op[0] == "img":                    # 電子簽名
-                    _, x, top, w_, h_, data_ = op
-                    try:
-                        from reportlab.lib.utils import ImageReader
-                        img_ = ImageReader(io.BytesIO(base64.b64decode(data_.split(",", 1)[1])))
-                        c.drawImage(img_, x, H - top - h_, width=w_, height=h_, mask="auto", preserveAspectRatio=True)
-                    except Exception as ex:
-                        print(f"[yulon] 簽名畫不上去：{ex}")
-                else:                                   # 打勾
-                    _, x, top = op
-                    y0 = H - top - 7.5
-                    c.setLineWidth(1.1)
-                    p_ = c.beginPath()
-                    p_.moveTo(x + 1.2, y0 + 3.8); p_.lineTo(x + 3.2, y0 + 1.2); p_.lineTo(x + 7.2, y0 + 8.2)
-                    c.drawPath(p_, stroke=1, fill=0)
-            c.save()
-            buf.seek(0)
-            page.merge_page(PdfReader(buf).pages[0])
-            page.compress_content_streams(level=9)
-    # 疊字會把原本壓縮的內容解開；不壓回去＋清掉舊的那份，檔案從 3MB 變 7～9MB
-    writer.compress_identical_objects(remove_identicals=True, remove_orphans=True)
-    out = io.BytesIO()
-    writer.write(out)
-    return out.getvalue()
-
+    return _pdf_overlay(tpl, ops)
 
 def _yulon_plans_of(r) -> list:
     """這位客人送件順序（或系統建議）裡的裕融方案"""
@@ -25760,6 +25831,333 @@ def adminb_download_yulon(request: Request, case_id: str = "", plan: str = ""):
         return JSONResponse({"error": "裕融申請書範本不在（申請書/裕融申請書.pdf）"}, status_code=500)
     from urllib.parse import quote
     fname = quote((r.get("customer_name") or "") + "_裕融申請書.pdf")
+    return StreamingResponse(io.BytesIO(data), media_type="application/pdf",
+                             headers={"Content-Disposition": f"attachment; filename*=UTF-8''{fname}"})
+
+
+# ============ 和潤申請書（使用者 2026-10-15 給 和潤汽機車申請書.pdf／和潤汽車範本.pdf）============
+# 方案（進件首頁）看資格表 NORMAL 那排符合幾條：1 U1、2 U2、3 U3、4 超U（使用者原話）；
+#   ⚠️ 5 超超U、6 以上超超U+ 是照「以此類推」推的，使用者還沒確認
+# PLUS 那排：2 條 Plus 2、3 條以上 Plus 3（使用者：「勾2條這個就是plus2」）
+# 最長期數：U1、U2 60 期；U3、超U、超超U、超超U+ 84 期。重機一律勾圓夢貸
+# 利率固定 15.75%（範本那份）；貸款金額比照裕融（天書 × 1.3 捨去到整萬）
+# 基數表：36期351 48期283 60期242 72期216 84期198
+_HEREN_RATE = {36: 351, 48: 283, 60: 242, 72: 216, 84: 198}
+_HEREN_RATE_PCT = "15.75"
+_HEREN_TIERS = ["U1", "U2", "U3", "超U", "超超U", "超超U+", "圓夢貸"]
+_HEREN_KEYS = ("tier", "plus", "biz", "amount", "periods", "payment", "rate")
+
+
+def _vehicle_license_fields(cust, kind: str = "汽車") -> dict:
+    """客人存檔裡那種車（汽車／機車）的行照判讀欄位"""
+    try:
+        for r in _docs_rows(cust.get("id_no") or "") if cust.get("id_no") else []:
+            if r.get("show_label") == "行照" and _doc_vehicle_kind(r) == kind:
+                return _doc_judge(r).get("欄位") or {}
+    except Exception:
+        pass
+    return {}
+
+
+def _heren_kind(plan: str) -> str:
+    return "機車" if "重機" in (plan or "") else "汽車"
+
+
+def _vehicle_loan_row(r, kind: str = "汽車") -> dict:
+    """車上那筆貸款（co 含汽車／機車＋動保／公路）"""
+    for d in _json_list(r.get("debt_list")):
+        if isinstance(d, dict) and kind in str(d.get("co") or "") and any(
+                k in str(d.get("dy") or "") for k in ("動保", "公路")):
+            return d
+    return {}
+
+
+def _heren_business(r, kind: str = "汽車") -> str:
+    """申貸產品：沒車貸＝原融；車貸是和潤自己的＝借新還舊；別家＝他行代償（同裕融做法）"""
+    d = _vehicle_loan_row(r, kind)
+    if not d:
+        return "原融"
+    return "借新還舊" if "和潤" in str(d.get("co") or "") else "他行代償"
+
+
+def _heren_conditions(c, kind: str = "汽車"):
+    """和潤分期申請資格表：資料看得出來「有符合」的序號 → ({序號: 說明}, {序號: 說明})（NORMAL, PLUS）。
+    看不出來的不勾、不算不符合（保人、存款、PDC、公司設立、卡種這些要人工看）"""
+    c = c or {}
+    N, P = {}, {}
+    L = _customer_doc_judge(c, "labor")
+    cur = [x for x in (L.get("目前投保") or []) if isinstance(x, dict) and isinstance(x.get("加保滿幾個月"), int)]
+    top = max(cur, key=lambda x: x["加保滿幾個月"]) if cur else {}
+    mon = top.get("加保滿幾個月") or 0
+    sal = top.get("投保薪資") if isinstance(top.get("投保薪資"), int) else 0
+    gov = str(top.get("類型") or "") in ("軍保", "公保") or (c.get("eval_labor_ins") or "") in ("軍保", "公保")
+    if mon >= 12:
+        N[1] = f"現職滿一年（勞保 {mon} 個月）"
+    if mon >= 24 or (mon >= 6 and sal >= 33000):
+        P[17] = f"現職滿兩年或投保 6 個月以上且投保 33000 以上（勞保 {mon} 個月、投保 {sal:,}）"
+    if str(c.get("eval_license") or "").strip() == "有":
+        N[2] = "有證照"
+    if gov:
+        N[3] = "軍公教"
+        if mon >= 12:
+            P[19] = "軍公教正職滿一年"
+    st = str(c.get("eval_salary_transfer") or "")
+    if "有" in st and "無" not in st:
+        N[6] = "有薪轉"
+    if "不動產" in str(c.get("eval_property") or ""):
+        N[8] = "持有不動產"
+    if _check_creditcard_status(c)[0] == "good":
+        N[11] = "有信用卡、沒遲繳（白金卡以上或額度 10 萬要確認）"
+    if any(k in str(c.get("company_role") or "") for k in ("醫師", "會計師", "律師", "建築師")):
+        P[18] = "醫師／會計師／律師／建築師"
+    lic = _vehicle_license_fields(c, kind)
+    brand = str(lic.get("廠牌") or "").upper()
+    yr = None
+    m_ = re.match(r"(\d{4})", str(lic.get("出廠年月") or ""))
+    if m_:
+        yr = int(m_.group(1))
+    elif kind == "汽車":
+        ages = _customer_car_ages(c)
+        yr = (now_tw().year - min(ages)) if ages else None
+    age = (now_tw().year - yr) if yr else None
+    toyota = any(k in brand for k in ("TOYOTA", "LEXUS", "豐田", "凌志"))
+    lux = any(k in brand for k in ("BMW", "BENZ", "賓士", "寶馬", "PORSCHE", "保時捷", "VOLVO", "富豪", "AUDI", "奧迪"))
+    if toyota:
+        N[14] = "TOYOTA／LEXUS"
+    if age is not None and age <= 7:
+        N[15] = f"車齡七年內（{yr} 年出廠）"
+    if age is not None and age <= 5 and toyota:
+        P[30] = "TOYOTA／LEXUS 且車齡五年內"
+    if age is not None and age <= 5 and lux:
+        P[31] = "BMW／BENZ／Porsche／VOLVO／AUDI 且車齡五年內"
+    late_ok = (c.get("eval_late") or "").strip() == "無" or str(c.get("eval_late_days") or "0").strip() in ("", "0")
+    d = _vehicle_loan_row(c, kind)
+    pa = int(re.sub(r"[^\d]", "", str(d.get("pa") or "")) or 0) if d else 0
+    if d and late_ok and (pa >= 9 or ("和潤" in str(d.get("co") or "") and pa >= 6)):
+        N[16] = f"既有客戶繳 {pa} 期、無逾期（{d.get('co')}）"
+    if d and late_ok and pa >= 12 and "和潤" not in str(d.get("co") or ""):
+        P[32] = f"同業既有客戶滿 12 期、無逾期（{d.get('co')} {pa} 期）"
+    return N, P
+
+
+def _heren_tier(n_normal: int, plan: str = "") -> str:
+    if "重機" in (plan or ""):
+        return "圓夢貸"
+    return {0: "", 1: "U1", 2: "U2", 3: "U3", 4: "超U", 5: "超超U"}.get(n_normal, "超超U+")
+
+
+def _heren_plus(n_plus: int) -> str:
+    return "Plus 3" if n_plus >= 3 else "Plus 2" if n_plus == 2 else ""
+
+
+def _heren_amount(r, tier: str, plan: str = ""):
+    """(貸款金額萬, 期數, 期付款)。金額比照裕融：天書 × 1.3 捨去；期數照金額（同裕融 10～29 萬 36 期…），再卡方案最長期數
+    ⚠️ 期數規則使用者還沒確認（範本那份 24 萬寫 48 期，照裕融會是 36 期）"""
+    price = _customer_car_book(r)[0] if _heren_kind(plan) == "汽車" else None
+    if not price:
+        return None, None, None
+    amt = int(price * 1.3 + 1e-9)
+    n = 36 if amt <= 29 else 48 if amt <= 40 else 60 if amt <= 60 else 72
+    if tier in ("U1", "U2"):
+        n = min(n, 60)
+    return amt, n, amt * _HEREN_RATE[n]
+
+
+def _heren_overrides(r) -> dict:
+    """行政B 和潤區行政改過的格子（adminb_heren，JSON）"""
+    try:
+        d = json.loads(r.get("adminb_heren") or "{}")
+        return {k: str(d[k]).strip() for k in _HEREN_KEYS if isinstance(d, dict) and str(d.get(k) or "").strip()}
+    except Exception:
+        return {}
+
+
+def _heren_plans_of(r) -> list:
+    """送件順序裡的和潤方案"""
+    try:
+        lst = [str(x.get("company") if isinstance(x, dict) else x)
+               for x in (json.loads(r.get("route_plan") or "{}") or {}).get("order", []) or []]
+    except Exception:
+        lst = []
+    return [x for x in lst if x.startswith("和潤")]
+
+
+def _heren_values(r, plan: str = "", ov=None) -> dict:
+    """和潤申請書要填的值：行政改過的 > 系統算的（方案改了，期數上限跟著方案走）"""
+    ov = _heren_overrides(r) if ov is None else ov
+    plan = plan or next((x for x in [r.get("current_company") or ""] + _heren_plans_of(r) if x.startswith("和潤")), "") or "和潤汽車"
+    kind = _heren_kind(plan)
+    N, P = _heren_conditions(r, kind)
+    tier = ov.get("tier") or _heren_tier(len(N), plan)
+    amt, n, pay = _heren_amount(r, tier, plan)
+    out = {"plan": plan, "tier": tier, "plus": "" if "重機" in plan else _heren_plus(len(P)),
+           "biz": _heren_business(r, kind), "amount": f"{amt}" if amt else "", "periods": str(n or ""),
+           "payment": f"{pay}" if pay else "", "rate": _HEREN_RATE_PCT, "_N": N, "_P": P}
+    for k in ("plus", "biz", "amount", "periods", "payment", "rate"):
+        if ov.get(k):
+            out[k] = "" if ov[k] == "無" else ov[k]
+    return out
+
+
+def _fill_heren_pdf(r: dict, plan: str = "") -> bytes:
+    """和潤（汽機車分期）申請書：空白範本疊字。範本：申請書/和潤申請書.pdf（使用者 2026-10-15 給的 和潤汽機車申請書.pdf）
+    5 頁：1 申請書、2 個資同意書（車主簽名＋日期）、3 資格表（勾 V）、4 進件首頁（AR、申貸產品、方案）、5 核駁通知書（簽名＋日期）
+    位置照使用者給的填好範本（和潤汽車範本.pdf）。⚠️ 第 1、2、5 頁座標是照圖量的，改範本要重量"""
+    tpl = os.path.join(os.path.dirname(os.path.abspath(__file__)), "申請書", "和潤申請書.pdf")
+    if not os.path.exists(tpl):
+        return b""
+
+    def v(k):
+        return str(r.get(k) or "").strip()
+
+    def ymd(d):
+        d = _normalize_roc_date(d) if d else ""
+        p = d.replace("-", "/").split("/")
+        try:
+            y = int(p[0])
+            return (str(y - 1911 if y >= 1911 else y), str(int(p[1])), str(int(p[2])))
+        except Exception:
+            return ("", "", "")
+
+    hv = _heren_values(r, plan)
+    kind = _heren_kind(hv["plan"])
+    rules = apply_adminb_rules(r)
+    now = now_tw()
+    today = (str(now.year - 1911), str(now.month), str(now.day))
+    ops = {i: [] for i in range(5)}
+
+    def T(pg, x, c, text, maxw=None, size=9):          # c＝那一行的中線
+        if str(text or "").strip():
+            ops[pg].append(("t", x, c - size / 2, str(text).strip(), maxw, size))
+
+    def V(pg, x, c):                                    # x＝方框左緣、c＝方框中線
+        ops[pg].append(("v", x - 0.3, c - 4.2))
+
+    # ---- 第 1 頁：申請書 ----
+    T(0, 505, 46, today[0]); T(0, 543, 46, today[1]); T(0, 573, 46, today[2])
+    V(0, {"原融": 221, "借新還舊": 247, "他行代償": 288}.get(hv["biz"], 221), 70.5)
+    if kind == "機車":
+        V(0, 328.5, 70.5)
+    lic = _vehicle_license_fields(r, kind)
+    T(0, 62, 111.5, lic.get("廠牌"), 85); T(0, 180, 111.5, lic.get("車輛型式"), 85, 8)
+    m_ = re.match(r"(\d{4})\D*(\d{1,2})?", str(lic.get("出廠年月") or ""))
+    if m_:
+        T(0, 304, 111.5, m_.group(1)); T(0, 343, 111.5, m_.group(2) or "")
+    T(0, 397, 111.5, lic.get("車牌"), 75)
+    price = _customer_car_book(r)[0] if kind == "汽車" else None
+    if price:
+        T(0, 196, 134, f"{price:g}", 45); V(0, 355, 134)     # 參考價（萬）＋參考來源：天書
+    T(0, 107, 156.5, hv["amount"], 40); T(0, 220, 156.5, hv["periods"], 40)
+    T(0, 320, 156.5, hv["payment"].replace(",", ""), 50); T(0, 420, 156.5, hv["rate"], 45)
+    # 申請人
+    T(0, 62, 253.5, v("customer_name"), 95)
+    T(0, 200, 253.5, v("id_no").upper(), 105)
+    by, bm, bd = ymd(v("birth_date"))
+    T(0, 338, 253.5, by); T(0, 372, 253.5, bm); T(0, 402, 253.5, bd)
+    mar = v("marriage")
+    if mar:
+        V(0, 459 if "已婚" in mar else 483 if "未婚" in mar else 508, 253.5)
+    edu = rules.get("edu_val") or v("education")
+    ex = (62.5 if any(k in edu for k in ("研究", "碩", "博")) else 104 if "大" in edu else 132 if "專" in edu else
+          160.5 if "高" in edu else 196 if edu else None)
+    if ex:
+        V(0, ex, 276)
+    try:
+        sal = float(str(rules.get("salary_val") or "0").replace("萬", "").replace(",", ""))
+        T(0, 318, 276, str(int(sal * 10000 if sal < 1000 else sal)) if sal else "", 50)   # 範本寫 35000（不寫萬）
+    except ValueError:
+        pass
+    T(0, 452, 276, v("adminb_hr_industry") or v("adminb_industry") or v("company_industry"), 140, 8)
+    T(0, 75, 298.5, v("company_name_detail") or v("company_name"), 230)
+    T(0, 332, 298.5, v("company_role"), 145)
+    T(0, 508, 298.5, rules.get("company_years_val") or v("company_years"), 20)
+    cm = rules["company_months_val"] if "company_months_val" in rules else v("company_months")
+    T(0, 535, 298.5, (cm + "月") if cm and cm != "0" else "", 25)
+
+    def addr(c, city, dist, rest):
+        rest = re.sub(r"\s+", "", rest or "")
+        for pre in (city, dist):
+            if pre and rest.startswith(pre):
+                rest = rest[len(pre):]
+        T(0, 100, c, city, 32); T(0, 148, c, dist, 32); T(0, 197, c, rest, 222)
+
+    addr(321.5, v("reg_city"), v("reg_district"), v("reg_address"))
+    T(0, 462, 321.5, v("reg_phone"), 70)
+    ls = rules.get("live_status_val") or v("live_status")
+    if any(k in ls for k in ("自有", "本人")):
+        V(0, 536.5, 317.5)
+    elif "租" in ls:
+        V(0, 536.5, 325.5)
+    elif ls and "宿舍" not in ls:
+        V(0, 555.5, 317.5)
+        T(0, 573, 316, "父母" if "父母" in ls else "配偶" if "配偶" in ls else "", 22, 6)
+    T(0, 577, 326, rules.get("live_years_val") or v("live_years"), 14, 6)
+    reg_full = (v("reg_city") + v("reg_district") + v("reg_address")).replace(" ", "")
+    live_full = (v("live_city") + v("live_district") + v("live_address")).replace(" ", "")
+    if v("live_same_as_reg") == "1" or not live_full or live_full == reg_full:
+        V(0, 392.5, 340)                                  # 同戶籍
+    else:
+        addr(344, v("live_city"), v("live_district"), v("live_address"))
+        T(0, 462, 344, v("live_phone"), 70)
+    addr(367, v("company_city"), v("company_district"), v("company_address"))
+    area, num = v("company_phone_area"), v("company_phone_num")
+    T(0, 462, 367, (f"{area}-{num}" if area and area != "mobile" and num else num), 75)
+    T(0, 552, 367, v("company_phone_ext"), 30)
+    T(0, 72, 389.5, v("email"), 270)
+    T(0, 462, 389.5, v("phone"), 110)
+    V(0, 186, 409.5)                                      # 繳款方式：簡訊（範本勾的）
+    # 範本最下面手寫兩位聯絡人＋電話（寫在第 2、3 點右邊的空白）
+    for i_, k in enumerate(("contact1", "contact2")):
+        T(0, 380, 795 + 17 * i_, " ".join(x for x in (v(k + "_name"), v(k + "_relation"), v(k + "_phone")) if x), 200)
+    # ---- 第 2 頁：個資同意書（立同意書人(車主)＋日期）----
+    T(1, 298, 777.5, today[0], None, 10); T(1, 413, 777.5, today[1], None, 10); T(1, 520, 777.5, today[2], None, 10)
+    # ---- 第 3 頁：資格表 ----
+    T(2, 240, 72, v("customer_name"), 120, 10)
+    T(2, 85, 87.8, lic.get("引擎號碼") or v("adminb_engine_no"), 105, 9)
+    T(2, 240, 87.8, lic.get("車身號碼") or v("adminb_body_no"), 140, 9)
+    row_top = {1: 160.6, 2: 198.8, 3: 229.6, 4: 260.5, 5: 292.7, 6: 324.8, 7: 351.0, 8: 377.1, 9: 403.3, 10: 429.5,
+               11: 460.1, 12: 490.7, 13: 516.8, 14: 545.0, 15: 579.7, 16: 620.9}
+    for no in hv["_N"]:
+        T(2, 130, row_top[no] + 4, "V", None, 11)
+    for no in hv["_P"]:
+        T(2, 351, row_top[no - 16] + 4, "V", None, 11)
+    # ---- 第 4 頁：進件首頁 ----
+    T(3, 120, 101, v("customer_name"), 170, 12)
+    V(3, 433.5, 92.5)                                     # 資料袋別：AR（範本勾的）
+    T(3, 128, 408, lic.get("引擎號碼") or v("adminb_engine_no"), 165, 11)
+    T(3, 392, 408, lic.get("車身號碼") or v("adminb_body_no"), 230, 11)
+    V(3, {"原融": 371.5, "借新還舊": 436.8, "他行代償": 526.5}.get(hv["biz"], 371.5), 467.5)
+    V(3, 559.2 if kind == "機車" else 405.6, 492.5)       # 一般車／機車
+    tier_top = {"超超U+": 511.7, "超超U": 535.8, "超U": 560.0, "U3": 584.1, "U2": 608.2, "U1": 632.4, "圓夢貸": 656.5}
+    if hv["tier"] in tier_top:
+        V(3, 343.9, tier_top[hv["tier"]] + 7.4)
+    if hv["plus"] in ("Plus 2", "Plus 3"):
+        V(3, 436.7, (536.7 if hv["plus"] == "Plus 2" else 560.8) + 7.4)
+    # ---- 第 5 頁：核駁通知書（簽名＋日期）----
+    T(4, 243, 773, today[0], None, 10); T(4, 368, 773, today[1], None, 10); T(4, 480, 773, today[2], None, 10)
+    sig = v("signature_applicant")
+    if sig.startswith("data:image"):
+        ops[1].append(("img", 160, 697, 110, 30, sig))    # 立同意書人(車主)
+        ops[4].append(("img", 160, 398, 130, 30, sig))    # 被通知人（親簽）
+    return _pdf_overlay(tpl, ops)
+
+
+@app.get("/adminb/download-heren")
+def adminb_download_heren(request: Request, case_id: str = "", plan: str = ""):
+    """行政B：和潤申請書 PDF（自動填好）"""
+    from fastapi.responses import StreamingResponse
+    if check_auth(request) not in ("admin", "adminB", "ops_admin"):
+        return JSONResponse({"error": "無權限"}, status_code=403)
+    with db_conn() as conn:
+        row = conn.execute("SELECT * FROM customers WHERE case_id=?", (case_id,)).fetchone()
+    if not row:
+        return JSONResponse({"error": "找不到客戶"}, status_code=404)
+    r = dict(row)
+    data = _fill_heren_pdf(r, plan)
+    if not data:
+        return JSONResponse({"error": "和潤申請書範本不在（申請書/和潤申請書.pdf）"}, status_code=500)
+    from urllib.parse import quote
+    fname = quote((r.get("customer_name") or "") + "_和潤申請書.pdf")
     return StreamingResponse(io.BytesIO(data), media_type="application/pdf",
                              headers={"Content-Disposition": f"attachment; filename*=UTF-8''{fname}"})
 
@@ -30996,6 +31394,10 @@ def docs_send_pack(request: Request, id_no: str, co: str = ""):
         tkey = _PACK_TEMPLATE_ALIAS.get(plan["company"], plan["company"])
         try:
             apps = _do_download_excel(request, cust["case_id"], only_plans=[tkey], raw=True) or []
+            if plan["company"].startswith("和潤"):   # 和潤是 PDF 範本（使用者 2026-10-15 給的 和潤汽機車申請書）
+                _h = _fill_heren_pdf(cust, plan["company"])
+                if _h:
+                    apps = [("和潤申請書.pdf", _h)]
             if plan["company"].startswith("裕融"):   # 裕融是 PDF 範本（使用者 2026-10-15 給的 TAC申請書）
                 _y = _fill_yulon_pdf(cust, plan["company"])
                 if _y:

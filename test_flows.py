@@ -3316,6 +3316,51 @@ check("行政B：有亞太汽車25萬、亞太老車15萬 勾選，車輛區會�
       'value="亞太汽車25萬"' in _pb97 and 'value="亞太老車15萬"' in _pb97 and "亞太汽車25萬,亞太老車15萬\"" in _pb97)
 m.check_auth = lambda req: "admin"
 
+# ========== 98. 和潤申請書 PDF（使用者 2026-10-15 給 和潤汽機車申請書／和潤汽車範本）==========
+print(chr(10) + "=== 98. 和潤申請書 ===")
+# ⛔ 期望值從單據／使用者原話抄：
+#   和潤汽車範本.pdf（真實那份）：資格表 NORMAL 勾 4 條（1、8、11、15）→ 進件首頁勾「超U」；參考價 19 萬 → 貸款金額 24 萬
+#   使用者原話：「勾一條就是u1 勾2條就是u2…勾到4條就是超u」「勾2條這個就是plus2」「u1-u2…最長期數都是60期」
+#             「重機都是勾圓夢貸」「基數表36期351 48期283 60期242 72期216 84期198」
+check("和潤方案：NORMAL 1／2／3／4 條 → U1／U2／U3／超U（範本 4 條＝超U）",
+      [m._heren_tier(n) for n in (1, 2, 3, 4)] == ["U1", "U2", "U3", "超U"])
+check("和潤方案：重機一律圓夢貸", m._heren_tier(4, "和潤重機") == "圓夢貸")
+check("和潤 Plus：PLUS 勾 2 條 → Plus 2", m._heren_plus(2) == "Plus 2" and m._heren_plus(0) == "")
+_uv98 = lambda tp: {"debt_list": "[]", "unloan_vehicles": json.dumps([{"type": "汽車", "tp": tp}])}
+check("和潤金額：參考價 19 萬 → 24 萬（範本）", m._heren_amount(_uv98("19"), "超U")[0] == 24)
+check("和潤期數：U1／U2 最長 60 期（70 萬）", m._heren_amount(_uv98("54"), "U2")[1] == 60 and m._heren_amount(_uv98("54"), "超U")[1] == 72)
+check("和潤基數表有 84 期 198", m._HEREN_RATE[84] == 198 and m._HEREN_RATE[48] == 283)
+_hl98 = lambda co: {"debt_list": json.dumps([{"co": co, "dy": "動保", "pa": "10"}], ensure_ascii=False)}
+check("和潤申貸產品：沒車貸原融／和潤自己的借新還舊／別家他行代償",
+      [m._heren_business({"debt_list": "[]"}), m._heren_business(_hl98("和潤汽車")), m._heren_business(_hl98("裕融汽車"))]
+      == ["原融", "借新還舊", "他行代償"])
+_vl98, _hc98 = m._vehicle_license_fields, m._heren_conditions
+m._vehicle_license_fields = lambda c, k="汽車": {"廠牌": "中華", "車牌": "ZZZ-0002", "出廠年月": "2020/06", "引擎號碼": "ENG123", "車身號碼": "BODY456"}
+m._heren_conditions = lambda c, k="汽車": ({1: "", 8: "", 11: "", 15: ""}, {17: "", 30: ""})
+_pdf98 = m._fill_heren_pdf(dict(_r95, unloan_vehicles=json.dumps([{"type": "汽車", "tp": "19"}]), signature_applicant=_sig96), "和潤汽車")
+_hv98 = m._heren_values(dict(_r95, unloan_vehicles=json.dumps([{"type": "汽車", "tp": "19"}])), "和潤汽車")
+m._vehicle_license_fields, m._heren_conditions = _vl98, _hc98
+_d98 = _pp95.open(_io93.BytesIO(_pdf98))
+_h1 = "".join(_d98.pages[0].extract_text().split()); _h4 = "".join(_d98.pages[3].extract_text().split())
+check("和潤 PDF：5 頁", len(_d98.pages) == 5)
+check("和潤 PDF：姓名、身分證、車牌、貸款 24、利率 15.75", all(x in _h1 for x in ("測試甲", "A100000001", "ZZZ-0002", "15.75")), _h1[:300])
+check("和潤 PDF：進件首頁有車主姓名、引擎號碼、車身號碼", all(x in _h4 for x in ("測試甲", "ENG123", "BODY456")))
+check("和潤：4 條＋PLUS 2 條 → 超U＋Plus 2", _hv98["tier"] == "超U" and _hv98["plus"] == "Plus 2", _hv98)
+_blank98 = _pp95.open("申請書/和潤申請書.pdf")
+check("和潤 PDF：第 2 頁車主、第 5 頁被通知人有電子簽名",
+      all(len(_d98.pages[i].images) > len(_blank98.pages[i].images) for i in (1, 4)))
+check("和潤 PDF：檔案不要被疊字撐大（< 4MB）", len(_pdf98) < 4_000_000, len(_pdf98))
+m.check_auth = lambda req: "adminB"
+_pb98 = _tc94.get("/adminb", params={"case_id": _cid93}).text
+check("行政B：有和潤勾選、和潤補充資料、下載鈕；簽名板只有一個（裕融和潤共用）",
+      'value="和潤"' in _pb98 and 'name="hr2_tier"' in _pb98 and "download-heren" in _pb98 and _pb98.count('id="ylSignPad"') == 1)
+_r = _tc94.get("/adminb/download-heren", params={"case_id": _cid93})
+check("行政B 下載和潤申請書", _r.status_code == 200 and _r.content[:4] == b"%PDF", _r.status_code)
+_tc94.post("/adminb/save", data={"case_id": _cid93, "plans": "和潤", "hr2_tier": "U3", "hr2_plus": "無", "hr2_rate": "15.75"})
+_ov98 = m._heren_overrides(get_cust("E300000001"))
+check("行政B 存檔（和潤）：只記改過的（方案 U3）", _ov98.get("tier") == "U3" and "rate" not in _ov98 and "plus" not in _ov98, _ov98)
+m.check_auth = lambda req: "admin"
+
 # ========== 總結 ==========
 print(f"\n{'='*50}")
 print(f"結果：{PASS} 通過、{FAIL} 失敗")
