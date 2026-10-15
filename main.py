@@ -19681,6 +19681,10 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
     try:
         if "和潤" not in sel_plans.split(",") and _heren_plans_of(customer):
             sel_plans = ",".join([x for x in sel_plans.split(",") if x] + ["和潤"])
+        if "預付" not in sel_plans.split(",") and any(
+                str(x.get("company") if isinstance(x, dict) else x) in _FAMILY_PREPAID
+                for x in (json.loads(customer.get("route_plan") or "{}") or {}).get("order", []) or []):
+            sel_plans = ",".join([x for x in sel_plans.split(",") if x] + ["預付"])
         hv = _heren_values(customer)
     except Exception as _e:
         print(f"[adminb] 和潤預填失敗：{_e}")
@@ -19775,6 +19779,7 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
         ])}
         <label class="ab-plan" style="background:#4e7055;border-color:#3a5040;"><input type="checkbox" name="plans" value="喬美" style="accent-color:#fff;"><div><div class="ab-plan-name" style="color:#fff;">喬美</div><div class="ab-plan-sub" style="color:#c8e6ca;">PDF電子簽名</div></div></label>
         <label class="ab-plan" style="background:#1d4ed8;border-color:#1e3a8a;"><input type="checkbox" name="plans" value="裕融" style="accent-color:#fff;"><div><div class="ab-plan-name" style="color:#fff;">裕融</div><div class="ab-plan-sub" style="color:#dbeafe;">汽車 PDF</div></div></label>
+        <label class="ab-plan" style="background:#7c3aed;border-color:#4c1d95;"><input type="checkbox" name="plans" value="預付" style="accent-color:#fff;"><div><div class="ab-plan-name" style="color:#fff;">預付</div><div class="ab-plan-sub" style="color:#ede9fe;">資融 PDF</div></div></label>
         <label class="ab-plan" style="background:#b45309;border-color:#78350f;"><input type="checkbox" name="plans" value="和潤" style="accent-color:#fff;"><div><div class="ab-plan-name" style="color:#fff;">和潤</div><div class="ab-plan-sub" style="color:#fef3c7;">汽車／重機 PDF</div></div></label>
       </div>
       <div style="font-size:11px;font-weight:700;color:#6a5e4e;margin-bottom:8px;">填寫表方案</div>
@@ -19857,6 +19862,11 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
           <div><div class="ab-lbl">資金用途</div><input name="car_fund" class="ab-inp" placeholder="購車" value="{h(customer.get('adminb_21car_fund','') or '')}"></div>
           <div><div class="ab-lbl">是否有信用卡</div><select name="car_hascc" class="ab-sel"><option value="">請選</option><option value="有" {"selected" if (customer.get('adminb_21car_hascc','') or '')=='有' else ''}>有</option><option value="無" {"selected" if (customer.get('adminb_21car_hascc','') or '')=='無' else ''}>無</option></select></div>
         </div>
+      </div>
+      <div class="ab-block" data-plans="預付" style="background:#f5f3ff;">
+        <div style="font-size:12px;font-weight:700;color:#6d28d9;margin-bottom:6px;">預付資融（基本資料＋負債檢查表 PDF）</div>
+        <div style="font-size:11px;color:#475569;margin-bottom:8px;">月付金參考：24 期、每萬 489（例：10 萬 → 4890）；最終金額及月付金依核准為主</div>
+        <a href="/adminb/download-prepaid?case_id={h(case_id)}" style="display:inline-block;padding:6px 14px;background:#6d28d9;color:#fff;border-radius:6px;font-size:13px;font-weight:700;text-decoration:none;">📄 預付資融申請書 PDF</a>
       </div>
       <div class="ab-block" data-plans="東豐" style="background:#ecfdf5;">
         <div style="font-size:12px;font-weight:700;color:#047857;margin-bottom:6px;">東豐（固定 10 萬／18 期／每期 6868，格子空著就用這組；特例才打）</div>
@@ -26412,6 +26422,194 @@ def adminb_download_heren(request: Request, case_id: str = "", plan: str = ""):
                              headers={"Content-Disposition": f"attachment; filename*=UTF-8''{fname}"})
 
 
+# ============ 預付資融申請書（使用者 2026-10-15 給「預付資融 申請書pdf」＋第 2 頁範本 預付資融範本.jpg）============
+# 第 1 頁基本資料、第 2 頁客戶負債檢查表。兩頁都是掃描圖（沒有文字層），⚠️ 座標是照圖量的，改範本要重量
+# 月付金參考：24 期、每萬 489（使用者給的「預付分期-期數表」5 萬 2445…50 萬 24450，整張都是 489／萬）
+_PREPAID_RATE_24 = 489
+
+
+def _prepaid_debt_groups(r):
+    """負債檢查表三段：汽車貸款／機車貸款／其它負債（手機分期、課程、美容…）"""
+    car, moto, other = [], [], []
+    for d in _json_list(r.get("debt_list")):
+        if not isinstance(d, dict) or not str(d.get("co") or "").strip():
+            continue
+        co, veh = str(d.get("co") or ""), str(d.get("vehicle") or "")
+        is_veh_loan = str(d.get("kind") or "") == "車貸" or any(k in str(d.get("dy") or "") for k in ("動保", "公路"))
+        if is_veh_loan and ("汽" in co or veh == "汽車"):
+            car.append(d)
+        elif is_veh_loan and ("機" in co or veh == "機車"):
+            moto.append(d)
+        else:
+            other.append(d)
+    return car, moto, other
+
+
+def _fill_prepaid_pdf(r: dict, plan: str = "") -> bytes:
+    tpl = os.path.join(os.path.dirname(os.path.abspath(__file__)), "申請書", "預付資融申請書.pdf")
+    if not os.path.exists(tpl):
+        return b""
+
+    def v(k):
+        return str(r.get(k) or "").strip()
+
+    rules = apply_adminb_rules(r)
+    ops = {0: [], 1: []}
+
+    def T(pg, x, c, text, maxw=None, size=12):      # c＝格子中線；掃描圖的字比量到的中線略低 → 往下補一點
+        if str(text or "").strip():
+            ops[pg].append(("t", x, c - size / 2 + (2.5 if pg == 0 else 1.5), str(text).strip(), maxw, size))
+
+    def V(pg, x, c):
+        ops[pg].append(("v", x - 0.3, c - 4.2))
+
+    plan = plan or next((x for x in [v("current_company")] + [
+        str(y.get("company") if isinstance(y, dict) else y) for y in
+        (json.loads(r.get("route_plan") or "{}") or {}).get("order", []) or []] if x in _FAMILY_PREPAID), "")
+    # ---- 第 1 頁：基本資料 ----
+    X = 207
+    T(0, 369, 123, plan, 180, 12)
+    T(0, X, 143.8, v("customer_name"), 360)
+    T(0, X, 202.3, v("id_no").upper(), 360)
+    T(0, X, 222.3, v("birth_date"), 360)
+    T(0, X, 242.3, v("line_id"), 360)
+    T(0, X, 261.5, v("carrier"), 360)
+    T(0, X, 297.7, v("reg_phone"), 360)
+    T(0, X, 317.7, v("phone"), 360)
+    reg_addr = v("reg_city") + v("reg_district") + v("reg_address")
+    live_same = v("live_same_as_reg") == "1" or (bool(v("reg_city")) and v("reg_city") == v("live_city")
+                                                  and v("reg_district") == v("live_district"))
+    T(0, X, 337, reg_addr, 360)
+    T(0, X, 357, "同上" if live_same else v("live_city") + v("live_district") + v("live_address"), 360)
+    ls = rules.get("live_status_val") or v("live_status")
+    T(0, X, 376, "自有" if any(k in ls for k in ("自有", "本人")) else "租賃" if "租" in ls else
+      "家人" if any(k in ls for k in ("父母", "配偶", "親屬", "家人")) else "其他" if ls else "", 360)
+    T(0, X, 404, v("email"), 360)
+    T(0, X, 423, v("company_name_detail") or v("company"), 360)
+    T(0, X, 442, v("company_city") + v("company_district") + v("company_address"), 360)
+    area = v("company_phone_area")
+    T(0, X, 462, fmt_company_phone("" if area == "mobile" else area, v("company_phone_num"), v("company_phone_ext")), 360)
+    T(0, X, 481.5, v("company_role"), 360)
+    cy = rules.get("company_years_val") or v("company_years")
+    cm = rules["company_months_val"] if "company_months_val" in rules else v("company_months")
+    T(0, X, 501.5, (f"{cy}年" if cy else "") + (f"{cm}月" if cm and cm != "0" else ""), 360)
+    T(0, X, 520.8, fmt_salary(rules.get("salary_val") or v("company_salary")), 360)
+    st = v("eval_salary_transfer")
+    T(0, X, 540.8, "薪資轉帳" if ("有" in st and "無" not in st) else "領現金" if "無" in st else "", 360)
+    T(0, X, 560, v("eval_labor_ins"), 360)
+    for k, (cn, cr, cp) in (("contact1", (598.5, 614.6, 630)), ("contact2", (667, 683, 698.5))):
+        T(0, X, cn, v(k + "_name"), 360, 10)          # 聯絡人那幾格比較矮
+        T(0, X, cr, "/".join(x for x in (v(k + "_relation"), v(k + "_known")) if x), 360, 10)
+        T(0, X, cp, v(k + "_phone"), 360, 10)
+    T(0, X, 729, v("adminb_contact_time"), 360)
+    # ---- 第 2 頁：客戶負債檢查表（格式照使用者給的範本）----
+    car, moto, other = _prepaid_debt_groups(r)
+    debts_known = bool(_json_list(r.get("debt_list")))
+    uv = [x for x in _json_list(r.get("unloan_vehicles")) if isinstance(x, dict)]
+    prop = v("eval_property")
+    YES, NO = 310, 351.5
+
+    def yn(c, has, known):
+        if has:
+            V(1, YES, c)
+        elif known:
+            V(1, NO, c)
+
+    yn(87, bool(moto) or any(x.get("type") == "機車" for x in uv) or "機車" in prop, bool(prop))
+    yn(110.8, bool(car) or any(x.get("type") == "汽車" for x in uv) or "汽車" in prop, bool(prop))
+    if "不動產" in prop or "房" in prop or "土地" in prop:
+        V(1, YES, 134.6)
+    elif prop:
+        V(1, 520, 134.6)
+    aw = v("eval_alert_warning")
+    if aw == "是":
+        V(1, YES, 182.3)
+    elif aw == "否":
+        V(1, 520, 182.3)
+    if v("eval_sent_3m") == "是":                               # 只寫得出「有」（近三月送過）；沒送過不代表半年內沒辦過
+        V(1, YES, 206)
+    try:
+        fine = int(float(v("eval_fine") or 0)) + int(float(v("eval_fuel_tax") or 0))
+    except ValueError:
+        fine = 0
+    if fine:
+        V(1, YES, 253); T(1, 377, 253, f"{fine:,}", 45, 9)
+    elif v("eval_fine") in ("0",):
+        V(1, 520, 253)
+    if "協商" in v("eval_credit_card") or "支付命令" in v("eval_note"):
+        V(1, YES, 300.8); T(1, 442, 300.8, "協商" if "協商" in v("eval_credit_card") else "支付命令", 120, 9)
+
+    late = v("eval_late")
+    days = v("eval_late_days")
+    # 繳息：範本每一筆寫一個「正」（「正 / 正」）；資料表只有整體有沒有遲繳 → 有遲繳就整格寫一次，哪一筆要人看
+    def pay_line(rows, sep):
+        if late == "無":
+            return sep.join("正" for _ in rows)
+        if late == "有":
+            return "有遲繳" + (f"（{days}天）" if days and days != "0" else "") + "，哪一筆要確認"
+        return ""
+
+    def num(x):
+        x = re.sub(r"[^\d]", "", str(x or ""))
+        return int(x) if x else 0
+
+    def wan(n):
+        return f"{(n / 10000 if n >= 1000 else n):g}"
+
+    def per(d):
+        pe = str(d.get("pe") or "")
+        total = num(pe.split("/")[0])
+        paid = num(d.get("pa")) or (num(pe.split("/")[1]) if "/" in pe else 0)
+        return total, paid
+
+    def loan_block(rows, top, label_rows=True):
+        if rows:
+            V(1, YES, top)
+            T(1, 342, top, str(len(rows)), 20)
+            T(1, 481, top, "/".join(re.sub(r"(汽車|機車)$", "", str(d.get("co") or "")) for d in rows), 88, 9)
+        elif debts_known:                         # ⛔ 負債表空白＝沒填，不等於「無」（同填寫表的規矩）→ 有填過才勾無
+            V(1, 391.5, top)
+        if not rows:
+            return
+        sep = " / "
+        T(1, 304, top + 23.8, sep.join(wan(num(d.get("lo"))) for d in rows), 260)
+        T(1, 304, top + 47.7, sep.join(str(per(d)[0] or "") for d in rows), 260)
+        T(1, 304, top + 71.3, sep.join(str(per(d)[1] or "") for d in rows), 260)
+        T(1, 304, top + 94.6, sep.join(str(num(d.get("mo")) or "") for d in rows), 260)
+        T(1, 304, top + 118.3, pay_line(rows, " / "), 260)
+
+    loan_block(car, 347.7)
+    loan_block(moto, 513)
+    if other:
+        T(1, 304, 678.5, "/".join(str(d.get("co") or "") for d in other), 260)
+        T(1, 304, 702, "/".join(f"{wan(num(d.get('lo')))}萬" for d in other), 260)
+        T(1, 304, 726, "/".join(f"{per(d)[0]}期" if per(d)[0] else "" for d in other), 260)
+        T(1, 304, 749, "/".join(f"{per(d)[1]}期" if per(d)[1] else "" for d in other), 260)
+        T(1, 304, 773, "/".join(str(num(d.get("mo")) or "") for d in other), 260)
+        T(1, 304, 797, pay_line(other, "/"), 260)
+    return _pdf_overlay(tpl, ops)
+
+
+@app.get("/adminb/download-prepaid")
+def adminb_download_prepaid(request: Request, case_id: str = "", plan: str = ""):
+    """行政B：預付資融申請書 PDF（自動填好）"""
+    from fastapi.responses import StreamingResponse
+    if check_auth(request) not in ("admin", "adminB", "ops_admin"):
+        return JSONResponse({"error": "無權限"}, status_code=403)
+    with db_conn() as conn:
+        row = conn.execute("SELECT * FROM customers WHERE case_id=?", (case_id,)).fetchone()
+    if not row:
+        return JSONResponse({"error": "找不到客戶"}, status_code=404)
+    r = dict(row)
+    data = _fill_prepaid_pdf(r, plan)
+    if not data:
+        return JSONResponse({"error": "預付資融申請書範本不在（申請書/預付資融申請書.pdf）"}, status_code=500)
+    from urllib.parse import quote
+    fname = quote((r.get("customer_name") or "") + "_預付資融申請書.pdf")
+    return StreamingResponse(io.BytesIO(data), media_type="application/pdf",
+                             headers={"Content-Disposition": f"attachment; filename*=UTF-8''{fname}"})
+
+
 @app.get("/adminb/download-qiaomei")
 def adminb_download_qiaomei(request: Request, case_id: str = ""):
     from fastapi.responses import StreamingResponse
@@ -31947,6 +32145,10 @@ def docs_send_pack(request: Request, id_no: str, co: str = ""):
         tkey = _PACK_TEMPLATE_ALIAS.get(plan["company"], plan["company"])
         try:
             apps = _do_download_excel(request, cust["case_id"], only_plans=[tkey], raw=True) or []
+            if plan["company"] in _FAMILY_PREPAID:   # 預付資融 4 個專案用同一張 PDF（使用者 2026-10-15）
+                _p = _fill_prepaid_pdf(cust, plan["company"])
+                if _p:
+                    apps = [("預付資融申請書.pdf", _p)]
             if plan["company"].startswith("和潤"):   # 和潤是 PDF 範本（使用者 2026-10-15 給的 和潤汽機車申請書）
                 _h = _fill_heren_pdf(cust, plan["company"])
                 if _h:

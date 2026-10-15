@@ -3564,6 +3564,25 @@ check("手機分期是另一家（不歸預付）", m._plan_family("手機分期
 check("每一家都有 family 而且是後端算的（網頁不再自己寫死前綴清單）",
       all(x.get("family") for x in m.evaluate_case(get_cust("A100000099") or {}).get("results", []) or [{"family": "x"}])
       and "var prefixes = ['亞太'" not in open("main.py", encoding="utf-8").read())
+# 預付資融申請書（使用者 2026-10-15：第 1 頁基本資料、第 2 頁照 預付資融範本.jpg 填負債檢查表）
+#   範本第 2 頁：汽車「和潤/中租」30/50、48/60、12/8、8490/10510；機車「和潤」10、36、10、3510；
+#   其它「手機分期/美容分期」6萬/10萬、24期/12期、3期/5期、2448/9500、正/正
+_debt_yf = json.dumps([
+    {"co": "和潤汽車", "kind": "車貸", "dy": "動保", "lo": "300000", "pe": "48/12", "mo": "8490"},
+    {"co": "中租汽車", "kind": "車貸", "dy": "動保", "lo": "500000", "pe": "60/8", "mo": "10510"},
+    {"co": "和潤機車", "kind": "車貸", "dy": "動保", "lo": "100000", "pe": "36/10", "mo": "3510"},
+    {"co": "手機分期", "kind": "信貸", "lo": "60000", "pe": "24/3", "mo": "2448"},
+    {"co": "美容分期", "kind": "信貸", "lo": "100000", "pe": "12/5", "mo": "9500"}], ensure_ascii=False)
+_yf = m._fill_prepaid_pdf(dict(_r95, debt_list=_debt_yf, eval_late="無", current_company="機車原融"))
+_dyf = _pp95.open(_io93.BytesIO(_yf))
+_y1 = "".join(_dyf.pages[0].extract_text().split()) if _dyf.pages[0].extract_text() else ""
+_y2 = "".join(_dyf.pages[1].extract_text().split()) if _dyf.pages[1].extract_text() else ""
+check("預付 PDF：2 頁；第 1 頁專案、姓名、身分證", len(_dyf.pages) == 2 and all(x in _y1 for x in ("機車原融", "測試甲", "A100000001")), _y1[:200])
+for _x in ("和潤/中租", "30/50", "48/60", "12/8", "8490/10510", "36", "3510", "手機分期/美容分期", "6萬/10萬", "24期/12期", "3期/5期", "2448/9500", "正/正"):
+    check(f"預付負債檢查表（照範本）：{_x}", _x in _y2, _y2[:400])
+_g = m._prepaid_debt_groups({"debt_list": _debt_yf})
+check("預付負債分三段：汽車 2、機車 1、其它 2", [len(x) for x in _g] == [2, 1, 2])
+check("預付月付金參考：24 期每萬 489（表上 10 萬 4890、50 萬 24450）", 10 * m._PREPAID_RATE_24 == 4890 and 50 * m._PREPAID_RATE_24 == 24450)
 check("申請書資料夾不可以有範本（真客人個資）",not any("範本" in f and ("中租" in f or "願望" in f) for f in os.listdir("申請書")))
 
 # ========== 總結 ==========
