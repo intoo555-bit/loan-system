@@ -2767,6 +2767,14 @@ check("行政上傳：送過一次就不重送", len([u for u, dd in _posts24 if
 _tcu.post(f"/archive/doc/{_up24[0]['id']}/delete")
 check("行政上傳：刪掉時業務 AI 那份也叫它刪", any(u.endswith("/api/loan/docs/1000000123/delete") for u, dd in _posts24), _posts24)
 m.req_lib.post = _orq24
+# 證件存檔清單：原本只抓最近 500 位 → 舊客人連搜尋都找不到（使用者 2026-10-15：客人多要分頁、不要拉太長）
+_c = sqlite3.connect(TEST_DB)
+_c.executemany("INSERT INTO customer_docs (id_no, remote_doc_id, source, label, pulled_at) VALUES (?,?,?,?,?)",
+               [(f"Z9{n:08d}", "x1", "測試", "其他", f"2020-01-01T00:{n // 60:02d}:{n % 60:02d}") for n in range(510)])
+_c.commit(); _c.close()
+_al = _tcu.get("/archive").text
+check("證件存檔清單：超過 500 位，最舊的也還在（搜尋得到）、一頁 20 位分頁", "Z900000000" in _al and '"pageSize": 20' in _al)
+_c = sqlite3.connect(TEST_DB); _c.execute("DELETE FROM customer_docs WHERE id_no LIKE 'Z9%'"); _c.commit(); _c.close()
 m._DOCS_SYNC = False
 m._bizai_list, m._bizai_fetch, m._bizai_judge = _o_list, _o_fetch, _o_judge
 m.check_auth = _old_auth75

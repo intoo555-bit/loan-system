@@ -31998,7 +31998,14 @@ def docs_list_page(request: Request, q: str = "", g: str = ""):
               (SELECT customer_name FROM customers c WHERE c.id_no=d.id_no AND c.status!='DELETED' ORDER BY created_at DESC LIMIT 1) name,
               (SELECT source_group_id FROM customers c WHERE c.id_no=d.id_no AND c.status!='DELETED' ORDER BY created_at DESC LIMIT 1) gid,
               (SELECT phone FROM customers c WHERE c.id_no=d.id_no AND c.status!='DELETED' ORDER BY created_at DESC LIMIT 1) phone
-            FROM customer_docs d GROUP BY d.id_no ORDER BY last_at DESC LIMIT 500""").fetchall()
+            FROM customer_docs d GROUP BY d.id_no ORDER BY last_at DESC""").fetchall()
+        # ⛔ 不加 LIMIT：搜尋是在下面篩的，原本 LIMIT 500 → 第 501 位以後的舊客人連搜尋都找不到。
+        #    畫面一頁 20 位（ui/archive_list.html pageSize），客人多也不會拉很長
+        # 每位客人最新那筆一次撈完（原本一位查一次，客人多會慢）
+        latest = {}
+        for c in cur.execute("SELECT * FROM customers WHERE status!='DELETED' AND id_no IN (SELECT DISTINCT id_no FROM customer_docs) "
+                             "ORDER BY created_at"):
+            latest[c["id_no"]] = dict(c)
     qq, gg = (q or "").strip(), (g or "").strip()
     gnames = get_all_group_names()
     # 群組篩選（使用者 2026-10-14：「證件存檔那頁也要多一個可以搜尋群組用的」）—— 只列有存檔的群組
@@ -32012,10 +32019,8 @@ def docs_list_page(request: Request, q: str = "", g: str = ""):
             continue
         if gg and (r["gid"] or "_none") != gg:
             continue
-        with db_conn() as conn:
-            c = conn.execute("SELECT * FROM customers WHERE id_no=? AND status!='DELETED' ORDER BY created_at DESC LIMIT 1",
-                             (r["id_no"],)).fetchone()
-        ro = _route_order_text(dict(c)) if c else ""
+        c = latest.get(r["id_no"])
+        ro = _route_order_text(c) if c else ""
         recs.append({"recordId": r["id_no"], "receivedDate": (r["first_at"] or "")[:10], "name": r["name"] or "",
                      "identityNumber": r["id_no"], "phone": r["phone"] or "",
                      "group": (gnames.get(r["gid"]) or r["gid"]) if r["gid"] else "還沒有群組",
