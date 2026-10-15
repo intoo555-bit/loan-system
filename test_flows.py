@@ -2728,6 +2728,45 @@ _c = sqlite3.connect(TEST_DB); _c.execute("UPDATE customer_docs SET judge_json=N
 _tcu.get("/archive/G300000001")
 _lab2 = [d for d in _tcu.get("/archive/G300000001/data").json()["documents"] if d["category"] == "人車合照"]
 check("拿不到判讀 → 卡片寫原因（不默默空著）、下次再試", _lab2 and "限流" in _lab2[0]["judge"] and "再試" in _lab2[0]["judge"], _lab2)
+# 交接第 24 段：行政上傳的照片送去業務 AI 讀（業務 AI 還沒串正式群組，照片都是行政自己傳）
+_posts24, _jc24 = [], []
+
+
+class _R24:
+    def __init__(self, code, js): self.status_code, self._js = code, js
+    def json(self): return self._js
+
+
+_ok24 = [False]
+
+
+def _post24(url, **kw):
+    _posts24.append((url, kw.get("data")))
+    if url.endswith("/upload"):
+        return _R24(200, {"ok": True, "doc_id": 1000000123}) if _ok24[0] else _R24(503, {})
+    return _R24(200, {"ok": True})
+
+
+_orq24 = m.req_lib.post
+m.req_lib.post = _post24
+m._bizai_judge = lambda kind, d, idv, **kw: (_jc24.append((kind, str(d))) or {"ok": True, "is_labor": True, "目前投保": []})
+os.environ["BUSINESS_AI_URL"], os.environ["BUSINESS_AI_SECRET"] = "http://bizai.test", "s"
+_r = _tcu.post("/archive/G300000001/upload", data={"category": "勞保明細"},
+               files=[("files", ("勞保.png", _png77((9, 9, 9)), "image/png"))]).json()
+check("行政上傳：業務 AI 連不上 → 照片照樣存、不去讀假編號（up-）", _r.get("ok") and not any(d.startswith("up-") for k, d in _jc24), (_r, _jc24))
+_ok24[0] = True
+_tcu.get("/archive/G300000001")
+_up24 = [r for r in m._docs_rows("G300000001") if r["source"] == "行政上傳" and r["show_label"] == "勞保明細"]
+check("行政上傳：下次打開頁面 → 送去業務 AI（帶身分證、分類），拿回編號再讀",
+      _up24 and _up24[0]["bizai_doc_id"] == "1000000123" and ("labor", "1000000123") in _jc24
+      and any(u.endswith("/api/loan/docs/upload") and (dd or {}).get("label") == "勞保明細" and (dd or {}).get("id_no") == "G300000001"
+              for u, dd in _posts24), (_up24, _jc24, _posts24))
+_n24 = len([u for u, dd in _posts24 if u.endswith("/upload")])
+_tcu.get("/archive/G300000001")
+check("行政上傳：送過一次就不重送", len([u for u, dd in _posts24 if u.endswith("/upload")]) == _n24)
+_tcu.post(f"/archive/doc/{_up24[0]['id']}/delete")
+check("行政上傳：刪掉時業務 AI 那份也叫它刪", any(u.endswith("/api/loan/docs/1000000123/delete") for u, dd in _posts24), _posts24)
+m.req_lib.post = _orq24
 m._DOCS_SYNC = False
 m._bizai_list, m._bizai_fetch, m._bizai_judge = _o_list, _o_fetch, _o_judge
 m.check_auth = _old_auth75

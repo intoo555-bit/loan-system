@@ -30515,7 +30515,8 @@ def _docs_ensure_table(cur):
     cur.execute("""CREATE TABLE IF NOT EXISTS customer_docs_pull (
         id_no TEXT PRIMARY KEY, last_pull_at TEXT, last_error TEXT)""")
     _cols = {r[1] for r in cur.execute("PRAGMA table_info(customer_docs)")}
-    for _c in ("ai_label", "ai_note", "ai_at", "manual_label", "judge_json", "judge_at", "deleted_at", "deleted_by"):
+    # bizai_doc_id：行政上傳（up-）的照片送去業務 AI 讀，拿回來的編號（交接第 24 段）
+    for _c in ("ai_label", "ai_note", "ai_at", "manual_label", "judge_json", "judge_at", "deleted_at", "deleted_by", "bizai_doc_id"):
         if _c not in _cols:
             cur.execute(f"ALTER TABLE customer_docs ADD COLUMN {_c} TEXT")
 
@@ -30623,6 +30624,35 @@ def _doc_real_type(path: str, fallback: str = "") -> str:
             return _doc_sniff(fp.read(16)) or fallback or ""
     except Exception:
         return fallback or ""
+
+
+def _bizai_upload(r) -> str:
+    """交接第 24 段：行政上傳的照片業務 AI 那邊沒有 → 判讀窗口用不了。先送過去（只讀、不進群組、不傳客人），
+    拿回業務 AI 的 doc_id 存起來；之後跟客人傳的照片走一樣的 labor／stamp／fields。
+    回 doc_id；連不上／失敗回 ""（照片照樣在行政這邊，下次打開頁面再送）"""
+    if r.get("bizai_doc_id"):
+        return str(r["bizai_doc_id"])
+    url, sec = _bizai_conf()
+    fp = r.get("file_path") or ""
+    if not url or not sec or not fp or not os.path.isfile(fp):
+        return ""
+    try:
+        with open(fp, "rb") as f:
+            resp = req_lib.post(f"{url}/api/loan/docs/upload", headers={"X-Loan-Secret": sec},
+                                data={"id_no": r["id_no"], "label": r.get("show_label") or _doc_label(r)},
+                                files={"file": (os.path.basename(fp), f, r.get("content_type") or "application/octet-stream")},
+                                timeout=60)
+        did = str((resp.json() or {}).get("doc_id") or "") if resp.status_code == 200 else ""
+    except Exception as e:
+        print(f"[證件] 送業務 AI 讀失敗 doc={r.get('id')}：{type(e).__name__}")
+        return ""
+    if not did:
+        print(f"[證件] 送業務 AI 讀失敗 doc={r.get('id')}：HTTP {resp.status_code}")
+        return ""
+    with db_conn(commit=True) as conn:
+        conn.execute("UPDATE customer_docs SET bizai_doc_id=? WHERE id=?", (did, r["id"]))
+    r["bizai_doc_id"] = did
+    return did
 
 
 def _bizai_judge(kind: str, doc_id, id_no: str, refresh: bool = False) -> dict:
@@ -30790,7 +30820,12 @@ def judge_customer_docs(id_no: str, force: bool = False) -> int:
         stale = kind.startswith("fields:") and old.get("_kind") == kind and old.get("_v") != _FIELDS_VER
         if old.get("_kind") == kind and not force and not old.get("_transient") and not stale:
             continue
-        res = _bizai_judge(kind, r["remote_doc_id"], idv, refresh=stale) if stale else _bizai_judge(kind, r["remote_doc_id"], idv)
+        rid = r["remote_doc_id"]
+        if str(rid).startswith("up-"):        # 行政上傳的：先送去業務 AI（交接第 24 段），送不過去就下次再試
+            rid = _bizai_upload(r)
+            if not rid:
+                continue
+        res = _bizai_judge(kind, rid, idv, refresh=stale) if stale else _bizai_judge(kind, rid, idv)
         res["_kind"] = kind
         if kind.startswith("fields:"):
             res["_v"] = _FIELDS_VER
@@ -31837,6 +31872,8 @@ async def docs_upload(request: Request, id_no: str):
                             remote_created_at, pulled_at, manual_label) VALUES (?,?,?,?,?,?,?,?,?,?)""",
                          (idv, rid, "行政上傳", cat, ctype, len(data), path, now_iso(), now_iso(), cat))
             saved += 1
+    if saved:
+        _judge_bg(idv)      # 送去業務 AI 讀（勞保、行照、權狀、時間相機…）
     return JSONResponse({"ok": saved > 0, "saved": saved, "bad": bad,
                          "error": "；".join(bad) if bad and not saved else ""})
 
@@ -31859,6 +31896,14 @@ async def docs_delete(request: Request, doc_pk: int):
             return JSONResponse({"ok": False, "error": f"刪檔失敗：{e}"})
         conn.execute("UPDATE customer_docs SET deleted_at=?, deleted_by=?, file_path='', judge_json='' WHERE id=?",
                      (now_iso(), "admin", doc_pk))
+    if r["bizai_doc_id"]:       # 行政上傳送去讀的那份也刪（交接第 24 段；刪不到不影響這邊）
+        try:
+            url, sec = _bizai_conf()
+            if url and sec:
+                req_lib.post(f"{url}/api/loan/docs/{r['bizai_doc_id']}/delete", headers={"X-Loan-Secret": sec},
+                             data={"id_no": r["id_no"]}, timeout=20)
+        except Exception as e:
+            print(f"[證件] 業務 AI 那份刪不到 doc={doc_pk}：{type(e).__name__}")
     print(f"[證件] 刪除 doc={doc_pk} id_no={r['id_no']} label={r['manual_label'] or r['ai_label'] or r['label']}")
     return JSONResponse({"ok": True})
 
