@@ -19875,10 +19875,11 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
       </div>
       <div class="ab-block" data-plans="新鑫" style="background:#f0fdfa;">
         <div style="font-size:12px;font-weight:700;color:#0f766e;margin-bottom:4px;">新鑫（房地）：一律 120 期、14.5%、用途投資理財、專案一般</div>
-        <div style="font-size:11px;color:#475569;margin-bottom:8px;">金額打估價後要申請的（30～300 萬），期付款照 120 期試算表 14.5% 自動帶。不動產那幾格看權狀／謄本；門牌、所有權人空著＝戶籍地址、本人</div>
+        <div style="font-size:11px;color:#475569;margin-bottom:6px;">二胎處理（不用還原本的貸款）：先估價，估價說能貸多少就打多少，最高 300 萬；期付款照 120 期試算表 14.5% 自動帶。不動產那幾格看權狀／謄本；門牌、所有權人空著＝戶籍地址、本人</div>
+        {_xinxin_amount_note(xx_ov.get("amount", ""))}
         <div class="ab-g3" style="margin-bottom:8px;">
           {"".join(f'<div><div class="ab-lbl">{lbl}</div><input name="xx_{k}" class="ab-inp" placeholder="{h(ph)}" value="{h(xx_ov.get(k, ""))}"></div>' for k, lbl, ph in [
-            ("amount", "申辦金額（萬）", "300"), ("area", "不動產 鄉鎮市區", xx_auto.get("area", "")), ("section", "段", "福安"),
+            ("amount", "估價後可貸金額（萬，最高 300）", "300"), ("area", "不動產 鄉鎮市區", xx_auto.get("area", "")), ("section", "段", "福安"),
             ("land_no", "地號", "1208-0014"), ("build_no", "建號", "00200-000"), ("mortgage", "已抵押設定金額（萬）", ""),
             ("door", "門牌", xx_auto.get("door", "")), ("owner", "所有權人", xx_auto.get("owner", "")), ("owner_id", "所有權人身分證", xx_auto.get("owner_id", ""))])}
         </div>
@@ -26652,6 +26653,7 @@ _XINXIN_120_145 = {30: 4747, 40: 6330, 50: 7912, 60: 9494, 70: 11076, 80: 12659,
                    110: 17405, 120: 18988, 130: 20570, 140: 22152, 150: 23734, 160: 25317, 170: 26899, 180: 28481,
                    190: 30063, 200: 31646, 210: 33228, 220: 34810, 230: 36392, 240: 37975, 250: 39557, 260: 41139,
                    270: 42721, 280: 44304, 290: 45886, 300: 47468}
+_XINXIN_MAX = 300   # 萬（使用者：「最高只能借 300」）
 _XINXIN_KEYS = ("amount", "area", "section", "land_no", "build_no", "mortgage", "door", "owner", "owner_id")
 
 
@@ -26671,6 +26673,25 @@ def _xinxin_values(r) -> dict:
             "mortgage": "", "door": reg_a, "owner": str(r.get("customer_name") or ""),
             "owner_id": str(r.get("id_no") or "").upper()}
     return {k: ov[k] or auto[k] for k in _XINXIN_KEYS}
+
+
+def _xinxin_amount_note(amount) -> str:
+    """行政B 新鑫區：估價金額的提醒（還沒估價／沒有產值／超過 300／不到試算表最低 30 萬）"""
+    a = str(amount or "").strip()
+    if not a:
+        return '<div style="font-size:12px;color:#b45309;font-weight:700;margin-bottom:8px;">⏳ 還沒估價：估價出來再打金額（申請書金額、期付款會空著）</div>'
+    try:
+        w = int(float(re.sub(r"[^\d.]", "", a) or 0))
+        w = w // 10000 if w >= 1000 else w
+    except ValueError:
+        return ""
+    if w <= 0:
+        return '<div style="font-size:12px;color:#b91c1c;font-weight:700;margin-bottom:8px;">⚠️ 估價沒有產值 → 不能送新鑫</div>'
+    if w > _XINXIN_MAX:
+        return f'<div style="font-size:12px;color:#b45309;font-weight:700;margin-bottom:8px;">⚠️ 估價 {w} 萬超過上限，申請書寫 {_XINXIN_MAX} 萬</div>'
+    if w not in _XINXIN_120_145:
+        return f'<div style="font-size:12px;color:#b45309;font-weight:700;margin-bottom:8px;">⚠️ {w} 萬不在試算表上（30～300 萬、每 10 萬一格），期付款要自己填</div>'
+    return f'<div style="font-size:12px;color:#047857;margin-bottom:8px;">✅ {w} 萬／120 期／期付款 {_XINXIN_120_145[w]:,}</div>'
 
 
 def _fill_xinxin_pdf(r: dict) -> bytes:
@@ -26703,6 +26724,9 @@ def _fill_xinxin_pdf(r: dict) -> bytes:
         wan = wan // 10000 if wan >= 1000 else wan
     except ValueError:
         wan = 0
+    # 使用者 2026-10-15：「新鑫是房地，要先估價才知道金額、看還有沒有產值」「是二胎處理，不用還錢，不是成數也不用扣」
+    #   「最高只能借 300」→ 金額＝估價後可貸多少（行政打），超過 300 萬一律 300
+    wan = min(wan, _XINXIN_MAX)
     pay = _XINXIN_120_145.get(wan)
     T(0, 78, 67.4, str(wan * 10000) if wan else "", 44)
     T(0, 155, 67.4, "120", 26)

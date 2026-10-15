@@ -3618,6 +3618,12 @@ check("新鑫還款來源：申購人、薪資月所得寫元（2.8 萬照申請
 _blx = _pp95.open("申請書/新鑫申請書.pdf")
 check("新鑫：申請書簽章、立同意書人、立書人簽章都有電子簽名",
       all(len(_xp.pages[i].images) > len(_blx.pages[i].images) for i in (0, 2, 3)))
+# 使用者 2026-10-15：「二胎處理不用還錢，不是成數也不用扣」「最高只能借 300」
+_xp4 = _pp95.open(_io93.BytesIO(m._fill_xinxin_pdf(dict(_xr, adminb_xinxin=json.dumps({"amount": "450"})))))
+_x14 = "".join((_xp4.pages[0].extract_text() or "").split())
+check("新鑫：估價 450 萬 → 申請書寫 300 萬（上限）、期付款 47468", "3000000" in _x14 and "47468" in _x14, _x14[:200])
+check("新鑫提醒：還沒估價／沒有產值／超過上限",
+      "還沒估價" in m._xinxin_amount_note("") and "沒有產值" in m._xinxin_amount_note("0") and "超過上限" in m._xinxin_amount_note("450"))
 check("新鑫：門牌、所有權人沒打 → 戶籍地址、本人", m._xinxin_values(_xr)["door"] == "長壽路72之23號" and m._xinxin_values(_xr)["owner"] == "測試甲")
 check("送件包：興達兩個方案都用興達那張",m._PACK_TEMPLATE_ALIAS.get("興達勞保貸") == "興達" and m._PACK_TEMPLATE_ALIAS.get("興達汽機車二胎") == "興達")
 check("申請書資料夾不可以有範本（真客人個資）",not any("範本" in f and ("中租" in f or "願望" in f) for f in os.listdir("申請書")))
