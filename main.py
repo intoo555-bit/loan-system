@@ -19863,6 +19863,9 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
           <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;">
             <button type="button" onclick="ylClear()" style="padding:6px 14px;background:#888;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:13px;">🗑 清除</button>
             <button type="button" onclick="ylSaveSign()" style="padding:6px 14px;background:#1d4ed8;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:13px;font-weight:700;">✍️ 存簽名</button>
+            <!-- 使用者 2026-10-15：裕融／和潤申請書按鈕放簽名旁邊（不放最下面）；勾了哪家才出現哪家 -->
+            <span class="ab-block" data-plans="裕融" style="display:inline;padding:0;margin:0;background:none;"><a href="/adminb/download-yulon?case_id={h(case_id)}" style="display:inline-block;padding:6px 14px;background:#1d4ed8;color:#fff;border-radius:6px;font-size:13px;font-weight:700;text-decoration:none;">📄 裕融申請書 PDF</a></span>
+            <span class="ab-block" data-plans="和潤" style="display:inline;padding:0;margin:0;background:none;"><a href="/adminb/download-heren?case_id={h(case_id)}" style="display:inline-block;padding:6px 14px;background:#b45309;color:#fff;border-radius:6px;font-size:13px;font-weight:700;text-decoration:none;">📄 和潤申請書 PDF</a></span>
             <span id="ylSignMsg" style="font-size:12px;color:#15803d;align-self:center;"></span>
           </div>
         </div>
@@ -19920,8 +19923,6 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
       <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
         <button type="submit" class="btn-save">💾 儲存資料</button>
         <a href="/adminb/download-excel?case_id={h(case_id)}" class="btn-dl" onclick="return confirm('將根據勾選的方案下載 Excel/TXT，確定嗎？')">📥 下載EXCEL/TXT</a>
-        <a href="/adminb/download-yulon?case_id={h(case_id)}" class="btn-dl" style="background:#1d4ed8">📄 裕融申請書 PDF</a>
-        <a href="/adminb/download-heren?case_id={h(case_id)}" class="btn-dl" style="background:#b45309">📄 和潤申請書 PDF</a>
         {('<span style="display:inline-flex;gap:6px;align-items:center;background:#e8f4f4;border:1px solid #b9dcdc;border-radius:8px;padding:6px 10px">'
           + _pack_picker_html(customer) + '</span>') if _pack_picker_html(customer) else ''}
         {'<button type="button" onclick="checkEligibilityAdminB()" style="background:#fef3c7;color:#854d0e;border:1px solid #fde047;padding:11px 22px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;">📋 對照規則表</button>' if role in ('admin', 'ops_admin') else ''}
@@ -30508,10 +30509,11 @@ def _docs_missing_html(cust, rows) -> str:
             d = (cust.get("created_at") or "")[:10]
             day = f"{int(d[5:7])}/{int(d[8:10])}" if len(d) == 10 and d[4] == "-" else ""
             line = day + "-" + (cust.get("customer_name") or "") + "-" + "/".join(sug)
+            # 使用者 2026-10-15：下面可以改字的那格已經是同一行 → 有那格就不再另外顯示一次
             rline = f'<div class="ms-line">📋 建議順序（系統排的，群組還沒排）：<b>{h(line)}</b></div>'
             if cust.get("status") == "ACTIVE" and cust.get("source_group_id"):
                 # 使用者 2026-10-15：「順序確定好可以直接群組通知嗎」→ 可以改字（跟群組一樣的寫法），確定後寫進系統＋貼到客人的群組
-                rline += ('<div class="ms-line" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">'
+                rline = ('<div class="ms-line" style="font-size:13px;color:#5b6b78">📋 建議順序（系統排的，群組還沒排；可以改字）</div>' '<div class="ms-line" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">'
                           f'<input id="roLine" value="{h(line)}" style="flex:1;min-width:260px;padding:6px 8px;border:1px solid #cdd8e0;border-radius:6px">'
                           '<button type="button" id="roBtn" style="border:0;background:#127a7d;color:#fff;border-radius:6px;padding:6px 12px;font-weight:700;cursor:pointer">'
                           f'✅ 確定順序，通知{h(get_group_name(cust["source_group_id"]) or "群組")}</button><span id="roMsg" style="font-size:13px"></span></div>'
@@ -30547,7 +30549,8 @@ def _docs_missing_line(cust, rows) -> str:
         parts.append(f'<span class="ms-check">⏳ 待確認：{h("、".join(wait))}</span>')
     if not parts:
         parts.append('<span class="ms-ok">✅ 證件齊全</span>')
-    return f'<div class="ms-line">📦 {lb} <b>{h(plan["company"])}</b>：{"　".join(parts)}</div>'
+    # 寫群組那種簡稱（使用者 2026-10-15：「裕融信福貸 → 信福貸不用打」）
+    return f'<div class="ms-line">📦 {lb} <b>{h(_plan_short(plan["company"], plan.get("max_amount")) or plan["company"])}</b>：{"　".join(parts)}</div>'
 
 
 def _doc_rank(label: str) -> int:

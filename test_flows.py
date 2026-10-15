@@ -2634,8 +2634,9 @@ check("不檢查的不會算缺（例：勞保有就給、身分證查詢截圖�
 m.check_auth = lambda req: "admin"
 _html = TestClient(m.app).get("/archive/G300000001").text
 # 使用者 2026-10-14：只要說明目前送的那家缺什麼（後面可能不會送到），不要拉太長
-check("證件頁只寫目前送的那家缺什麼（21機車25萬），不列後面幾家",
-      "目前送 <b>21機車25萬</b>" in _html and "亞太機車25萬" not in _html.split("目前送")[1][:300] and "每一家缺什麼" not in _html)
+# 使用者 2026-10-15：「裕融信福貸 → 信福貸不用打」→ 寫群組那種簡稱（21機車25萬 → 21機25）
+check("證件頁只寫目前送的那家缺什麼（寫簡稱 21機25），不列後面幾家",
+      "目前送 <b>21機25</b>" in _html and "亞太機車25萬" not in _html.split("目前送")[1][:300] and "每一家缺什麼" not in _html)
 check("缺件一行寫完（勞保要重拉、時間相機）", "要重拉" in _html.split("目前送")[1][:400], _html.split("目前送")[1][:400])
 _dd = {d["id"]: d for d in TestClient(m.app).get("/archive/G300000001/data").json()["documents"]}
 _lab = [d for d in _dd.values() if d["category"] == "勞保明細"][0]
