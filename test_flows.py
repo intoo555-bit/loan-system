@@ -3403,7 +3403,31 @@ _r = _tc94.get("/adminb/download-heren", params={"case_id": _cid93})
 check("行政B 下載和潤申請書", _r.status_code == 200 and _r.content[:4] == b"%PDF", _r.status_code)
 _tc94.post("/adminb/save", data={"case_id": _cid93, "plans": "和潤", "hr2_tier": "U3", "hr2_plus": "無", "hr2_rate": "15.75"})
 _ov98 = m._heren_overrides(get_cust("E300000001"))
-check("行政B 存檔（和潤）：只記改過的（方案 U3）", _ov98.get("tier") == "U3" and "rate" not in _ov98 and "plus" not in _ov98, _ov98)
+# 交接第 17 段：業務 AI 客人自己簽的電子簽名 → 申請書優先用；沒有才用行政B 簽名板；紙本簽名（合約書簽名）不拿
+_bl99, _bf99 = m._bizai_list, m._bizai_fetch
+_png99 = _b64_96.b64decode(_sig96.split(",", 1)[1])
+_local99 = "data:image/png;base64,LOCAL"
+m._bizai_fetch = lambda rid, idv: (_png99, "image/png", "") if rid == "S1" else (None, "", "x")
+m._BIZAI_SIG_CACHE.clear()
+m._bizai_list = lambda idv: ([{"doc_id": "S1", "label": "電子簽名"}, {"doc_id": "P1", "label": "身分證正面"}], "")
+check("簽名：業務 AI 有電子簽名 → 優先用它（不用行政B 簽的）",
+      m._customer_signature({"id_no": "A100000001", "signature_applicant": _local99}).startswith("data:image/png;base64,iVBOR"))
+m._BIZAI_SIG_CACHE.clear()
+m._bizai_list = lambda idv: ([{"doc_id": "C1", "label": "合約書簽名"}], "")
+check("簽名：只有紙本簽名照片 → 不拿，用行政B 簽的", m._customer_signature({"id_no": "A100000001", "signature_applicant": _local99}) == _local99)
+m._BIZAI_SIG_CACHE.clear()
+m._bizai_list = lambda idv: (None, "連不到業務 AI")
+check("簽名：業務 AI 連不到 → 用行政B 簽的；兩邊都沒有 → 空白（客人紙本自己簽）",
+      m._customer_signature({"id_no": "A100000001", "signature_applicant": _local99}) == _local99
+      and m._customer_signature({"id_no": "A100000001"}) == "")
+m._BIZAI_SIG_CACHE.clear()
+m._bizai_list = lambda idv: ([{"doc_id": "S1", "label": "電子簽名"}], "")
+_pdf99 = m._fill_yulon_pdf(dict(_r95), "裕融信福貸")
+check("裕融 PDF：行政B 沒簽、業務 AI 有 → 簽名欄有簽名",
+      len(_pp95.open(_io93.BytesIO(_pdf99)).pages[0].images) > len(_doc95.pages[0].images))
+m._bizai_list, m._bizai_fetch = _bl99, _bf99
+m._BIZAI_SIG_CACHE.clear()
+check("行政B 存檔（和潤）：只記改過的（方案 U3）",_ov98.get("tier") == "U3" and "rate" not in _ov98 and "plus" not in _ov98, _ov98)
 m.check_auth = lambda req: "admin"
 
 # ========== 總結 ==========

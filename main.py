@@ -19857,7 +19857,7 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
       <div class="ab-block" data-plans="裕融,和潤" style="background:#f1f5f9;">
         <div style="background:#fff;border:1px dashed #1d4ed8;border-radius:8px;padding:12px;margin:10px 0;">
           <div style="font-size:12px;font-weight:700;color:#1d4ed8;margin-bottom:6px;">📝 客人電子簽名（裕融、和潤申請書每個要簽的地方都會帶）</div>
-          <div style="font-size:11px;color:#475569;margin-bottom:8px;">{"目前已有簽名（下圖）；要重簽就在下面簽完按「存簽名」" if yl_sig.startswith("data:image") else "還沒有簽名：請客人在下面簽，按「存簽名」"}　之後業務 AI 那邊客人簽好的會直接用</div>
+          <div style="font-size:11px;color:#475569;margin-bottom:8px;">{"這裡簽過了（下圖）；要重簽就在下面簽完按「存簽名」" if yl_sig.startswith("data:image") else "客人在業務 AI 線上簽過就不用簽；沒有的話請客人在下面簽，按「存簽名」"}　⭐ 下載時先用業務 AI 客人自己簽的，沒有才用這裡的；紙本簽名的客人不用簽（申請書自己在紙上簽）</div>
           {f'<img src="{h(yl_sig)}" style="max-width:240px;max-height:70px;border:1px solid #cbd5e1;border-radius:4px;background:#fff;margin-bottom:8px;display:block;">' if yl_sig.startswith("data:image") else ""}
           <canvas id="ylSignPad" width="500" height="150" style="border:2px solid #1d4ed8;background:#fff;cursor:crosshair;display:block;border-radius:6px;width:100%;max-width:500px;touch-action:none;"></canvas>
           <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;">
@@ -25822,8 +25822,8 @@ def _fill_yulon_pdf(r: dict, plan: str = "") -> bytes:
     T(0, 256, 550.3, rules["company_months_val"] if "company_months_val" in rules else v("company_months"), 16)
     V(0, 77.3, 564.5)                                 # 繳款通知：簡訊（範本那份勾的）
     V(0, 77.3, 588.5)                                 # 繳款文件郵寄：戶籍地
-    # 借款人(簽章)：客人在填單頁簽的電子簽名（沒簽就留白）
-    sig = v("signature_applicant")
+    # 借款人(簽章)：業務 AI 客人自己簽的 > 行政B 簽名板（沒簽就留白）
+    sig = _customer_signature(r)
     if sig.startswith("data:image"):
         # 使用者 2026-10-15：「有需要簽章地方都要簽」—— 第 4 頁沒有簽名欄；第 3 頁只簽第一個立同意書人（借款人本人）
         ops[0].append(("img", 82, 770, 120, 40, sig))     # 第 1 頁 借款人(簽章)
@@ -26220,7 +26220,7 @@ def _fill_heren_pdf(r: dict, plan: str = "") -> bytes:
         V(3, 436.7, (536.7 if hv["plus"] == "Plus 2" else 560.8) + 7.4)
     # ---- 第 5 頁：核駁通知書（簽名＋日期）----
     T(4, 243, 773, today[0], None, 10); T(4, 368, 773, today[1], None, 10); T(4, 480, 773, today[2], None, 10)
-    sig = v("signature_applicant")
+    sig = _customer_signature(r)       # 業務 AI 客人自己簽的 > 行政B 簽名板
     if sig.startswith("data:image"):
         ops[1].append(("img", 160, 697, 110, 30, sig))    # 立同意書人(車主)
         ops[4].append(("img", 160, 398, 130, 30, sig))    # 被通知人（親簽）
@@ -29889,6 +29889,43 @@ def _bizai_fetch(doc_id, id_no: str):
     if r.status_code != 200:
         return None, "", f"下載失敗（HTTP {r.status_code}）"
     return r.content, r.headers.get("Content-Type", ""), ""
+
+
+_BIZAI_SIG_CACHE = {}   # 身分證 → (時間, data URL)；只留 60 秒（同一次下載＋送件包別重拉兩次）
+
+
+def _bizai_signature(id_no: str) -> str:
+    """業務 AI 客人自己簽的電子簽名 → data:image/png;base64,…；沒有／拿不到回 ""。
+    交接第 17 段（2026-10-15）：窗口 1 不帶 only_docs 會有 label＝「電子簽名」那一筆，用窗口 2 下載。
+    ⛔ 每次都重拉清單、不存 doc_id：客人重簽時業務 AI 會刪掉舊的（舊 doc_id 會 404）
+    ⛔ 紙本簽名的客人沒有電子簽名 → 回 ""，申請書簽名欄留白讓客人自己簽（使用者：「紙本簽名的客戶他們自己簽好了」）"""
+    import time
+    idv = normalize_id_no(id_no or "")
+    if not idv:
+        return ""
+    hit = _BIZAI_SIG_CACHE.get(idv)
+    if hit and time.time() - hit[0] < 60:
+        return hit[1]
+    out = ""
+    items, _err = _bizai_list(idv)
+    it = next((x for x in items or [] if (x.get("label") or "").strip() == "電子簽名"), None)
+    if it and it.get("doc_id"):
+        data, _ct, _ferr = _bizai_fetch(str(it["doc_id"]), idv)
+        if data and _doc_sniff(data) in ("image/png", "image/jpeg"):
+            out = f"data:{_doc_sniff(data)};base64," + base64.b64encode(data).decode()
+    _BIZAI_SIG_CACHE[idv] = (time.time(), out)
+    return out
+
+
+def _customer_signature(cust) -> str:
+    """申請書要用的簽名：業務 AI 客人自己簽的優先（使用者 2026-10-15：「業務AI那邊簽署的電子簽章可以直接拉過來」），
+    沒有才用行政B 簽名板簽的（signature_applicant）"""
+    try:
+        sig = _bizai_signature((cust or {}).get("id_no") or "")
+    except Exception as e:
+        print(f"[signature] 拉業務 AI 電子簽名失敗：{e}")
+        sig = ""
+    return sig or str((cust or {}).get("signature_applicant") or "").strip()
 
 
 def _doc_sniff(data: bytes) -> str:
