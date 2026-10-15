@@ -5714,6 +5714,7 @@ def init_db():
         ("adminb_heren", "TEXT"),
         ("adminb_dz_amount", "TEXT"),       # 行政B 東豐：分期金額／期數／每期應繳
         ("adminb_xd_amount", "TEXT"),       # 行政B 興達：核准金額（萬，空白＝10）
+        ("adminb_xinxin", "TEXT"),          # 行政B 新鑫：金額＋不動產那幾格（JSON，見 _xinxin_values）
         ("adminb_dz_period", "TEXT"),
         ("adminb_dz_payment", "TEXT"),          # 行政B 和潤區行政改過的格子（JSON，見 _heren_overrides）
         ("adminb_ry_amount", "TEXT"),
@@ -19681,6 +19682,11 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
         print(f"[adminb] 裕融預填失敗：{_e}")
         yv = {k: "" for k in _YULON_KEYS}
     yl_ov = _yulon_overrides(customer)
+    try:
+        xx_ov = json.loads(customer.get("adminb_xinxin") or "{}") or {}
+        xx_auto = _xinxin_values(dict(customer, adminb_xinxin=""))
+    except Exception:
+        xx_ov, xx_auto = {}, {}
     # 和潤：送件順序有排和潤就先幫忙勾
     try:
         if "和潤" not in sel_plans.split(",") and _heren_plans_of(customer):
@@ -19782,6 +19788,7 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
         ])}
         <label class="ab-plan" style="background:#4e7055;border-color:#3a5040;"><input type="checkbox" name="plans" value="喬美" style="accent-color:#fff;"><div><div class="ab-plan-name" style="color:#fff;">喬美</div><div class="ab-plan-sub" style="color:#c8e6ca;">PDF電子簽名</div></div></label>
         <label class="ab-plan" style="background:#1d4ed8;border-color:#1e3a8a;"><input type="checkbox" name="plans" value="裕融" style="accent-color:#fff;"><div><div class="ab-plan-name" style="color:#fff;">裕融</div><div class="ab-plan-sub" style="color:#dbeafe;">汽車 PDF</div></div></label>
+        <label class="ab-plan" style="background:#0f766e;border-color:#134e4a;"><input type="checkbox" name="plans" value="新鑫" style="accent-color:#fff;"><div><div class="ab-plan-name" style="color:#fff;">新鑫</div><div class="ab-plan-sub" style="color:#ccfbf1;">房地 PDF</div></div></label>
         <label class="ab-plan" style="background:#7c3aed;border-color:#4c1d95;"><input type="checkbox" name="plans" value="預付" style="accent-color:#fff;"><div><div class="ab-plan-name" style="color:#fff;">預付</div><div class="ab-plan-sub" style="color:#ede9fe;">資融 PDF</div></div></label>
         <label class="ab-plan" style="background:#b45309;border-color:#78350f;"><input type="checkbox" name="plans" value="和潤" style="accent-color:#fff;"><div><div class="ab-plan-name" style="color:#fff;">和潤</div><div class="ab-plan-sub" style="color:#fef3c7;">汽車／重機 PDF</div></div></label>
       </div>
@@ -19865,6 +19872,18 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
           <div><div class="ab-lbl">資金用途</div><input name="car_fund" class="ab-inp" placeholder="購車" value="{h(customer.get('adminb_21car_fund','') or '')}"></div>
           <div><div class="ab-lbl">是否有信用卡</div><select name="car_hascc" class="ab-sel"><option value="">請選</option><option value="有" {"selected" if (customer.get('adminb_21car_hascc','') or '')=='有' else ''}>有</option><option value="無" {"selected" if (customer.get('adminb_21car_hascc','') or '')=='無' else ''}>無</option></select></div>
         </div>
+      </div>
+      <div class="ab-block" data-plans="新鑫" style="background:#f0fdfa;">
+        <div style="font-size:12px;font-weight:700;color:#0f766e;margin-bottom:4px;">新鑫（房地）：一律 120 期、14.5%、用途投資理財、專案一般</div>
+        <div style="font-size:11px;color:#475569;margin-bottom:8px;">金額打估價後要申請的（30～300 萬），期付款照 120 期試算表 14.5% 自動帶。不動產那幾格看權狀／謄本；門牌、所有權人空著＝戶籍地址、本人</div>
+        <div class="ab-g3" style="margin-bottom:8px;">
+          {"".join(f'<div><div class="ab-lbl">{lbl}</div><input name="xx_{k}" class="ab-inp" placeholder="{h(ph)}" value="{h(xx_ov.get(k, ""))}"></div>' for k, lbl, ph in [
+            ("amount", "申辦金額（萬）", "300"), ("area", "不動產 鄉鎮市區", xx_auto.get("area", "")), ("section", "段", "福安"),
+            ("land_no", "地號", "1208-0014"), ("build_no", "建號", "00200-000"), ("mortgage", "已抵押設定金額（萬）", ""),
+            ("door", "門牌", xx_auto.get("door", "")), ("owner", "所有權人", xx_auto.get("owner", "")), ("owner_id", "所有權人身分證", xx_auto.get("owner_id", ""))])}
+        </div>
+        <a href="/adminb/download-xinxin?case_id={h(case_id)}" style="display:inline-block;padding:6px 14px;background:#0f766e;color:#fff;border-radius:6px;font-size:13px;font-weight:700;text-decoration:none;">📄 新鑫申請書 PDF</a>
+        <span style="font-size:11px;color:#475569;margin-left:6px;">（請先按儲存再下載）</span>
       </div>
       <div class="ab-block" data-plans="預付" style="background:#f5f3ff;">
         <div style="font-size:12px;font-weight:700;color:#6d28d9;margin-bottom:6px;">預付資融（基本資料＋負債檢查表 PDF）</div>
@@ -20417,6 +20436,11 @@ async def adminb_save(request: Request):
             fields["adminb_heren"] = json.dumps(new_ov, ensure_ascii=False) if new_ov else ""
         except Exception as e:
             print(f"[adminb save] 和潤欄位存失敗：{e}")
+    if "xx_amount" in form:
+        # 新鑫：行政打的才存（空的＝照系統：門牌＝戶籍、所有權人＝本人）
+        _xx = {k: str(form.get("xx_" + k, "") or "").strip() for k in _XINXIN_KEYS}
+        _xx = {k: x for k, x in _xx.items() if x}
+        fields["adminb_xinxin"] = json.dumps(_xx, ensure_ascii=False) if _xx else ""
     if row and "yl_plan" in form:
         # 裕融：只存行政「改過」的格子 —— 跟畫面上原本系統算的一樣＝沒動 → 不存，以後資料變了照樣重算
         #   （之前改過、這次沒動的保留；清空＝回到系統算的）
@@ -26617,6 +26641,175 @@ def adminb_download_prepaid(request: Request, case_id: str = "", plan: str = "")
         return JSONResponse({"error": "預付資融申請書範本不在（申請書/預付資融申請書.pdf）"}, status_code=500)
     from urllib.parse import quote
     fname = quote((r.get("customer_name") or "") + "_預付資融申請書.pdf")
+    return StreamingResponse(io.BytesIO(data), media_type="application/pdf",
+                             headers={"Content-Disposition": f"attachment; filename*=UTF-8''{fname}"})
+
+
+# ============ 新鑫（房地）申請書（使用者 2026-10-15 給 新鑫申請書.pdf＋新鑫範本.pdf）============
+# 「一律都選 120 期 14.5% 的利率，資金用途也是固定投資理財」；專案照範本寫「一般」
+# 期付款照使用者給的「120 期分期試算表」14.5% 那一欄（30 萬～300 萬，每 10 萬一格）
+_XINXIN_120_145 = {30: 4747, 40: 6330, 50: 7912, 60: 9494, 70: 11076, 80: 12659, 90: 14241, 100: 15823,
+                   110: 17405, 120: 18988, 130: 20570, 140: 22152, 150: 23734, 160: 25317, 170: 26899, 180: 28481,
+                   190: 30063, 200: 31646, 210: 33228, 220: 34810, 230: 36392, 240: 37975, 250: 39557, 260: 41139,
+                   270: 42721, 280: 44304, 290: 45886, 300: 47468}
+_XINXIN_KEYS = ("amount", "area", "section", "land_no", "build_no", "mortgage", "door", "owner", "owner_id")
+
+
+def _xinxin_values(r) -> dict:
+    """新鑫不動產那幾格＋金額：行政B 打的優先；沒打的 → 門牌＝戶籍地址、所有權人＝本人（範本那份就是這樣）"""
+    try:
+        ov = json.loads(r.get("adminb_xinxin") or "{}") or {}
+    except Exception:
+        ov = {}
+    ov = {k: str(ov.get(k) or "").strip() for k in _XINXIN_KEYS}
+    dist = str(r.get("reg_district") or "").strip()
+    reg_a = str(r.get("reg_address") or "").strip()
+    for pre in (str(r.get("reg_city") or ""), dist):
+        if pre and reg_a.startswith(pre):
+            reg_a = reg_a[len(pre):]
+    auto = {"amount": "", "area": re.sub(r"[區鄉鎮市]$", "", dist), "section": "", "land_no": "", "build_no": "",
+            "mortgage": "", "door": reg_a, "owner": str(r.get("customer_name") or ""),
+            "owner_id": str(r.get("id_no") or "").upper()}
+    return {k: ov[k] or auto[k] for k in _XINXIN_KEYS}
+
+
+def _fill_xinxin_pdf(r: dict) -> bytes:
+    """4 頁（空白範本的順序）：0 申請書、1 個資同意書（第九點兩個同意）、2 立同意書人、3 還款來源暨財資力說明書"""
+    tpl = os.path.join(os.path.dirname(os.path.abspath(__file__)), "申請書", "新鑫申請書.pdf")
+    if not os.path.exists(tpl):
+        return b""
+
+    def v(k):
+        return str(r.get(k) or "").strip()
+
+    rules = apply_adminb_rules(r)
+    xv = _xinxin_values(r)
+    now = now_tw()
+    today = (str(now.year - 1911), str(now.month), str(now.day))
+    ops = {i: [] for i in range(4)}
+
+    def T(pg, x, top, text, maxw=None, size=10):          # top＝跟同一行標籤一樣（pdfplumber 量的）
+        if str(text or "").strip():
+            ops[pg].append(("t", x, top + 0.5, str(text).strip(), maxw, size))
+
+    def V(pg, x, top):                                     # x、top＝方框字元的位置
+        ops[pg].append(("v", x + 0.5, top + 0.8))
+
+    # ---- 第 1 頁：申請書 ----
+    T(0, 60, 36.9, "投資理財", 200)
+    T(0, 331, 36.9, "一般", 200)
+    try:
+        wan = int(float(re.sub(r"[^\d.]", "", xv["amount"]) or 0))
+        wan = wan // 10000 if wan >= 1000 else wan
+    except ValueError:
+        wan = 0
+    pay = _XINXIN_120_145.get(wan)
+    T(0, 78, 67.4, str(wan * 10000) if wan else "", 44)
+    T(0, 155, 67.4, "120", 26)
+    T(0, 228, 67.4, str(pay) if pay else "", 46)
+    T(0, 60, 139.2, v("customer_name"), 68)
+    bd = (_normalize_roc_date(v("birth_date")) or "").replace("-", "/").split("/")
+    try:
+        y_ = int(bd[0])
+        T(0, 165, 139.2, str(y_ - 1911 if y_ >= 1911 else y_)); T(0, 196, 139.2, str(int(bd[1]))); T(0, 226, 139.2, str(int(bd[2])))
+    except (ValueError, IndexError):
+        pass
+    mar = v("marriage")
+    if mar:
+        V(0, 327.8 if "已婚" in mar else 357.7 if "未婚" in mar else 387.8, 139.2)
+    T(0, 80, 157.2, v("id_no").upper(), 190)
+    edu = rules.get("edu_val") or v("education")
+    ex = (327.8 if any(k in edu for k in ("研究", "碩", "博")) else 387.7 if "大學" in edu else 417.8 if "專" in edu else
+          447.8 if "高" in edu else 487.7 if edu and any(k in edu for k in ("國", "小", "初")) else 530.5 if edu else None)
+    if ex:
+        V(0, ex, 157.2)
+    T(0, 80, 175.4, v("reg_city") + v("reg_district") + v("reg_address"), 360)
+    T(0, 490, 175.4, v("phone"), 80)
+
+    def live_row(top, status, years, phone):
+        if any(k in status for k in ("自有", "本人")):
+            V(0, 24.8, top)
+        elif "租" in status:
+            V(0, 59.8, top)
+        elif status and "宿舍" not in status:
+            V(0, 94.8, top)
+            T(0, 146, top, "父母" if "父母" in status else "配偶" if "配偶" in status else "", 46)
+        T(0, 262, top, years, 40)
+        T(0, 362, top, phone, 90, 9)
+
+    ls = rules.get("live_status_val") or v("live_status")
+    yrs = rules.get("live_years_val") or v("live_years")
+    live_row(193.4, ls, yrs, v("reg_phone"))
+    T(0, 505, 193.4, v("line_id"), 65, 9)
+    reg_full = (v("reg_city") + v("reg_district") + v("reg_address")).replace(" ", "")
+    live_full = (v("live_city") + v("live_district") + v("live_address")).replace(" ", "")
+    if v("live_same_as_reg") == "1" or not live_full or live_full == reg_full:
+        V(0, 74.7, 211.6)
+    else:
+        V(0, 119.8, 211.6)
+        T(0, 185, 211.6, live_full, 380)
+        live_row(229.6, ls, yrs, v("live_phone"))
+    role = v("company_role")
+    if role:
+        V(0, 74.7 if any(w in role for w in _BOSS_WORDS) else 109.8, 247.9)
+    T(0, 155, 247.9, v("company_name_detail") or v("company"), 128)
+    area = v("company_phone_area")
+    T(0, 476, 247.9, fmt_company_phone("" if area == "mobile" else area, v("company_phone_num"), v("company_phone_ext")), 92, 9)
+    T(0, 80, 265.9, v("company_city") + v("company_district") + v("company_address"), 202, 9)
+    T(0, 327, 265.9, role, 52)
+    T(0, 422, 265.9, rules.get("company_years_val") or v("company_years"), 26)
+    T(0, 527, 265.9, fmt_salary(rules.get("salary_val") or v("company_salary")).replace("萬", ""), 27)
+    T(0, 67, 283.4, v("email"), 300)
+    V(0, 74.7, 300.1)                                       # 通訊地址：同戶籍（範本勾的）
+    T(0, 67, 323.8, xv["area"], 42); T(0, 155, 323.8, xv["section"], 54); T(0, 265, 323.8, xv["land_no"], 58)
+    T(0, 360, 323.8, xv["build_no"], 54); T(0, 507, 323.8, xv["mortgage"], 46)
+    T(0, 60, 341.8, xv["door"], 188); T(0, 315, 341.8, xv["owner"], 98); T(0, 490, 341.8, xv["owner_id"], 80)
+    T(0, 70, 763.4, v("customer_name"), 120)
+    T(0, 482, 801.4, today[0]); T(0, 515, 801.4, today[1]); T(0, 546, 801.4, today[2])
+    # ---- 第 2 頁：個資同意書第九點兩個「同意」（範本勾的）----
+    V(1, 67.5, 642.0); V(1, 67.5, 678.0)
+    # ---- 第 3 頁：立同意書人 ----
+    T(2, 102, 435.2, v("id_no").upper(), 150)
+    T(2, 66, 453.9, today[0]); T(2, 101, 453.9, today[1]); T(2, 136, 453.9, today[2])
+    # ---- 第 4 頁：還款來源暨財資力說明書（範本：勾自營／受僱、2. 薪資收入月所得寫元）----
+    T(3, 140, 73.1, v("customer_name"), 95, 11)
+    T(3, 180, 157.9, v("company_name_detail") or v("company"), 195)
+    if role:
+        V(3, 173.8 if any(w in role for w in _BOSS_WORDS) else 215.8, 191.8)
+    try:
+        sal_n = float(str(rules.get("salary_val") or v("company_salary") or 0).replace("萬", "").replace(",", ""))
+        sal_y = str(int(sal_n * 10000 if sal_n < 1000 else sal_n)) if sal_n else ""
+    except ValueError:
+        sal_y = ""
+    if sal_y:
+        V(3, 131.8, 317.4)
+        T(3, 242, 317.4, sal_y, 66)
+    T(3, 385, 756.1, v("id_no").upper(), 150, 11)
+    T(3, 185, 796.1, today[0], None, 11); T(3, 285, 796.1, today[1], None, 11); T(3, 383, 796.1, today[2], None, 11)
+    sig = _customer_signature(r)
+    if sig.startswith("data:image"):
+        ops[0].append(("img", 290, 750, 110, 28, sig))      # 申請書 簽章
+        ops[2].append(("img", 102, 393, 120, 28, sig))      # 立同意書人
+        ops[3].append(("img", 385, 700, 130, 30, sig))      # 立書人簽章
+    return _pdf_overlay(tpl, ops)
+
+
+@app.get("/adminb/download-xinxin")
+def adminb_download_xinxin(request: Request, case_id: str = ""):
+    """行政B：新鑫申請書 PDF（自動填好）"""
+    from fastapi.responses import StreamingResponse
+    if check_auth(request) not in ("admin", "adminB", "ops_admin"):
+        return JSONResponse({"error": "無權限"}, status_code=403)
+    with db_conn() as conn:
+        row = conn.execute("SELECT * FROM customers WHERE case_id=?", (case_id,)).fetchone()
+    if not row:
+        return JSONResponse({"error": "找不到客戶"}, status_code=404)
+    r = dict(row)
+    data = _fill_xinxin_pdf(r)
+    if not data:
+        return JSONResponse({"error": "新鑫申請書範本不在（申請書/新鑫申請書.pdf）"}, status_code=500)
+    from urllib.parse import quote
+    fname = quote((r.get("customer_name") or "") + "_新鑫申請書.pdf")
     return StreamingResponse(io.BytesIO(data), media_type="application/pdf",
                              headers={"Content-Disposition": f"attachment; filename*=UTF-8''{fname}"})
 

@@ -3600,7 +3600,26 @@ for _cell, _want in (("C4", "測試戊"), ("E5", "換發"), ("C6", "南市"), ("
                      ("C14", "聯絡甲"), ("K14", "保密"), ("K15", "知情"),
                      ("C35", "HTC手機 HTC Desire 22 Pro"), ("D35", "100000"), ("E35", "1"), ("H35", "18"), ("I35", "6967"), ("F35", "125406")):
     check(f"興達 {_cell}＝{_want}", _gx(_cell).strip() == _want, _gx(_cell))
-check("送件包：興達兩個方案都用興達那張", m._PACK_TEMPLATE_ALIAS.get("興達勞保貸") == "興達" and m._PACK_TEMPLATE_ALIAS.get("興達汽機車二胎") == "興達")
+# 新鑫（使用者 2026-10-15：「一律都選120期14.5%的利率，資金用途也是固定投資理財」＋120 期試算表 14.5% 那欄）
+#   範本：300 萬／120 期／期付款 47468；表上 30 萬 4747、100 萬 15823、200 萬 31646
+check("新鑫 14.5% 試算表：30 萬 4747、100 萬 15823、200 萬 31646、300 萬 47468",
+      [m._XINXIN_120_145[k] for k in (30, 100, 200, 300)] == [4747, 15823, 31646, 47468] and len(m._XINXIN_120_145) == 28)
+_xr = dict(_r95, birth_date="074/12/12", company_role="負責人", reg_city="台中市", reg_district="大甲區", reg_address="長壽路72之23號",
+           adminb_xinxin=json.dumps({"amount": "300", "section": "福安", "land_no": "1208-0014", "build_no": "00200-000"}))
+_bz, m._bizai_signature = m._bizai_signature, (lambda idv: "")
+_xp = _pp95.open(_io93.BytesIO(m._fill_xinxin_pdf(dict(_xr, signature_applicant=_sig96))))
+m._bizai_signature = _bz
+_x1 = "".join((_xp.pages[0].extract_text() or "").split())
+_x4 = "".join((_xp.pages[3].extract_text() or "").split())
+check("新鑫 PDF：4 頁", len(_xp.pages) == 4)
+for _w in ("投資理財", "一般", "3000000", "120", "47468", "測試甲", "A100000001", "大甲", "福安", "1208-0014", "00200-000", "長壽路72之23號"):
+    check(f"新鑫申請書：{_w}", _w in _x1, _x1[:300])
+check("新鑫還款來源：申購人、薪資月所得寫元（2.8 萬照申請書規則 → 35000）", "測試甲" in _x4 and "35000" in _x4, _x4[:300])
+_blx = _pp95.open("申請書/新鑫申請書.pdf")
+check("新鑫：申請書簽章、立同意書人、立書人簽章都有電子簽名",
+      all(len(_xp.pages[i].images) > len(_blx.pages[i].images) for i in (0, 2, 3)))
+check("新鑫：門牌、所有權人沒打 → 戶籍地址、本人", m._xinxin_values(_xr)["door"] == "長壽路72之23號" and m._xinxin_values(_xr)["owner"] == "測試甲")
+check("送件包：興達兩個方案都用興達那張",m._PACK_TEMPLATE_ALIAS.get("興達勞保貸") == "興達" and m._PACK_TEMPLATE_ALIAS.get("興達汽機車二胎") == "興達")
 check("申請書資料夾不可以有範本（真客人個資）",not any("範本" in f and ("中租" in f or "願望" in f) for f in os.listdir("申請書")))
 
 # ========== 總結 ==========
