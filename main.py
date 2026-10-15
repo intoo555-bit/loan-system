@@ -19748,6 +19748,7 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
           ("麻吉機車","麻吉機車","10萬 24期"),("麻吉手機","麻吉手機","10萬 24期"),
           ("手機分期","手機分期","填寫表"),("分貝機車","分貝機車","改裝填寫表"),
           ("分貝汽車","分貝汽車","改裝填寫表"),("分貝商品","分貝商品","14.8萬 24期"),("21汽車","21汽車","貸款100% 利率16%"),
+          ("中租汽車","中租汽車","填寫表"),("願望機車","願望","願望小車／工會 填寫表"),
         ])}
       </div>
       <div style="margin-top:8px;padding:8px 12px;background:#fdf2f8;border:1px dashed #9d174d;border-radius:6px;"><label style="display:flex;align-items:center;gap:8px;font-size:13px;color:#9d174d;font-weight:600;cursor:pointer;"><input type="checkbox" name="mj_6w18p" value="1" {"checked" if customer.get('adminb_mj_6w18p','')=='1' else ''} style="width:16px;height:16px;accent-color:#9d174d;"> 麻吉改用 6萬／18期／月付3771元（不勾用預設 10萬／24期）</label></div>
@@ -27202,6 +27203,9 @@ def _do_download_excel(request: Request, case_id: str, only_plans=None, raw: boo
         "分貝汽車": os.path.join(_base, "申請書", "分貝汽車.txt"),
         "分貝商品": os.path.join(_base, "申請書", "分貝商品.txt"),
         "21汽車":   os.path.join(_base, "申請書", "21汽車申請書.txt"),
+        # 2026-10-15 使用者給的填寫表
+        "中租汽車": os.path.join(_base, "申請書", "中租汽車申請書.txt"),
+        "願望機車": os.path.join(_base, "申請書", "願望機車申請書.txt"),
     }
 
     # 自訂範本覆蓋：若使用者在 /admin/templates 上傳過該方案的範本，優先使用
@@ -28052,7 +28056,8 @@ def _do_download_excel(request: Request, case_id: str, only_plans=None, raw: boo
         # 居住時間
         live_time = ""
         if v("live_years") or v("live_months"):
-            live_time = f'{v("live_years")}年{v("live_months")}月'
+            _lm = v("live_months")
+            live_time = (f'{v("live_years")}年' if v("live_years") else "") + (f"{_lm}月" if _lm and _lm != "0" else "")
         # 年資
         co_years_full = v("company_years")
         if v("company_months"):
@@ -28111,9 +28116,21 @@ def _do_download_excel(request: Request, case_id: str, only_plans=None, raw: boo
             ("有動單" if any("動保" in _dv(x, "dy") for x in _debts) else ""),
         ) if x])
 
+        # 願望：「是否有薪轉或勞健保（不是工會的）」範本填「公司保」→ 有勞保寫勞保狀態，沒有才寫薪轉
+        labor_or_salary = _labor_ins or _sal_tr
+        # 願望：「有無上過法院」← 法學條數（空白＝沒填，不猜「無」）
+        _lw = re.sub(r"\s+", "", v("eval_law"))
+        law_court = "" if not _lw else ("無" if _lw in ("無", "0", "共0條", "沒有") else f"有（法學{_lw}）")
         # ===== label 關鍵字 → 值 對應 =====
         # 比對時用 startswith / in 容錯，越長 / 越精確的 key 排前面
         LABEL_MAP = [
+            # 願望機車（2026-10-15）：⛔ 這幾條要排在「現居地」「戶籍」「勞保」那些短的 key 前面
+            ("戶籍跟現居是否相同", "相同" if live_same else reg_addr),
+            ("現居地是誰的", v("live_status")),
+            ("現居電話", v("live_phone")),
+            ("住多久", live_time),
+            ("是否有薪轉或勞健保", labor_or_salary),
+            ("上過法院", law_court),
             # 21汽車 專屬
             ("專案名稱", v("adminb_21car_project")),
             ("貸款金額.期數.月付金", f'{v("adminb_21car_amount")}/{v("adminb_21car_period")}/{v("adminb_21car_monthly")}'.strip("/")),
@@ -28171,6 +28188,7 @@ def _do_download_excel(request: Request, case_id: str, only_plans=None, raw: boo
             ("現居地地址", live_addr),
             ("現居地址", live_addr),
             ("現住地址", live_addr),
+            ("現居地", live_addr),             # 願望「現居地：」（⛔ 要在「現居地是誰的」後面）
             ("住宅地址", live_addr),
             ("戶籍電話", v("reg_phone")),
             ("現住電話", v("live_phone")),
@@ -28181,12 +28199,14 @@ def _do_download_excel(request: Request, case_id: str, only_plans=None, raw: boo
             ("居住狀況", v("live_status")),
             ("最高學歷", v("education")),
             ("教育程度", v("education")),
+            ("學歷", v("education")),          # 願望
             ("婚姻狀態", v("marriage")),
             ("婚姻", v("marriage")),
             # 公司
             ("公司名稱", v("company_name_detail") or v("company")),
             ("公司地址", co_addr),
             ("公司分機", v("company_phone_ext")),
+            ("分機", v("company_phone_ext")),   # 中租「分機：」獨立一行（⛔ 要在「公司分機」後面）
             ("公司電話", co_phone),
             ("公司職稱", v("company_role")),
             ("職稱", v("company_role")),
@@ -28201,6 +28221,7 @@ def _do_download_excel(request: Request, case_id: str, only_plans=None, raw: boo
             ("商品廠牌", product_brand_model),
             # 雜項
             ("可照會時間", v("adminb_contact_time")),
+            ("方便電話聯絡時間", v("adminb_contact_time")),   # 中租
             ("近2月備註", v("adminb_bei_note")),
             # 分貝 5 題答案（每題一行對應）
             ("1.近2個月內有無送過", bei_lines[0]),
@@ -28210,6 +28231,16 @@ def _do_download_excel(request: Request, case_id: str, only_plans=None, raw: boo
             ("5.有無遲繳", bei_lines[4]),
             ("資金用途", v("adminb_21car_fund") or v("adminb_fund_use")),
         ]
+
+        # 中租汽車（2026-10-15 使用者給的範本）：住宅地址跟戶籍一樣寫「同上」；居住狀況只能填（家人名下、自有名下、租房、其他）
+        #   ⛔ 只在中租那張表（認「兵役狀況」），21汽車也有「住宅地址」「居住狀況」，那張照舊
+        with open(template_path, encoding="utf-8") as _f_tpl:
+            _is_chailease = "兵役狀況" in _f_tpl.read()
+        if _is_chailease:
+            _ls = v("live_status")
+            _ls4 = ("自有名下" if any(k in _ls for k in ("自有", "本人")) else "租房" if "租" in _ls else
+                    "家人名下" if any(k in _ls for k in ("父母", "配偶", "親屬", "家人")) else "其他" if _ls else "")
+            LABEL_MAP = [("住宅地址", "同上" if live_same else live_addr), ("居住狀況", _ls4)] + LABEL_MAP
 
         # 麻吉：勾選「6萬18期3771元」→ 覆寫範本預設「10萬/24期」
         if v("adminb_mj_6w18p") == "1":
@@ -28230,17 +28261,19 @@ def _do_download_excel(request: Request, case_id: str, only_plans=None, raw: boo
                 contact_state["idx"] = 2
                 return True, v("contact2_name")
 
-            # 聯絡人段內欄位
+            # 聯絡人段內欄位（⛔「本人方便電話聯絡時間」是客人自己的，不是聯絡人的 —— 中租那張排在聯絡人下面）
+            if "本人" in t:
+                contact_state["idx"] = 0
             if contact_state["idx"] == 1:
                 if "聯絡人姓名" in t: return True, v("contact1_name")
                 if "姓名" in t: return True, v("contact1_name")  # 含「1.姓名」
-                if "電話" in t: return True, v("contact1_phone")
+                if "電話" in t or t == "手機": return True, v("contact1_phone")   # 願望聯絡人寫「手機：」
                 if "關係" in t or "稱謂" in t: return True, v("contact1_relation")
                 if "知情" in t: return True, v("contact1_known")
             if contact_state["idx"] == 2:
                 if "聯絡人姓名" in t: return True, v("contact2_name")
                 if "姓名" in t: return True, v("contact2_name")  # 含「2.姓名」
-                if "電話" in t: return True, v("contact2_phone")
+                if "電話" in t or t == "手機": return True, v("contact2_phone")
                 if "關係" in t or "稱謂" in t: return True, v("contact2_relation")
                 if "知情" in t: return True, v("contact2_known")
 
@@ -28259,10 +28292,17 @@ def _do_download_excel(request: Request, case_id: str, only_plans=None, raw: boo
             # - 不含「姓名」→ 由 find_value 處理、不當 state marker（避免分貝 5 題的「1.近2個月...:」誤觸）
             if ":" in s or "：" in s:
                 if "姓名" in s:
-                    if s.startswith("1.") or "親屬聯絡人" in s:
+                    if s.startswith(("1.", "1姓名")) or "親屬聯絡人" in s:      # 願望「1姓名：」
                         contact_state["idx"] = 1
-                    elif s.startswith("2.") or "朋友聯絡人" in s:
+                    elif s.startswith(("2.", "2姓名")) or "朋友聯絡人" in s:
                         contact_state["idx"] = 2
+                return
+            # 中租「聯絡人資料（一）」「聯絡人資料（二）」
+            if "聯絡人" in s and ("（一）" in s or "(一)" in s):
+                contact_state["idx"] = 1
+                return
+            if "聯絡人" in s and ("（二）" in s or "(二)" in s):
+                contact_state["idx"] = 2
                 return
             # 1.（...） / 1.姓名 / 親屬聯絡人 / 1聯絡人
             if s.startswith("1.") or "親屬聯絡人" in s or s == "1聯絡人":
@@ -28282,7 +28322,7 @@ def _do_download_excel(request: Request, case_id: str, only_plans=None, raw: boo
         #    prepend 才會蓋掉原本那條（find_value 由前往後取第一個 match）。
         #    同一個病根在 PDF 那邊是 fmt_company_phone()。安全網：test_flows.py 第 51 組。
         _co_ext_val = v("company_phone_ext")
-        if _co_ext_val and "公司分機" not in content:
+        if _co_ext_val and "公司分機" not in content and not _re.search(r"(?m)^\s*分機\s*[:：]", content):
             LABEL_MAP = [("公司電話", fmt_company_phone(co_area, co_num, _co_ext_val))] + LABEL_MAP
 
         def process_line(line):
@@ -28326,9 +28366,18 @@ def _do_download_excel(request: Request, case_id: str, only_plans=None, raw: boo
             return out
 
         out_lines = []
+        _raw_rest = False
         for line in content.splitlines():
+            # 願望：虛線以下是負債明細（✨商品貸…手機貸…），⛔ 不套一般欄位（「手機貸…哪間」會被填成客人手機），交給 _wish_debt_lines
+            if "願望機車" in content and line.strip().startswith("-----"):
+                _raw_rest = True
+            if _raw_rest:
+                out_lines.append(line)
+                continue
             detect_state_marker(line)
             out_lines.append(process_line(line))
+        if "願望機車" in content and "✨" in content:
+            out_lines = _wish_debt_lines(out_lines, _debts, sent_3m)
         return "\n".join(out_lines)
 
     for plan_label in plans:
@@ -31477,6 +31526,76 @@ def docs_zip(request: Request, id_no: str, ids: str = ""):
 _PACK_SKIP = {"銀行", "鄉民", "零卡", "代書", "當舖", "南亞", "房地", "新鑫"}
 
 
+def _wish_debt_lines(lines, debts, sent_3m: str) -> list:
+    """願望機車進件表單下半段「✨…」負債明細。
+    使用者 2026-10-15：「願望負債表明細只需填寫有動保的車貸跟銀行貸款，其他貸款都不要填寫上去」
+      → 車貸／機車貸：只填有動保的（dy 含動保）；信貸／房貸：只填銀行的；商品貸、手機貸、私人借貸、信用卡一律不填
+    每段：「✨X：___萬，哪間：」＋下一行「總金額/已繳期數/月付金/餘幾期：」；同一段多筆用「、」接
+    「✨近期三個月以內，送過哪幾家…？」後面接近三月送件（範本填「否」）"""
+    def num(x):
+        x = re.sub(r"[^\d]", "", str(x or ""))
+        return int(x) if x else 0
+
+    def wan(n):
+        w = n / 10000 if n >= 1000 else n
+        return f"{w:g}"
+
+    groups = {"車貸": [], "機車貸": [], "信貸": [], "房貸": []}
+    for d in debts:
+        co, dy, kind = str(d.get("co") or ""), str(d.get("dy") or ""), str(d.get("kind") or "")
+        veh = str(d.get("vehicle") or "")
+        bank = bool(re.search(r"銀行|銀$", co))
+        if "動保" in dy and ("汽" in co or veh == "汽車"):
+            groups["車貸"].append(d)
+        elif "動保" in dy and ("機" in co or veh == "機車"):
+            groups["機車貸"].append(d)
+        elif bank and ("房" in co or "房" in kind):
+            groups["房貸"].append(d)
+        elif bank:
+            groups["信貸"].append(d)
+
+    def detail(d):
+        pe_raw = str(d.get("pe") or "")
+        total = num(pe_raw.split("/")[0])
+        paid = num(d.get("pa")) or (num(pe_raw.split("/")[1]) if "/" in pe_raw else 0)
+        lo, mo = num(d.get("lo")), num(d.get("mo"))
+        left = total - paid if total and total >= paid else ""
+        return "/".join(str(x) for x in ((f"{wan(lo)}萬" if lo else ""), paid or "", mo or "", left))
+
+    out, sec = [], None
+    for ln in lines:
+        m_ = re.match(r"✨(車貸|機車貸|信貸|房貸)[:：]", ln)
+        if m_:
+            sec = m_.group(1)
+            rows = groups[sec]
+            if rows:
+                amt = "、".join(wan(num(d.get("lo"))) for d in rows if num(d.get("lo")))
+                cos = "、".join(re.sub(r"(汽車|機車)$", "", str(d.get("co") or "")) for d in rows)
+                ln = f"✨{sec}：{amt}萬，哪間：{cos}" if sec in ("車貸", "機車貸") else f"✨{sec}：{amt}萬"
+            out.append(ln)
+            continue
+        if ln.startswith("✨"):
+            sec = None
+            if ln.startswith("✨近期三個月以內") and sent_3m:
+                ln = ln.rstrip() + sent_3m
+            out.append(ln)
+            continue
+        if sec and groups[sec] and re.match(r"(銀行名稱/)?總金額/已繳期數/月付金(/餘幾期)?\s*[:：]", ln.strip()):
+            lab = re.split(r"[:：]", ln, 1)[0]
+            rows = groups[sec]
+            if sec == "信貸":
+                val = "、".join(f"{d.get('co')}/" + detail(d) for d in rows)
+            elif sec == "房貸":
+                val = "、".join("/".join(detail(d).split("/")[:3]) for d in rows)
+            else:
+                val = "、".join(detail(d) for d in rows)
+            ln = f"{lab}：{val}"
+        elif sec == "房貸" and groups["房貸"] and ln.strip().startswith("第一順位哪間"):
+            ln = "第一順位哪間：" + str(groups["房貸"][0].get("co") or "")
+        out.append(ln)
+    return out
+
+
 # 亞太汽車／老車沒有自己的申請書：跟亞太機車同一張表，車輛那幾格（廠牌／車牌／型式…）改填汽車的
 #   使用者 2026-10-15：「亞太汽車亞太老車都是比照機車寫法寫進去只是車牌那些改成寫汽車的」
 #   車輛資料來自行政B 亞太區（at_plate…），送汽車方案時那區預設帶汽車行照（見 _adminb_license_html）
@@ -31484,7 +31603,8 @@ _FORM_SAME_AS = {"亞太汽車25萬": "亞太機車25萬", "亞太老車15萬": 
 
 # 規則表方案名 → 申請書範本的名字（範本表用的是公司層的名字：第一、分貝機車、21汽車…）
 _PACK_TEMPLATE_ALIAS = {"分貝機車改裝": "分貝機車", "分貝汽車改裝1+1": "分貝汽車", "麻吉U質手機": "麻吉手機",
-                        "第一汽車": "第一", "第一信貸": "第一", "21汽車A": "21汽車", "21汽車B": "21汽車", "21汽車C": "21汽車"}
+                        "第一汽車": "第一", "第一信貸": "第一", "21汽車A": "21汽車", "21汽車B": "21汽車", "21汽車C": "21汽車",
+                        "願望小車25萬": "願望機車", "願望工會15萬": "願望機車"}   # 願望兩個方案用同一張「願望機車進件表單」
 
 
 def _doc_vehicle_kind(r) -> str:

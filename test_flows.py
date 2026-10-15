@@ -3437,6 +3437,50 @@ m._BIZAI_SIG_CACHE.clear()
 check("行政B 存檔（和潤）：只記改過的（方案 U3）",_ov98.get("tier") == "U3" and "rate" not in _ov98 and "plus" not in _ov98, _ov98)
 m.check_auth = lambda req: "admin"
 
+# ========== 99. 中租汽車／願望機車 填寫表（使用者 2026-10-15 給的範本；⛔ 範本有真客人個資，這裡只用假資料照格式對）==========
+print(chr(10) + "=== 99. 中租／願望填寫表 ===")
+_debt99 = json.dumps([
+    {"co": "和潤機車", "dy": "動保", "lo": "400000", "pe": "60/39", "mo": "7287", "kind": "車貸"},
+    {"co": "裕融汽車", "dy": "動保", "lo": "300000", "pe": "48/10", "mo": "8000", "kind": "車貸"},
+    {"co": "和裕機車", "dy": "無", "lo": "100000", "pe": "24/5", "mo": "5000", "kind": "車貸"},     # 沒動保 → 不填
+    {"co": "台新銀行", "lo": "200000", "pe": "60/12", "mo": "4500", "kind": "信貸"},
+    {"co": "21商品", "lo": "50000", "pe": "24/3", "mo": "2500", "kind": "信貸"},                    # 商品貸 → 不填
+    {"co": "亞太手機", "lo": "30000", "pe": "24/3", "mo": "1500", "kind": "信貸"},                  # 手機貸 → 不填
+], ensure_ascii=False)
+_row99 = dict(case_id="TXT99", status="ACTIVE", source_group_id="TEST_B", created_at="2026-10-15", updated_at="2026-10-15",
+              customer_name="測試戊", id_no="A100000099", birth_date="061/10/23", marriage="已婚", phone="0912000099",
+              education="專科/大學", reg_city="桃園市", reg_district="中壢區", reg_address="測試路1號", live_same_as_reg="1",
+              live_years="20", live_months="", live_status="父母", email="t99@example.com",
+              company_name_detail="測試股份有限公司", company_city="桃園市", company_district="桃園區", company_address="測試路2號",
+              company_phone_area="03", company_phone_num="1234567", company_phone_ext="88", company_role="資訊經理",
+              company_years="1", company_months="7", company_salary="6", eval_labor_ins="公司保", eval_law="無", eval_sent_3m="否",
+              contact1_name="聯絡甲", contact1_relation="妻子", contact1_phone="0910000001",
+              contact2_name="聯絡乙", contact2_relation="姊姊", contact2_phone="0910000002", debt_list=_debt99)
+_c = sqlite3.connect(TEST_DB)
+_c.execute(f"INSERT INTO customers({','.join(_row99)}) VALUES({','.join('?' * len(_row99))})", list(_row99.values()))
+_c.commit(); _c.close()
+m.check_auth = lambda req: "admin"
+_t99 = lambda plan: (m._do_download_excel(None, "TXT99", only_plans=[plan], raw=True) or [("", b"")])[0][1].decode("utf-8")
+_z99 = _t99("中租汽車")
+for _ln in ("中文姓名：測試戊", "出生年月日：061/10/23", "住宅地址：同上", "居住時間：20年", "居住狀況：家人名下",
+            "公司電話：03-1234567", "分機：88", "年資：1年7月", "月薪：6萬", "姓名：聯絡甲", "關係：妻子", "電話：0910000001"):
+    check(f"中租：{_ln}", _ln in _z99.splitlines(), _z99)
+check("中租：「本人方便電話聯絡時間」不會被填成聯絡人電話", "本人方便電話聯絡時間：0910000001" not in _z99)
+_w99 = _t99("願望機車")
+for _ln in ("姓名：測試戊", "學歷：專科/大學", "現居地：桃園市中壢區測試路1號", "住多久：20年", "現居地是誰的：父母",
+            "戶籍跟現居是否相同：相同", "手機：0912000099", "月收入：6萬", "是否有薪轉或勞健保（不是工會的勞健保）？ ：公司保",
+            "有無上過法院？：無", "1姓名：聯絡甲", "2姓名：聯絡乙", "✨機車貸：40萬，哪間：和潤", "✨車貸：30萬，哪間：裕融",
+            "✨信貸：20萬"):
+    check(f"願望：{_ln}", _ln in _w99.splitlines(), _w99)
+check("願望：聯絡人的「手機」填聯絡人的", _w99.count("手機：0910000001") == 1 and _w99.count("手機：0910000002") == 1, _w99)
+# 使用者 2026-10-15：「願望負債表明細只需填寫有動保的車貸跟銀行貸款，其他貸款都不要填寫上去」
+check("願望：沒動保的機車貸（和裕）不填", "和裕" not in _w99)
+check("願望：商品貸、手機貸不填（照範本空著）", "✨商品貸_____萬" in _w99 and "✨手機貸_____萬，哪間：" in _w99.splitlines() and "21商品" not in _w99 and "亞太手機" not in _w99, _w99)
+check("願望：銀行信貸有寫（台新銀行）", "台新銀行/20萬" in _w99, _w99)
+check("願望：近三個月送件寫在問句後面", "（中租、和潤、裕隆、裕富）？否" in _w99)
+check("送件包：願望小車25萬、願望工會15萬 都用願望機車那張", m._PACK_TEMPLATE_ALIAS.get("願望小車25萬") == "願望機車" and m._PACK_TEMPLATE_ALIAS.get("願望工會15萬") == "願望機車")
+check("申請書資料夾不可以有範本（真客人個資）", not any("範本" in f and ("中租" in f or "願望" in f) for f in os.listdir("申請書")))
+
 # ========== 總結 ==========
 print(f"\n{'='*50}")
 print(f"結果：{PASS} 通過、{FAIL} 失敗")
