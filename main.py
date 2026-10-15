@@ -19509,8 +19509,8 @@ def _adminb_license_html(customer, role) -> str:
             kind = _lic_kind(f, j.get("種類")) or "車種分不出來"
             lic.append({"name": f'{kind}行照 {vals["at_plate"]}' + (f"（{cc}cc）" if cc else ""), "kind": kind, "vals": vals})
     # 使用者 2026-10-14：「亞太也是有汽車行照」→ 汽車、機車都可以選；送的是汽車方案就汽車排第一個（預設帶它）
-    want = "汽車" if ("汽車" in str(customer.get("adminb_selected_plans") or "") + str(customer.get("current_company") or "")
-                     or "老車" in str(customer.get("current_company") or "") and _customer_has_car_any(customer)) else "機車"
+    _sp = str(customer.get("adminb_selected_plans") or "") + str(customer.get("current_company") or "")
+    want = "汽車" if ("汽車" in _sp or "老車" in _sp and _customer_has_car_any(customer)) else "機車"
     lic.sort(key=lambda x: 0 if x["kind"] == want else 1)
     if not lic:
         return ('<div style="font-size:12px;color:#8a7e70;margin-bottom:8px">📋 證件存檔裡還沒有讀好的行照'
@@ -19710,6 +19710,7 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
         {"".join(f'<label class="ab-plan"><input type="checkbox" name="plans" value="{v}"><div><div class="ab-plan-name">{n}</div><div class="ab-plan-sub">{s}</div></div></label>' for v,n,s in [
           ("亞太商品","亞太商品","熊速貸 12萬 30期"),("亞太機車15萬","亞太機車15萬","機車動擔 15萬 36期"),
           ("亞太工會機車","亞太工會機車","工會機車動擔 15萬"),("亞太機車25萬","亞太機車25萬","機車動擔 25萬 48期"),
+          ("亞太汽車25萬","亞太汽車25萬","同機車表，填汽車"),("亞太老車15萬","亞太老車15萬","同機車表，填汽車"),
           ("和裕機車","和裕機車","維力機車專 15萬 24期"),("和裕商品","和裕商品","維力商品專 12萬 24期"),
           ("21機車12萬","21機車12萬","12萬 24期"),("21機車25萬","21機車25萬","25萬 48期"),
           ("21商品","21商品","12萬 24期"),("第一","第一","30萬 24期"),("貸救補","貸救補","10萬 24期"),
@@ -19729,7 +19730,7 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
     </div>
     <div class="ab-card">
       <div class="ab-sec">補充資料</div>
-      <div class="ab-block" data-plans="亞太商品,亞太機車15萬,亞太工會機車,亞太機車25萬" style="background:#e0f2fe;">
+      <div class="ab-block" data-plans="亞太商品,亞太機車15萬,亞太工會機車,亞太機車25萬,亞太汽車25萬,亞太老車15萬" style="background:#e0f2fe;">
         <div style="font-size:12px;font-weight:700;color:#0369a1;margin-bottom:10px;">亞太（商品／機車／工會）</div>
         <div class="ab-g3" style="margin-bottom:10px;">
           <div><div class="ab-lbl">資金用途</div><select name="at_fund" class="ab-sel"><option value="">請選擇</option>{"".join(f'<option value="{o}" {"selected" if customer.get("adminb_fund_use","")==o else ""}>{o}</option>' for o in ["I-1教育費","I-2醫藥費","I-3出國旅遊","I-4創業","II-1購買交通工具","II-2購買手機","II-3購買3C產品"])}</select></div>
@@ -27842,7 +27843,8 @@ def _do_download_excel(request: Request, case_id: str, only_plans=None, raw: boo
             out_lines.append(process_line(line))
         return "\n".join(out_lines)
 
-    for plan in plans:
+    for plan_label in plans:
+        plan = _FORM_SAME_AS.get(plan_label, plan_label)   # 亞太汽車／老車 → 亞太機車那張表
         template_path = PLAN_TEMPLATE_MAP.get(plan)
         if not template_path or not os.path.exists(template_path):
             continue
@@ -27978,7 +27980,7 @@ def _do_download_excel(request: Request, case_id: str, only_plans=None, raw: boo
                     else:
                         with open(template_path, "rb") as f:
                             filled_bytes = f.read()
-                files_to_zip.append((f"{name}_{plan}.xlsx", filled_bytes))
+                files_to_zip.append((f"{name}_{plan_label}.xlsx", filled_bytes))
         except Exception as e:
             print(f"Generate error for {plan}: {e}")
             import traceback; traceback.print_exc()
@@ -30900,6 +30902,11 @@ def docs_zip(request: Request, id_no: str, ids: str = ""):
 # 送件包只給融資＋商品貸（使用者 2026-10-14）；銀行、鄉民、零卡、代書、當舖、南亞、房地不用
 _PACK_SKIP = {"銀行", "鄉民", "零卡", "代書", "當舖", "南亞", "房地", "新鑫"}
 
+
+# 亞太汽車／老車沒有自己的申請書：跟亞太機車同一張表，車輛那幾格（廠牌／車牌／型式…）改填汽車的
+#   使用者 2026-10-15：「亞太汽車亞太老車都是比照機車寫法寫進去只是車牌那些改成寫汽車的」
+#   車輛資料來自行政B 亞太區（at_plate…），送汽車方案時那區預設帶汽車行照（見 _adminb_license_html）
+_FORM_SAME_AS = {"亞太汽車25萬": "亞太機車25萬", "亞太老車15萬": "亞太機車15萬"}
 
 # 規則表方案名 → 申請書範本的名字（範本表用的是公司層的名字：第一、分貝機車、21汽車…）
 _PACK_TEMPLATE_ALIAS = {"分貝機車改裝": "分貝機車", "分貝汽車改裝1+1": "分貝汽車", "麻吉U質手機": "麻吉手機",

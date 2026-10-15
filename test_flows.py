@@ -3297,6 +3297,25 @@ _ov96 = m._yulon_overrides(get_cust("E300000001"))
 check("行政B 存檔：只記改過的（金額 8），沒動的不記", _ov96 == {"amount": "8"}, _ov96)
 m.check_auth = lambda req: "admin"
 
+# ========== 97. 亞太汽車25萬／亞太老車15萬：跟亞太機車同一張表，車輛填汽車（使用者 2026-10-15）==========
+print(chr(10) + "=== 97. 亞太汽車／老車申請書 ===")
+_c = sqlite3.connect(TEST_DB)
+_c.execute("UPDATE customers SET vehicle_plate='CAR-9999', adminb_brand='豐田' WHERE case_id=?", (_cid93,))
+_c.commit(); _c.close()
+m.check_auth = lambda req: "adminB"
+for _p97 in ("亞太汽車25萬", "亞太老車15萬"):
+    _f97 = m._do_download_excel(None, _cid93, only_plans=[_p97], raw=True) or []
+    _x97 = ""
+    if _f97:
+        with _zf93.ZipFile(_io93.BytesIO(_f97[0][1])) as _z:
+            _x97 = "".join(_z.read(n).decode("utf-8", "ignore") for n in _z.namelist() if n.endswith(".xml"))
+    check(f"{_p97}：產得出申請書，檔名寫{_p97}", len(_f97) == 1 and _f97[0][0].endswith(f"_{_p97}.xlsx"), [f[0] for f in _f97])
+    check(f"{_p97}：用亞太機車那張表、車牌廠牌填進去", "CAR-9999" in _x97 and "豐田" in _x97)
+_pb97 = _tc94.get("/adminb", params={"case_id": _cid93}).text
+check("行政B：有亞太汽車25萬、亞太老車15萬 勾選，車輛區會跟著出現",
+      'value="亞太汽車25萬"' in _pb97 and 'value="亞太老車15萬"' in _pb97 and "亞太汽車25萬,亞太老車15萬\"" in _pb97)
+m.check_auth = lambda req: "admin"
+
 # ========== 總結 ==========
 print(f"\n{'='*50}")
 print(f"結果：{PASS} 通過、{FAIL} 失敗")
