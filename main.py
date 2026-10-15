@@ -19668,6 +19668,9 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
     salary = fmt_salary(customer.get("company_salary","")) or "-"
     labor = customer.get("eval_labor_ins","") or "-"
     sel_plans = customer.get("adminb_selected_plans","") or ""
+    # 亞太汽車／老車不另外開勾選（使用者 2026-10-15：「就跟亞太機車一樣，改一下就好，不用多那個」）
+    #   → 舊資料勾過的換成亞太機車 25／15 萬；車輛那區看送的是汽車就自動帶汽車行照（見 _adminb_license_html 的 want）
+    sel_plans = ",".join(dict.fromkeys(_FORM_SAME_AS.get(x, x) for x in sel_plans.split(",") if x))
     # 裕融：送件順序有排裕融就先幫忙勾（行政也可以自己勾／取消）
     try:
         if "裕融" not in sel_plans.split(",") and _yulon_plans_of(customer):
@@ -19769,9 +19772,8 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
       <div style="font-size:11px;font-weight:700;color:#6a5e4e;margin-bottom:8px;">Excel 方案</div>
       <div class="ab-plan-grid">
         {"".join(f'<label class="ab-plan"><input type="checkbox" name="plans" value="{v}"><div><div class="ab-plan-name">{n}</div><div class="ab-plan-sub">{s}</div></div></label>' for v,n,s in [
-          ("亞太商品","亞太商品","熊速貸 12萬 30期"),("亞太機車15萬","亞太機車15萬","機車動擔 15萬 36期"),
-          ("亞太工會機車","亞太工會機車","工會機車動擔 15萬"),("亞太機車25萬","亞太機車25萬","機車動擔 25萬 48期"),
-          ("亞太汽車25萬","亞太汽車25萬","同機車表，填汽車"),("亞太老車15萬","亞太老車15萬","同機車表，填汽車"),
+          ("亞太商品","亞太商品","熊速貸 12萬 30期"),("亞太機車15萬","亞太機車/汽車15萬","機車／汽車動擔 15萬 36期"),
+          ("亞太工會機車","亞太工會機車","工會機車動擔 15萬"),("亞太機車25萬","亞太機車/汽車25萬","機車／汽車動擔 25萬 48期"),
           ("和裕機車","和裕機車","維力機車專 15萬 24期"),("和裕商品","和裕商品","維力商品專 12萬 24期"),
           ("21機車12萬","21機車12萬","12萬 24期"),("21機車25萬","21機車25萬","25萬 48期"),
           ("21商品","21商品","12萬 24期"),("第一","第一","30萬 24期"),("貸救補","貸救補","10萬 24期"),
