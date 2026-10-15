@@ -2615,6 +2615,13 @@ _rows = m._docs_rows("G300000001")
 _res = {r: (st, n) for r, st, n in m.docs_missing_for_plan(_rows, _p21["required_docs"])}
 check("勞保 10 天前印的 → ❌ 要重拉", any(st == "missing" and "重拉" in n for st, n in _res.values()), _res)
 check("要時間相機但合照沒浮水印 → ❌ 要重拍", any(st == "missing" and "時間相機" in n for st, n in _res.values()), _res)
+# 使用者 2026-10-15：「只要補機車合照的都直接用時間相機拍」（21機車25萬沒時間相機會降貸，行政會漏）
+#   → 規則表只寫「人與機車合照」「機車合照」的家，也一樣要浮水印
+for _rq in ("人與機車合照", "機車合照"):
+    _rs = m.docs_missing_for_plan(_rows, [_rq])
+    check(f"規則表寫「{_rq}」（沒寫時間相機）：合照沒浮水印 → 也要重拍", _rs[0][1] == "missing" and "時間相機" in _rs[0][2], _rs)
+_rs = m.docs_missing_for_plan([], ["人與機車合照"])
+check("還沒交機車合照 → 缺件寫「請客戶用時間相機拍」", _rs[0][1] == "missing" and "時間相機" in _rs[0][2], _rs)
 _c = sqlite3.connect(TEST_DB)
 _c.execute("""UPDATE customer_docs SET judge_json=? WHERE id_no='G300000001' AND remote_doc_id='47'""",
            (json.dumps({"_kind": "stamp", "ok": True, "error": "判讀失敗"}),))

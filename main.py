@@ -30344,10 +30344,16 @@ def docs_missing_for_plan(rows, required_docs) -> list:
             out.append((req, "skip", ""))
             continue
         mode, cats = rule
+        # 使用者 2026-10-15：「只要補機車合照的都直接用時間相機拍」—— 21機車25萬一定要時間相機、不然降貸，
+        #   行政會漏 → 不管哪家，機車合照一律要時間相機浮水印（規則表沒寫「時間相機」也一樣）
+        need_stamp = "時間相機" in req or ("人車合照" in cats and "汽車" not in req)
         got = [c for c in cats if have.get(c)]
         if (mode == "all" and len(got) < len(cats)) or (mode == "any" and not got):
             lack = [c for c in cats if not have.get(c)] if mode == "all" else []
-            out.append((req, "missing", "缺：" + "、".join(lack) if lack else ""))
+            note = "缺：" + "、".join(lack) if lack else ""
+            if need_stamp:
+                note = (note + "；" if note else "") + "請客戶用時間相機拍"
+            out.append((req, "missing", note))
             continue
         status, note = "ok", ""
         if "勞保明細" in got and cats[0] == "勞保明細" or (got == ["勞保明細"]):
@@ -30359,7 +30365,7 @@ def docs_missing_for_plan(rows, required_docs) -> list:
                 status, note = "check", "勞保日期還沒判讀"
             else:
                 note = f"勞保 {min(days)} 天前印的（AI 判讀・待確認）"
-        if "時間相機" in req and status != "missing":
+        if need_stamp and status != "missing":
             stamps = [(_doc_judge(r) or {}).get("has_stamp") for c in got for r in have.get(c, [])]
             if any(x is True for x in stamps):
                 note = "有時間浮水印（AI 判讀・待確認）"
