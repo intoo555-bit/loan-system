@@ -3493,7 +3493,29 @@ check("願望：機車貸明細照標題順序 40萬/39/7287/21", "總金額/已
 check("願望／中租：沒資料的格子留白（不寫「無」）", "戶籍電話：" in _w99.splitlines() and "戶籍電話：" in _z99.splitlines())
 check("願望：近三個月送件寫在問句後面", "（中租、和潤、裕隆、裕富）？否" in _w99)
 check("送件包：願望小車25萬、願望工會15萬 都用願望機車那張", m._PACK_TEMPLATE_ALIAS.get("願望小車25萬") == "願望機車" and m._PACK_TEMPLATE_ALIAS.get("願望工會15萬") == "願望機車")
-check("申請書資料夾不可以有範本（真客人個資）", not any("範本" in f and ("中租" in f or "願望" in f) for f in os.listdir("申請書")))
+# 東豐小額申請書（使用者 2026-10-15 給的 115.09.11 版；格子照東豐範本.xlsx，⛔ 範本有真個資，這裡只用假資料）
+import openpyxl as _ox99
+_c = sqlite3.connect(TEST_DB)
+_c.execute("""UPDATE customers SET bank_name='測試銀行', bank_branch='測試分行', bank_account='111-22-333444-5', line_id='t99line',
+              carrier='中華電信', adminb_dz_amount='10', adminb_dz_period='18', adminb_dz_payment='6868', reg_phone='07-1234567',
+              adminb_mj_brand='HTC手機', adminb_mj_model='HTC Desire 22 Pro', company_months='10', company_years='3'
+              WHERE case_id='TXT99'""")
+_c.commit(); _c.close()
+_fd = m._do_download_excel(None, "TXT99", only_plans=["東豐"], raw=True)
+_ws = _ox99.load_workbook(_io93.BytesIO(_fd[0][1])).active if _fd else None
+_g = lambda c: str(_ws[c].value if _ws is not None and _ws[c].value is not None else "")
+check("東豐：產得出來、檔名寫東豐", len(_fd) == 1 and _fd[0][0].endswith("_東豐.xlsx"), [f[0] for f in _fd])
+for _cell, _want in (("D3", "測試戊"), ("G3", "061/10/23"), ("J3", "A100000099"), ("D5", "同上"), ("K5", "同上"),
+                     ("F6", "□國小 □國中 □高中/職 ☑大學/專科"), ("K6", "0912-000099"), ("G7", "3.8年"), ("I7", "6萬"),
+                     ("D9", "聯絡甲"), ("G9", "妻子"), ("K9", "0910-000001"), ("K10", "0910-000002"),
+                     ("D12", "測試戊"), ("G12", "測試銀行"), ("J12", "測試分行"), ("D13", "111-22-333444-5"),
+                     ("E24", "10萬"), ("G24", "18"), ("I24", "6868"), ("K24", "123624"),      # 範本：10萬／18／6868／123624
+                     ("D25", "HTC手機"), ("G25", "HTC Desire 22 Pro"), ("D26", "電信公司:中華電信")):
+    check(f"東豐 {_cell}＝{_want}", _g(_cell).strip() == _want, _g(_cell))
+check("東豐負債表：只列有動保的（和潤機車、裕融汽車），沒動保的和裕、信貸不列",
+      {_g("D29"), _g("D30")} == {"和潤機車", "裕融汽車"} and _g("D31") == "", [_g(f"D{i}") for i in range(29, 33)])
+check("送件包：東豐小額信貸 → 東豐那張", m._PACK_TEMPLATE_ALIAS.get("東豐小額信貸") == "東豐")
+check("申請書資料夾不可以有範本（真客人個資）",not any("範本" in f and ("中租" in f or "願望" in f) for f in os.listdir("申請書")))
 
 # ========== 總結 ==========
 print(f"\n{'='*50}")
