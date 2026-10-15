@@ -19833,6 +19833,7 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
           {yl_inp("periods", "期數", "36")}
           {yl_inp("payment", "期付款", "3510")}
         </div>
+        {'' if _account_complete(customer.get("bank_account")) else '<div style="font-size:12px;color:#b91c1c;font-weight:700;margin-bottom:8px;">⚠️ 撥款帳號沒有完整的（存摺只讀到後 4 碼）→ 申請書帳號那格會空著，請到客戶資料填完整帳號，或下載後手寫</div>'}
         <div style="font-size:11px;font-weight:700;color:#1d4ed8;margin-bottom:6px;">舊案／新案（借新還舊、他行代償才印；原車不用填）</div>
         <div class="ab-g4" style="margin-bottom:10px;">
           {yl_inp("paid", "已繳期數", "12")}
@@ -25536,6 +25537,15 @@ _YULON_RATE = {36: 351, 48: 283, 60: 242, 72: 216}
 _YULON_RATE_XYJ_NOLOAN = {36: 350, 48: 281, 60: 241, 72: 215}
 
 
+def _account_complete(acct) -> bool:
+    """帳號是不是完整的（可以印在申請書上）。
+    使用者 2026-10-15：「帳號填寫要完整喔」—— 裕融申請書印成「***9411」。
+    病根：業務 AI 讀存摺封面只回後 4 碼（行政當初在交接寫「帳號可以只回後 4 碼」，那時只拿來比對是不是同一本），
+    帳號沒填時裕融拿它來補 → 印出遮過的帳號。⛔ 有 * 或數字不到 8 碼的一律不印（交接第 19 段已請業務 AI 回完整的）"""
+    a = str(acct or "").strip()
+    return bool(a) and "*" not in a and "＊" not in a and len(re.sub(r"\D", "", a)) >= 8
+
+
 def _yulon_car_loan_row(r) -> dict:
     """車上那筆汽車貸款（co 含汽車＋動保／公路，同 _customer_has_car_loan）"""
     for d in _json_list(r.get("debt_list")):
@@ -25863,6 +25873,7 @@ def _fill_yulon_pdf(r: dict, plan: str = "") -> bytes:
         f_ = (pb.get("欄位") or {}) if pb else {}
         bank, branch, acct = (bank or str(f_.get("銀行") or ""), branch or str(f_.get("分行") or ""),
                               acct or str(f_.get("帳號") or ""))
+    acct = acct if _account_complete(acct) else ""      # ⛔ 遮過的（***9411）不印，留白給行政手寫
     T(1, 72, 488, v("customer_name"), 270, 11); T(1, 377, 488, v("id_no").upper(), 170, 11)
     T(1, 72, 512, bank, 270, 11); T(1, 390, 512, branch, 160, 11); T(1, 72, 536, acct, 270, 11)
     # ---- 第 3 頁同意書、第 5 頁 Mobile ID：身分證字號＋日期（簽名留給客人）----

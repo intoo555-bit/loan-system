@@ -3437,6 +3437,17 @@ m._BIZAI_SIG_CACHE.clear()
 check("行政B 存檔（和潤）：只記改過的（方案 U3）",_ov98.get("tier") == "U3" and "rate" not in _ov98 and "plus" not in _ov98, _ov98)
 m.check_auth = lambda req: "admin"
 
+# 使用者 2026-10-15：「帳號填寫要完整喔」（裕融印成 ***9411）→ 遮過的／不完整的帳號一律不印
+check("帳號：遮過的、只有後 4 碼的不算完整；完整的才印",
+      not m._account_complete("***9411") and not m._account_complete("9411") and not m._account_complete("")
+      and m._account_complete("000111222333") and m._account_complete("0001-1122-2333"))
+_dj99 = m._customer_doc_judge
+m._customer_doc_judge = lambda c, k: {"欄位": {"銀行": "測試銀行", "帳號": "***9411"}} if k == "fields:存摺封面" else _dj99(c, k)
+_pdfa = m._fill_yulon_pdf(dict(_r95, bank_account="", bank_name=""), "裕融信福貸")
+m._customer_doc_judge = _dj99
+_t2a = "".join(_pp95.open(_io93.BytesIO(_pdfa)).pages[1].extract_text().split())
+check("裕融 PDF：存摺只讀到 ***9411 → 帳號不印（不可以印遮過的）", "9411" not in _t2a and "測試銀行" in _t2a, _t2a[-200:])
+
 # ========== 99. 中租汽車／願望機車 填寫表（使用者 2026-10-15 給的範本；⛔ 範本有真客人個資，這裡只用假資料照格式對）==========
 print(chr(10) + "=== 99. 中租／願望填寫表 ===")
 _debt99 = json.dumps([
