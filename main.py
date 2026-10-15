@@ -23944,9 +23944,10 @@ def _missing_docs_for_api(cust):
         for plan in plans:                  # 目前送的＋下一家（2026-10-15）；同一個 code 兩家都缺 → 一筆，for 寫兩家
             short = _plan_short(plan["company"], plan.get("max_amount")) or plan["company"]
             for req, st, note in docs_missing_for_plan(rows, _docs_for_customer(plan.get("required_docs"), cust)):
-                if st != "missing" or any(k in req for k in _MISSING_DOC_ADMIN_SELF):
+                if st not in ("missing", "warn") or any(k in req for k in _MISSING_DOC_ADMIN_SELF):
                     continue
-                code = "labor_reprint" if "重拉" in note else next(
+                # warn＝有交但不是時間相機拍的 → 新代碼（業務 AI 不叫 AI 去要，只顯示給業務看；交接第 16 段）
+                code = "moto_photo_no_timecam" if st == "warn" else "labor_reprint" if "重拉" in note else next(
                     (c for keys, c in _MISSING_DOC_CODES if any(k in req for k in keys)), "other")
                 label = req.split("（")[0].split("｜")[0] + (f"（{note}）" if note else "")
                 key = code if code != "other" else "other:" + label
@@ -30457,7 +30458,8 @@ def _req_doc_rule(text: str):
 
 
 def docs_missing_for_plan(rows, required_docs) -> list:
-    """一家要的文件逐項對照已收的證件 → [(要的文件, 狀態, 說明)]；狀態：ok／missing／check（AI 判讀・待確認）／skip（不檢查）。
+    """一家要的文件逐項對照已收的證件 → [(要的文件, 狀態, 說明)]；狀態：ok／missing／check（AI 判讀・待確認）／skip（不檢查）
+    ／warn（有交但要人另外處理：機車合照不是時間相機拍的）。
     ⛔ 勞保要一週內（使用者：各家勞保都要一周內）、要時間相機的合照要有浮水印 —— 用業務 AI 的判讀數字，不比對文字"""
     have = {}
     for r in rows:
@@ -30496,7 +30498,9 @@ def docs_missing_for_plan(rows, required_docs) -> list:
             if any(x is True for x in stamps):
                 note = "有時間浮水印（AI 判讀・待確認）"
             elif stamps and all(x is False for x in stamps):
-                status, note = "missing", "合照沒有時間相機浮水印，要重拍"
+                # 使用者 2026-10-15：「有些客人不會下載時間相機、不會用 → 標示⚠️ 不是時間相機拍的，業務和行政都看得到，
+                #   知道這件要另外處理就好」→ ⛔ 不算缺、不叫客人重拍；狀態 warn（21機車25萬沒時間相機會降貸，要人處理）
+                status, note = "warn", "⚠️ 不是時間相機拍的，要另外處理"
             else:
                 status, note = "check", "時間浮水印還沒判讀"
         out.append((req, status, note))
@@ -30677,11 +30681,14 @@ def _docs_missing_line_one(cust, rows, co, lb=None) -> str:
     res = docs_missing_for_plan(rows, _docs_for_customer(plan.get("required_docs"), cust))
     miss = [(req.split("（")[0].split("｜")[0] + (f"（{note}）" if note else "")) for req, st, note in res if st == "missing"]
     wait = [(req.split("（")[0].split("｜")[0] + (f"（{note}）" if note else "")) for req, st, note in res if st == "check"]
+    warn = [req.split("（")[0].split("｜")[0] for req, st, note in res if st == "warn"]
     parts = []
     if miss:
         parts.append(f'<span class="ms-missing">❌ 缺：{h("、".join(miss))}</span>')
     if wait:
         parts.append(f'<span class="ms-check">⏳ 待確認：{h("、".join(wait))}</span>')
+    if warn:
+        parts.append(f'<span class="ms-check">⚠️ 不是時間相機拍的（要另外處理）：{h("、".join(warn))}</span>')
     if not parts:
         parts.append('<span class="ms-ok">✅ 證件齊全</span>')
     # 寫群組那種簡稱（使用者 2026-10-15：「裕融信福貸 → 信福貸不用打」）
@@ -31545,7 +31552,7 @@ def docs_send_pack(request: Request, id_no: str, co: str = ""):
         rule = _req_doc_rule(req)
         if rule:
             want.update(rule[1])
-        if st == "missing":
+        if st in ("missing", "warn"):
             missing.append(req.split("（")[0] + (f"（{note}）" if note else ""))
     want.add("申請書／填寫表")
     # 使用者 2026-10-14：「裕融是汽車送件包，還是把機車塞進去了」→ 行照要分車種，汽車方案只放汽車行照
