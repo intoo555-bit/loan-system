@@ -3697,6 +3697,68 @@ _xv23 = m._xinxin_values(dict(_xr, adminb_xinxin="{}"))
 m._customer_doc_judge = _dj21
 check("新鑫：權狀讀兩次不一致 → 不帶（空著讓行政打）", _xv23["land_no"] == "" and _xv23["owner"] == "", _xv23)
 check("新鑫：行政打的優先（門牌）", m._xinxin_values(dict(_xr, adminb_xinxin=json.dumps({"door": "打的門牌"})))["door"] == "打的門牌")
+# 交接第 26 段：權狀多的提醒（請對照／文件／姓名核對）
+def _xv_with(j):
+    m._customer_doc_judge = lambda c, k: (j if k == "fields:權狀" else _dj21(c, k))
+    try:
+        return m._xinxin_values(dict(_xr, adminb_xinxin="{}")), m._xinxin_deed_notes(dict(_xr))
+    finally:
+        m._customer_doc_judge = _dj21
+_deed = {"鄉鎮市區": "大甲區", "段": "福安段", "地號": "1208-0014", "建號": "00200-000",
+         "建物門牌": "台中市大甲區長壽路72之23號", "所有權人": "測試乙", "所有權人身分證": "A100000002"}
+_v, _n = _xv_with({"欄位": _deed, "不一致": {"所有權人": ["測試乙", "測試已"]}, "請對照": "⚠️ 這張**所有權人**讀兩次結果不一樣"})
+check("第 26 段：只有所有權人讀兩次不一樣（請對照）→ 只空所有權人，地號／建號照帶",
+      _v["owner"] == "" and _v["land_no"] == "1208-0014" and _v["build_no"] == "00200-000", _v)
+check("第 26 段：請對照 → 新鑫區提醒寫是哪一格、不用叫客戶重拍", "所有權人" in _n and "不用叫客戶重拍" in _n, _n)
+_v, _n = _xv_with({"欄位": dict(_deed, 所有權人="測試申", 所有權人身分證="a100000001"),
+                   "姓名核對": "權狀上的統一編號就是這位客戶 → 所有權人姓名請以**客戶身分證上的姓名**為準"})
+check("第 26 段：統一編號＝客戶本人 → 所有權人用客戶姓名（權狀讀的名字可能錯字）、不再多一句提醒",
+      _v["owner"] == "測試甲" and "統一編號" not in _n, (_v["owner"], _n))
+_v, _n = _xv_with({"欄位": _deed, "姓名核對": "⚠️ 權狀上的統一編號**不是這位客戶** → 房子不在客戶本人名下"})
+check("第 26 段：統一編號不是客戶 → 所有權人照權狀讀的、新鑫區提醒「不在本人名下」",
+      _v["owner"] == "測試乙" and "不在客戶本人名下" in _n and "**" not in _n, (_v["owner"], _n))
+_v, _n = _xv_with({"欄位": {"段": "亂讀段", "地號": "9999"}, "文件": "都不是", "文件提醒": "這張看起來不是權狀／謄本／房屋稅籍證明書 → 請人工看是什麼"})
+check("第 26 段：文件＝都不是（傳錯張）→ 整份不帶、提醒請人工看", _v["land_no"] == "" and _v["section"] == "" and "請人工看" in _n, (_v, _n))
+_v, _n = _xv_with({"不一致": {"地號": ["1", "2"]}, "欄位": _deed})
+check("第 23 段照舊：地號讀兩次不一樣（沒有請對照）→ 整份不帶", _v["land_no"] == "" and _v["owner"] == "" and "讀兩次結果不一樣" in _n, (_v, _n))
+_i, _wn = m._doc_fields_check({"欄位": {"段": "", "地號": ""}, "文件": "稅籍",
+                                "文件提醒": "這張是**房屋稅籍證明書**，不是權狀 → 上面沒有段／地號／建號"}, "權狀或謄本", _r95)
+check("證件頁：權狀的文件提醒要顯示（原本最外層的 key 都沒顯示）", any("房屋稅籍證明書" in x and "**" not in x for x in _wn), (_i, _wn))
+_i, _wn = m._doc_fields_check({"欄位": {"車牌": "ABC-123", "車主姓名": "", "發照日期": "2020-01-01"},
+                                "品質": "⚠️ 這張**車主姓名**讀不出來（太模糊）→ ⛔ 請客戶重拍一張"}, "行照", _r95)
+check("證件頁：業務 AI 給了「品質」→ 顯示它，不再自己多講一句「讀不到」",
+      sum("重拍" in x for x in _wn) == 1 and any("車主姓名讀不出來" in x for x in _wn), _wn)
+# 交接第 28 段：信用卡卡號、有效日期（MM/YY）
+def _card_with(j, kind="fields:信用卡"):
+    m._customer_doc_judge = lambda c, k: (j if k == kind else {})
+    try:
+        return m._card_auto({"id_no": "A123456789"})
+    finally:
+        m._customer_doc_judge = _dj21
+_ca = _card_with({"欄位": {"卡號": "4111111111111111", "有效日期": "08/32", "發卡銀行": "測試銀行"}})
+check("第 28 段：卡號 16 碼 → 4-4-4-4；有效日期 MM/YY 08/32 → 存「年/月」32/08", (_ca["no"], _ca["exp"]) == ("4111-1111-1111-1111", "32/08"), _ca)
+_ca = _card_with({"欄位": {"卡號": "378282246310005", "有效日期": "01/30"}}, "fields:信用卡帳單")
+check("第 28 段：美國運通 15 碼 → 4-6-5；帳單也讀", _ca["no"] == "3782-822463-10005", _ca)
+_ca = _card_with({"欄位": {"卡號": "4111111111111112", "有效日期": "08/32"}, "卡號提醒": "⚠️ 卡號的檢查碼對不上 → 請對照照片確認每一碼"})
+check("第 28 段：卡號提醒（檢查碼不對）→ 卡號不帶、要講；有效日期照帶", _ca["no"] == "" and "檢查碼" in _ca["warn"] and _ca["exp"] == "32/08", _ca)
+m._customer_doc_judge = lambda c, k: ({"欄位": {"卡號": "4111111111111111", "有效日期": "08/32"}} if k == "fields:信用卡" else {})
+try:
+    _wq = "".join(t for x, y, t in _qm_words())
+    _wq2 = "".join(t for x, y, t in _qm_words(adminb_credit_no="5555-5555-5555-4444", adminb_credit_exp="2031/06"))
+finally:
+    m._customer_doc_judge = _dj21
+check("第 28 段：喬美 PDF 卡號、有效日期沒打 → 用信用卡照片讀到的", "4111-1111-1111-1111" in _wq and "32" in _wq, _wq[-200:])
+check("第 28 段：喬美 PDF 行政有打 → 用行政打的", "5555-5555-5555-4444" in _wq2 and "4111" not in _wq2 and "2031" in _wq2, _wq2[-200:])
+_i, _wn = m._doc_fields_check({"欄位": {"卡號": "4111111111111111", "有效日期": "08/32", "發卡銀行": "測試銀行"}}, "信用卡正面", _r95)
+check("證件頁：信用卡只顯示卡號末4碼（不顯示整串）", any("末4碼 1111" in x for x in _i) and not any("4111111111111111" in x for x in _i + _wn), _i)
+check("欄位版本 +1（舊的信用卡答案沒有卡號 → 重拿一次）", m._FIELDS_VER >= 4)
+m._customer_doc_judge = lambda c, k: ({"欄位": {"卡號": "4111111111111111", "有效日期": "08/32"}} if k == "fields:信用卡" else _dj21(c, k))
+try:
+    _pg28 = _tc73.get("/adminb", params={"case_id": _cid73}).text
+finally:
+    m._customer_doc_judge = _dj21
+check("第 28 段：行政B 喬美卡號灰字＝讀到的卡號（原本是範例卡號 6480-…，看起來像真的）",
+      'placeholder="4111-1111-1111-1111"' in _pg28 and "6480-6295" not in _pg28 and 'placeholder="32"' in _pg28, "")
 check("送件包：興達兩個方案都用興達那張",m._PACK_TEMPLATE_ALIAS.get("興達勞保貸") == "興達" and m._PACK_TEMPLATE_ALIAS.get("興達汽機車二胎") == "興達")
 check("申請書資料夾不可以有範本（真客人個資）",not any("範本" in f and ("中租" in f or "願望" in f) for f in os.listdir("申請書")))
 

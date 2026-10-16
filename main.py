@@ -19689,6 +19689,11 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
         xx_auto = _xinxin_values(dict(customer, adminb_xinxin=""))
     except Exception:
         xx_ov, xx_auto = {}, {}
+    try:
+        qm_card = _card_auto(dict(customer))
+    except Exception:
+        qm_card = {"no": "", "exp": "", "warn": ""}
+    _qe = qm_card["exp"].split("/") if "/" in qm_card["exp"] else ["", ""]
     # 和潤：送件順序有排和潤就先幫忙勾
     try:
         if "和潤" not in sel_plans.split(",") and _heren_plans_of(customer):
@@ -19879,7 +19884,7 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
         <div style="font-size:12px;font-weight:700;color:#0f766e;margin-bottom:4px;">新鑫（房地）：一律 120 期、14.5%、用途投資理財、專案一般</div>
         <div style="font-size:11px;color:#475569;margin-bottom:6px;">二胎處理（不用還原本的貸款）：先估價，估價說能貸多少就打多少，最高 300 萬；期付款照 120 期試算表 14.5% 自動帶。不動產那幾格看權狀／謄本（每個人都不一樣，不預設）；格子裡灰色的字＝從權狀讀到的，空著下載就用它</div>
         {_xinxin_amount_note(xx_ov.get("amount", ""))}
-        {'<div style="font-size:12px;color:#b45309;font-weight:700;margin-bottom:8px;">⚠️ 權狀讀兩次結果不一樣，沒有自動帶，請看權狀自己打</div>' if (_customer_doc_judge(customer, "fields:權狀") or {}).get("不一致") else ""}
+        {_xinxin_deed_notes(customer)}
         <div class="ab-g3" style="margin-bottom:8px;">
           {"".join(f'<div><div class="ab-lbl">{lbl}</div><input name="xx_{k}" class="ab-inp" placeholder="{h(ph)}" value="{h(xx_ov.get(k, ""))}"></div>' for k, lbl, ph in [
             ("amount", "估價後可貸金額（萬，最高 300）", ""), ("area", "不動產 鄉鎮市區", xx_auto.get("area", "")), ("section", "段", xx_auto.get("section", "")),
@@ -19982,11 +19987,12 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
             <button type="button" onclick="qmSignAndDownload()" style="padding:6px 14px;background:#e91e63;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:13px;font-weight:700;">✍️ 簽名並下載喬美 PDF</button>
           </div>
         </div>
-        <div style="font-size:11px;font-weight:700;color:#5b21b6;margin-bottom:8px;">信用資料</div>
+        <div style="font-size:11px;font-weight:700;color:#5b21b6;margin-bottom:8px;">信用資料<span style="font-weight:400;color:#6b5b8e;">（卡號、有效日期的灰字＝從信用卡照片讀到的，空著下載就用它）</span></div>
+        {f'<div style="font-size:12px;color:#b45309;font-weight:700;margin-bottom:8px;">{h(qm_card["warn"])}（卡號沒有自動帶）</div>' if qm_card["warn"] else ""}
         <div class="ab-g3">
           <div><div class="ab-lbl">發卡銀行</div><input name="qm_cbank" class="ab-inp" placeholder="星展銀行" value="{h(customer.get('adminb_credit_bank','') or '')}"></div>
-          <div><div class="ab-lbl">卡號</div><input name="qm_cno" class="ab-inp" placeholder="6480-6295-1099-819" value="{h(customer.get('adminb_credit_no','') or '')}"></div>
-          <div><div class="ab-lbl">有效日期（年/月）</div><div style="display:flex;gap:6px;"><input name="qm_exp_y" class="ab-inp" placeholder="年" style="width:50%;" value="{h((customer.get('adminb_credit_exp','') or '').split('/')[0] if '/' in (customer.get('adminb_credit_exp','') or '') else '')}"><input name="qm_exp_m" class="ab-inp" placeholder="月" style="width:50%;" value="{h((customer.get('adminb_credit_exp','') or '').split('/')[1] if '/' in (customer.get('adminb_credit_exp','') or '') else '')}"></div></div>
+          <div><div class="ab-lbl">卡號</div><input name="qm_cno" class="ab-inp" placeholder="{h(qm_card['no'])}" value="{h(customer.get('adminb_credit_no','') or '')}"></div>
+          <div><div class="ab-lbl">有效日期（年/月）</div><div style="display:flex;gap:6px;"><input name="qm_exp_y" class="ab-inp" placeholder="{h(_qe[0] or '年')}" style="width:50%;" value="{h((customer.get('adminb_credit_exp','') or '').split('/')[0] if '/' in (customer.get('adminb_credit_exp','') or '') else '')}"><input name="qm_exp_m" class="ab-inp" placeholder="{h(_qe[1] or '月')}" style="width:50%;" value="{h((customer.get('adminb_credit_exp','') or '').split('/')[1] if '/' in (customer.get('adminb_credit_exp','') or '') else '')}"></div></div>
           <div><div class="ab-lbl">額度（萬）</div><input name="qm_climit" class="ab-inp" placeholder="10" value="{h(customer.get('adminb_credit_limit','') or '')}"></div>
           <div><div class="ab-lbl">近二月有無遲繳</div><select name="qm_clate" class="ab-sel"><option value="無">無</option><option value="有" {"selected" if (customer.get('adminb_credit_late','') or '')=='有' else ''}>有</option></select></div>
           <div><div class="ab-lbl">月付金</div><input name="qm_cpay" class="ab-inp" placeholder="3000" value="{h(customer.get('adminb_credit_pay','') or '')}"></div>
@@ -26677,7 +26683,13 @@ def _xinxin_values(r) -> dict:
     ov = {k: str(ov.get(k) or "").strip() for k in _XINXIN_KEYS}
     j_ = _customer_doc_judge(r, "fields:權狀") or {}
     # 交接第 23 段：權狀讀兩次比對，兩次不一樣回「不一致」→ 整份不帶（地號讀錯一碼就是另一塊地，空著讓行政看權狀打）
-    f_ = {} if j_.get("不一致") else (j_.get("欄位") or {})
+    #   第 26 段：只有「所有權人／門牌」不一樣時多一個「請對照」（罕見字）→ 只空那幾格，段／地號／建號照帶
+    #   第 26 段：文件＝都不是（傳錯張）→ 整份不帶
+    f_ = dict(j_.get("欄位") or {})
+    if j_.get("文件") == "都不是" or (j_.get("不一致") and not j_.get("請對照")):
+        f_ = {}
+    for k in (j_.get("不一致") or {}) if j_.get("請對照") else ():
+        f_.pop(k, None)
 
     def g(*keys):
         for k in keys:
@@ -26688,7 +26700,49 @@ def _xinxin_values(r) -> dict:
     auto = {"amount": "", "area": re.sub(r"[區鄉鎮市]$", "", g("鄉鎮市區")), "section": _xinxin_section(g("段", "地段")),
             "land_no": g("地號"), "build_no": g("建號"), "mortgage": g("他項權利設定金額", "設定金額"),
             "door": g("建物門牌", "門牌"), "owner": g("所有權人"), "owner_id": g("所有權人身分證", "統一編號").upper()}
+    # 第 26 段：統一編號就是這位客戶 → 名字以客戶身分證為準（AI 讀權狀上的名字低畫質會看錯字，而且讀兩次錯一樣）
+    if auto["owner_id"] and auto["owner_id"] == normalize_id_no(r.get("id_no") or "") and r.get("customer_name"):
+        auto["owner"] = str(r.get("customer_name")).strip()
     return {k: ov[k] or auto[k] for k in _XINXIN_KEYS}
+
+
+def _xinxin_deed_notes(customer) -> str:
+    """新鑫區上方：權狀判讀的提醒（交接第 23／26 段）"""
+    j = _customer_doc_judge(customer, "fields:權狀") or {}
+    st = 'style="font-size:12px;color:#b45309;font-weight:700;margin-bottom:8px;"'
+    out = []
+    if j.get("不一致") and not j.get("請對照"):
+        out.append("⚠️ 權狀讀兩次結果不一樣，沒有自動帶，請看權狀自己打")
+    elif j.get("請對照"):
+        out.append(f"⚠️ {'、'.join(j.get('不一致') or {})} 讀兩次不一樣（多半是罕見字），這幾格沒帶，請看權狀打（不用叫客戶重拍）")
+    for k in ("文件提醒", "姓名核對"):
+        x = str(j.get(k) or "").replace("**", "").strip()
+        if x and not (k == "姓名核對" and "就是這位客戶" in x):     # 是本人 → 已經自動帶身分證姓名，不用再講
+            out.append(x if x.startswith("⚠️") else "⚠️ " + x)
+    return "".join(f'<div {st}>{h(x)}</div>' for x in out)
+
+
+def _card_auto(r) -> dict:
+    """喬美信用卡格子：業務 AI 讀信用卡（卡片優先，其次帳單）的卡號、有效日期（交接第 28 段）
+    ⛔ 有「卡號提醒」（檢查碼對不上＝可能讀錯一碼或兩碼對調）→ 卡號不帶，空著讓行政看照片打
+    有效日期：業務 AI 給 MM/YY → 這邊存「年/月」；行政平常打 31/06 和 2031/06 兩種都有，兩位數那種比較多（2026-08 備份實數）"""
+    out = {"no": "", "exp": "", "warn": ""}
+    for kind in ("fields:信用卡", "fields:信用卡帳單"):
+        j = _customer_doc_judge(r, kind) or {}
+        f = j.get("欄位") or {}
+        no = re.sub(r"\D", "", str(f.get("卡號") or ""))
+        if j.get("卡號提醒"):
+            out["warn"] = out["warn"] or str(j["卡號提醒"]).replace("**", "")
+        elif not out["no"] and len(no) == 16:
+            out["no"] = "-".join(no[i:i + 4] for i in range(0, 16, 4))
+        elif not out["no"] and len(no) == 15:          # 美國運通 4-6-5
+            out["no"] = f"{no[:4]}-{no[4:10]}-{no[10:]}"
+        m = re.fullmatch(r"(\d{2})/(\d{2})", str(f.get("有效日期") or "").strip())
+        if m and not out["exp"]:
+            out["exp"] = f"{m.group(2)}/{m.group(1)}"
+    if out["no"]:
+        out["warn"] = ""
+    return out
 
 
 def _xinxin_amount_note(amount) -> str:
@@ -26916,6 +26970,12 @@ def _fill_qiaomei_pdf(r: dict) -> bytes:
             return b""
 
         def v(k): return (r.get(k, "") or "").strip()
+        try:
+            _ca = _card_auto(dict(r))           # 交接第 28 段：行政沒打卡號／有效日期 → 用信用卡照片讀到的
+        except Exception:
+            _ca = {"no": "", "exp": ""}
+        _cno = v("adminb_credit_no") or _ca["no"]
+        _cexp = v("adminb_credit_exp") or _ca["exp"]
 
         # 公司電話組合（mobile 不顯示）
         co_area = v("company_phone_area")
@@ -27044,11 +27104,11 @@ def _fill_qiaomei_pdf(r: dict) -> bytes:
             (185, 326, v("live_months")),
             # 信用卡：發卡銀行 / 卡號 / 有效日期年/月 (同卡號行 y=323) / 額度 (下行 y=353)
             (371, 285, v("adminb_credit_bank")),
-            (359, 323, v("adminb_credit_no")),
+            (359, 323, _cno),
             # 有效日期年：在「年」字 (538.1) 之前
-            (505, 323, v("adminb_credit_exp").split("/")[0] if "/" in v("adminb_credit_exp") else ""),
+            (505, 323, _cexp.split("/")[0] if "/" in _cexp else ""),
             # 有效日期月：在「年」(538) 和「月」(569) 之間
-            (548, 323, v("adminb_credit_exp").split("/")[1] if "/" in v("adminb_credit_exp") else v("adminb_credit_exp")),
+            (548, 323, _cexp.split("/")[1] if "/" in _cexp else _cexp),
             # 額度：在「萬」字 (423.9) 之前的空白
             (380, 353, v("adminb_credit_limit")),
             # === 分期付款標的表格（新範本、top~548 第一資料列）===
@@ -30801,7 +30861,8 @@ _FIELDS_KIND = {"身分證正面": "身分證正面", "身分證反面": "身分
 _JUDGE_KIND.update({k: "fields:" + v for k, v in _FIELDS_KIND.items()})
 # 業務 AI 讀的欄位改版了 → 版本 +1，舊答案會自動重拿一次（兩邊都存了舊答案，不重拿永遠是舊的）
 #   2：發證日期／發證地／換補發改從身分證「正面」讀（2026-10-14 交接第 8 段更正）
-_FIELDS_VER = 3   # 3：2026-10-15 行照多讀車種欄／底色（分機車汽車）；IMEI、手機型號
+_FIELDS_VER = 4   # 3：2026-10-15 行照多讀車種欄／底色（分機車汽車）；IMEI、手機型號
+#   4：2026-10-16 信用卡多讀卡號、有效日期統一 MM/YY（交接第 28 段）；權狀多了 文件／請對照／姓名核對（第 26 段）
 
 
 def judge_customer_docs(id_no: str, force: bool = False) -> int:
@@ -30978,7 +31039,9 @@ def _doc_fields_check(j: dict, label: str, cust) -> tuple:
         nm = f.get("持卡人姓名") or f.get("姓名") or ""
         if other(nm):
             warn.append(f"⚠️ 名字不是本人（{nm}）")
-        info.append(" ".join(x for x in (f.get("發卡銀行"), f"有效到 {f['有效日期']}" if f.get("有效日期") else "") if x))
+        cno = re.sub(r"\D", "", f.get("卡號") or "")[-4:]
+        info.append(" ".join(x for x in (f.get("發卡銀行"), f"卡號末4碼 {cno}" if cno else "",
+                                          f"有效到 {f['有效日期']}" if f.get("有效日期") else "") if x))
     # 發證日期／發證地／換補發：⛔ 印在身分證「正面」下方（2026-10-14 交接第 8 段原本寫成背面，是我寫錯）→ 正反面都看
     if label in ("身分證正面", "身分證反面"):
         d = _roc_ymd(f.get("發證日期_民國") or f.get("發證日期"))
@@ -30995,8 +31058,15 @@ def _doc_fields_check(j: dict, label: str, cust) -> tuple:
            "存摺封面": ("戶名", "帳號")}.get(label, ())
     # ⚠️ 存摺「銀行」不算：有的封面只印 logo 沒印行名（業務 AI 實測），讀不到不代表糊
     lost = [k for k in key if not str(f.get(k) or f.get(k + "_民國") or "").strip()]
-    if lost and any(str(v or "").strip() for v in f.values()):
+    if lost and not j.get("品質") and any(str(v or "").strip() for v in f.values()):
         warn.append(f"⚠️ 讀不到{'、'.join(lost)}（照片可能太黑／太糊）→ 請客戶重拍，⛔ 不要勉強送件")
+    # 業務 AI 放在最外層的提醒（⛔ 不在「欄位」裡，原本這邊沒顯示）：品質＝請客戶重拍、遮住＝被貼紙蓋住不用重拍、
+    #   IMEI／卡號提醒＝檢查碼對不上請看照片、請對照／文件提醒／姓名核對＝權狀（交接第 26 段）
+    #   ⚠️ 行照／存摺的姓名核對這邊自己比過了（上面「車主不是本人」）→ 只收權狀的，不然同一句講兩次
+    for k in ("品質", "遮住", "IMEI提醒", "卡號提醒", "請對照", "文件提醒") + (("姓名核對",) if label == "權狀或謄本" else ()):
+        x = str(j.get(k) or "").replace("**", "").strip()
+        if x:
+            (warn if x.startswith("⚠️") or k in ("品質", "請對照", "文件提醒") else info).append(x)
     return [x for x in info if x], warn
 
 
@@ -31117,7 +31187,7 @@ def _doc_judge_text(r, cust=None) -> str:
     if j["_kind"].startswith("fields:"):
         info, warn = _doc_fields_check(j, r.get("show_label") or _doc_label(r), cust)
         if not (j.get("欄位") or {}) or not any((j.get("欄位") or {}).values()):
-            return "🤖 讀不到上面的字"
+            return ("🤖 " + "；".join(warn)) if warn else "🤖 讀不到上面的字"
         return "🤖 " + "；".join(warn + info) if (warn or info) else "🤖 已讀到（看大圖右邊）"
     return ""
 
