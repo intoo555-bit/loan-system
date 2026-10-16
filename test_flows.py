@@ -3803,6 +3803,21 @@ check("喬美：發卡銀行灰字＝信用卡照片讀到的（原本是範例�
       'placeholder="測試商業銀行"' in _pgqb and 'placeholder="星展銀行"' not in _pgqb, "")
 check("喬美 PDF：發卡銀行沒打 → 用讀到的；有打 → 用行政打的",
       "測試商業銀行" in _wqb and "行政打的銀行" in _wqb2 and "測試商業銀行" not in _wqb2, (_wqb[-120:], _wqb2[-120:]))
+# 交接第 29 段＋使用者 2026-10-16：「送手機分期要手機帳單，只有這家需要」（舊備份 38 筆「缺件：手機帳單」37 筆是手機分期）
+_pbreq = m._plan_for_company("手機分期")["required_docs"]
+_pbr = {r: st for r, st, n in m.docs_missing_for_plan([], _pbreq)}
+check("手機分期：沒交手機帳單 → 算缺件（原本不檢查）", _pbr.get("手機帳單") == "missing", _pbr)
+_pbr = {r: st for r, st, n in m.docs_missing_for_plan([{"show_label": "電信帳單", "id": 1}], _pbreq)}
+check("手機分期：有電信帳單 → 手機帳單 ✅", _pbr.get("手機帳單") == "ok", _pbr)
+check("只有手機分期要手機帳單（其他家規則表沒寫）",
+      [x["company"] for x in m.PLAN_ELIGIBILITY_RULES if any("手機帳單" in d or "電信帳單" in d for d in x.get("required_docs") or [])] == ["手機分期"])
+check("電信帳單在分類清單、證件頁分組在財力", "電信帳單" in m._DOC_CATS and m._DOC_GROUP.get("電信帳單") == "finance")
+check("給業務 AI 的缺件代碼：手機帳單 → phone_bill",
+      next(c for keys, c in m._MISSING_DOC_CODES if any(k in "手機帳單" for k in keys)) == "phone_bill")
+check("行政 AI 判「其他」、業務 AI 標電信帳單 → 顯示電信帳單（上線前收的帳單才不會被喊缺件）",
+      m._doc_label({"label": "電信帳單", "ai_label": "其他"}) == "電信帳單"
+      and m._doc_label({"label": "電信帳單", "ai_label": "其他", "manual_label": "存摺封面"}) == "存摺封面"
+      and m._doc_label({"label": "電信帳單", "ai_label": "身分證正面"}) == "身分證正面")
 check("送件包：興達兩個方案都用興達那張",m._PACK_TEMPLATE_ALIAS.get("興達勞保貸") == "興達" and m._PACK_TEMPLATE_ALIAS.get("興達汽機車二胎") == "興達")
 check("申請書資料夾不可以有範本（真客人個資）",not any("範本" in f and ("中租" in f or "願望" in f) for f in os.listdir("申請書")))
 
