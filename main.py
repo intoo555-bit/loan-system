@@ -80,7 +80,9 @@ window.confirm=function(m){return ask('c',m);};
 window.prompt=function(m,d){return ask('p',m,d);};
 window.alert=function(m){if(!document.body)return nAlert(m);try{sessionStorage.setItem(KEY,String(m));}catch(e){}
 show(m,[{t:'確定',pri:1,f:function(){try{sessionStorage.removeItem(KEY);}catch(e){}}}]);};
-function pending(){var m=null;try{m=sessionStorage.getItem(KEY);sessionStorage.removeItem(KEY);}catch(e){}if(m)window.alert(m);}
+function pending(){var m=null;try{m=sessionStorage.getItem(KEY);sessionStorage.removeItem(KEY);}catch(e){}
+var c=document.cookie.match(/(?:^|; )uidlg_msg=([^;]*)/);if(c){document.cookie='uidlg_msg=; Max-Age=0; path=/';try{m=decodeURIComponent(c[1]);}catch(e){}}
+if(m)window.alert(m);}
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',pending);else pending();
 })();</script>"""
 
@@ -124,7 +126,17 @@ async def _ui_dialog_mw(request, call_next):
             msg = "沒辦法完成，請回上一頁重新操作"
         if not msg:
             return _R(body, status_code=resp.status_code, headers=hdrs, media_type=ctype)
-        return HTMLResponse(_ui_error_page(_UI_ERR_ZH.get(msg, msg), resp.status_code), status_code=resp.status_code, headers=hdrs)
+        msg = _UI_ERR_ZH.get(msg, msg)
+        # ⭐ 從本站某頁點過來的 GET（下載、連結）→ 不要多跳一頁，導回原頁、用系統的框講（使用者 2026-10-16）
+        #    POST（表單送出）不導回：重新整理會把剛填的字洗掉，留錯誤頁、按回上一頁字還在
+        from urllib.parse import urlsplit, quote as _q
+        ref = request.headers.get("referer") or ""
+        rs = urlsplit(ref)
+        if request.method == "GET" and rs.netloc == request.url.netloc and ref != str(request.url):
+            rd = RedirectResponse(rs.path + (("?" + rs.query) if rs.query else ""), status_code=303)
+            rd.set_cookie("uidlg_msg", _q(msg[:500]), max_age=60, path="/")
+            return rd
+        return HTMLResponse(_ui_error_page(msg, resp.status_code), status_code=resp.status_code, headers=hdrs)
     try:
         s = body.decode("utf-8")
     except UnicodeDecodeError:

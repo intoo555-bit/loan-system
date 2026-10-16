@@ -3831,6 +3831,10 @@ _nav = {"sec-fetch-mode": "navigate"}
 _r = _tc.get("/adminb/download-excel", params={"case_id": "沒有這位"}, headers=_nav)
 check("白框換掉：網址直接開的錯誤 → 中文頁，不是 {\"error\"}", "text/html" in _r.headers["content-type"]
       and "找不到客戶" in _r.text and '{"error"' not in _r.text and "回上一頁" in _r.text, _r.text[:200])
+_r = _tc.get("/adminb/download-excel", params={"case_id": "沒有這位"}, follow_redirects=False,
+            headers={**_nav, "referer": "http://testserver/adminb?case_id=X1"})
+check("白框換掉：從某頁點過來出錯 → 導回同一頁（不多跳一頁），訊息交給那頁的框",
+      _r.status_code == 303 and _r.headers["location"] == "/adminb?case_id=X1" and "uidlg_msg=" in _r.headers.get("set-cookie", ""), (_r.status_code, dict(_r.headers)))
 _r = _tc.get("/no-such-page", headers=_nav)
 check("白框換掉：找不到的網址 → 中文（沒有 Not Found）", "找不到這個頁面" in _r.text and "Not Found" not in _r.text, _r.text[:200])
 _r = _tc.get("/adminb/download-excel", params={"case_id": "沒有這位"})
