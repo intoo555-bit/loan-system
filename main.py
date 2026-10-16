@@ -19690,6 +19690,13 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
     except Exception:
         xx_ov, xx_auto = {}, {}
     try:
+        hr_pb = _payout_bank(dict(customer))
+        _pbn = str(((_customer_doc_judge(dict(customer), "fields:存摺封面") or {}).get("欄位") or {}).get("戶名") or "").strip()
+        hr_pb_warn = (f"⚠️ 存摺封面戶名是「{_pbn}」，不是客戶本人 → 和裕申請書戶名印的是本人，銀行請確認"
+                      if _pbn and customer.get("customer_name") and _name_norm(_pbn) != _name_norm(customer.get("customer_name")) else "")
+    except Exception:
+        hr_pb, hr_pb_warn = ("", "", ""), ""
+    try:
         qm_card = _card_auto(dict(customer))
     except Exception:
         qm_card = {"no": "", "exp": "", "warn": ""}
@@ -19840,10 +19847,11 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
           <div><div class="ab-lbl">照會時間</div><input name="hr_contact" class="ab-inp" placeholder="平日下午2-5點" value="{h(customer.get('adminb_contact_time','') or '')}"></div>
           <div><div class="ab-lbl">資金用途（F17 下拉）</div><select name="hr_fund" class="ab-sel"><option value="">請選擇</option>{"".join(f'<option value="{o}" {"selected" if customer.get("adminb_fund_use","")==o else ""}>{o}</option>' for o in ["1.購買消費型產品","2.購買家電、家具","3.購買3C產品","4.房屋裝修","5.子女教育費","6.醫療保險費","7.出國旅遊","8.個人創業"])}</select></div>
         </div>
-        <div style="font-size:11px;font-weight:700;color:#166534;margin-bottom:8px;">撥款資料</div>
+        <div style="font-size:11px;font-weight:700;color:#166534;margin-bottom:8px;">撥款資料<span style="font-weight:400;color:#475569;">（灰字＝客戶資料或存摺封面讀到的，空著下載就用它；戶名一律印客戶本人）</span></div>
+        {f'<div style="font-size:12px;color:#b45309;font-weight:700;margin-bottom:8px;">{h(hr_pb_warn)}</div>' if hr_pb_warn else ""}
         <div class="ab-g2" style="margin-bottom:10px;">
-          <div><div class="ab-lbl">銀行名稱</div><input name="hr_bank" class="ab-inp" placeholder="台灣銀行" value="{h(customer.get('adminb_bank','') or '')}"></div>
-          <div><div class="ab-lbl">分行</div><input name="hr_branch" class="ab-inp" placeholder="苗栗分行" value="{h(customer.get('adminb_branch','') or '')}"></div>
+          <div><div class="ab-lbl">銀行名稱</div><input name="hr_bank" class="ab-inp" placeholder="{h(hr_pb[0])}" value="{h(customer.get('adminb_bank','') or '')}"></div>
+          <div><div class="ab-lbl">分行</div><input name="hr_branch" class="ab-inp" placeholder="{h(hr_pb[1])}" value="{h(customer.get('adminb_branch','') or '')}"></div>
         </div>
         <div style="font-size:11px;font-weight:700;color:#166534;margin-bottom:8px;">商品資料</div>
         <div class="ab-g3">
@@ -25740,6 +25748,19 @@ def _car21_hint_html(customer) -> str:
             f'項目表看得出來的：{h(hit)}</div>')
 
 
+def _payout_bank(r) -> tuple:
+    """撥款銀行、分行、帳號：客戶資料有填的優先，沒填的從存摺封面讀（業務 AI）。
+    ⛔ 裕融、和裕、還有另一張申請書都走這一支（原本複製兩份，和裕根本沒接 → 2026-10-16 使用者：和裕的銀行也要照存封打完整）"""
+    v = lambda k: str(r.get(k) or "").strip()
+    bank, branch, acct = v("bank_name"), v("bank_branch"), v("bank_account")
+    if not (bank and acct):
+        pb = _customer_doc_judge(r, "fields:存摺封面")
+        f_ = (pb.get("欄位") or {}) if pb else {}
+        bank, branch, acct = (bank or str(f_.get("銀行") or "").strip(), branch or str(f_.get("分行") or "").strip(),
+                              acct or str(f_.get("帳號") or "").strip())
+    return bank, branch, acct
+
+
 def _account_complete(acct) -> bool:
     """帳號是不是完整的（可以印在申請書上）。
     使用者 2026-10-15：「帳號填寫要完整喔」—— 裕融申請書印成「***9411」。
@@ -26070,12 +26091,7 @@ def _fill_yulon_pdf(r: dict, plan: str = "") -> bytes:
             for k, yy in right.items():
                 if h_.startswith(k):
                     V(1, 285.6, yy + 1.2)              # 「車主」那格
-    bank, branch, acct = v("bank_name"), v("bank_branch"), v("bank_account")
-    if not (bank and acct):
-        pb = _customer_doc_judge(r, "fields:存摺封面")
-        f_ = (pb.get("欄位") or {}) if pb else {}
-        bank, branch, acct = (bank or str(f_.get("銀行") or ""), branch or str(f_.get("分行") or ""),
-                              acct or str(f_.get("帳號") or ""))
+    bank, branch, acct = _payout_bank(r)
     acct = acct if _account_complete(acct) else ""      # ⛔ 遮過的（***9411）不印，留白給行政手寫
     T(1, 72, 488, v("customer_name"), 270, 11); T(1, 377, 488, v("id_no").upper(), 170, 11)
     T(1, 72, 512, bank, 270, 11); T(1, 390, 512, branch, 160, 11); T(1, 72, 536, acct, 270, 11)
@@ -28174,8 +28190,8 @@ def _do_download_excel(request: Request, case_id: str, only_plans=None, raw: boo
                 "C25": c1_ph_fmt, "F25": c2_ph_fmt,
                 "D22": c1_known_val, "G22": c2_known_val,
                 # 撥款資訊（無填寫則清空，戶名 C39 不動有公式）
-                "C37": v("adminb_bank") or "",
-                "C38": v("adminb_branch") or "",
+                "C37": v("adminb_bank") or _payout_bank(r)[0],      # 行政B 沒打 → 客戶資料／存摺封面（2026-10-16）
+                "C38": v("adminb_branch") or _payout_bank(r)[1],
                 # 商品資訊（無填寫則清空）
                 "C42": v("adminb_product") or "",
                 "F42": v("adminb_model") or "",
@@ -32384,12 +32400,7 @@ def _dongfeng_cells(r: dict) -> dict:
         yrs = v("company_years")
     area = v("company_phone_area")
     co_phone = fmt_company_phone("" if area == "mobile" else area, v("company_phone_num"), v("company_phone_ext"))
-    bank, branch, acct = v("bank_name"), v("bank_branch"), v("bank_account")
-    if not (bank and acct):
-        pb = _customer_doc_judge(r, "fields:存摺封面")
-        f_ = (pb.get("欄位") or {}) if pb else {}
-        bank, branch, acct = (bank or str(f_.get("銀行") or ""), branch or str(f_.get("分行") or ""),
-                              acct or str(f_.get("帳號") or ""))
+    bank, branch, acct = _payout_bank(r)
     cells = {
         "D3": v("customer_name"), "G3": v("birth_date"), "J3": v("id_no").upper(),
         "D4": reg_addr, "K4": v("reg_phone"),

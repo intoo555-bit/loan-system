@@ -3759,6 +3759,25 @@ finally:
     m._customer_doc_judge = _dj21
 check("第 28 段：行政B 喬美卡號灰字＝讀到的卡號（原本是範例卡號 6480-…，看起來像真的）",
       'placeholder="4111-1111-1111-1111"' in _pg28 and "6480-6295" not in _pg28 and 'placeholder="32"' in _pg28, "")
+# 2026-10-16 使用者：「和裕的銀行 也要打完整的存封頁面」→ 行政B 沒打 → 客戶資料 → 存摺封面讀到的（跟裕融同一支）
+_pbj = {"欄位": {"戶名": "測試戊", "銀行": "中華郵政", "分行": "苗栗郵局", "帳號": "00012345678901"}}
+m._customer_doc_judge = lambda c, k: (_pbj if k == "fields:存摺封面" else _dj21(c, k))
+try:
+    _c = sqlite3.connect(TEST_DB)
+    _c.execute("UPDATE customers SET adminb_bank='', adminb_branch='', bank_name='', bank_branch='', bank_account='' WHERE case_id='TXT99'")
+    _c.commit(); _c.close()
+    _wh = _ox99.load_workbook(_io93.BytesIO(m._do_download_excel(None, "TXT99", only_plans=["和裕機車"], raw=True)[0][1]))
+    _wh = _wh[_wh.sheetnames[0]]
+    _hb = (str(_wh["C37"].value or ""), str(_wh["C38"].value or ""))
+    _cid99 = sqlite3.connect(TEST_DB).execute("SELECT case_id FROM customers WHERE case_id='TXT99'").fetchone()[0]
+    _pg99 = _tc73.get("/adminb", params={"case_id": _cid99}).text
+finally:
+    m._customer_doc_judge = _dj21
+check("和裕：撥款銀行／分行沒打 → 用存摺封面讀到的（中華郵政／苗栗郵局）", _hb == ("中華郵政", "苗栗郵局"), _hb)
+check("和裕：行政B 銀行灰字＝存摺讀到的（不再是範例「台灣銀行」「苗栗分行」）",
+      'placeholder="中華郵政"' in _pg99 and 'placeholder="台灣銀行"' not in _pg99 and 'placeholder="苗栗分行"' not in _pg99, "")
+check("撥款銀行：客戶資料有填的優先", m._payout_bank({"bank_name": "台新", "bank_branch": "竹北", "bank_account": "12345678901"})
+      == ("台新", "竹北", "12345678901"))
 check("送件包：興達兩個方案都用興達那張",m._PACK_TEMPLATE_ALIAS.get("興達勞保貸") == "興達" and m._PACK_TEMPLATE_ALIAS.get("興達汽機車二胎") == "興達")
 check("申請書資料夾不可以有範本（真客人個資）",not any("範本" in f and ("中租" in f or "願望" in f) for f in os.listdir("申請書")))
 
