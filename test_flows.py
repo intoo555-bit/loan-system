@@ -3821,6 +3821,21 @@ check("行政 AI 判「其他」、業務 AI 標電信帳單 → 顯示電信帳
 check("送件包：興達兩個方案都用興達那張",m._PACK_TEMPLATE_ALIAS.get("興達勞保貸") == "興達" and m._PACK_TEMPLATE_ALIAS.get("興達汽機車二胎") == "興達")
 check("申請書資料夾不可以有範本（真客人個資）",not any("範本" in f and ("中租" in f or "願望" in f) for f in os.listdir("申請書")))
 
+# ========== 全站：瀏覽器白框換成系統自己的框（使用者 2026-10-16：「這種框都換掉」「不要有英文」）==========
+# 真瀏覽器點過一輪在 scratchpad/ui_dialog_browser.py（取消／確定／表單／prompt／alert 換頁）；這裡守住「每頁都有插」
+m.check_auth = lambda req: "admin"
+_tc = TestClient(m.app)
+for _u in ("/report", "/adminb", "/login"):
+    check(f"白框換掉：{_u} 有插系統自己的框", "window.__uiDlg" in _tc.get(_u).text)
+_nav = {"sec-fetch-mode": "navigate"}
+_r = _tc.get("/adminb/download-excel", params={"case_id": "沒有這位"}, headers=_nav)
+check("白框換掉：網址直接開的錯誤 → 中文頁，不是 {\"error\"}", "text/html" in _r.headers["content-type"]
+      and "找不到客戶" in _r.text and '{"error"' not in _r.text and "回上一頁" in _r.text, _r.text[:200])
+_r = _tc.get("/no-such-page", headers=_nav)
+check("白框換掉：找不到的網址 → 中文（沒有 Not Found）", "找不到這個頁面" in _r.text and "Not Found" not in _r.text, _r.text[:200])
+_r = _tc.get("/adminb/download-excel", params={"case_id": "沒有這位"})
+check("白框換掉：頁面裡 fetch 照樣拿到 JSON", _r.json().get("error") == "找不到客戶", _r.text[:200])
+
 # ========== 總結 ==========
 print(f"\n{'='*50}")
 print(f"結果：{PASS} 通過、{FAIL} 失敗")

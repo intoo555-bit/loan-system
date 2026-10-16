@@ -35,6 +35,105 @@ def h(val) -> str:
 #    （使用者 2026-10-13 同意關；我們自己用不到）
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 
+
+# ══════════ 全站：瀏覽器白框換成系統自己的框（使用者 2026-10-16：「這種框都換掉」「不要有英文」）══════════
+# 瀏覽器原生的 alert／confirm／prompt 會在上面印網址（loan-system-a7xd.onrender.com 說），很醜又有英文。
+# ⭐ 結構化做法：middleware 在每一頁 HTML 自動插 _UI_DIALOG_JS，把三個函式換掉 → 原本 90 幾處呼叫一處都不用改，
+#    以後新寫的頁面照樣寫 confirm() 也會自動變好看（不用記得）。
+# confirm 是「同步」的（要馬上回 true／false），自己的框做不到 → 做法：
+#   第一次呼叫：跳我們的框、先回 false（動作取消）；按「確定」→ 記住「這句話已經按過確定」，
+#   把剛剛觸發的那個動作（點按鈕／送出表單／選檔案）再做一次 → 第二次 confirm 直接回 true。
+#   找不到觸發的動作（極少數：計時器裡呼叫）→ 退回瀏覽器原生的框，至少不會壞。
+# alert 改成不擋住：後面常接 location.reload()，訊息先存 sessionStorage，換頁後再顯示，不會一閃就不見。
+_UI_DIALOG_JS = r"""<script>(function(){
+if(window.__uiDlg)return;window.__uiDlg=1;
+var nAlert=window.alert.bind(window),nConfirm=window.confirm.bind(window),nPrompt=window.prompt.bind(window);
+var ok={},KEY='__uiDlgMsg';
+function css(){if(document.getElementById('__uiDlgCss'))return;var s=document.createElement('style');s.id='__uiDlgCss';
+s.textContent='.uidlg-bg{position:fixed;inset:0;background:rgba(15,30,50,.38);z-index:2147483000;display:flex;padding:16px;overflow:auto}'+
+'.uidlg{margin:auto;background:#fff;color:#1d2733;border-radius:14px;box-shadow:0 12px 40px rgba(0,0,0,.25);width:100%;max-width:420px;'+
+'padding:22px 22px 16px;font:15px/1.6 "Noto Sans TC","Microsoft JhengHei",sans-serif;box-sizing:border-box}'+
+'.uidlg p{margin:0 0 16px;white-space:pre-wrap;word-break:break-word}.uidlg input{width:100%;box-sizing:border-box;font:inherit;'+
+'padding:8px 10px;border:1px solid #cdd8e0;border-radius:8px;margin:0 0 16px}.uidlg-b{display:flex;gap:8px;justify-content:flex-end}'+
+'.uidlg-b button{font:inherit;font-size:15px;border-radius:8px;padding:8px 20px;cursor:pointer;border:1px solid #cdd8e0;background:#fff;color:#1d2733}'+
+'.uidlg-b button.pri{background:#2f6f8f;border-color:#2f6f8f;color:#fff;font-weight:700}';
+(document.head||document.documentElement).appendChild(s);}
+function show(msg,btns,withInput,def){css();var bg=document.createElement('div');bg.className='uidlg-bg';
+var box=document.createElement('div');box.className='uidlg';var p=document.createElement('p');p.textContent=String(msg==null?'':msg);box.appendChild(p);
+var inp=null;if(withInput){inp=document.createElement('input');inp.value=def==null?'':String(def);box.appendChild(inp);}
+var row=document.createElement('div');row.className='uidlg-b';
+btns.forEach(function(b){var e=document.createElement('button');e.type='button';e.textContent=b.t;if(b.pri)e.className='pri';
+e.onclick=function(){bg.remove();document.removeEventListener('keydown',kd,true);b.f(inp?inp.value:null);};row.appendChild(e);});
+box.appendChild(row);bg.appendChild(box);document.body.appendChild(bg);
+function kd(e){if(e.key==='Escape'){e.preventDefault();row.firstChild.click();}else if(e.key==='Enter'&&(!inp||document.activeElement===inp)){e.preventDefault();row.lastChild.click();}}
+document.addEventListener('keydown',kd,true);setTimeout(function(){(inp||row.lastChild).focus();},0);}
+function replay(ev){var t=ev.target;
+if(ev.type==='submit'&&t&&t.tagName==='FORM'){if(t.requestSubmit)t.requestSubmit(ev.submitter||undefined);else t.submit();return;}
+if(ev.type==='click'||ev.type==='mouseup'||ev.type==='pointerup'){var el=t&&t.closest?t.closest('a,button,input,label,[onclick]')||t:t;if(el&&el.click)el.click();return;}
+if(t&&t.dispatchEvent)t.dispatchEvent(new Event(ev.type,{bubbles:true}));}
+function ask(kind,msg,def){var k=kind+'\u0001'+msg;
+if(k in ok){var v=ok[k];delete ok[k];return v;}
+var ev=window.event;if(!ev||!ev.target||!document.body)return kind==='c'?nConfirm(msg):nPrompt(msg,def);
+show(msg,[{t:'取消',f:function(){}},{t:'確定',pri:1,f:function(v){ok[k]=kind==='c'?true:v;replay(ev);
+setTimeout(function(){delete ok[k];},1500);}}],kind==='p',def);return kind==='c'?false:null;}
+window.confirm=function(m){return ask('c',m);};
+window.prompt=function(m,d){return ask('p',m,d);};
+window.alert=function(m){if(!document.body)return nAlert(m);try{sessionStorage.setItem(KEY,String(m));}catch(e){}
+show(m,[{t:'確定',pri:1,f:function(){try{sessionStorage.removeItem(KEY);}catch(e){}}}]);};
+function pending(){var m=null;try{m=sessionStorage.getItem(KEY);sessionStorage.removeItem(KEY);}catch(e){}if(m)window.alert(m);}
+if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',pending);else pending();
+})();</script>"""
+
+
+def _ui_error_page(msg: str, status: int) -> str:
+    """網址直接打開（不是頁面裡的 fetch）卻回錯誤 → 中文頁＋回上一頁，不要給人看 {"error": ...}"""
+    return (f'<!DOCTYPE html><html lang="zh-Hant"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
+            f'<title>沒辦法完成</title><style>body{{margin:0;background:#f3f5f7;color:#1d2733;font:15px/1.7 "Noto Sans TC","Microsoft JhengHei",sans-serif;'
+            f'display:flex;min-height:100vh;padding:16px;box-sizing:border-box;overflow-x:hidden}}.c{{margin:auto;background:#fff;border-radius:14px;'
+            f'box-shadow:0 8px 30px rgba(0,0,0,.08);max-width:440px;width:100%;padding:28px 24px;box-sizing:border-box;text-align:center}}'
+            f'h1{{font-size:19px;margin:0 0 10px}}p{{margin:0 0 20px;color:#5b6b7c;white-space:pre-wrap}}button{{font:inherit;background:#2f6f8f;'
+            f'color:#fff;border:0;border-radius:8px;padding:9px 22px;font-weight:700;cursor:pointer}}</style></head>'
+            f'<body><div class="c"><h1>⚠️ 沒辦法完成</h1><p>{h(msg)}</p>'
+            f'<button onclick="history.length>1?history.back():location.href=\'/\'">← 回上一頁</button></div></body></html>')
+
+
+_UI_ERR_ZH = {"Not Found": "找不到這個頁面", "Method Not Allowed": "這個網址不能直接打開",
+              "Internal Server Error": "系統出了點問題，請稍後再試", "Unauthorized": "請先登入", "Forbidden": "沒有權限"}
+
+
+@app.middleware("http")
+async def _ui_dialog_mw(request, call_next):
+    resp = await call_next(request)
+    ctype = resp.headers.get("content-type", "")
+    nav = request.headers.get("sec-fetch-mode") == "navigate"     # 網址列／連結／表單直接開，不是頁面裡的 fetch
+    if not (ctype.startswith("text/html") or (nav and ctype.startswith("application/json"))):
+        return resp
+    body = b"".join([c async for c in resp.body_iterator])
+    hdrs = {k: v for k, v in resp.headers.items() if k.lower() not in ("content-length", "content-type")}
+    from fastapi.responses import Response as _R
+    if ctype.startswith("application/json"):
+        try:
+            d = json.loads(body)
+        except Exception:
+            d = None
+        msg = ""
+        if isinstance(d, dict):
+            m = d.get("error") or d.get("detail") or (d.get("message") if resp.status_code >= 400 or d.get("ok") is False else "")
+            msg = m if isinstance(m, str) else ("資料格式不對，請回上一頁重新操作" if m else "")
+        elif resp.status_code >= 400:
+            msg = "沒辦法完成，請回上一頁重新操作"
+        if not msg:
+            return _R(body, status_code=resp.status_code, headers=hdrs, media_type=ctype)
+        return HTMLResponse(_ui_error_page(_UI_ERR_ZH.get(msg, msg), resp.status_code), status_code=resp.status_code, headers=hdrs)
+    try:
+        s = body.decode("utf-8")
+    except UnicodeDecodeError:
+        return _R(body, status_code=resp.status_code, headers=hdrs, media_type=ctype)
+    if "__uiDlg" not in s and (nav or "<html" in s[:3000].lower()):      # fetch 回來的小片段不插
+        i = s.lower().find("</head>")
+        s = (s[:i] + _UI_DIALOG_JS + s[i:]) if i >= 0 else (_UI_DIALOG_JS + s)
+    return _R(s.encode("utf-8"), status_code=resp.status_code, headers=hdrs, media_type=ctype)
+
 CHANNEL_ACCESS_TOKEN = os.getenv("CHANNEL_ACCESS_TOKEN", "")
 LINE_CHANNEL_SECRET = os.getenv("LINE_CHANNEL_SECRET", "")
 BACKUP_ENABLED = os.getenv("BACKUP_ENABLED", "").lower() == "true"
@@ -20027,7 +20126,7 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
       <div class="ab-sec">儲存與下載</div>
       <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
         <button type="submit" class="btn-save">💾 儲存資料</button>
-        <a href="/adminb/download-excel?case_id={h(case_id)}" class="btn-dl" onclick="return confirm('將根據勾選的方案下載 Excel/TXT，確定嗎？')">📥 下載EXCEL/TXT</a>
+        <a href="/adminb/download-excel?case_id={h(case_id)}" class="btn-dl" onclick="return confirm('將根據勾選的方案下載申請書，確定嗎？')">📥 下載EXCEL/TXT</a>
         {('<span style="display:inline-flex;gap:6px;align-items:center;background:#e8f4f4;border:1px solid #b9dcdc;border-radius:8px;padding:6px 10px">'
           + _pack_picker_html(customer) + '</span>') if _pack_picker_html(customer) else ''}
         {'<button type="button" onclick="checkEligibilityAdminB()" style="background:#fef3c7;color:#854d0e;border:1px solid #fde047;padding:11px 22px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;">📋 對照規則表</button>' if role in ('admin', 'ops_admin') else ''}
