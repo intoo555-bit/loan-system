@@ -3778,6 +3778,31 @@ check("和裕：行政B 銀行灰字＝存摺讀到的（不再是範例「台�
       'placeholder="中華郵政"' in _pg99 and 'placeholder="台灣銀行"' not in _pg99 and 'placeholder="苗栗分行"' not in _pg99, "")
 check("撥款銀行：客戶資料有填的優先", m._payout_bank({"bank_name": "台新", "bank_branch": "竹北", "bank_account": "12345678901"})
       == ("台新", "竹北", "12345678901"))
+# 2026-10-16 使用者：「是裕融我講錯」—— 裕融區要看得到會印的撥款銀行／分行／帳號；存摺讀到完整帳號就不可以再喊「只讀到後 4 碼」
+check("裕融區：顯示存摺封面讀到的完整撥款資料（銀行、分行、帳號）",
+      "撥款（申請書會印）" in _pg99 and "<b>中華郵政</b>" in _pg99 and "<b>苗栗郵局</b>" in _pg99 and "<b>00012345678901</b>" in _pg99, "")
+check("裕融區：客戶資料帳號空、但存摺讀到完整帳號 → 不可以警告「沒有完整的」", "撥款帳號沒有完整的" not in _pg99, "")
+check("裕融區：存摺戶名是本人 → 不提醒", "存摺封面戶名是" not in _pg99, "")
+_pbj["欄位"]["戶名"] = "測試己"
+m._customer_doc_judge = lambda c, k: (_pbj if k == "fields:存摺封面" else _dj21(c, k))
+try:
+    _pg99b = _tc73.get("/adminb", params={"case_id": _cid99}).text
+finally:
+    m._customer_doc_judge = _dj21
+check("裕融區：存摺戶名不是本人 → 提醒（裕融申請書戶名印本人）", "存摺封面戶名是「測試己」" in _pg99b and "裕融申請書戶名印的是本人" in _pg99b, "")
+# 2026-10-16 使用者：喬美發卡銀行也從信用卡照片帶
+m._customer_doc_judge = lambda c, k: ({"欄位": {"卡號": "4111111111111111", "有效日期": "08/32", "發卡銀行": "測試商業銀行"}}
+                                      if k == "fields:信用卡" else _dj21(c, k))
+try:
+    _pgqb = _tc73.get("/adminb", params={"case_id": _cid73}).text
+    _wqb = "".join(t for x, y, t in _qm_words())
+    _wqb2 = "".join(t for x, y, t in _qm_words(adminb_credit_bank="行政打的銀行"))
+finally:
+    m._customer_doc_judge = _dj21
+check("喬美：發卡銀行灰字＝信用卡照片讀到的（原本是範例「星展銀行」）",
+      'placeholder="測試商業銀行"' in _pgqb and 'placeholder="星展銀行"' not in _pgqb, "")
+check("喬美 PDF：發卡銀行沒打 → 用讀到的；有打 → 用行政打的",
+      "測試商業銀行" in _wqb and "行政打的銀行" in _wqb2 and "測試商業銀行" not in _wqb2, (_wqb[-120:], _wqb2[-120:]))
 check("送件包：興達兩個方案都用興達那張",m._PACK_TEMPLATE_ALIAS.get("興達勞保貸") == "興達" and m._PACK_TEMPLATE_ALIAS.get("興達汽機車二胎") == "興達")
 check("申請書資料夾不可以有範本（真客人個資）",not any("範本" in f and ("中租" in f or "願望" in f) for f in os.listdir("申請書")))
 

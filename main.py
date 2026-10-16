@@ -19436,9 +19436,7 @@ def _adminb_supp_guess(customer) -> dict:
     g["hr_industry"] = hr
     g["hr_fund"] = "3.購買3C產品"          # 同亞太（使用者：資金用途一律 3C）
     # 撥款資料 ← 存摺封面判讀
-    pb = _customer_doc_judge(c, "fields:存摺封面")
-    f = pb.get("欄位") or {} if pb else {}
-    g["hr_bank"], g["hr_branch"] = str(f.get("銀行") or ""), str(f.get("分行") or "")
+    g["hr_bank"], g["hr_branch"] = _payout_bank(c)[:2]
     # 機車資料 ← 機車行照（和裕機車、麻吉機車、喬美的商品）
     moto = {}
     try:
@@ -19494,7 +19492,7 @@ def _adminb_supp_guess(customer) -> dict:
     g["car_hascc"] = "有" if st in ("good", "bad") else ("無" if (c.get("eval_credit_card") or "").strip() else "")
     # 喬美信用資料 ← 信用卡正面判讀／資料表
     cc = _customer_doc_judge(c, "fields:信用卡")
-    g["qm_cbank"] = str((cc.get("欄位") or {}).get("發卡銀行") or "") if cc else ""
+    g["qm_cbank"] = _card_auto(c)["bank"]
     g["qm_clate"] = "有" if st == "bad" else ("無" if st == "good" else "")
     # 分貝：近 2 個月送件備註 ← 資料表「近三月送過什麼」
     g["bei_note"] = str(c.get("eval_sent_3m_detail") or "").strip()
@@ -19699,7 +19697,7 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
     try:
         qm_card = _card_auto(dict(customer))
     except Exception:
-        qm_card = {"no": "", "exp": "", "warn": ""}
+        qm_card = {"no": "", "exp": "", "warn": "", "bank": ""}
     _qe = qm_card["exp"].split("/") if "/" in qm_card["exp"] else ["", ""]
     # 和潤：送件順序有排和潤就先幫忙勾
     try:
@@ -19934,7 +19932,10 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
           {yl_inp("periods", "期數", "36")}
           {yl_inp("payment", "期付款", "3510")}
         </div>
-        {'' if _account_complete(customer.get("bank_account")) else '<div style="font-size:12px;color:#b91c1c;font-weight:700;margin-bottom:8px;">⚠️ 撥款帳號沒有完整的（存摺只讀到後 4 碼）→ 申請書帳號那格會空著，請到客戶資料填完整帳號，或下載後手寫</div>'}
+        <div style="font-size:12px;color:#1e3a8a;margin-bottom:6px;">撥款（申請書會印）：銀行 <b>{h(hr_pb[0]) or "—"}</b>　分行 <b>{h(hr_pb[1]) or "—"}</b>　帳號 <b>{h(hr_pb[2]) if _account_complete(hr_pb[2]) else "—"}</b>　戶名 <b>{h(customer.get("customer_name") or "")}</b><span style="color:#475569;">（客戶資料有填用客戶資料，沒填用存摺封面讀到的；要改請改客戶資料）</span></div>
+        {'' if hr_pb[0] and hr_pb[1] else '<div style="font-size:12px;color:#b91c1c;font-weight:700;margin-bottom:8px;">⚠️ 撥款銀行／分行讀不到 → 申請書那格會空著，請到客戶資料填，或下載後手寫</div>'}
+        {'' if _account_complete(hr_pb[2]) else '<div style="font-size:12px;color:#b91c1c;font-weight:700;margin-bottom:8px;">⚠️ 撥款帳號沒有完整的（存摺封面沒讀到完整帳號）→ 申請書帳號那格會空著，請到客戶資料填完整帳號，或下載後手寫</div>'}
+        {f'<div style="font-size:12px;color:#b45309;font-weight:700;margin-bottom:8px;">{h(hr_pb_warn.replace("和裕", "裕融"))}</div>' if hr_pb_warn else ""}
         <div style="font-size:11px;font-weight:700;color:#1d4ed8;margin-bottom:6px;">舊案／新案（借新還舊、他行代償才印；原車不用填）</div>
         <div class="ab-g4" style="margin-bottom:10px;">
           {yl_inp("paid", "已繳期數", "12")}
@@ -19998,7 +19999,7 @@ body{background:#ece8e2;font-family:'Microsoft JhengHei','PingFang TC',sans-seri
         <div style="font-size:11px;font-weight:700;color:#5b21b6;margin-bottom:8px;">信用資料<span style="font-weight:400;color:#6b5b8e;">（卡號、有效日期的灰字＝從信用卡照片讀到的，空著下載就用它）</span></div>
         {f'<div style="font-size:12px;color:#b45309;font-weight:700;margin-bottom:8px;">{h(qm_card["warn"])}（卡號沒有自動帶）</div>' if qm_card["warn"] else ""}
         <div class="ab-g3">
-          <div><div class="ab-lbl">發卡銀行</div><input name="qm_cbank" class="ab-inp" placeholder="星展銀行" value="{h(customer.get('adminb_credit_bank','') or '')}"></div>
+          <div><div class="ab-lbl">發卡銀行</div><input name="qm_cbank" class="ab-inp" placeholder="{h(qm_card['bank'])}" value="{h(customer.get('adminb_credit_bank','') or '')}"></div>
           <div><div class="ab-lbl">卡號</div><input name="qm_cno" class="ab-inp" placeholder="{h(qm_card['no'])}" value="{h(customer.get('adminb_credit_no','') or '')}"></div>
           <div><div class="ab-lbl">有效日期（年/月）</div><div style="display:flex;gap:6px;"><input name="qm_exp_y" class="ab-inp" placeholder="{h(_qe[0] or '年')}" style="width:50%;" value="{h((customer.get('adminb_credit_exp','') or '').split('/')[0] if '/' in (customer.get('adminb_credit_exp','') or '') else '')}"><input name="qm_exp_m" class="ab-inp" placeholder="{h(_qe[1] or '月')}" style="width:50%;" value="{h((customer.get('adminb_credit_exp','') or '').split('/')[1] if '/' in (customer.get('adminb_credit_exp','') or '') else '')}"></div></div>
           <div><div class="ab-lbl">額度（萬）</div><input name="qm_climit" class="ab-inp" placeholder="10" value="{h(customer.get('adminb_credit_limit','') or '')}"></div>
@@ -26742,10 +26743,11 @@ def _card_auto(r) -> dict:
     """喬美信用卡格子：業務 AI 讀信用卡（卡片優先，其次帳單）的卡號、有效日期（交接第 28 段）
     ⛔ 有「卡號提醒」（檢查碼對不上＝可能讀錯一碼或兩碼對調）→ 卡號不帶，空著讓行政看照片打
     有效日期：業務 AI 給 MM/YY → 這邊存「年/月」；行政平常打 31/06 和 2031/06 兩種都有，兩位數那種比較多（2026-08 備份實數）"""
-    out = {"no": "", "exp": "", "warn": ""}
+    out = {"no": "", "exp": "", "warn": "", "bank": ""}
     for kind in ("fields:信用卡", "fields:信用卡帳單"):
         j = _customer_doc_judge(r, kind) or {}
         f = j.get("欄位") or {}
+        out["bank"] = out["bank"] or str(f.get("發卡銀行") or "").strip()    # 2026-10-16 使用者：發卡銀行也自動帶
         no = re.sub(r"\D", "", str(f.get("卡號") or ""))
         if j.get("卡號提醒"):
             out["warn"] = out["warn"] or str(j["卡號提醒"]).replace("**", "")
@@ -26989,7 +26991,7 @@ def _fill_qiaomei_pdf(r: dict) -> bytes:
         try:
             _ca = _card_auto(dict(r))           # 交接第 28 段：行政沒打卡號／有效日期 → 用信用卡照片讀到的
         except Exception:
-            _ca = {"no": "", "exp": ""}
+            _ca = {"no": "", "exp": "", "bank": ""}
         _cno = v("adminb_credit_no") or _ca["no"]
         _cexp = v("adminb_credit_exp") or _ca["exp"]
 
@@ -27119,7 +27121,7 @@ def _fill_qiaomei_pdf(r: dict) -> bytes:
             (120, 326, v("live_years")),
             (185, 326, v("live_months")),
             # 信用卡：發卡銀行 / 卡號 / 有效日期年/月 (同卡號行 y=323) / 額度 (下行 y=353)
-            (371, 285, v("adminb_credit_bank")),
+            (371, 285, v("adminb_credit_bank") or _ca.get("bank", "")),
             (359, 323, _cno),
             # 有效日期年：在「年」字 (538.1) 之前
             (505, 323, _cexp.split("/")[0] if "/" in _cexp else ""),
